@@ -425,11 +425,18 @@ const DEFAULT_SETTINGS = {
     datacatPublicFeed: false,
     datacatReextractOnUpdate: false,
     ctCookie: null,
+    charavaultEmail: null,
+    charavaultAppPassword: null,
+    charavaultRemember: false,
+    charavaultFolder: '',
 
     // ---- NSFW Toggles ----
     pygmalionNsfw: false,
     wyvernNsfw: false,
     ctNsfw: false,
+    charavaultNsfw: false,
+    charavaultHasBook: false,
+    charavaultSort: 'most_downloaded',
 
     // ---- Search & Sort ----
     defaultSort: 'name_asc',
@@ -897,6 +904,14 @@ function setupSettingsModal() {
     const datacatPluginBanner = document.getElementById('datacatPluginBanner');
     const datacatSettingsFields = document.getElementById('datacatSettingsFields');
     const datacatSessionStatus = document.getElementById('datacatSessionStatus');
+    const charavaultEmailInput = document.getElementById('settingsCharavaultEmail');
+    const charavaultAppPasswordInput = document.getElementById('settingsCharavaultAppPassword');
+    const charavaultRememberCredsCheckbox = document.getElementById('settingsCharavaultRememberCredentials');
+    const toggleCharavaultPasswordVisibility = document.getElementById('toggleCharavaultPasswordVisibility');
+    const charavaultPluginBanner = document.getElementById('charavaultPluginBanner');
+    const charavaultSettingsFields = document.getElementById('charavaultSettingsFields');
+    const charavaultSessionStatus = document.getElementById('charavaultSessionStatus');
+    const validateCharavaultBtn = document.getElementById('validateCharavaultBtn');
     const minScoreSlider = document.getElementById('settingsMinScore');
     const minScoreValue = document.getElementById('minScoreValue');
     
@@ -1365,6 +1380,7 @@ function setupSettingsModal() {
         { id: 'chartavern', inputId: 'ctExcludeTagsInput', pillsId: 'ctExcludeTagsPills' },
         { id: 'wyvern', inputId: 'wyvernExcludeTagsInput', pillsId: 'wyvernExcludeTagsPills' },
         { id: 'datacat', inputId: 'datacatExcludeTagsInput', pillsId: 'datacatExcludeTagsPills' },
+        { id: 'charavault', inputId: 'charavaultExcludeTagsInput', pillsId: 'charavaultExcludeTagsPills' },
     ];
 
     function renderExcludeTagPills(providerId, pillsId) {
@@ -1430,6 +1446,9 @@ function setupSettingsModal() {
         if (wyvernPasswordInput) wyvernPasswordInput.value = getSetting('wyvernPassword') || '';
         if (wyvernRememberCredsCheckbox) wyvernRememberCredsCheckbox.checked = getSetting('wyvernRememberCredentials') || false;
         if (datacatTokenInput) datacatTokenInput.value = getSetting('datacatToken') || '';
+        if (charavaultEmailInput) charavaultEmailInput.value = getSetting('charavaultEmail') || '';
+        if (charavaultAppPasswordInput) charavaultAppPasswordInput.value = getSetting('charavaultAppPassword') || '';
+        if (charavaultRememberCredsCheckbox) charavaultRememberCredsCheckbox.checked = getSetting('charavaultRemember') || false;
         const datacatPublicFeedCheckbox = document.getElementById('datacatPublicFeedCheckbox');
         if (datacatPublicFeedCheckbox) {
             datacatPublicFeedCheckbox.checked = getSetting('datacatPublicFeed') === true;
@@ -1450,6 +1469,7 @@ function setupSettingsModal() {
             pygmalionPluginBanner, pygmalionSettingsFields,
             ctPluginBanner, ctSettingsFields,
             datacatPluginBanner, datacatSettingsFields,
+            charavaultPluginBanner, charavaultSettingsFields,
         ).then(available => {
             if (datacatSessionStatus) {
                 if (!available) {
@@ -1459,6 +1479,16 @@ function setupSettingsModal() {
                     datacatSessionStatus.className = 'settings-status-badge inactive';
                     datacatSessionStatus.innerHTML = '<i class="fa-solid fa-circle"></i> Checking...';
                     updateDatacatSessionStatus();
+                }
+            }
+            if (charavaultSessionStatus) {
+                if (!available) {
+                    charavaultSessionStatus.className = 'settings-status-badge inactive';
+                    charavaultSessionStatus.innerHTML = '<i class="fa-solid fa-circle"></i> Plugin missing';
+                } else {
+                    charavaultSessionStatus.className = 'settings-status-badge inactive';
+                    charavaultSessionStatus.innerHTML = '<i class="fa-solid fa-circle"></i> Checking...';
+                    updateCharavaultSessionStatus();
                 }
             }
         });
@@ -1783,6 +1813,11 @@ function setupSettingsModal() {
             wyvernEmail: wyvernEmailInput ? (wyvernEmailInput.value || null) : null,
             wyvernPassword: wyvernPasswordInput ? (wyvernPasswordInput.value || null) : null,
             wyvernRememberCredentials: wyvernRememberCredsCheckbox ? wyvernRememberCredsCheckbox.checked : false,
+            charavaultEmail: charavaultEmailInput ? (charavaultEmailInput.value || null) : null,
+            charavaultAppPassword: charavaultAppPasswordInput && charavaultRememberCredsCheckbox?.checked
+                ? (charavaultAppPasswordInput.value || null)
+                : null,
+            charavaultRemember: charavaultRememberCredsCheckbox ? charavaultRememberCredsCheckbox.checked : false,
             duplicateMinScore: parseInt(minScoreSlider.value),
             searchInName: searchNameCheckbox.checked,
             searchInListingName: searchListingNameCheckbox ? searchListingNameCheckbox.checked : true,
@@ -1941,6 +1976,9 @@ function setupSettingsModal() {
         if (wyvernEmailInput) wyvernEmailInput.value = '';
         if (wyvernPasswordInput) wyvernPasswordInput.value = '';
         if (wyvernRememberCredsCheckbox) wyvernRememberCredsCheckbox.checked = false;
+        if (charavaultEmailInput) charavaultEmailInput.value = '';
+        if (charavaultAppPasswordInput) charavaultAppPasswordInput.value = '';
+        if (charavaultRememberCredsCheckbox) charavaultRememberCredsCheckbox.checked = false;
         minScoreSlider.value = DEFAULT_SETTINGS.duplicateMinScore;
         minScoreValue.textContent = String(DEFAULT_SETTINGS.duplicateMinScore);
         searchNameCheckbox.checked = DEFAULT_SETTINGS.searchInName;
@@ -2189,6 +2227,87 @@ function setupSettingsModal() {
                 setTimeout(() => {
                     validateWyvernBtn.classList.remove('success', 'error');
                     validateWyvernBtn.innerHTML = originalHtml;
+                }, 3000);
+            }
+        };
+    }
+
+    // CharaVault session management
+    function updateCharavaultSessionStatus() {
+        if (!charavaultSessionStatus) return;
+        if (!window.charavaultValidateSession) {
+            charavaultSessionStatus.className = 'settings-status-badge inactive';
+            charavaultSessionStatus.innerHTML = '<i class="fa-solid fa-circle"></i> Module not loaded';
+            return;
+        }
+        window.charavaultValidateSession().then(result => {
+            if (result.valid) {
+                charavaultSessionStatus.className = 'settings-status-badge active';
+                charavaultSessionStatus.innerHTML = '<i class="fa-solid fa-circle"></i> Active';
+            } else {
+                charavaultSessionStatus.className = 'settings-status-badge inactive';
+                charavaultSessionStatus.innerHTML = '<i class="fa-solid fa-circle"></i> Inactive';
+            }
+        });
+    }
+
+    if (toggleCharavaultPasswordVisibility && charavaultAppPasswordInput) {
+        toggleCharavaultPasswordVisibility.onclick = (e) => {
+            e.preventDefault();
+            const hidden = charavaultAppPasswordInput.type === 'password';
+            charavaultAppPasswordInput.type = hidden ? 'text' : 'password';
+            const icon = toggleCharavaultPasswordVisibility.querySelector('i');
+            if (icon) {
+                icon.classList.toggle('fa-eye', !hidden);
+                icon.classList.toggle('fa-eye-slash', hidden);
+            }
+        };
+    }
+
+    if (validateCharavaultBtn && charavaultEmailInput && charavaultAppPasswordInput) {
+        validateCharavaultBtn.onclick = async (e) => {
+            e.preventDefault();
+            validateCharavaultBtn.classList.remove('success', 'error');
+            const originalHtml = '<i class="fa-solid fa-check"></i>';
+            validateCharavaultBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
+            validateCharavaultBtn.disabled = true;
+
+            try {
+                if (!window.charavaultLogin) {
+                    showToast('CharaVault module not ready', 'error');
+                    throw new Error('Module not ready');
+                }
+                const email = charavaultEmailInput.value?.trim();
+                const password = charavaultAppPasswordInput.value;
+                if (!email || !password) {
+                    showToast('Email and app password required', 'warning');
+                    validateCharavaultBtn.classList.add('error');
+                    return;
+                }
+                const result = await window.charavaultLogin(email, password);
+                if (result.ok) {
+                    showToast(`CharaVault login successful${result.warning ? ' (' + result.warning + ')' : ''}!`, result.warning ? 'warning' : 'success');
+                    validateCharavaultBtn.classList.add('success');
+                    updateCharavaultSessionStatus();
+                } else {
+                    showToast(`Login failed: ${result.error || 'Unknown'}`, 'error');
+                    validateCharavaultBtn.classList.add('error');
+                    validateCharavaultBtn.innerHTML = '<i class="fa-solid fa-times"></i>';
+                }
+            } catch (err) {
+                if (!validateCharavaultBtn.classList.contains('error')) {
+                    showToast(`Login error: ${err.message}`, 'error');
+                    validateCharavaultBtn.classList.add('error');
+                    validateCharavaultBtn.innerHTML = '<i class="fa-solid fa-exclamation"></i>';
+                }
+            } finally {
+                validateCharavaultBtn.disabled = false;
+                if (validateCharavaultBtn.classList.contains('success')) {
+                    validateCharavaultBtn.innerHTML = '<i class="fa-solid fa-check"></i>';
+                }
+                setTimeout(() => {
+                    validateCharavaultBtn.classList.remove('success', 'error');
+                    validateCharavaultBtn.innerHTML = originalHtml;
                 }, 3000);
             }
         };
@@ -12399,6 +12518,7 @@ const ADV_FILTER_PROVIDERS = [
     { value: 'pygmalion', label: 'Pygmalion' },
     { value: 'wyvern', label: 'Wyvern' },
     { value: 'datacat', label: 'DataCat' },
+    { value: 'charavault', label: 'CharaVault' },
 ];
 
 // ========== FILTER PRESETS ==========
@@ -12886,7 +13006,7 @@ function performSearch() {
     //   "creator:john linked:yes dark elf"
     // ========================================================================
     
-    const prefixPattern = /(?:^|\s)((?:creator|version|gallery|uid|favorite|fav|linked|chub|janny|charactertavern|ct|pygmalion|wyvern|datacat|dc|playlist):(?:[^\s]+))/gi;
+    const prefixPattern = /(?:^|\s)((?:creator|version|gallery|uid|favorite|fav|linked|chub|janny|charactertavern|ct|pygmalion|wyvern|datacat|dc|charavault|cv|playlist):(?:[^\s]+))/gi;
     
     let creatorFilter = null;
     let versionFilter = null;
@@ -12923,7 +13043,7 @@ function performSearch() {
             favoriteFilter = value;
             filterFavoriteYes = value === 'yes' || value === 'true';
             filterFavoriteNo = value === 'no' || value === 'false';
-        } else if (['linked', 'chub', 'janny', 'charactertavern', 'ct', 'pygmalion', 'wyvern', 'datacat', 'dc'].includes(prefix)) {
+        } else if (['linked', 'chub', 'janny', 'charactertavern', 'ct', 'pygmalion', 'wyvern', 'datacat', 'dc', 'charavault', 'cv'].includes(prefix)) {
             linkFilterPrefix = prefix;
             linkFilterWantLinked = value === 'yes' || value === 'true' || value === 'linked';
         } else if (prefix === 'playlist') {
@@ -12985,6 +13105,7 @@ function performSearch() {
                     : linkFilterPrefix === 'pygmalion' ? 'pygmalion'
                     : linkFilterPrefix === 'wyvern' ? 'wyvern'
                     : (linkFilterPrefix === 'datacat' || linkFilterPrefix === 'dc') ? 'datacat'
+                    : (linkFilterPrefix === 'charavault' || linkFilterPrefix === 'cv') ? 'charavault'
                     : null;
                 const prov = provId ? window.ProviderRegistry?.getProvider(provId) : null;
                 isLinked = prov ? !!prov.getLinkInfo(c) : false;
@@ -13985,7 +14106,7 @@ function getCharacterBookFromEditor() {
 // Utility Functions
 // ==============================================
 
-const PROVIDER_EXT_KEYS = ['chub', 'jannyai', 'pygmalion', 'wyvern', 'chartavern', 'datacat'];
+const PROVIDER_EXT_KEYS = ['chub', 'jannyai', 'pygmalion', 'wyvern', 'chartavern', 'datacat', 'charavault'];
 
 function getListingNameFromExtensions(char) {
     const ext = char?.data?.extensions;

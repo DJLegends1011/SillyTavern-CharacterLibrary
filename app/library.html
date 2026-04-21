@@ -1125,7 +1125,7 @@ https://jannyai.com/characters/uuid_slug
                             <ul>
                                 <li><strong>Characters</strong>: Your local library. Browse, search, filter, and manage all your character cards</li>
                                 <li><strong>Chats</strong>: Chat history browser. View all chat logs across characters, search by content, and see which AI model was used</li>
-                                <li><strong>Online</strong>: Browse and import characters from online providers (ChubAI, JanitorAI, CharacterTavern, Pygmalion, Wyvern)</li>
+                                <li><strong>Online</strong>: Browse and import characters from online providers (ChubAI, JanitorAI, CharacterTavern, Pygmalion, Wyvern, DataCat, CharaVault)</li>
                             </ul>
                             <p>On mobile, swipe left/right on the main screen to switch between views.</p>
                         </div>
@@ -2167,6 +2167,66 @@ https://jannyai.com/characters/uuid_slug
                                             <input type="text" class="glass-input provider-exclude-tags-input" id="wyvernExcludeTagsInput" placeholder="Type a tag and press Enter" autocomplete="off">
                                         </div>
                                         <span class="settings-hint">Tags entered here are always excluded from Wyvern browse results.</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </details>
+
+                        <!-- CharaVault provider settings -->
+                        <details class="settings-provider-section" id="settingsCharavaultSection">
+                            <summary>
+                                <i class="fa-solid fa-vault provider-icon"></i> CharaVault
+                                <i class="fa-solid fa-chevron-right provider-chevron"></i>
+                            </summary>
+                            <div class="settings-provider-body">
+                                <div class="cl-helper-banner cl-hidden" id="charavaultPluginBanner">
+                                    <i class="fa-solid fa-puzzle-piece"></i>
+                                    <div>
+                                        <strong>cl-helper plugin required for login</strong>
+                                        <span>Browsing public characters works without the plugin. Signing in for higher rate limits requires the cl-helper server plugin.</span>
+                                    </div>
+                                </div>
+                                <div class="settings-group" id="charavaultSettingsFields">
+                                    <div class="settings-group-title"><i class="fa-solid fa-sign-in-alt"></i> Login</div>
+                                    <div class="settings-row">
+                                        <label>Status:</label>
+                                        <div class="settings-input-group">
+                                            <span id="charavaultSessionStatus" class="settings-status-badge inactive"><i class="fa-solid fa-circle"></i> Checking...</span>
+                                        </div>
+                                    </div>
+                                    <div class="settings-row">
+                                        <label for="settingsCharavaultEmail">Email:</label>
+                                        <div class="settings-input-group">
+                                            <input type="email" id="settingsCharavaultEmail" placeholder="your-email@example.com" autocomplete="email">
+                                        </div>
+                                    </div>
+                                    <div class="settings-row">
+                                        <label for="settingsCharavaultAppPassword">App Password:</label>
+                                        <div class="settings-input-group">
+                                            <input type="password" id="settingsCharavaultAppPassword" placeholder="cv_xxxxxxxxxxxxxxxx" autocomplete="current-password" data-sensitive="true">
+                                            <button id="toggleCharavaultPasswordVisibility" class="glass-btn icon-only" title="Show/Hide">
+                                                <i class="fa-solid fa-eye"></i>
+                                            </button>
+                                            <button id="validateCharavaultBtn" class="settings-verify-btn" title="Validate Credentials">
+                                                <i class="fa-solid fa-check"></i>
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div class="settings-row">
+                                        <label>
+                                            <input type="checkbox" id="settingsCharavaultRememberCredentials"> Remember credentials (stored locally)
+                                        </label>
+                                        <span class="settings-hint">App passwords start with <code>cv_</code>. Generate one at <a href="https://charavault.net" target="_blank">charavault.net</a> → Settings → App Passwords.</span>
+                                    </div>
+                                </div>
+                                <div class="settings-group">
+                                    <div class="settings-group-title"><i class="fa-solid fa-ban"></i> Exclude Tags</div>
+                                    <div class="settings-row">
+                                        <div class="provider-exclude-tags-container">
+                                            <div class="provider-exclude-tags-pills" id="charavaultExcludeTagsPills"></div>
+                                            <input type="text" class="glass-input provider-exclude-tags-input" id="charavaultExcludeTagsInput" placeholder="Type a tag and press Enter" autocomplete="off">
+                                        </div>
+                                        <span class="settings-hint">Tags entered here are always excluded from CharaVault browse results.</span>
                                     </div>
                                 </div>
                             </div>

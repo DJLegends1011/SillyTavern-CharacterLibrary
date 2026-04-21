@@ -1,0 +1,77 @@
+/* ============================================
+   CharaVault Browse CSS
+   Extracted from library.css
+   ============================================ */
+
+.cv-login-disabled {
+    opacity: 0.5;
+    pointer-events: none;
+}
+
+.cv-login-instructions {
+    margin-top: 10px;
+}
+
+.cv-login-instructions details {
+    background: rgba(255, 255, 255, 0.03);
+    padding: 10px;
+    border-radius: 8px;
+}
+
+.cv-login-instructions summary {
+    cursor: pointer;
+    color: var(--accent);
+    font-size: var(--font-md);
+    user-select: none;
+}
+
+.cv-login-instructions ol {
+    margin: 8px 0 4px 20px;
+    padding: 0;
+    font-size: var(--font-md);
+    color: var(--text-secondary, #aaa);
+    line-height: 1.7;
+}
+
+.cv-login-instructions code {
+    background: rgba(255, 255, 255, 0.08);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: var(--font-md);
+}
+
+.cv-login-note {
+    margin-top: 6px;
+    font-size: var(--font-sm);
+    color: var(--text-tertiary, #888);
+    font-style: italic;
+}
+
+.cv-password-wrapper {
+    position: relative;
+    display: flex;
+    align-items: center;
+}
+
+.cv-password-wrapper input {
+    flex: 1;
+    padding-right: 36px;
+}
+
+.cv-password-toggle {
+    position: absolute;
+    right: 6px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: transparent;
+    border: 0;
+    color: var(--text-secondary, #aaa);
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 4px;
+}
+
+.cv-password-toggle:hover {
+    color: var(--accent);
+    background: rgba(255, 255, 255, 0.06);
+}

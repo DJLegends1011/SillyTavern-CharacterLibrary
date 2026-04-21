@@ -303,6 +303,7 @@ async function initModuleSystem() {
     loadModuleCSS('./providers/pygmalion/pygmalion-browse.css');
     loadModuleCSS('./providers/wyvern/wyvern-browse.css');
     loadModuleCSS('./providers/datacat/datacat-browse.css');
+    loadModuleCSS('./providers/charavault/charavault-browse.css');
     {
         const providerImports = [
             { name: 'chub', load: () => import('./providers/chub/chub-provider.js') },
@@ -311,6 +312,7 @@ async function initModuleSystem() {
             { name: 'pygmalion', load: () => import('./providers/pygmalion/pygmalion-provider.js') },
             { name: 'wyvern', load: () => import('./providers/wyvern/wyvern-provider.js') },
             { name: 'datacat', load: () => import('./providers/datacat/datacat-provider.js') },
+            { name: 'charavault', load: () => import('./providers/charavault/charavault-provider.js') },
         ];
         const results = await Promise.allSettled(providerImports.map(p => p.load()));
         for (let i = 0; i < results.length; i++) {
