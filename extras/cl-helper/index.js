@@ -495,5 +495,241 @@ export async function init(router) {
         }
     });
 
+    // =================================================================
+    // CharaVault — cookie-based session auth (App Password recommended)
+    // =================================================================
+
+    const CV_BASE = 'https://charavault.net';
+    const CV_ORIGIN = 'https://charavault.net';
+
+    // In-memory session store
+    let cvSessionCookies = null; // string — raw Cookie: header value
+    let cvSessionEmail = null;   // for UI display only
+
+    function cvHeaders(extra = {}) {
+        const headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Accept': 'application/json',
+            'Origin': CV_ORIGIN,
+            'Referer': CV_ORIGIN + '/',
+            ...extra,
+        };
+        if (cvSessionCookies) headers['Cookie'] = cvSessionCookies;
+        return headers;
+    }
+
+    /**
+     * Collect Set-Cookie headers from a fetch Response into a single
+     * `Cookie:` header string ("name=value; name2=value2").
+     */
+    function collectSetCookies(response) {
+        // Node 18+: Response.headers.getSetCookie() — returns string[]
+        let raw = [];
+        if (typeof response.headers.getSetCookie === 'function') {
+            raw = response.headers.getSetCookie();
+        } else if (response.headers.raw && typeof response.headers.raw === 'function') {
+            raw = response.headers.raw()['set-cookie'] || [];
+        } else {
+            const combined = response.headers.get('set-cookie');
+            if (combined) raw = [combined];
+        }
+        const pairs = [];
+        for (const entry of raw) {
+            // Keep only the "name=value" part before the first ';'
+            const first = entry.split(';')[0];
+            if (first && first.includes('=')) pairs.push(first.trim());
+        }
+        return pairs.join('; ');
+    }
+
+    /**
+     * POST /cv-login
+     * Body: { email, password } (password is an App Password "cv_..." or an account password)
+     * Delegates to /api/auth/login on charavault.net; captures session cookies.
+     */
+    router.post('/cv-login', async (req, res) => {
+        const { email, password } = req.body ?? {};
+
+        if (!email || !password || typeof email !== 'string' || typeof password !== 'string') {
+            return res.status(400).json({ ok: false, error: 'email and password are required' });
+        }
+        if (email.length > 320 || password.length > 256) {
+            return res.status(400).json({ ok: false, error: 'Invalid credentials format' });
+        }
+
+        try {
+            const response = await fetch(`${CV_BASE}/api/auth/login`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                    'Accept': 'application/json',
+                    'Origin': CV_ORIGIN,
+                    'Referer': CV_ORIGIN + '/login',
+                },
+                body: JSON.stringify({ email, password }),
+            });
+
+            const contentType = response.headers.get('content-type') || '';
+            let data = null;
+            if (contentType.includes('application/json')) {
+                try { data = await response.json(); } catch { /* ignore */ }
+            }
+
+            if (!response.ok) {
+                const msg = data?.error || data?.message || `HTTP ${response.status}`;
+                return res.json({ ok: false, error: msg });
+            }
+
+            const cookieHeader = collectSetCookies(response);
+            if (!cookieHeader) {
+                return res.json({ ok: false, error: 'Login succeeded but no session cookies returned' });
+            }
+
+            cvSessionCookies = cookieHeader;
+            cvSessionEmail = email;
+            const warning = password.startsWith('cv_')
+                ? null
+                : 'Tip: CharaVault App Passwords (starts with "cv_") bypass 2FA, are long-lived, and get 2× the rate limit. Generate one in CharaVault → Settings → App Passwords.';
+
+            console.log(`[cl-helper] CV login OK for ${email}`);
+            res.json({ ok: true, email, warning });
+        } catch (err) {
+            console.error('[cl-helper] CV login error:', err.message);
+            res.status(502).json({ ok: false, error: 'Failed to reach CharaVault' });
+        }
+    });
+
+    /**
+     * POST /cv-logout — clears session cookies.
+     */
+    router.post('/cv-logout', (_req, res) => {
+        cvSessionCookies = null;
+        cvSessionEmail = null;
+        console.log('[cl-helper] CV session cleared');
+        res.json({ ok: true });
+    });
+
+    /**
+     * GET /cv-session — returns { active, email? }
+     */
+    router.get('/cv-session', (_req, res) => {
+        res.json({ active: !!cvSessionCookies, email: cvSessionEmail });
+    });
+
+    /**
+     * GET /cv-validate — hit /api/auth/me; clears session on 401/403.
+     */
+    router.get('/cv-validate', async (_req, res) => {
+        if (!cvSessionCookies) {
+            return res.json({ valid: false, reason: 'no session' });
+        }
+
+        try {
+            const response = await fetch(`${CV_BASE}/api/auth/me`, {
+                headers: cvHeaders(),
+            });
+
+            if (response.status === 401 || response.status === 403) {
+                cvSessionCookies = null;
+                cvSessionEmail = null;
+                return res.json({ valid: false, reason: 'Session expired or rejected' });
+            }
+
+            if (!response.ok) {
+                return res.json({ valid: false, reason: `HTTP ${response.status}` });
+            }
+
+            let data = null;
+            try { data = await response.json(); } catch { /* ignore */ }
+            const email = data?.email || data?.user?.email || cvSessionEmail || null;
+            if (email) cvSessionEmail = email;
+            res.json({ valid: true, email });
+        } catch (err) {
+            console.error('[cl-helper] CV validate error:', err.message);
+            res.json({ valid: false, reason: err.message });
+        }
+    });
+
+    // Allowed CharaVault API paths (read-only + static resources)
+    const CV_ALLOWED_PATHS = [
+        /^\/api\/cards\b/,
+        /^\/api\/cards\/[^/]+\/[^/]+$/,
+        /^\/api\/cards\/[^/]+\/[^/]+\/lorebooks$/,
+        /^\/api\/cards\/[^/]+\/[^/]+\/rating$/,
+        /^\/api\/cards\/[^/]+\/[^/]+\/similar$/,
+        /^\/api\/cards\/download\/[^/]+\/[^/]+\.png$/,
+        /^\/api\/lorebooks\/[^/]+$/,
+        /^\/api\/lorebooks\/download\/[^/]+$/,
+        /^\/api\/tags\b/,
+        /^\/api\/stats\b/,
+        /^\/api\/auth\/me$/,
+        /^\/api\/favorites\b/,
+    ];
+
+    /**
+     * GET /cv-proxy/* — read-only proxy to charavault.net with stored session cookies.
+     * Path-allowlisted to prevent abuse as an open relay.
+     * Exposes X-RateLimit-* headers to the browser so the client can throttle.
+     */
+    router.get('/cv-proxy/*', async (req, res) => {
+        const targetPath = '/' + req.params[0];
+
+        const normalizedPath = new URL(targetPath, CV_BASE).pathname;
+        if (!CV_ALLOWED_PATHS.some(re => re.test(normalizedPath))) {
+            console.warn(`[cl-helper] CV proxy blocked: ${normalizedPath}`);
+            return res.status(403).json({ error: 'Proxy path not allowed' });
+        }
+
+        const targetUrl = new URL(targetPath, CV_BASE);
+        targetUrl.search = new URL(req.url, 'http://localhost').search;
+
+        if (targetUrl.hostname !== 'charavault.net') {
+            return res.status(403).json({ error: 'Proxy target must be charavault.net' });
+        }
+
+        try {
+            const response = await fetch(targetUrl.toString(), {
+                method: 'GET',
+                headers: cvHeaders(),
+                redirect: 'follow',
+            });
+
+            // Forward rate-limit headers so the client throttle can adapt
+            const forwardHeaders = [
+                'x-ratelimit-limit', 'x-ratelimit-remaining', 'x-ratelimit-reset',
+                'retry-after',
+            ];
+            for (const h of forwardHeaders) {
+                const v = response.headers.get(h);
+                if (v != null) res.set(h, v);
+            }
+
+            // Clear session on auth failure
+            if (response.status === 401 || response.status === 403) {
+                // Defensive: some endpoints return 403 for NSFW content without auth —
+                // only clear when hitting auth-scoped routes.
+                if (/^\/api\/(auth\/me|favorites)/.test(normalizedPath)) {
+                    cvSessionCookies = null;
+                    cvSessionEmail = null;
+                }
+            }
+
+            const contentType = response.headers.get('content-type') || '';
+            res.status(response.status);
+            res.set('Content-Type', contentType);
+
+            if (contentType.includes('application/json') || contentType.startsWith('text/')) {
+                res.send(await response.text());
+            } else {
+                const buffer = Buffer.from(await response.arrayBuffer());
+                res.send(buffer);
+            }
+        } catch (err) {
+            console.error('[cl-helper] CV proxy error:', err.message);
+            res.status(502).json({ error: 'Failed to reach CharaVault' });
+        }
+    });
+
     console.log('[cl-helper] Character Library helper plugin loaded');
 }
