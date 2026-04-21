@@ -503,9 +503,8 @@ export async function init(router) {
     const CV_ORIGIN = 'https://charavault.net';
 
     // In-memory session store
-    let cvSessionCookies = null; // string — raw Cookie: header value (legacy account-password flow)
+    let cvSessionCookies = null; // string — raw Cookie: header value
     let cvSessionEmail = null;   // for UI display only
-    let cvAppPassword = null;    // App Password bearer token (cv_...)
 
     function cvHeaders(extra = {}) {
         const headers = {
@@ -515,7 +514,6 @@ export async function init(router) {
             'Referer': CV_ORIGIN + '/',
             ...extra,
         };
-        if (cvAppPassword) headers['Authorization'] = `Bearer ${cvAppPassword}`;
         if (cvSessionCookies) headers['Cookie'] = cvSessionCookies;
         return headers;
     }
@@ -559,49 +557,6 @@ export async function init(router) {
             return res.status(400).json({ ok: false, error: 'Invalid credentials format' });
         }
 
-        // App Password flow: treat the token as a Bearer credential and verify
-        // via /api/auth/me. No cookies/session — the token itself is the auth.
-        if (password.startsWith('cv_')) {
-            try {
-                const response = await fetch(`${CV_BASE}/api/auth/me`, {
-                    method: 'GET',
-                    headers: {
-                        'Authorization': `Bearer ${password}`,
-                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                        'Accept': 'application/json',
-                        'Origin': CV_ORIGIN,
-                        'Referer': CV_ORIGIN + '/',
-                    },
-                });
-
-                const contentType = response.headers.get('content-type') || '';
-                let data = null;
-                let rawText = null;
-                if (contentType.includes('application/json')) {
-                    try { data = await response.json(); } catch { /* ignore */ }
-                } else {
-                    try { rawText = await response.text(); } catch { /* ignore */ }
-                }
-
-                if (!response.ok) {
-                    const msg = data?.error || data?.message || rawText?.slice(0, 200) || `HTTP ${response.status}`;
-                    console.warn(`[cl-helper] CV app-password verify failed: ${response.status} ${msg}`);
-                    return res.json({ ok: false, error: msg });
-                }
-
-                cvAppPassword = password;
-                cvSessionCookies = null; // mutually exclusive with app-password auth
-                cvSessionEmail = data?.email || data?.user?.email || email;
-
-                console.log(`[cl-helper] CV app-password OK for ${cvSessionEmail}`);
-                return res.json({ ok: true, email: cvSessionEmail, warning: null });
-            } catch (err) {
-                console.error('[cl-helper] CV app-password error:', err.message);
-                return res.status(502).json({ ok: false, error: 'Failed to reach CharaVault' });
-            }
-        }
-
-        // Account-password flow: POST to /api/auth/login and capture session cookies.
         try {
             const response = await fetch(`${CV_BASE}/api/auth/login`, {
                 method: 'POST',
@@ -636,15 +591,10 @@ export async function init(router) {
             }
 
             cvSessionCookies = cookieHeader;
-            cvAppPassword = null;
             cvSessionEmail = email;
 
             console.log(`[cl-helper] CV login OK for ${email}`);
-            res.json({
-                ok: true,
-                email,
-                warning: 'Tip: CharaVault App Passwords (start with "cv_") bypass 2FA, are long-lived, and get 2× the rate limit. Generate one in CharaVault → Settings → App Passwords.',
-            });
+            res.json({ ok: true, email, warning: null });
         } catch (err) {
             console.error('[cl-helper] CV login error:', err.message);
             res.status(502).json({ ok: false, error: 'Failed to reach CharaVault' });
@@ -656,7 +606,6 @@ export async function init(router) {
      */
     router.post('/cv-logout', (_req, res) => {
         cvSessionCookies = null;
-        cvAppPassword = null;
         cvSessionEmail = null;
         console.log('[cl-helper] CV session cleared');
         res.json({ ok: true });
@@ -666,14 +615,14 @@ export async function init(router) {
      * GET /cv-session — returns { active, email? }
      */
     router.get('/cv-session', (_req, res) => {
-        res.json({ active: !!(cvSessionCookies || cvAppPassword), email: cvSessionEmail });
+        res.json({ active: !!cvSessionCookies, email: cvSessionEmail });
     });
 
     /**
      * GET /cv-validate — hit /api/auth/me; clears session on 401/403.
      */
     router.get('/cv-validate', async (_req, res) => {
-        if (!cvSessionCookies && !cvAppPassword) {
+        if (!cvSessionCookies) {
             return res.json({ valid: false, reason: 'no session' });
         }
 
@@ -684,7 +633,6 @@ export async function init(router) {
 
             if (response.status === 401 || response.status === 403) {
                 cvSessionCookies = null;
-                cvAppPassword = null;
                 cvSessionEmail = null;
                 return res.json({ valid: false, reason: 'Session expired or rejected' });
             }
@@ -764,7 +712,6 @@ export async function init(router) {
                 // only clear when hitting auth-scoped routes.
                 if (/^\/api\/(auth\/me|favorites)/.test(normalizedPath)) {
                     cvSessionCookies = null;
-                    cvAppPassword = null;
                     cvSessionEmail = null;
                 }
             }

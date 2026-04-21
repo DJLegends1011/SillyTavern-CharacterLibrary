@@ -1486,12 +1486,8 @@ async function doCvLogin(email, appPassword, remember) {
     if (cvLoginInProgress) return;
 
     if (!email || !appPassword) {
-        showToast('Enter both email and app password', 'warning');
+        showToast('Enter both email and password', 'warning');
         return;
-    }
-
-    if (!appPassword.startsWith('cv_')) {
-        showToast('App passwords start with "cv_". You may have pasted your account password — generate an App Password on charavault.net/settings.', 'warning', 6000);
     }
 
     cvLoginInProgress = true;
@@ -1757,7 +1753,7 @@ class CharaVaultBrowseView extends BrowseView {
                 </p>
                 <p class="chub-login-info">
                     <i class="fa-solid fa-key" style="color: var(--accent);"></i>
-                    <strong>Optional:</strong> Sign in with an App Password for higher rate limits and private content.
+                    <strong>Optional:</strong> Sign in for higher rate limits and private content.
                 </p>
 
                 <!-- Session status -->
@@ -1782,9 +1778,9 @@ class CharaVaultBrowseView extends BrowseView {
                                 <input type="email" id="cvEmailInput" class="glass-input" autocomplete="email" placeholder="you@example.com">
                             </div>
                             <div class="form-group">
-                                <label for="cvAppPasswordInput">App Password</label>
+                                <label for="cvAppPasswordInput">Password</label>
                                 <div class="cv-password-wrapper">
-                                    <input type="password" id="cvAppPasswordInput" class="glass-input" autocomplete="current-password" placeholder="cv_xxxxxxxxxxxxxxxx">
+                                    <input type="password" id="cvAppPasswordInput" class="glass-input" autocomplete="current-password" placeholder="Your CharaVault password">
                                     <button type="button" id="cvTogglePasswordVisibility" class="cv-password-toggle" title="Show/hide password">
                                         <i class="fa-solid fa-eye"></i>
                                     </button>
@@ -1793,18 +1789,6 @@ class CharaVaultBrowseView extends BrowseView {
                             <label class="filter-checkbox" style="margin-top: 8px;">
                                 <input type="checkbox" id="cvRememberCredentials"> Remember credentials (stored locally)
                             </label>
-                            <div class="cv-login-instructions">
-                                <details>
-                                    <summary><i class="fa-solid fa-circle-question"></i> How to create an App Password</summary>
-                                    <ol>
-                                        <li>Log in to <a href="https://charavault.net" target="_blank">charavault.net</a> in your browser</li>
-                                        <li>Go to <strong>Settings</strong> → <strong>App Passwords</strong></li>
-                                        <li>Click <strong>Create new</strong>, give it a label, and copy the generated token (starts with <code>cv_</code>)</li>
-                                        <li>Paste the token above (not your account password)</li>
-                                    </ol>
-                                    <p class="cv-login-note"><i class="fa-solid fa-shield-halved"></i> App Passwords are scoped tokens you can revoke anytime from the same settings page.</p>
-                                </details>
-                            </div>
                         </div>
 
                         <div class="chub-login-actions" style="margin-top: 12px;">
