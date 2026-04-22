@@ -443,7 +443,7 @@ export function getCardPngUrl(folder, file) {
  */
 export function getAvatarUrl(folder, file, width = 320) {
     const fileName = file.toLowerCase().endsWith('.png') ? file : `${file}.png`;
-    return `${CV_SITE_BASE}/cards/thumb/${encodeURIComponent(folder)}/${encodeURIComponent(fileName)}`;
+    return `${CV_SITE_BASE}/cdn-cgi/image/format=auto,width=${width},quality=85/cards/${encodeURIComponent(folder)}/${encodeURIComponent(fileName)}`;
 }
 
 /**
