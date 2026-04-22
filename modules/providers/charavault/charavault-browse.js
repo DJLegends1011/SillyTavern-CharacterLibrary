@@ -956,6 +956,7 @@ async function loadTopTags() {
     try {
         const raw = await fetchTopTags(apiRequest);
         cvTopTags = (Array.isArray(raw) ? raw : []).map(t => {
+            if (Array.isArray(t) && t.length >= 2) return { tag: String(t[0]), count: Number(t[1]) || 0 };
             if (typeof t === 'string') return { tag: t, count: 0 };
             return { tag: t.tag || t.name || String(t), count: t.count ?? t.total ?? 0 };
         }).filter(t => t.tag);

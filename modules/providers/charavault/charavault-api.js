@@ -371,7 +371,16 @@ export async function fetchCardDetail(folder, file, apiRequest) {
     const path = `/api/cards/${encodeURIComponent(folder)}/${encodeURIComponent(file)}`;
     const resp = await cvFetch(path, apiRequest);
     if (!resp.ok) throw new Error(`CharaVault detail failed (HTTP ${resp.status})`);
-    return resp.json();
+    const data = await resp.json();
+    
+    if (data && data.entry) {
+        const flat = { ...data.entry };
+        if (data.full_metadata && data.full_metadata.data) {
+            Object.assign(flat, data.full_metadata.data);
+        }
+        return flat;
+    }
+    return data;
 }
 
 /**
@@ -420,14 +429,16 @@ export async function fetchTopTags(apiRequest) {
  * Use this for thumbnails and for the authoritative PNG download on import.
  */
 export function getCardPngUrl(folder, file) {
-    return `${CV_SITE_BASE}/cards/${encodeURIComponent(folder)}/${encodeURIComponent(file)}.card.png`;
+    const fileName = file.toLowerCase().endsWith('.png') ? file : `${file}.png`;
+    return `${CV_SITE_BASE}/cards/${encodeURIComponent(folder)}/${encodeURIComponent(fileName)}`;
 }
 
 /**
  * Cloudflare-resized thumbnail. Falls back to raw card PNG on error in the UI.
  */
 export function getAvatarUrl(folder, file, width = 320) {
-    return `${CV_SITE_BASE}/cdn-cgi/image/format=auto,width=${width},quality=85/cards/${encodeURIComponent(folder)}/${encodeURIComponent(file)}.card.png`;
+    const fileName = file.toLowerCase().endsWith('.png') ? file : `${file}.png`;
+    return `${CV_SITE_BASE}/cards/thumb/${encodeURIComponent(folder)}/${encodeURIComponent(fileName)}`;
 }
 
 /**
@@ -456,6 +467,7 @@ export function parseCharacterUrl(url) {
         const patterns = [
             /^\/cards\/([^/]+)\/([^/]+?)\.card\.png$/i,
             /^\/api\/cards\/download\/([^/]+)\/([^/]+?)\.png$/i,
+            /^\/api\/cards\/download\/([^/]+)\/([^/]+)$/i,
             /^\/api\/cards\/([^/]+)\/([^/]+)$/i,
             /^\/cards\/([^/]+)\/([^/]+?)(?:\.[a-z]+)?$/i,
             /^\/c\/([^/]+)\/([^/]+)$/i,
