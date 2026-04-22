@@ -375,8 +375,13 @@ export async function fetchCardDetail(folder, file, apiRequest) {
     
     if (data && data.entry) {
         const flat = { ...data.entry };
-        if (data.full_metadata && data.full_metadata.data) {
-            Object.assign(flat, data.full_metadata.data);
+        if (data.full_metadata) {
+            // Support V2 format (metadata inside .data) and V1 format (flat metadata)
+            if (data.full_metadata.data) {
+                Object.assign(flat, data.full_metadata.data);
+            } else {
+                Object.assign(flat, data.full_metadata);
+            }
         }
         return flat;
     }
