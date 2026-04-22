@@ -220,7 +220,7 @@ function createCvCard(hit) {
     return `
         <div class="${cardClass}" data-cv-path="${escapeHtml(fullPath)}" ${desc ? `title="${escapeHtml(desc)}"` : ''}>
             <div class="browse-card-image">
-                <img data-src="${escapeHtml(avatarUrl)}" src="${IMG_PLACEHOLDER}" alt="${escapeHtml(name)}" decoding="async" fetchpriority="low" data-fallback="${escapeHtml(rawPngUrl)}" onerror="if(!this.dataset.failed){this.dataset.failed='1';this.src=this.dataset.fallback||'/img/ai4.png';}else{this.src='/img/ai4.png';}">
+                <img data-src="${escapeHtml(avatarUrl)}" data-avatar="${escapeHtml(avatarUrl)}" src="${IMG_PLACEHOLDER}" alt="${escapeHtml(name)}" decoding="async" fetchpriority="low" onerror="if(!this.dataset.retried){this.dataset.retried='1'; setTimeout(()=>this.src=this.dataset.avatar, 2000);} else if(!this.dataset.failed){this.dataset.failed='1';this.src='/img/ai4.png';}">
                 ${hit.nsfw ? '<span class="browse-nsfw-badge">NSFW</span>' : ''}
                 ${badges.length > 0 ? `<div class="browse-feature-badges">${badges.join('')}</div>` : ''}
             </div>
