@@ -8218,6 +8218,23 @@ function setupCharacterGridDelegates() {
     characterGridDelegatesInitialized = true;
 }
 
+// Show full name tooltip on truncated names on hover.
+// Covers local library cards (.card-name), browse cards (.browse-card-name),
+// browse preview modal titles (.browse-char-header-info h2), and the local
+// modal title (#modalTitle). Uses mouseover (which bubbles) + a per-element
+// flag to lazily attach the real mouseenter handler once.
+document.addEventListener('mouseover', (e) => {
+    const el = e.target.closest('.card-name, .browse-card-name, .browse-char-header-info h2, #modalTitle');
+    if (!el || el._truncTipDone) return;
+    el._truncTipDone = true;
+
+    el.addEventListener('mouseenter', () => {
+        const isTruncated = el.scrollWidth > el.clientWidth || el.scrollHeight > el.clientHeight;
+        el.title = isTruncated ? el.textContent : '';
+    });
+    el.dispatchEvent(new MouseEvent('mouseenter', { bubbles: false }));
+});
+
 // Update grid height on window resize (throttled to avoid jank during drag-resize)
 let resizeRAF = null;
 window.addEventListener('resize', () => {
@@ -9541,8 +9558,10 @@ async function openModal(char, { navList } = {}) {
     // Load avatar with transition: keep spinner until the correct image is ready
     modalImg.onload = modalImg.onerror = () => { modalImg.classList.remove('loading'); };
     modalImg.src = imgPath;
-    document.getElementById('modalTitle').innerText = getCharacterName(char);
-    
+    const modalTitleEl = document.getElementById('modalTitle');
+    modalTitleEl.innerText = getCharacterName(char);
+    modalTitleEl.title = '';
+
     // Reset/hide legacy folder button (will be updated when Gallery tab is clicked)
     const legacyBtn = document.getElementById('checkLegacyFolderBtn');
     if (legacyBtn) {
