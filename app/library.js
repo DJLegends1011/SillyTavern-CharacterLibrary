@@ -8331,13 +8331,16 @@ function createCharacterCard(char) {
         : getCharacterAvatarUrl(char.avatar);
     const tags = getTags(char);
     
-    // Use creator_notes as hover tooltip - extract plain text only
-    // For online imports, this contains the public character description (often with HTML/CSS)
-    const creatorNotes = char.data?.creator_notes || char.creator_notes || '';
+    // Prefer provider tagline for hover tooltip; fall back to creator_notes
+    const providerMatch = window.ProviderRegistry?.getCharacterProvider(char) || null;
+    const providerTagline = providerMatch
+        ? (char?.data?.extensions?.[providerMatch.provider.id]?.tagline || '')
+        : '';
+    const tooltipSource = providerTagline || char.data?.creator_notes || char.creator_notes || '';
     const cacheKey = 'plainText:' + char.avatar;
     let tooltipText = getCached(cacheKey);
     if (tooltipText === undefined) {
-        tooltipText = extractPlainText(creatorNotes, 200);
+        tooltipText = extractPlainText(tooltipSource, 200);
         setCached(cacheKey, tooltipText);
     }
     if (tooltipText) {
