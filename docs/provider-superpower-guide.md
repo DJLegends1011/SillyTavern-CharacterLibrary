@@ -1,238 +1,352 @@
 # New Provider Superpower Guide
 
-Use this when adding a new online provider to Character Library. The goal is not to invent a provider from scratch. The goal is to inspect the target website, find the existing provider that behaves most like it, duplicate that pattern, and only add new infrastructure when the site forces your hand.
+Use this guide as a required procedure for adding an Online provider to Character Library.
 
-## Mission
+Do not infer provider behavior from the visible website. Do not invent a UI pattern. Do not create a provider from scratch while a close provider already exists. Every implementation choice must be backed by a website observation, a repo pattern, or a failing/passing test.
 
-Build the smallest provider that can reliably browse, preview, import, link, and update characters from the target site.
+## Required Output
 
-Before coding, answer these questions:
+Before coding, create a draft note for the target provider under `docs/provider-drafts/`. The draft must contain:
 
-- What data source does the website actually use: public REST, GraphQL, MeiliSearch, embedded PNG cards, page HTML, or a private app API?
-- Can browser-side `fetch()` reach it directly, or does it need SillyTavern's `/proxy/`, `fetchWithProxy()`, or `cl-helper`?
-- Does the provider need user auth for useful features, or only for optional extras?
-- Does the site expose bookmarks, favorites, follows, or a timeline worth syncing into Character Library?
-- Which existing provider already solved the closest version of this problem?
+- target website URL,
+- recon date,
+- data endpoints found,
+- auth/session requirements,
+- CORS/proxy result,
+- Cloudflare/bot-protection result,
+- closest existing provider and why,
+- server-plugin decision and why,
+- planned files,
+- provider ID, display name, extension key, and URL ID format,
+- copied provider folder and every copied control kept, changed, or removed,
+- verification checklist for the provider.
 
-## Website Recon Checklist
+Stop if any required field is unknown. Inspect more or ask the user.
 
-Do this in the browser before touching repo files:
+## Phase 1: Website Recon
 
-1. Open the site and inspect a normal character page.
-2. Open DevTools > Network and reload the page.
-3. Find the requests that carry character data. Prioritize JSON/API requests over HTML scraping.
-4. Check the request method, URL, headers, body, cookies, response shape, pagination, and auth requirements.
-5. Test whether an anonymous session can search, browse, open details, and download/import a card.
-6. Test whether logged-in state unlocks important data such as NSFW results, private cards, favorites, follows, galleries, or bookmarks.
-7. Test direct browser fetches from Character Library's origin when possible. If CORS blocks direct requests, try SillyTavern's `/proxy/`.
-8. Check for Cloudflare or bot challenges. If the response is a challenge page, server-side Node fetch may not help.
-9. Record the canonical ID format for a character, such as `creator/slug`, UUID, numeric ID, or full URL path.
-10. Record the best source of truth for V2 card fields: API JSON, embedded PNG, exported card JSON, or scraped page props.
+Perform these steps in order.
 
-Save the recon notes somewhere temporary before coding. The implementation should follow what the site really does, not what the visible page suggests.
+1. Open the target website.
+2. Open a normal public character page.
+3. Open DevTools > Network.
+4. Reload the page.
+5. Identify the request that returns character data.
+6. Record method, URL, headers, request body, response shape, pagination fields, and auth state.
+7. Test anonymous browse.
+8. Test anonymous search.
+9. Test anonymous character detail.
+10. Test anonymous image/avatar download.
+11. Test logged-in-only behavior only after public behavior is documented.
+12. Record whether login unlocks NSFW, private cards, favorites, bookmarks, followed creators, timelines, galleries, or exports.
+13. Test direct browser fetch from the extension origin when practical.
+14. Test SillyTavern `/proxy/` or `fetchWithProxy()` only after direct browser fetch is known to fail.
+15. Check for Cloudflare or bot challenge responses.
+16. Record the canonical character identifier: UUID, numeric ID, `creator/slug`, or full path.
+17. Record the source of truth for V2 fields: API JSON, embedded PNG, exported card JSON, page props, or scraped HTML.
 
-## Pick The Closest Existing Provider
+Do not code until the draft note contains the evidence above.
 
-Start by copying the provider that resembles the new website. Rename IDs, selectors, settings, endpoint constants, extension keys, and CSS class prefixes after the copy.
+## Phase 2: Choose The Provider To Copy
 
-| Copy this provider | When the new website resembles it |
+Search the repo before choosing:
+
+```bash
+rg -n "class .*Provider|renderView\\(|fetchRemoteCard\\(|importCharacter\\(" modules/providers
+```
+
+Use the table below as a selection rule. Pick the provider whose network and auth model matches first. UI similarity is secondary.
+
+| Copy this provider | Required evidence |
 | --- | --- |
-| `modules/providers/chub/` | Full-featured provider with token auth, favorites, following/timeline, gallery downloads, remote version history, linked lorebooks, bulk linking, and rich browsing. Use this as the model when the target site has account-backed sync features like bookmarks/favorites/follows. |
-| `modules/providers/chartavern/` | Site exposes useful REST APIs and/or embedded PNG cards, but some content needs session cookies through `cl-helper`. Good model for optional cookie auth and read-only server proxying. |
-| `modules/providers/pygmalion/` | Public browsing works, but login needs a server-side auth proxy because browser JS cannot set required headers or complete the auth flow safely. Good model for email/password auth routed through `cl-helper`. |
-| `modules/providers/wyvern/` | Auth can happen browser-side and the provider supports browse, import, gallery, and following without requiring `cl-helper`. Good model for Firebase or normal API auth. |
-| `modules/providers/janny/` | Search is API-backed, but detail pages require HTML/Astro scraping and may fight CORS or Cloudflare. Good model when no clean detail API exists. |
-| `modules/providers/datacat/` | Provider is experimental, aggregator-like, or server-plugin-first. Good model when `cl-helper` is required for sessions, extraction, custom proxying, FlareSolverr forwarding, or upstream quirks like compression/browser-incompatible responses. |
+| `modules/providers/chub/` | Target has token auth plus favorites, follows/timeline, rich gallery support, remote version history, or account-backed sync. |
+| `modules/providers/chartavern/` | Target has useful public APIs or embedded PNG cards, but some content requires cookie/session proxying through `cl-helper`. |
+| `modules/providers/pygmalion/` | Target browsing is public, but login requires server-side exchange or headers/cookies the browser cannot safely perform. |
+| `modules/providers/wyvern/` | Target can run browser-side with normal API calls/auth and supports browse, import, gallery, or following without `cl-helper`. |
+| `modules/providers/janny/` | Target requires HTML/app-shell scraping because no complete clean detail API exists. |
+| `modules/providers/datacat/` | Target is server-plugin-first, aggregator-like, extraction-based, or needs custom server proxy/session/bootstrap behavior. |
 
-If two providers look close, copy the one whose networking/auth model matches first. UI shape is easier to adjust than a mismatched data path.
+Do not pick a provider because it looks visually close. Pick it because the request flow, auth flow, and data shape match.
 
-## Browser-Only Or Server Plugin?
+Record the chosen provider in the draft note.
 
-Default to browser-only when the site allows it. Add `cl-helper` support only when it unlocks reliability or a real feature.
+## Phase 3: Server Plugin Decision
 
-Stay browser-only when:
+Use this decision tree.
 
-- Public APIs work from the browser or through SillyTavern's CORS proxy.
-- Auth can use a normal token header in browser requests.
-- No forbidden headers, protected cookies, or server-only secrets are needed.
-- The site does not require long-lived shared session state.
+Stay browser-only only when all statements are true:
 
-Use `cl-helper` when:
+- Public browse works from browser code or `fetchWithProxy()`.
+- Public detail works from browser code or `fetchWithProxy()`.
+- Avatar/image fetch works or has an existing safe fallback.
+- Auth is not required for the initial useful provider.
+- No forbidden headers, protected cookies, server secrets, or persistent server sessions are required.
+- No Cloudflare challenge blocks the required public data path.
 
-- Browser requests are blocked by CORS and ST's `/proxy/` is insufficient.
-- The provider needs forbidden headers such as custom `Origin`, `Referer`, or cookie forwarding.
-- Login requires a server-side exchange, as with Pygmalion.
-- Auth uses cookies that should be stored server-side, as with CharacterTavern.
-- The provider needs reusable session/bootstrap state, as with DataCat.
-- Responses need server-side decoding or normalization before the browser can consume them.
-- The site is behind Cloudflare and the only workable path is a user-provided FlareSolverr service.
-- You want user account sync features like bookmarks, favorites, followed creators, or timeline data and those APIs require authenticated server-side handling.
+Add `cl-helper` only when at least one statement is true:
 
-Keep every `cl-helper` route narrow:
+- Browser CORS blocks required data and SillyTavern proxy does not solve it.
+- The provider requires forbidden headers such as custom `Origin`, `Referer`, or raw cookie forwarding.
+- Login requires a server-side exchange.
+- Auth cookies must be stored server-side.
+- The site requires reusable server-side bootstrap/session state.
+- The response requires server-side decoding or normalization before the browser can use it.
+- Cloudflare blocks required data and the only workable route is a user-configured FlareSolverr path.
+- Account sync requires authenticated server-side handling.
 
-- Allowlist hostnames and paths.
-- Prefer read-only `GET` proxies unless a write action is explicitly needed.
-- Validate request body fields and lengths.
-- Do not create an open proxy.
-- Do not store unnecessary secrets.
-- Return upstream errors clearly enough for the UI to explain setup problems.
+For every `cl-helper` route:
 
-## Provider Anatomy
+- allowlist hostnames,
+- allowlist paths,
+- validate request bodies,
+- reject unknown methods,
+- reject unknown target URLs,
+- return clear upstream errors,
+- do not create an open proxy,
+- do not store secrets that are not required.
 
-A normal provider folder has these files:
+## Phase 4: Repo Wiring Audit
 
-- `newsite-provider.js`: provider identity, link metadata, card normalization, imports, updates, auth, URL parsing, gallery, and bulk-link behavior.
-- `newsite-api.js`: endpoint constants, network helpers, response parsing, auth helpers, card builders, and cache/session helpers.
-- `newsite-browse.js`: Online tab controls, browse/search state, preview modal, import buttons, follow/favorite/bookmark controls, lazy image loading, and event wiring.
-- `newsite-browse.css`: provider-specific UI polish only. Shared browse styling belongs in `modules/providers/browse-shared.css`.
+Run these searches before writing provider code:
 
-Shared contracts live here:
+```bash
+rg -n "providerSelectorArea|onlineFilterContent|onlineView" app/library.html app/library.js
+rg -n "providerOrder|providerDefaults|providerExcludeTags|ADV_FILTER_PROVIDERS|PROVIDER_EXT_KEYS" app/library.js
+rg -n "loadModuleCSS|providerImports|registerProvider|getViewProviders|getProviderForUrl" modules/module-loader.js modules/providers/provider-registry.js
+rg -n "getComparableFields|fetchRemoteCard|character_book|listing_name" modules/card-updates.js modules/character-versions.js
+rg -n "CL_HELPER_PLUGIN_BASE|plugins/cl-helper" modules extras
+```
 
-- `modules/providers/provider-interface.js`: the provider methods and capability flags.
-- `modules/providers/provider-registry.js`: provider registration, activation, character ownership lookup, and URL dispatch.
-- `modules/providers/provider-utils.js`: shared fetch, text, PNG import, gallery save, and `CL_HELPER_PLUGIN_BASE`.
-- `modules/providers/browse-view.js`: base browse behavior, local-library lookup, image observers, preview helpers, and following manager support.
-- `modules/module-loader.js`: CSS loading and provider imports.
-- `app/library.html`: shared Online tab anchors such as `providerSelectorArea`, `onlineFilterContent`, and `onlineView`.
-- `app/library.js`: top-level Online tab activation, settings rendering, URL import routing, provider link display, and shared modal flows.
-- `app/library.css` and `app/library-mobile.css`: shared layout and responsive styles. Add provider-specific CSS only when the copied provider's shared classes are not enough.
+Update every applicable wiring point:
 
-## Provider Wiring Points
+- `modules/module-loader.js`: add provider CSS and provider import.
+- `modules/providers/provider-registry.js`: modify only if the generic registry cannot support the provider.
+- `app/library.html`: add static UI only for global shared settings, help text, or import placeholders. Do not mount provider browse UI here.
+- `app/library.js`: update hardcoded provider lists, settings controls, advanced filters, search prefixes, provider extension keys, and import/link flows when applicable.
+- `modules/card-updates.js`: rely on provider `getComparableFields()` unless a global comparison rule is required.
+- `modules/character-versions.js`: rely on provider comparable fields unless a global version rule is required.
+- `modules/gallery-extractors/extractor-registry.js`: update only when provider metadata affects extractor behavior.
+- `extras/cl-helper/index.js`: update only when Phase 3 requires server routes.
+- `README.md`: update provider matrix and user-facing docs after the provider is real.
 
-Do not stop after creating the provider folder. Search for the copied provider ID and update every central wiring point that applies.
+Do not assume the provider appears in the app because its folder exists. The provider appears only after the shared wiring loads it.
 
-In the current app, the provider selector and Online tab content are generated dynamically:
+## Phase 5: Copy And Rename
 
-- Static HTML supplies the shared slots in `app/library.html`: `providerSelectorArea`, `onlineFilterContent`, and `onlineView`.
-- `modules/module-loader.js` imports provider modules and provider CSS. This is the normal place to make a provider exist at runtime.
-- `modules/providers/provider-registry.js` builds the provider selector, activates views, routes provider URLs, and finds which provider owns a local card.
-- `app/library.js` renders provider order/settings, toggles the Online tab, handles batch URL imports, displays linked-provider metadata, and asks each provider to enrich local imports.
-- `modules/card-updates.js` and `modules/character-versions.js` consume provider comparable fields for update/version diff UI.
-- `modules/gallery-extractors/extractor-registry.js` can read provider extension metadata when gallery/media extraction needs provider context.
-- `extras/cl-helper/index.js` needs narrow routes only when the provider requires server plugin support.
+Copy the chosen provider folder as files. Do not hand-build a new provider shell when Phase 2 selected a close match.
 
-Only edit static HTML when the shared slots or global controls themselves need to change. Normal provider UI should come from `renderFilterBar()`, `renderView()`, and `renderModals()` so the registry can mount it consistently.
+Preserve the copied provider shape first:
 
-When you copy a provider, search for all of these strings before coding too far:
+- `renderFilterBar()` control order,
+- `renderView()` section order,
+- `renderModals()` modal structure,
+- shared class names,
+- topbar button classes,
+- dropdown classes,
+- mobile filter IDs,
+- custom select initialization,
+- dropdown dismiss wiring,
+- modal listener persistence,
+- card grid rendering path.
 
-- the old provider ID, display name, extension key, CSS prefix, DOM ID prefix, settings keys, and log prefix,
-- provider-specific settings in `getSettings()` and `app/library.js`,
-- provider-specific preview globals such as `window.openChubCharPreview`,
-- server routes or plugin checks in `extras/cl-helper/index.js`,
-- README/provider matrix entries.
+Remove or change a copied control only after the draft note records the exact target-site evidence that the capability does not exist. When a copied capability is not implemented in this pass, render an explicit unavailable state or omit the control with the recorded reason. Do not silently replace the copied shell with a simpler UI.
 
-## Implementation Plan
+Rename all of these before adding behavior:
 
-Follow this order.
+- filenames,
+- class names,
+- provider `id`,
+- display name,
+- extension metadata key,
+- DOM ID prefix,
+- CSS prefix,
+- settings keys,
+- log prefixes,
+- preview globals,
+- endpoint constants,
+- URL parser names,
+- test filenames.
 
-1. Finish website recon and write down the source endpoints.
-2. Pick the closest provider from the table above.
-3. Duplicate that provider folder and rename file names, classes, constants, DOM IDs, CSS prefixes, settings keys, and extension metadata keys.
-4. Search the repo for the copied provider ID/name and update the central wiring points listed above.
-5. Add the provider CSS and provider import to `modules/module-loader.js`.
-6. Confirm `app/library.html` already has the shared Online tab anchors the provider needs. Add shared HTML only if a new global slot is required.
-7. Implement identity first: `id`, `name`, `icon`, `iconUrl`, `browseView`, `hasView`, `renderFilterBar()`, `renderView()`, and lifecycle methods.
-8. Implement URL routing: `canHandleUrl()` and `parseUrl()`.
-9. Implement link metadata: `getLinkInfo()`, `setLinkInfo()`, and `getCharacterUrl()`. Store stable provider metadata under `card.data.extensions.<providerId>`.
-10. Implement browse/search with the simplest useful filters. Get cards rendering before adding advanced controls.
-11. Implement preview/details. Reuse the browse view modal pattern from the copied provider.
-12. Implement `fetchMetadata()` and `fetchRemoteCard()` using the most complete source of truth.
-13. Implement `normalizeRemoteCard()` so update diffs compare V2-compatible fields.
-14. Implement `supportsImport` and `importCharacter()`. Use `assignGalleryId()` and `importFromPng()` from `provider-utils.js`.
-15. Implement auth only after anonymous browse/import works.
-16. Implement account sync features next: bookmarks/favorites/follows/timeline. Chub is the best reference for favorites and following.
-17. Implement optional capabilities only if the website supports them: gallery downloads, bulk link, remote version history, linked lorebooks, remote page version, or custom comparable fields.
-18. Add `cl-helper` routes only if the decision tree says they are needed.
-19. Add settings descriptors through `getSettings()` for tokens, cookies, feature toggles, or server plugin endpoints.
-20. Update docs or README provider matrix if the new provider is user-facing.
+Run these searches until no stale copied identifiers remain except intentional references in comments or docs:
 
-## Card Data Rules
+```bash
+rg -n "oldProviderId|OldProviderName|oldCssPrefix|oldDomPrefix" modules/providers/<new-provider> tests docs
+```
 
-Character Library expects V2 card data for imports and update checks. Map provider fields deliberately:
+## Phase 6: Implement The Provider Contract
 
-- Provider display name or page title goes into `pageName` inside the provider extension metadata.
-- Character definition goes into `data.description`.
-- Personality goes into `data.personality` only if the source has a distinct personality field.
-- Website blurb/tagline usually belongs in `data.creator_notes` or `data.extensions.<providerId>.tagline`.
-- Alternate greetings should be preserved when the source exposes them.
-- Lorebooks should go into `data.character_book` when embedded or fetchable.
-- Tags should be normalized to plain strings.
-- Store stable IDs and paths in `data.extensions.<providerId>` so local cards can be linked later.
+Implement in this order.
 
-Never overwrite local card content during auto-enrichment unless the card was imported from that provider in the current flow. For local import enrichment, prefer adding provider metadata and tags only after strict name/creator checks.
+1. `id`
+2. `name`
+3. `icon`
+4. `iconUrl`
+5. `browseView`
+6. `hasView`
+7. `renderFilterBar()`
+8. `renderView()`
+9. `renderModals()`
+10. `activate()`
+11. `deactivate()`
+12. `canHandleUrl()`
+13. `parseUrl()`
+14. `getLinkInfo()`
+15. `setLinkInfo()`
+16. `getCharacterUrl()`
+17. `fetchMetadata()`
+18. `fetchRemoteCard()`
+19. `normalizeRemoteCard()`
+20. `supportsImport`
+21. `importCharacter()`
+22. `searchForBulkLink()`
+23. `searchForImportMatch()`
+24. `supportsGallery`
+25. `fetchGalleryImages()`
+26. `getSettings()`
 
-## Account Sync Features
+Skip a method only when `ProviderBase` supplies the desired behavior and the provider does not advertise that capability.
 
-If the target website has bookmarks, favorites, follows, collections, or a creator timeline, treat that as a first-class provider capability.
+## Phase 7: Match Existing UI Strictly
 
-Use Chub as the reference when implementing:
+Use the copied provider's structure first. Do not create new visual structure unless the copied structure cannot represent the target provider.
 
-- token-backed auth settings,
-- favorites filtering,
-- add/remove favorite buttons,
-- followed creator manager,
-- timeline/following tab,
-- account-gated restricted content,
-- cached favorite/follow IDs for fast badge updates.
+Required Online browse structure:
 
-Use `BrowseView`'s following manager hooks when the website tracks followed creators:
+- topbar controls in `renderFilterBar()`,
+- main search/content in `renderView()`,
+- modal HTML in `renderModals()`,
+- provider root using existing shared classes such as `browse-section`, `browse-search-bar`, `browse-search-input-wrapper`, `browse-search-submit`, `browse-grid`, `browse-card`, `browse-card-image`, `browse-card-body`, `browse-card-name`, `browse-card-creator` or `browse-card-creator-link`, `browse-card-tags`, and `browse-card-footer`,
+- provider-specific CSS only for gaps that shared CSS does not cover.
 
-- `supportsFollowingManager`
-- `getFollowedCreators()`
-- `followCreator(query)`
-- `unfollowCreator(id)`
-- `getCreatorAvatarUrl(creator)`
+Required copied-control audit:
 
-If the site calls the feature "bookmarks" instead of "favorites", keep UI text aligned with the site but store the implementation in provider-specific names to avoid confusing it with SillyTavern native favorites.
+- If the copied provider has Browse/Following controls, decide and record whether the new provider supports each mode.
+- If a mode is unsupported, keep the visual pattern consistent and document the unavailable behavior.
+- If the copied provider uses `CoreAPI.initCustomSelect()`, initialize the new provider select the same way.
+- If the copied provider has Tags or Features controls, keep them unless the target has no tag/filter data and the draft note records that result.
+- If a new provider-specific button class is created, update shared CSS selectors that style equivalent provider buttons.
+- If mobile filter IDs exist in the copied provider, add equivalent IDs or record why the provider is intentionally excluded from mobile settings.
 
-## Cloudflare And Anti-Bot Notes
+Card rules:
 
-Cloudflare changes the provider design.
+- Keep browse cards compact.
+- Do not render long descriptions inside browse cards.
+- Put long description, greeting, scenario, lorebook, or prompt fields in the preview modal.
+- Clamp names through the shared card name style.
+- Keep footer stats short.
+- Use shared icon button styles for search, refresh, filters, and NSFW controls.
+- Preserve lazy image loading through `observeImages()`.
+- Use the same modal listener persistence pattern as the copied provider. Modal DOM persists across provider switches.
 
-Try these in order:
+After rendering, compare the new provider against the copied provider in the browser. Fix visible differences unless the draft note records an intentional reason.
 
-1. Use official/public APIs that are not protected.
-2. Use browser-accessible app APIs with the same headers the site uses.
-3. Use SillyTavern `/proxy/` or `fetchWithProxy()` for CORS-only failures.
-4. Use `cl-helper` for required forbidden headers, cookies, sessions, or response decoding.
-5. Use a user-configured FlareSolverr endpoint through `cl-helper` only for specific allowlisted URLs.
+## Phase 8: Card Data Mapping
 
-Do not silently depend on a public third-party CORS proxy for core features unless there is no better path and the UI clearly explains the reliability tradeoff. Janny's current fallback pattern is useful context, but a new provider should prefer first-party or user-run infrastructure.
+Map source fields deliberately:
 
-## Registration Checklist
+- provider page/listing title -> `data.extensions.<providerId>.pageName`,
+- stable provider ID/path -> `data.extensions.<providerId>.id` and/or `fullPath`,
+- character definition -> `data.description`,
+- distinct personality -> `data.personality`,
+- distinct scenario -> `data.scenario`,
+- first message -> `data.first_mes`,
+- alternate greetings -> `data.alternate_greetings`,
+- website tagline/blurb -> `data.extensions.<providerId>.tagline` or `data.creator_notes`,
+- embedded/fetchable lorebook -> `data.character_book`,
+- tags -> normalized string array.
 
-Before calling it done, verify:
+Do not store volatile stats in comparable card fields. Store volatile stats in provider extension metadata only when the UI needs them.
 
-- The provider is imported in `modules/module-loader.js`.
-- Its CSS is loaded in `modules/module-loader.js` if it has provider-specific CSS.
-- Static Online tab anchors in `app/library.html` still match what `app/library.js` and `provider-registry.js` expect.
-- The provider appears in the generated provider selector and settings provider-order list.
-- The provider returns a unique `id` and uses that same ID in extension metadata.
-- URL import dispatch works through `canHandleUrl()` and `parseUrl()`.
-- Browsing handles empty, loading, error, and pagination states.
-- Preview modal opens and closes cleanly on desktop and mobile.
-- Import creates a valid PNG character card and links it back to the provider.
-- Update checks fetch fresh remote data and produce sane diffs.
-- Auth-required controls degrade gracefully when logged out or when `cl-helper` is missing.
-- Server plugin routes, if added, are allowlisted and not open proxies.
-- Settings labels make setup understandable without reading code.
-- README/provider matrix is updated if the provider ships to users.
+Do not overwrite local card content during enrichment unless the current import flow fetched that card from the provider. For existing local cards, add provider metadata only after strict matching.
 
-## Quick Smoke Tests
+## Phase 9: Account Sync
 
-Run or manually verify these flows:
+Implement account sync only after public browse, preview, import, linking, and update checks work.
 
-1. Open Online tab and switch to the new provider.
-2. Search a common character name.
-3. Open preview for a result.
-4. Import the result.
-5. Confirm the card appears in the local library with an In Library badge.
-6. Open the imported card and confirm provider link metadata is present.
-7. Run Check for Updates on the imported card.
-8. Paste a provider URL into batch import and confirm routing picks the new provider.
-9. Toggle NSFW/auth-only features while logged out and logged in, if supported.
-10. If `cl-helper` is involved, test both missing-plugin and installed-plugin states.
+If the website has bookmarks, favorites, follows, collections, subscriptions, or timelines:
 
-## Agent Reminder
+1. Record endpoint evidence in the draft note.
+2. Record auth requirements.
+3. Copy Chub's favorites/following patterns when the feature is account-backed.
+4. Use `BrowseView` following manager hooks for followed creators:
+   - `supportsFollowingManager`
+   - `getFollowedCreators()`
+   - `followCreator(query)`
+   - `unfollowCreator(id)`
+   - `getCreatorAvatarUrl(creator)`
+5. Use the website's user-facing term in UI text.
+6. Keep internal keys provider-specific.
 
-When in doubt, inspect first, copy the closest provider second, and only build new infrastructure third. The provider should feel native to Character Library, but its network strategy must match the website's real behavior.
+Do not add sync controls that cannot work with the implemented auth path.
+
+## Phase 10: Tests
+
+Add focused tests for:
+
+- URL parsing,
+- ID validation,
+- row normalization,
+- V2 card mapping,
+- private/unlisted/NSFW filtering,
+- provider identity and link metadata,
+- stale cache behavior,
+- persistent modal listener behavior,
+- importable module smoke.
+
+Use `node --test` unless the repo defines a different test command.
+
+## Phase 11: Required Verification
+
+Run these before claiming the provider is ready:
+
+```bash
+node --test
+node --check app/library.js
+node --check modules/providers/<provider>/<provider>-api.js
+node --check modules/providers/<provider>/<provider>-browse.js
+node --check modules/providers/<provider>/<provider>-provider.js
+git diff --check
+```
+
+Also run a live API smoke when the provider uses public endpoints:
+
+```bash
+node --input-type=module -e "const api=await import('./modules/providers/<provider>/<provider>-api.js'); /* call one browse/search function and print IDs */"
+```
+
+Run browser visual QA before merge:
+
+1. Open the app.
+2. Open Online.
+3. Select the provider.
+4. Confirm provider selector displays the provider.
+5. Confirm topbar controls match existing providers.
+6. Confirm search panel matches existing providers.
+7. Confirm cards match existing provider density.
+8. Confirm preview opens.
+9. Confirm preview closes.
+10. Confirm import works.
+11. Confirm imported card shows In Library.
+12. Confirm provider link metadata exists.
+13. Confirm Check for Updates returns sane diffs.
+14. Confirm provider URL import routes to the provider.
+15. Confirm mobile viewport has no overlapping text or controls.
+
+Do not mark the task complete without recording which checks passed and which checks were not run.
+
+## Stop Rules
+
+Stop and ask the user when:
+
+- no data endpoint can be identified,
+- direct and proxied requests both fail,
+- Cloudflare blocks required data,
+- auth is required for all useful behavior,
+- the closest provider is unclear after evidence collection,
+- the implementation requires server routes but the user has not approved `cl-helper` scope,
+- the UI cannot match an existing provider without changing shared CSS/HTML,
+- verification cannot run.
+
+## Final Rule
+
+Inspect first. Copy second. Wire every shared entry point third. Match the existing UI fourth. Add new infrastructure last.

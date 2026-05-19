@@ -38,6 +38,19 @@ test('Masquerade provider exposes identity, URL handling, and link metadata', as
     assert.match(provider.getCharacterUrl(provider.getLinkInfo(card)), /masqueradeproductions\.org\/character\//);
 });
 
+test('Masquerade browse view keeps the copied provider topbar controls', async () => {
+    const provider = await loadProvider();
+    const html = provider.renderFilterBar();
+
+    assert.match(html, /class="masquerade-view-btn active"/);
+    assert.match(html, /data-masquerade-view="following"/);
+    assert.match(html, /id="masqueradeSortSelect"/);
+    assert.match(html, /id="masqueradeTagsBtn"/);
+    assert.match(html, /id="masqueradeFiltersBtn"/);
+    assert.match(html, /id="masqueradeNsfwToggle"/);
+    assert.match(html, /id="refreshMasqueradeBtn"/);
+});
+
 test('Masquerade preview fetches the requested character instead of reusing stale cache', async () => {
     const provider = await loadProvider();
     const originalFetchMetadata = provider.fetchMetadata;

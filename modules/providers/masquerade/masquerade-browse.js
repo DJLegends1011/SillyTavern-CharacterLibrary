@@ -46,6 +46,15 @@ let masqueradeCurrentSort = 'popular';
 let masqueradeNsfwEnabled = false;
 let masqueradeSelectedChar = null;
 let masqueradeModalListenersBound = false;
+let masqueradeTagFilters = new Map();
+let masqueradeFilterHideOwned = false;
+let masqueradeFilterHidePossible = false;
+let masqueradeFilterHasGallery = false;
+let masqueradeFilterHasAltGreetings = false;
+let masqueradeFilterAmplified = false;
+let masqueradePopularTags = [];
+let masqueradeTagsLoaded = false;
+let masqueradeTagFilterDebounceTimeout = null;
 
 let view;
 
@@ -81,6 +90,103 @@ function isCharInLocalLibrary(char) {
 function isCharPossibleMatchObj(char) {
     if (isCharInLocalLibrary(char)) return false;
     return view.isCharPossibleMatch(char.name || '', '');
+}
+
+function normalizeTagName(tag) {
+    return String(tag || '').trim().toLowerCase().replace(/\s+/g, '_');
+}
+
+function getNormalizedTags(char) {
+    return (char.tags || []).map(normalizeTagName).filter(Boolean);
+}
+
+function hasAltGreetings(char) {
+    return Array.isArray(char.alternate_greetings) && char.alternate_greetings.some(g => String(g || '').trim());
+}
+
+function hasGallery(char) {
+    return getGalleryUrls(char).length > 0;
+}
+
+function getMasqueradeFilterTags() {
+    const includeTags = [];
+    const excludeTags = [];
+
+    for (const [tag, state] of masqueradeTagFilters) {
+        const normalized = normalizeTagName(tag);
+        if (!normalized) continue;
+        if (state === 'include') includeTags.push(normalized);
+        if (state === 'exclude') excludeTags.push(normalized);
+    }
+
+    for (const tag of getProviderExcludeTags?.('masquerade') || []) {
+        const normalized = normalizeTagName(tag);
+        if (normalized && !excludeTags.includes(normalized)) excludeTags.push(normalized);
+    }
+
+    return { includeTags, excludeTags };
+}
+
+function hasActiveMasqueradeClientFilters() {
+    return masqueradeTagFilters.size > 0
+        || masqueradeFilterHideOwned
+        || masqueradeFilterHidePossible
+        || masqueradeFilterHasGallery
+        || masqueradeFilterHasAltGreetings
+        || masqueradeFilterAmplified;
+}
+
+function getFilteredMasqueradeCharacters() {
+    let display = masqueradeCharacters;
+    const { includeTags, excludeTags } = getMasqueradeFilterTags();
+
+    if (includeTags.length > 0) {
+        display = display.filter(char => {
+            const tags = getNormalizedTags(char);
+            return includeTags.some(tag => tags.includes(tag));
+        });
+    }
+
+    if (excludeTags.length > 0) {
+        display = display.filter(char => {
+            const tags = getNormalizedTags(char);
+            return !excludeTags.some(tag => tags.includes(tag));
+        });
+    }
+
+    if (masqueradeFilterHideOwned) display = display.filter(char => !isCharInLocalLibrary(char));
+    if (masqueradeFilterHidePossible) display = display.filter(char => !isCharPossibleMatchObj(char));
+    if (masqueradeFilterHasGallery) display = display.filter(hasGallery);
+    if (masqueradeFilterHasAltGreetings) display = display.filter(hasAltGreetings);
+    if (masqueradeFilterAmplified) display = display.filter(char => char.is_amplified);
+
+    return display;
+}
+
+function extractMasqueradeTagsFromResults(characters) {
+    if (masqueradeTagsLoaded && masqueradePopularTags.length >= 100) return;
+
+    const tagCounts = new Map();
+    for (const tag of masqueradePopularTags) tagCounts.set(tag, 10);
+
+    for (const char of characters || []) {
+        for (const tag of char.tags || []) {
+            const normalized = normalizeTagName(tag);
+            if (normalized && normalized.length > 1 && normalized.length < 40) {
+                tagCounts.set(normalized, (tagCounts.get(normalized) || 0) + 1);
+            }
+        }
+    }
+
+    const sortedTags = [...tagCounts.entries()]
+        .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+        .slice(0, 200)
+        .map(([tag]) => tag);
+
+    if (sortedTags.length > masqueradePopularTags.length) {
+        masqueradePopularTags = sortedTags;
+        masqueradeTagsLoaded = true;
+    }
 }
 
 function updateSearchClearButton() {
@@ -149,19 +255,29 @@ function createMasqueradeCard(char) {
     `;
 }
 
-function renderGrid(characters, append = false) {
+function renderGrid(_characters = masqueradeCharacters, append = false) {
     const grid = document.getElementById('masqueradeGrid');
     if (!grid) return;
 
-    if (!append) {
+    const displayCharacters = getFilteredMasqueradeCharacters();
+    const canAppend = append && !hasActiveMasqueradeClientFilters();
+
+    if (!canAppend) {
         grid.innerHTML = '';
         masqueradeGridRenderedCount = 0;
     }
 
+    if (displayCharacters.length === 0) {
+        const filtered = masqueradeCharacters.length > 0 && hasActiveMasqueradeClientFilters();
+        renderEmpty(filtered ? 'All characters in this view were filtered out by your current filters.' : 'No characters found');
+        masqueradeBrowseView.updateLoadMoreVisibility('masqueradeLoadMore', masqueradeHasMore, masqueradeCharacters.length > 0);
+        return;
+    }
+
     const start = masqueradeGridRenderedCount;
-    const html = characters.slice(start).map(createMasqueradeCard).join('');
+    const html = displayCharacters.slice(start).map(createMasqueradeCard).join('');
     grid.insertAdjacentHTML('beforeend', html);
-    masqueradeGridRenderedCount = characters.length;
+    masqueradeGridRenderedCount = displayCharacters.length;
     masqueradeBrowseView.observeImages(grid);
     masqueradeBrowseView.updateLoadMoreVisibility('masqueradeLoadMore', masqueradeHasMore, masqueradeCharacters.length > 0);
 }
@@ -216,6 +332,7 @@ async function loadMasqueradeCharacters(append = false) {
             masqueradeCharacters = results;
         }
 
+        extractMasqueradeTagsFromResults(results);
         masqueradeHasMore = !masqueradeCurrentSearch && results.length >= PAGE_SIZE;
         renderGrid(masqueradeCharacters, append);
         if (!append && masqueradeCharacters.length === 0) renderEmpty('No characters found');
@@ -432,6 +549,181 @@ function bindPersistentModalListeners() {
     masqueradeModalListenersBound = true;
 }
 
+function updateMasqueradeTagsButtonState() {
+    const label = document.getElementById('masqueradeTagsBtnLabel');
+    const btn = document.getElementById('masqueradeTagsBtn');
+    if (!label || !btn) return;
+
+    const includeCount = Array.from(masqueradeTagFilters.values()).filter(v => v === 'include').length;
+    const excludeCount = Array.from(masqueradeTagFilters.values()).filter(v => v === 'exclude').length;
+    const parts = [];
+    if (includeCount > 0) parts.push(`+${includeCount}`);
+    if (excludeCount > 0) parts.push(`-${excludeCount}`);
+
+    label.textContent = parts.length > 0 ? `Tags (${parts.join('/')})` : 'Tags';
+    btn.classList.toggle('has-filters', parts.length > 0);
+}
+
+function updateMasqueradeFiltersButtonState() {
+    const btn = document.getElementById('masqueradeFiltersBtn');
+    if (!btn) return;
+
+    const count = (masqueradeFilterHideOwned ? 1 : 0)
+        + (masqueradeFilterHidePossible ? 1 : 0)
+        + (masqueradeFilterHasGallery ? 1 : 0)
+        + (masqueradeFilterHasAltGreetings ? 1 : 0)
+        + (masqueradeFilterAmplified ? 1 : 0);
+
+    btn.classList.toggle('has-filters', count > 0);
+    btn.innerHTML = count > 0
+        ? `<i class="fa-solid fa-sliders"></i> Features (${count})`
+        : '<i class="fa-solid fa-sliders"></i> Features';
+}
+
+function triggerMasqueradeFilterRenderDebounced() {
+    if (masqueradeTagFilterDebounceTimeout) clearTimeout(masqueradeTagFilterDebounceTimeout);
+    masqueradeTagFilterDebounceTimeout = setTimeout(() => {
+        masqueradeTagFilterDebounceTimeout = null;
+        renderGrid(masqueradeCharacters, false);
+    }, 250);
+}
+
+function renderMasqueradeTagsList(filter = '') {
+    const container = document.getElementById('masqueradeTagsList');
+    if (!container) return;
+
+    if (masqueradePopularTags.length === 0) {
+        container.innerHTML = '<div class="browse-tags-empty">Type a tag name and press Enter to filter</div>';
+        return;
+    }
+
+    const filterLower = normalizeTagName(filter);
+    const filteredTags = filterLower
+        ? masqueradePopularTags.filter(tag => tag.includes(filterLower))
+        : masqueradePopularTags;
+    const hasExactMatch = filterLower && filteredTags.some(tag => tag === filterLower);
+    const showCustomAdd = filterLower && filterLower.length >= 2 && !hasExactMatch;
+
+    if (filteredTags.length === 0 && !showCustomAdd) {
+        container.innerHTML = '<div class="browse-tags-empty">No matching tags - press Enter to add as filter</div>';
+        return;
+    }
+
+    const sortedTags = [...filteredTags].sort((a, b) => {
+        const aState = masqueradeTagFilters.get(a);
+        const bState = masqueradeTagFilters.get(b);
+        if (aState && !bState) return -1;
+        if (!aState && bState) return 1;
+        return a.localeCompare(b);
+    });
+
+    const customAddHtml = showCustomAdd ? `
+        <div class="browse-tag-filter-item browse-tag-custom-add" data-custom-tag="${esc(filterLower)}">
+            <button class="browse-tag-state-btn state-include"><i class="fa-solid fa-plus"></i></button>
+            <span class="tag-label">Add <strong>${esc(filterLower)}</strong> as filter</span>
+        </div>
+    ` : '';
+
+    container.innerHTML = customAddHtml + sortedTags.map(tag => {
+        const state = masqueradeTagFilters.get(tag) || 'neutral';
+        const stateClass = `state-${state}`;
+        const stateIcon = state === 'include' ? '<i class="fa-solid fa-check"></i>'
+            : state === 'exclude' ? '<i class="fa-solid fa-minus"></i>'
+                : '';
+        const stateTitle = state === 'include' ? 'Included - click to exclude'
+            : state === 'exclude' ? 'Excluded - click to clear'
+                : 'Neutral - click to include';
+
+        return `
+            <div class="browse-tag-filter-item" data-tag="${esc(tag)}">
+                <button class="browse-tag-state-btn ${stateClass}" title="${stateTitle}">${stateIcon}</button>
+                <span class="tag-label">${esc(tag)}</span>
+            </div>
+        `;
+    }).join('');
+
+    container.querySelector?.('.browse-tag-custom-add')?.addEventListener('click', () => {
+        if (!masqueradeTagFilters.has(filterLower)) {
+            masqueradeTagFilters.set(filterLower, 'include');
+            const searchInput = document.getElementById('masqueradeTagsSearchInput');
+            if (searchInput) searchInput.value = '';
+            updateMasqueradeTagsButtonState();
+            renderMasqueradeTagsList('');
+            triggerMasqueradeFilterRenderDebounced();
+        }
+    });
+
+    container.querySelectorAll?.('.browse-tag-filter-item[data-tag]').forEach(item => {
+        const tag = item.dataset.tag;
+        const cycleState = () => {
+            const current = masqueradeTagFilters.get(tag) || 'neutral';
+            if (current === 'neutral') {
+                masqueradeTagFilters.set(tag, 'include');
+            } else if (current === 'include') {
+                masqueradeTagFilters.set(tag, 'exclude');
+            } else {
+                masqueradeTagFilters.delete(tag);
+            }
+            updateMasqueradeTagsButtonState();
+            renderMasqueradeTagsList(document.getElementById('masqueradeTagsSearchInput')?.value || '');
+            triggerMasqueradeFilterRenderDebounced();
+        };
+
+        item.querySelector?.('.browse-tag-state-btn')?.addEventListener('click', event => {
+            event.stopPropagation();
+            cycleState();
+        });
+        item.querySelector?.('.tag-label')?.addEventListener('click', cycleState);
+    });
+}
+
+function initMasqueradeTagsDropdown() {
+    const btn = document.getElementById('masqueradeTagsBtn');
+    const dropdown = document.getElementById('masqueradeTagsDropdown');
+    const searchInput = document.getElementById('masqueradeTagsSearchInput');
+    const clearBtn = document.getElementById('masqueradeTagsClearBtn');
+    if (!btn || !dropdown) return;
+
+    btn.addEventListener('click', event => {
+        event.stopPropagation();
+        CoreAPI.closeAllTopbarDropdowns?.();
+        document.getElementById('masqueradeFiltersDropdown')?.classList.add('hidden');
+        const wasHidden = dropdown.classList.contains('hidden');
+        dropdown.classList.toggle('hidden');
+        if (wasHidden) {
+            renderMasqueradeTagsList(searchInput?.value || '');
+            if (!window.matchMedia?.('(max-width: 768px)').matches) searchInput?.focus();
+        }
+    });
+
+    dropdown.addEventListener('click', event => event.stopPropagation());
+
+    const renderDebounced = debounce ? debounce(() => {
+        renderMasqueradeTagsList(searchInput?.value || '');
+    }, 150) : () => renderMasqueradeTagsList(searchInput?.value || '');
+    searchInput?.addEventListener('input', renderDebounced);
+
+    searchInput?.addEventListener('keydown', event => {
+        if (event.key !== 'Enter') return;
+        event.preventDefault();
+        const value = normalizeTagName(searchInput.value);
+        if (!value) return;
+        if (!masqueradeTagFilters.has(value)) masqueradeTagFilters.set(value, 'include');
+        searchInput.value = '';
+        updateMasqueradeTagsButtonState();
+        renderMasqueradeTagsList('');
+        triggerMasqueradeFilterRenderDebounced();
+    });
+
+    clearBtn?.addEventListener('click', () => {
+        masqueradeTagFilters.clear();
+        if (searchInput) searchInput.value = '';
+        updateMasqueradeTagsButtonState();
+        renderMasqueradeTagsList('');
+        renderGrid(masqueradeCharacters, false);
+    });
+}
+
 class MasqueradeBrowseView extends BrowseView {
     constructor(provider) {
         super(provider);
@@ -446,12 +738,29 @@ class MasqueradeBrowseView extends BrowseView {
     get previewModalId() { return 'masqueradeCharModal'; }
     _getImageGridIds() { return ['masqueradeGrid']; }
 
+    get mobileFilterIds() {
+        return {
+            sort: 'masqueradeSortSelect',
+            tags: 'masqueradeTagsBtn',
+            filters: 'masqueradeFiltersBtn',
+            nsfw: 'masqueradeNsfwToggle',
+            refresh: 'refreshMasqueradeBtn',
+            modeBrowseSelector: '.masquerade-view-btn[data-masquerade-view="browse"]',
+            modeFollowSelector: '.masquerade-view-btn[data-masquerade-view="following"]',
+            modeBtnClass: 'masquerade-view-btn',
+        };
+    }
+
+    get hasModeToggle() { return false; }
+
     getSettingsConfig() {
         return {
             browseSortOptions: Object.entries(MASQUERADE_SORT_OPTIONS).map(([value, config]) => ({
                 value,
                 label: config.label,
             })),
+            followingSortOptions: [],
+            viewModes: [],
         };
     }
 
@@ -466,15 +775,56 @@ class MasqueradeBrowseView extends BrowseView {
 
     renderFilterBar() {
         return `
+            <div class="chub-view-toggle">
+                <button class="masquerade-view-btn active" data-masquerade-view="browse" title="Browse all characters">
+                    <i class="fa-solid fa-compass"></i> <span>Browse</span>
+                </button>
+                <button class="masquerade-view-btn" data-masquerade-view="following" title="MasqueradeAI following sync is not implemented yet">
+                    <i class="fa-solid fa-users"></i> <span>Following</span>
+                </button>
+            </div>
+
             <div class="browse-sort-container">
                 <select id="masqueradeSortSelect" class="glass-select" title="Sort characters">
-                    <option value="popular" selected>Popular</option>
-                    <option value="newest">Newest</option>
-                    <option value="quality">Quality</option>
-                    <option value="subscribers">Most Saved</option>
-                    <option value="chatters">Most Chatters</option>
+                    <option value="popular" selected>&#128293; Popular</option>
+                    <option value="newest">&#127381; Newest</option>
+                    <option value="quality">&#11088; Quality</option>
+                    <option value="subscribers">&#128150; Most Saved</option>
+                    <option value="chatters">&#128172; Most Chatters</option>
                 </select>
             </div>
+
+            <div class="browse-tags-dropdown-container" style="position: relative;">
+                <button id="masqueradeTagsBtn" class="glass-btn" title="Filter by tag">
+                    <i class="fa-solid fa-tags"></i> <span id="masqueradeTagsBtnLabel">Tags</span>
+                </button>
+                <div id="masqueradeTagsDropdown" class="dropdown-menu browse-tags-dropdown hidden">
+                    <div class="browse-tags-search-row">
+                        <input type="search" id="masqueradeTagsSearchInput" placeholder="Type a tag name..." autocomplete="one-time-code">
+                        <button id="masqueradeTagsClearBtn" class="glass-btn icon-only" title="Clear tag filter">
+                            <i class="fa-solid fa-rotate-left"></i>
+                        </button>
+                    </div>
+                    <div class="browse-tags-list" id="masqueradeTagsList"></div>
+                </div>
+            </div>
+
+            <div class="browse-more-filters" style="position: relative;">
+                <button id="masqueradeFiltersBtn" class="glass-btn" title="Filter options">
+                    <i class="fa-solid fa-sliders"></i> <span>Features</span>
+                </button>
+                <div id="masqueradeFiltersDropdown" class="dropdown-menu browse-features-dropdown hidden" style="width: 240px;">
+                    <div class="dropdown-section-title">Character must have:</div>
+                    <label class="filter-checkbox"><input type="checkbox" id="masqueradeFilterGallery"> <i class="fa-solid fa-images"></i> Extra Images</label>
+                    <label class="filter-checkbox"><input type="checkbox" id="masqueradeFilterGreetings"> <i class="fa-solid fa-comments"></i> Alt Greetings</label>
+                    <label class="filter-checkbox"><input type="checkbox" id="masqueradeFilterAmplified"> <i class="fa-solid fa-bolt"></i> Amplified</label>
+                    <hr style="margin: 8px 0; border-color: var(--glass-border);">
+                    <div class="dropdown-section-title">Library:</div>
+                    <label class="filter-checkbox"><input type="checkbox" id="masqueradeFilterHideOwned"> <i class="fa-solid fa-check"></i> Hide Owned Characters</label>
+                    <label class="filter-checkbox"><input type="checkbox" id="masqueradeFilterHidePossible"> <i class="fa-solid fa-check" style="color: #f0a500;"></i> Hide Possible Matches</label>
+                </div>
+            </div>
+
             <button id="masqueradeNsfwToggle" class="glass-btn nsfw-toggle" style="opacity: 0.5;" title="Toggle NSFW content">
                 <i class="fa-solid fa-shield-halved"></i> <span>SFW Only</span>
             </button>
@@ -560,6 +910,34 @@ class MasqueradeBrowseView extends BrowseView {
         super.init();
         if (typeof document === 'undefined') return;
 
+        const sortEl = document.getElementById('masqueradeSortSelect');
+        if (sortEl) {
+            sortEl.value = masqueradeCurrentSort;
+            CoreAPI.initCustomSelect?.(sortEl);
+        }
+
+        if (typeof document.addEventListener === 'function') {
+            this._registerDropdownDismiss([
+                { dropdownId: 'masqueradeTagsDropdown', buttonId: 'masqueradeTagsBtn' },
+                { dropdownId: 'masqueradeFiltersDropdown', buttonId: 'masqueradeFiltersBtn' },
+            ]);
+        }
+
+        document.querySelectorAll?.('.masquerade-view-btn')?.forEach(btn => {
+            btn.addEventListener('click', () => {
+                const mode = btn.dataset.masqueradeView;
+                if (mode === 'browse') {
+                    document.querySelectorAll?.('.masquerade-view-btn')?.forEach(button => {
+                        button.classList.toggle('active', button.dataset.masqueradeView === 'browse');
+                    });
+                    return;
+                }
+                showToast?.('MasqueradeAI following sync needs account/plugin support before it can be enabled.', 'info');
+                document.querySelector?.('.masquerade-view-btn[data-masquerade-view="browse"]')?.classList.add('active');
+                btn.classList.remove('active');
+            });
+        });
+
         bind('masqueradeSearchBtn', 'click', () => {
             masqueradeCurrentSearch = document.getElementById('masqueradeSearchInput')?.value?.trim() || '';
             resetAndLoad();
@@ -591,6 +969,39 @@ class MasqueradeBrowseView extends BrowseView {
             masqueradeCurrentSort = event.currentTarget.value || 'popular';
             resetAndLoad();
         });
+        bind('masqueradeFiltersBtn', 'click', event => {
+            event.stopPropagation();
+            CoreAPI.closeAllTopbarDropdowns?.();
+            document.getElementById('masqueradeTagsDropdown')?.classList.add('hidden');
+            document.getElementById('masqueradeFiltersDropdown')?.classList.toggle('hidden');
+        });
+        document.getElementById('masqueradeFiltersDropdown')?.addEventListener('click', event => event.stopPropagation());
+        bind('masqueradeFilterGallery', 'change', event => {
+            masqueradeFilterHasGallery = event.currentTarget.checked;
+            updateMasqueradeFiltersButtonState();
+            renderGrid(masqueradeCharacters, false);
+        });
+        bind('masqueradeFilterGreetings', 'change', event => {
+            masqueradeFilterHasAltGreetings = event.currentTarget.checked;
+            updateMasqueradeFiltersButtonState();
+            renderGrid(masqueradeCharacters, false);
+        });
+        bind('masqueradeFilterAmplified', 'change', event => {
+            masqueradeFilterAmplified = event.currentTarget.checked;
+            updateMasqueradeFiltersButtonState();
+            renderGrid(masqueradeCharacters, false);
+        });
+        bind('masqueradeFilterHideOwned', 'change', event => {
+            masqueradeFilterHideOwned = event.currentTarget.checked;
+            updateMasqueradeFiltersButtonState();
+            renderGrid(masqueradeCharacters, false);
+        });
+        bind('masqueradeFilterHidePossible', 'change', event => {
+            masqueradeFilterHidePossible = event.currentTarget.checked;
+            updateMasqueradeFiltersButtonState();
+            renderGrid(masqueradeCharacters, false);
+        });
+        initMasqueradeTagsDropdown();
         bind('masqueradeNsfwToggle', 'click', () => {
             masqueradeNsfwEnabled = !masqueradeNsfwEnabled;
             setSetting?.('masqueradeNsfw', masqueradeNsfwEnabled);
@@ -626,10 +1037,28 @@ class MasqueradeBrowseView extends BrowseView {
     }
 
     async activate(container, options = {}) {
+        if (options.domRecreated) {
+            masqueradeCurrentSearch = '';
+            masqueradeCharacters = [];
+            masqueradeCurrentPage = 1;
+            masqueradeHasMore = true;
+            masqueradeIsLoading = false;
+            masqueradeGridRenderedCount = 0;
+            masqueradeTagFilters = new Map();
+            masqueradeFilterHideOwned = false;
+            masqueradeFilterHidePossible = false;
+            masqueradeFilterHasGallery = false;
+            masqueradeFilterHasAltGreetings = false;
+            masqueradeFilterAmplified = false;
+            masqueradeCurrentSort = 'popular';
+            masqueradeSelectedChar = null;
+        }
         masqueradeNsfwEnabled = getSetting?.('masqueradeNsfw') === true;
         super.activate(container, options);
         updateMasqueradeNsfwToggle();
         updateSearchClearButton();
+        updateMasqueradeTagsButtonState();
+        updateMasqueradeFiltersButtonState();
         this.buildLocalLibraryLookup();
         if (options.domRecreated || masqueradeCharacters.length === 0) {
             await resetAndLoad();
