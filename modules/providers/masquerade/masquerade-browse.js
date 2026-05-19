@@ -83,12 +83,33 @@ function isCharPossibleMatchObj(char) {
     return view.isCharPossibleMatch(char.name || '', '');
 }
 
+function updateSearchClearButton() {
+    const input = document.getElementById('masqueradeSearchInput');
+    const clearBtn = document.getElementById('masqueradeClearSearchBtn');
+    clearBtn?.classList.toggle('hidden', !(input?.value || '').trim());
+}
+
+function updateMasqueradeNsfwToggle() {
+    const btn = document.getElementById('masqueradeNsfwToggle');
+    if (!btn) return;
+
+    btn.classList.toggle('active', masqueradeNsfwEnabled);
+    if (masqueradeNsfwEnabled) {
+        btn.style.opacity = '1';
+        btn.innerHTML = '<i class="fa-solid fa-fire"></i> <span>NSFW On</span>';
+    } else {
+        btn.style.opacity = '0.5';
+        btn.innerHTML = '<i class="fa-solid fa-shield-halved"></i> <span>SFW Only</span>';
+    }
+}
+
 function createMasqueradeCard(char) {
     const id = char.id || char.character_id || '';
     const name = char.name || 'Unknown';
     const tagline = char.tagline || char.personality || '';
+    const creatorName = char.creator_name || char.creatorUsername || char.username || char.author || '';
     const avatarUrl = getAvatarUrl(char);
-    const tags = (char.tags || []).slice(0, 4);
+    const tags = (char.tags || []).slice(0, 3);
     const inLibrary = isCharInLocalLibrary(char);
     const possibleMatch = !inLibrary && isCharPossibleMatchObj(char);
     const cardClass = inLibrary ? 'browse-card in-library' : possibleMatch ? 'browse-card possible-library' : 'browse-card';
@@ -114,15 +135,14 @@ function createMasqueradeCard(char) {
             </div>
             <div class="browse-card-body">
                 <div class="browse-card-name">${esc(name)}</div>
-                ${tagline ? `<div class="browse-card-description">${esc(tagline)}</div>` : ''}
+                ${creatorName ? `<span class="browse-card-creator">by ${esc(creatorName)}</span>` : ''}
                 <div class="browse-card-tags">
                     ${tags.map(tag => `<span class="browse-card-tag" title="${esc(tag)}">${esc(tag)}</span>`).join('')}
                 </div>
             </div>
             <div class="browse-card-footer">
-                <span class="browse-card-stat" title="Messages"><i class="fa-solid fa-comments"></i> ${formatNumber(char.total_messages || 0)}</span>
+                <span class="browse-card-stat" title="Messages"><i class="fa-solid fa-message"></i> ${formatNumber(char.total_messages || 0)}</span>
                 <span class="browse-card-stat" title="Saved"><i class="fa-solid fa-bookmark"></i> ${formatNumber(char.subscriber_count || 0)}</span>
-                <span class="browse-card-stat" title="Quality"><i class="fa-solid fa-star"></i> ${formatNumber(char.quality_score || 0)}</span>
                 ${createdDate ? `<span class="browse-card-date"><i class="fa-solid fa-clock"></i> ${esc(createdDate)}</span>` : ''}
             </div>
         </div>
@@ -455,30 +475,29 @@ class MasqueradeBrowseView extends BrowseView {
                     <option value="chatters">Most Chatters</option>
                 </select>
             </div>
-            <label class="filter-checkbox masquerade-nsfw-toggle" title="Show NSFW content">
-                <input type="checkbox" id="masqueradeNsfwToggle">
-                <i class="fa-solid fa-eye-slash"></i> NSFW
-            </label>
+            <button id="masqueradeNsfwToggle" class="glass-btn nsfw-toggle" style="opacity: 0.5;" title="Toggle NSFW content">
+                <i class="fa-solid fa-shield-halved"></i> <span>SFW Only</span>
+            </button>
             <button id="refreshMasqueradeBtn" class="glass-btn icon-only" title="Refresh">
-                <i class="fa-solid fa-rotate"></i>
+                <i class="fa-solid fa-sync"></i>
             </button>
         `;
     }
 
     renderView() {
         return `
-            <div class="masquerade-provider-root">
-                <div class="masquerade-search-row">
-                    <div class="masquerade-search-input-wrap">
+            <div id="masqueradeBrowseSection" class="browse-section">
+                <div class="browse-search-bar">
+                    <div class="browse-search-input-wrapper">
                         <i class="fa-solid fa-search"></i>
-                        <input type="search" id="masqueradeSearchInput" placeholder="Search MasqueradeAI..." autocomplete="one-time-code">
+                        <input type="search" id="masqueradeSearchInput" placeholder="Search MasqueradeAI characters..." autocomplete="one-time-code">
+                        <button id="masqueradeClearSearchBtn" class="browse-search-clear hidden" title="Clear search">
+                            <i class="fa-solid fa-xmark"></i>
+                        </button>
+                        <button id="masqueradeSearchBtn" class="browse-search-submit" title="Search">
+                            <i class="fa-solid fa-arrow-right"></i>
+                        </button>
                     </div>
-                    <button id="masqueradeSearchBtn" class="glass-btn">
-                        <i class="fa-solid fa-search"></i><span>Search</span>
-                    </button>
-                    <button id="masqueradeClearSearchBtn" class="glass-btn icon-only" title="Clear search">
-                        <i class="fa-solid fa-xmark"></i>
-                    </button>
                 </div>
                 <div id="masqueradeGrid" class="browse-grid"></div>
                 <div id="masqueradeLoadMore" class="browse-load-more" style="display:none;">
@@ -549,6 +568,7 @@ class MasqueradeBrowseView extends BrowseView {
             const input = document.getElementById('masqueradeSearchInput');
             if (input) input.value = '';
             masqueradeCurrentSearch = '';
+            updateSearchClearButton();
             resetAndLoad();
         });
         bind('masqueradeSearchInput', 'keydown', event => {
@@ -557,6 +577,7 @@ class MasqueradeBrowseView extends BrowseView {
                 resetAndLoad();
             }
         });
+        bind('masqueradeSearchInput', 'input', updateSearchClearButton);
         if (debounce) {
             const debouncedSearch = debounce(() => {
                 const value = document.getElementById('masqueradeSearchInput')?.value?.trim() || '';
@@ -570,9 +591,10 @@ class MasqueradeBrowseView extends BrowseView {
             masqueradeCurrentSort = event.currentTarget.value || 'popular';
             resetAndLoad();
         });
-        bind('masqueradeNsfwToggle', 'change', event => {
-            masqueradeNsfwEnabled = !!event.currentTarget.checked;
+        bind('masqueradeNsfwToggle', 'click', () => {
+            masqueradeNsfwEnabled = !masqueradeNsfwEnabled;
             setSetting?.('masqueradeNsfw', masqueradeNsfwEnabled);
+            updateMasqueradeNsfwToggle();
             resetAndLoad();
         });
         bind('refreshMasqueradeBtn', 'click', () => resetAndLoad());
@@ -606,8 +628,8 @@ class MasqueradeBrowseView extends BrowseView {
     async activate(container, options = {}) {
         masqueradeNsfwEnabled = getSetting?.('masqueradeNsfw') === true;
         super.activate(container, options);
-        const nsfwToggle = document.getElementById('masqueradeNsfwToggle');
-        if (nsfwToggle) nsfwToggle.checked = masqueradeNsfwEnabled;
+        updateMasqueradeNsfwToggle();
+        updateSearchClearButton();
         this.buildLocalLibraryLookup();
         if (options.domRecreated || masqueradeCharacters.length === 0) {
             await resetAndLoad();
