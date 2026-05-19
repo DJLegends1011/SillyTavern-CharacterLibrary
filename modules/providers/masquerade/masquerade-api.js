@@ -234,16 +234,13 @@ function pushUnique(list, seen, value) {
     list.push(clean);
 }
 
-export function getMasqueradeTags(row, includeProviderTags = false) {
+export function getMasqueradeTags(row, includeNsfwTag = false) {
     const tags = [];
     const seen = new Set();
     pushUnique(tags, seen, row?.origin_tag);
     for (const tag of Array.isArray(row?.identity_tags) ? row.identity_tags : []) pushUnique(tags, seen, tag);
     for (const tag of Array.isArray(row?.personality_tags) ? row.personality_tags : []) pushUnique(tags, seen, tag);
-    if (includeProviderTags) {
-        pushUnique(tags, seen, 'masquerade');
-        if (row?.is_nsfw) pushUnique(tags, seen, 'nsfw');
-    }
+    if (includeNsfwTag && row?.is_nsfw) pushUnique(tags, seen, 'nsfw');
     return tags;
 }
 

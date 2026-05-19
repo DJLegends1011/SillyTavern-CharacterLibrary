@@ -277,6 +277,8 @@ Map V2-like source fields directly. Do not fill an empty V2 field from a differe
 
 Do not write import provenance into V2 content fields. Store source URLs, import timestamps, remote stats, listing names, and provider-specific display fields under `data.extensions.<providerId>`.
 
+Do not add the provider's own name as a card tag. Provider identity belongs in `data.extensions.<providerId>` and the link/update metadata.
+
 Do not store volatile stats in comparable card fields. Store volatile stats in provider extension metadata only when the UI needs them.
 
 Do not overwrite local card content during enrichment unless the current import flow fetched that card from the provider. For existing local cards, add provider metadata only after strict matching.
@@ -311,6 +313,7 @@ Add focused tests for:
 - V2 card mapping,
 - private/unlisted/NSFW filtering,
 - provider identity and link metadata,
+- imported tags do not include the provider's own name,
 - stale cache behavior,
 - topbar copied-control HTML,
 - preview modal shell HTML,

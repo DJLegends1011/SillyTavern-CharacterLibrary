@@ -49,7 +49,8 @@ test('buildCharacterCardFromMasquerade maps a public row to V2 card data', async
     assert.equal(card.data.scenario, '');
     assert.equal(card.data.first_mes, sampleRow.greeting);
     assert.deepEqual(card.data.alternate_greetings, ['*She waits in the doorway.*']);
-    assert.deepEqual(card.data.tags, ['video_game', 'female', 'god', 'wise', 'masquerade', 'nsfw']);
+    assert.deepEqual(card.data.tags, ['video_game', 'female', 'god', 'wise', 'nsfw']);
+    assert.equal(card.data.tags.includes('masquerade'), false);
     assert.equal(card.data.creator_notes, '');
     assert.equal(card.data.extensions.masquerade.tagline, sampleRow.tagline);
     assert.match(card.data.extensions.masquerade.sourceUrl, /masqueradeproductions\.org\/character\//);
