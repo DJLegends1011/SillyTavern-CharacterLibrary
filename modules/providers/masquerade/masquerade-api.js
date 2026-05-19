@@ -317,6 +317,14 @@ function maybeDistinct(value, other) {
     return a && a !== b ? a : '';
 }
 
+function withoutTrailingDuplicate(value, duplicate) {
+    const text = String(value || '').trim();
+    const suffix = String(duplicate || '').trim();
+    if (!text || !suffix || !text.endsWith(suffix)) return text;
+
+    return text.slice(0, -suffix.length).trim();
+}
+
 function getCreatorNotes(row) {
     return row.creator_notes || row.creatorNotes || row.author_notes || row.authorNotes || '';
 }
@@ -324,7 +332,7 @@ function getCreatorNotes(row) {
 export function buildCharacterCardFromMasquerade(rawRow = {}) {
     const row = normalizeMasqueradeCharacter(rawRow);
     const description = row.description || '';
-    const personality = row.personality || '';
+    const personality = withoutTrailingDuplicate(row.personality, row.tagline);
     const scenario = maybeDistinct(row.scenario, description);
     const sourceUrl = row.id ? getCharacterPageUrl(row.id) : MASQUERADE_SITE_BASE;
 

@@ -277,6 +277,8 @@ Map V2-like source fields directly. Do not fill an empty V2 field from a differe
 
 Do not write import provenance into V2 content fields. Store source URLs, import timestamps, remote stats, listing names, and provider-specific display fields under `data.extensions.<providerId>`.
 
+Do not copy a website tagline into `data.personality`, `data.description`, `data.scenario`, or `data.creator_notes`. If a source field duplicates or appends the tagline, strip that duplicate and store the tagline only under `data.extensions.<providerId>.tagline`.
+
 Do not add the provider's own name as a card tag. Provider identity belongs in `data.extensions.<providerId>` and the link/update metadata.
 
 Do not store volatile stats in comparable card fields. Store volatile stats in provider extension metadata only when the UI needs them.
@@ -311,6 +313,7 @@ Add focused tests for:
 - ID validation,
 - row normalization,
 - V2 card mapping,
+- tagline/listing blurb is not imported into V2 content fields,
 - private/unlisted/NSFW filtering,
 - provider identity and link metadata,
 - imported tags do not include the provider's own name,

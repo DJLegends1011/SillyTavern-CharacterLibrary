@@ -45,7 +45,7 @@ test('buildCharacterCardFromMasquerade maps a public row to V2 card data', async
     assert.equal(card.spec_version, '2.0');
     assert.equal(card.data.name, sampleRow.name);
     assert.equal(card.data.description, sampleRow.description);
-    assert.equal(card.data.personality, sampleRow.personality);
+    assert.equal(card.data.personality, '');
     assert.equal(card.data.scenario, '');
     assert.equal(card.data.first_mes, sampleRow.greeting);
     assert.deepEqual(card.data.alternate_greetings, ['*She waits in the doorway.*']);
@@ -63,6 +63,19 @@ test('buildCharacterCardFromMasquerade maps a public row to V2 card data', async
     assert.equal(card.data.extensions.masquerade.background_url, sampleRow.background_url);
     assert.equal(card.data.extensions.masquerade.circle_avatar_url, sampleRow.circle_avatar_url);
     assert.ok(card.data.extensions.masquerade.linkedAt);
+});
+
+test('buildCharacterCardFromMasquerade strips duplicated tagline from personality', async () => {
+    const api = await loadApi();
+
+    const card = api.buildCharacterCardFromMasquerade({
+        ...sampleRow,
+        tagline: 'W image gng.',
+        personality: 'A confident and playful warrior who enjoys teasing reactions.\n\nW image gng.',
+    });
+
+    assert.equal(card.data.personality, 'A confident and playful warrior who enjoys teasing reactions.');
+    assert.equal(card.data.extensions.masquerade.tagline, 'W image gng.');
 });
 
 test('buildCharacterCardFromMasquerade preserves distinct V2 description and scenario fields', async () => {
