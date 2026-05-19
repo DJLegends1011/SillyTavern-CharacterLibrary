@@ -883,6 +883,7 @@
                     <p>Paste character URLs below (one per line):</p>
                     <textarea id="importUrlsInput" class="glass-input import-urls-textarea" autocomplete="one-time-code" placeholder="https://chub.ai/characters/author/character-name
 https://jannyai.com/characters/uuid_slug
+https://www.masqueradeproductions.org/character/uuid
 ..."></textarea>
                 </div>
 
@@ -1277,6 +1278,10 @@ https://jannyai.com/characters/uuid_slug
                                 <div class="info-code-item">
                                     <code>wyvern:yes</code> / <code>wyvern:no</code>
                                     <span>Filter by Wyvern link status</span>
+                                </div>
+                                <div class="info-code-item">
+                                    <code>masquerade:yes</code> / <code>mq:no</code>
+                                    <span>Filter by MasqueradeAI link status</span>
                                 </div>
                                 <div class="info-code-item">
                                     <code>dc:yes</code> / <code>dc:no</code>
@@ -2320,6 +2325,35 @@ https://jannyai.com/characters/uuid_slug
                                             <input type="text" class="glass-input provider-exclude-tags-input" id="wyvernExcludeTagsInput" placeholder="Type a tag and press Enter" autocomplete="off">
                                         </div>
                                         <span class="settings-hint">Tags entered here are always excluded from Wyvern browse results.</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </details>
+
+                        <!-- MasqueradeAI provider settings -->
+                        <details class="settings-provider-section" id="settingsMasqueradeSection">
+                            <summary>
+                                <i class="fa-solid fa-masks-theater provider-icon"></i> MasqueradeAI
+                                <i class="fa-solid fa-chevron-right provider-chevron"></i>
+                            </summary>
+                            <div class="settings-provider-body">
+                                <div class="settings-group">
+                                    <div class="settings-group-title"><i class="fa-solid fa-display"></i> Display</div>
+                                    <div class="settings-row">
+                                        <label class="settings-checkbox-label">
+                                            <input type="checkbox" id="settingsShowMasqueradeTagline" checked>
+                                            <span>Show MasqueradeAI tagline in previews</span>
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="settings-group">
+                                    <div class="settings-group-title"><i class="fa-solid fa-ban"></i> Exclude Tags</div>
+                                    <div class="settings-row">
+                                        <div class="provider-exclude-tags-container">
+                                            <div class="provider-exclude-tags-pills" id="masqueradeExcludeTagsPills"></div>
+                                            <input type="text" class="glass-input provider-exclude-tags-input" id="masqueradeExcludeTagsInput" placeholder="Type a tag and press Enter" autocomplete="off">
+                                        </div>
+                                        <span class="settings-hint">Tags entered here are always excluded from MasqueradeAI browse results.</span>
                                     </div>
                                 </div>
                             </div>
