@@ -19,6 +19,7 @@ Before coding, create a draft note for the target provider under `docs/provider-
 - planned files,
 - provider ID, display name, extension key, and URL ID format,
 - copied provider folder and every copied control kept, changed, or removed,
+- copied preview/card-open path and every modal shell class kept, changed, or removed,
 - verification checklist for the provider.
 
 Stop if any required field is unknown. Inspect more or ask the user.
@@ -147,6 +148,9 @@ Preserve the copied provider shape first:
 - custom select initialization,
 - dropdown dismiss wiring,
 - modal listener persistence,
+- card click delegation,
+- preview lookup/cache path,
+- shared preview modal shell,
 - card grid rendering path.
 
 Remove or change a copied control only after the draft note records the exact target-site evidence that the capability does not exist. When a copied capability is not implemented in this pass, render an explicit unavailable state or omit the control with the recorded reason. Do not silently replace the copied shell with a simpler UI.
@@ -227,6 +231,18 @@ Required copied-control audit:
 - If a new provider-specific button class is created, update shared CSS selectors that style equivalent provider buttons.
 - If mobile filter IDs exist in the copied provider, add equivalent IDs or record why the provider is intentionally excluded from mobile settings.
 
+Required preview-open contract:
+
+- `create<Provider>Card()` must render the same clickable card structure as the copied provider.
+- Each card must include the data attribute that the click delegate reads.
+- The click delegate must attach to the current grid after DOM creation.
+- The click delegate must find the clicked character from the rendered result set, lookup map, following list, or detail cache.
+- The preview opener must set selected character state before import buttons can run.
+- `renderModals()` must use the same shared shell family as the copied provider. For current browse providers, this means `modal-overlay hidden` on the overlay and `modal-glass browse-char-modal` on the panel unless the copied provider uses a different documented shell.
+- Open must remove `hidden` from the overlay element that shared CSS controls.
+- Close must add `hidden` back to the same overlay element.
+- Overlay click, close button, mobile back handling, and provider deactivation must all close or clean up the same preview.
+
 Card rules:
 
 - Keep browse cards compact.
@@ -237,6 +253,7 @@ Card rules:
 - Use shared icon button styles for search, refresh, filters, and NSFW controls.
 - Preserve lazy image loading through `observeImages()`.
 - Use the same modal listener persistence pattern as the copied provider. Modal DOM persists across provider switches.
+- Do not declare preview open complete until clicking a real rendered card opens the modal in the browser.
 
 After rendering, compare the new provider against the copied provider in the browser. Fix visible differences unless the draft note records an intentional reason.
 
@@ -290,7 +307,10 @@ Add focused tests for:
 - private/unlisted/NSFW filtering,
 - provider identity and link metadata,
 - stale cache behavior,
+- topbar copied-control HTML,
+- preview modal shell HTML,
 - persistent modal listener behavior,
+- card click lookup behavior when practical,
 - importable module smoke.
 
 Use `node --test` unless the repo defines a different test command.
@@ -323,14 +343,18 @@ Run browser visual QA before merge:
 5. Confirm topbar controls match existing providers.
 6. Confirm search panel matches existing providers.
 7. Confirm cards match existing provider density.
-8. Confirm preview opens.
-9. Confirm preview closes.
-10. Confirm import works.
-11. Confirm imported card shows In Library.
-12. Confirm provider link metadata exists.
-13. Confirm Check for Updates returns sane diffs.
-14. Confirm provider URL import routes to the provider.
-15. Confirm mobile viewport has no overlapping text or controls.
+8. Click a rendered card, not an empty test fixture.
+9. Confirm the preview overlay becomes visible.
+10. Confirm the preview uses the same modal shell as the copied provider.
+11. Confirm the preview shows the clicked card's name/avatar/tags/stats.
+12. Confirm preview closes by close button.
+13. Confirm preview closes by overlay click.
+14. Confirm import works.
+15. Confirm imported card shows In Library.
+16. Confirm provider link metadata exists.
+17. Confirm Check for Updates returns sane diffs.
+18. Confirm provider URL import routes to the provider.
+19. Confirm mobile viewport has no overlapping text or controls.
 
 Do not mark the task complete without recording which checks passed and which checks were not run.
 
