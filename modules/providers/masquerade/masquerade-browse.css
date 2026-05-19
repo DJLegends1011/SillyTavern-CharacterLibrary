@@ -16,8 +16,7 @@
     opacity: 0.65;
 }
 
-#masqueradeCharModal .browse-char-tagline:empty,
-#masqueradeCharModal .browse-rich-text:empty {
+#masqueradeCharModal .scrolling-text:empty {
     display: none;
 }
 

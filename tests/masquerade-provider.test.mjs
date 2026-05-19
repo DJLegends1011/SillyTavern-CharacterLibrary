@@ -51,6 +51,18 @@ test('Masquerade browse view keeps the copied provider topbar controls', async (
     assert.match(html, /id="refreshMasqueradeBtn"/);
 });
 
+test('Masquerade preview modal uses the shared browse modal shell', async () => {
+    const provider = await loadProvider();
+    const html = provider.renderModals();
+
+    assert.match(html, /id="masqueradeCharModal" class="modal-overlay hidden"/);
+    assert.match(html, /class="modal-glass browse-char-modal"/);
+    assert.match(html, /class="modal-header"/);
+    assert.match(html, /class="modal-controls"/);
+    assert.doesNotMatch(html, /class="modal hidden browse-char-modal"/);
+    assert.doesNotMatch(html, /class="modal-content browse-char-content"/);
+});
+
 test('Masquerade preview fetches the requested character instead of reusing stale cache', async () => {
     const provider = await loadProvider();
     const originalFetchMetadata = provider.fetchMetadata;

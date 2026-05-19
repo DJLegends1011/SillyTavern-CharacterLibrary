@@ -364,8 +364,10 @@ function openPreviewModal(char) {
     masqueradeSelectedChar = char;
     const modal = document.getElementById('masqueradeCharModal');
     if (!modal) return;
+    window.resetBrowseSectionCollapseState?.(modal);
 
     const name = char.name || 'Unknown';
+    const creatorName = char.creator_name || char.creatorUsername || char.username || char.author || 'Unknown';
     const avatar = document.getElementById('masqueradeCharAvatar');
     if (avatar) {
         avatar.src = getAvatarUrl(char);
@@ -383,7 +385,11 @@ function openPreviewModal(char) {
     };
 
     setText('masqueradeCharName', name);
-    setText('masqueradeCharTagline', getSetting?.('showMasqueradeTagline') === false ? '' : char.tagline || '');
+    setText('masqueradeCharCreator', creatorName);
+    const tagline = getSetting?.('showMasqueradeTagline') === false ? '' : char.tagline || '';
+    setText('masqueradeCharTagline', tagline);
+    const taglineSection = document.getElementById('masqueradeCharTaglineSection');
+    if (taglineSection) taglineSection.style.display = tagline ? 'flex' : 'none';
     setText('masqueradeCharMessages', formatNumber(char.total_messages || 0));
     setText('masqueradeCharSaved', formatNumber(char.subscriber_count || 0));
     setText('masqueradeCharQuality', formatNumber(char.quality_score || 0));
@@ -861,45 +867,68 @@ class MasqueradeBrowseView extends BrowseView {
 
     renderModals() {
         return `
-            <div id="masqueradeCharModal" class="modal hidden browse-char-modal">
-                <div class="modal-content browse-char-content">
-                    <button id="masqueradeCharClose" class="modal-close" title="Close">
-                        <i class="fa-solid fa-xmark"></i>
-                    </button>
-                    <div class="browse-char-header">
-                        <img id="masqueradeCharAvatar" class="browse-char-avatar" src="/img/ai4.png" alt="">
-                        <div class="browse-char-title">
-                            <h2 id="masqueradeCharName"></h2>
-                            <p id="masqueradeCharTagline" class="browse-char-tagline"></p>
-                            <div id="masqueradeCharTags" class="browse-tags"></div>
+            <div id="masqueradeCharModal" class="modal-overlay hidden">
+                <div class="modal-glass browse-char-modal">
+                    <div class="modal-header">
+                        <div class="browse-char-header-info">
+                            <img id="masqueradeCharAvatar" class="browse-char-avatar" src="/img/ai4.png" alt="">
+                            <div>
+                                <h2 id="masqueradeCharName">Character Name</h2>
+                                <p class="browse-char-meta">
+                                    by <span id="masqueradeCharCreator">Unknown</span>
+                                </p>
+                            </div>
+                        </div>
+                        <div class="modal-controls">
+                            <a id="masqueradeOpenInBrowserBtn" class="action-btn secondary" href="#" target="_blank" rel="noopener" title="Open on MasqueradeAI">
+                                <i class="fa-solid fa-external-link"></i> Open
+                            </a>
+                            <button id="masqueradeImportBtn" class="action-btn primary" title="Import to SillyTavern">
+                                <i class="fa-solid fa-download"></i> Import
+                            </button>
+                            <button class="close-btn" id="masqueradeCharClose">&times;</button>
                         </div>
                     </div>
                     <div class="browse-char-body">
-                        <div class="browse-meta-grid">
-                            <div><i class="fa-solid fa-comments"></i><span id="masqueradeCharMessages">0</span><small>Messages</small></div>
-                            <div><i class="fa-solid fa-bookmark"></i><span id="masqueradeCharSaved">0</span><small>Saved</small></div>
-                            <div><i class="fa-solid fa-star"></i><span id="masqueradeCharQuality">0</span><small>Quality</small></div>
+                        <div class="browse-char-tagline" id="masqueradeCharTaglineSection" style="display: none;">
+                            <i class="fa-solid fa-quote-left"></i>
+                            <div id="masqueradeCharTagline" class="browse-tagline-text"></div>
                         </div>
-                        <section class="browse-section">
-                            <h3>Description</h3>
-                            <div id="masqueradeCharDescription" class="browse-rich-text"></div>
-                        </section>
-                        <section class="browse-section">
-                            <h3>First Message</h3>
-                            <div id="masqueradeCharGreeting" class="browse-rich-text"></div>
-                        </section>
-                        <section class="browse-section">
-                            <h3>Scenario</h3>
-                            <div id="masqueradeCharScenario" class="browse-rich-text"></div>
-                        </section>
-                    </div>
-                    <div class="browse-char-actions">
-                        <a id="masqueradeOpenInBrowserBtn" class="glass-btn" href="#" target="_blank" rel="noopener">
-                            <i class="fa-solid fa-arrow-up-right-from-square"></i> Open
-                        </a>
-                        <button id="masqueradeImportBtn" class="glass-btn primary">
-                            <i class="fa-solid fa-download"></i> Import
-                        </button>
+                        <div class="browse-char-meta-grid">
+                            <div class="browse-char-stats">
+                                <div class="browse-stat">
+                                    <i class="fa-solid fa-comments"></i>
+                                    <span id="masqueradeCharMessages">0</span> messages
+                                </div>
+                                <div class="browse-stat">
+                                    <i class="fa-solid fa-bookmark"></i>
+                                    <span id="masqueradeCharSaved">0</span> saved
+                                </div>
+                                <div class="browse-stat">
+                                    <i class="fa-solid fa-star"></i>
+                                    <span id="masqueradeCharQuality">0</span> quality
+                                </div>
+                            </div>
+                            <div id="masqueradeCharTags" class="browse-char-tags"></div>
+                        </div>
+                        <div class="browse-char-section" id="masqueradeCharDescriptionSection">
+                            <h3 class="browse-section-title" data-section="masqueradeCharDescription" data-label="Description" data-icon="fa-solid fa-scroll" title="Click to expand">
+                                <i class="fa-solid fa-scroll"></i> Description
+                            </h3>
+                            <div id="masqueradeCharDescription" class="scrolling-text"></div>
+                        </div>
+                        <div class="browse-char-section" id="masqueradeCharGreetingSection">
+                            <h3 class="browse-section-title" data-section="masqueradeCharGreeting" data-label="First Message" data-icon="fa-solid fa-message" title="Click to expand">
+                                <i class="fa-solid fa-message"></i> First Message
+                            </h3>
+                            <div id="masqueradeCharGreeting" class="scrolling-text first-message-preview"></div>
+                        </div>
+                        <div class="browse-char-section" id="masqueradeCharScenarioSection">
+                            <h3 class="browse-section-title" data-section="masqueradeCharScenario" data-label="Scenario" data-icon="fa-solid fa-theater-masks" title="Click to expand">
+                                <i class="fa-solid fa-theater-masks"></i> Scenario
+                            </h3>
+                            <div id="masqueradeCharScenario" class="scrolling-text"></div>
+                        </div>
                     </div>
                 </div>
             </div>
