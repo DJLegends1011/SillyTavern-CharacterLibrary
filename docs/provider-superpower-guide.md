@@ -268,9 +268,14 @@ Map source fields deliberately:
 - distinct scenario -> `data.scenario`,
 - first message -> `data.first_mes`,
 - alternate greetings -> `data.alternate_greetings`,
-- website tagline/blurb -> `data.extensions.<providerId>.tagline` or `data.creator_notes`,
+- website tagline/listing blurb -> `data.extensions.<providerId>.tagline`,
+- actual source author notes or creator notes -> `data.creator_notes`,
 - embedded/fetchable lorebook -> `data.character_book`,
 - tags -> normalized string array.
+
+Map V2-like source fields directly. Do not fill an empty V2 field from a different listing field unless the draft note records evidence that the target site uses that field as the canonical value.
+
+Do not write import provenance into V2 content fields. Store source URLs, import timestamps, remote stats, listing names, and provider-specific display fields under `data.extensions.<providerId>`.
 
 Do not store volatile stats in comparable card fields. Store volatile stats in provider extension metadata only when the UI needs them.
 

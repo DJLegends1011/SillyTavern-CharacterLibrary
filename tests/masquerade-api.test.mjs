@@ -50,13 +50,47 @@ test('buildCharacterCardFromMasquerade maps a public row to V2 card data', async
     assert.equal(card.data.first_mes, sampleRow.greeting);
     assert.deepEqual(card.data.alternate_greetings, ['*She waits in the doorway.*']);
     assert.deepEqual(card.data.tags, ['video_game', 'female', 'god', 'wise', 'masquerade', 'nsfw']);
-    assert.match(card.data.creator_notes, /MasqueradeAI/);
+    assert.equal(card.data.creator_notes, '');
+    assert.equal(card.data.extensions.masquerade.tagline, sampleRow.tagline);
+    assert.match(card.data.extensions.masquerade.sourceUrl, /masqueradeproductions\.org\/character\//);
+    assert.doesNotMatch(card.data.creator_notes, /Imported from MasqueradeAI/);
+    assert.doesNotMatch(card.data.creator_notes, /Tagline:/);
+    assert.doesNotMatch(card.data.creator_notes, /Source:/);
     assert.doesNotMatch(card.data.creator_notes, /2707 messages/);
     assert.equal(card.data.extensions.masquerade.id, sampleRow.id);
     assert.equal(card.data.extensions.masquerade.pageName, sampleRow.name);
     assert.equal(card.data.extensions.masquerade.background_url, sampleRow.background_url);
     assert.equal(card.data.extensions.masquerade.circle_avatar_url, sampleRow.circle_avatar_url);
     assert.ok(card.data.extensions.masquerade.linkedAt);
+});
+
+test('buildCharacterCardFromMasquerade preserves distinct V2 description and scenario fields', async () => {
+    const api = await loadApi();
+
+    const card = api.buildCharacterCardFromMasquerade({
+        ...sampleRow,
+        description: 'Visible description field.',
+        scenario: 'Separate scenario field.',
+        personality: '',
+        tagline: 'Listing-only tagline.',
+    });
+
+    assert.equal(card.data.description, 'Visible description field.');
+    assert.equal(card.data.scenario, 'Separate scenario field.');
+    assert.equal(card.data.personality, '');
+    assert.equal(card.data.creator_notes, '');
+    assert.equal(card.data.extensions.masquerade.tagline, 'Listing-only tagline.');
+});
+
+test('buildCharacterCardFromMasquerade uses real creator notes only when supplied by source data', async () => {
+    const api = await loadApi();
+
+    const card = api.buildCharacterCardFromMasquerade({
+        ...sampleRow,
+        creator_notes: 'Actual author notes from the source card.',
+    });
+
+    assert.equal(card.data.creator_notes, 'Actual author notes from the source card.');
 });
 
 test('parseCharacterUrl extracts Masquerade character IDs from supported routes', async () => {

@@ -320,17 +320,14 @@ function maybeDistinct(value, other) {
     return a && a !== b ? a : '';
 }
 
-function buildCreatorNotes(row, sourceUrl) {
-    const lines = ['Imported from MasqueradeAI.'];
-    if (row.tagline) lines.push(`Tagline: ${row.tagline}`);
-    if (sourceUrl) lines.push(`Source: ${sourceUrl}`);
-    return lines.join('\n');
+function getCreatorNotes(row) {
+    return row.creator_notes || row.creatorNotes || row.author_notes || row.authorNotes || '';
 }
 
 export function buildCharacterCardFromMasquerade(rawRow = {}) {
     const row = normalizeMasqueradeCharacter(rawRow);
-    const description = row.description || row.scenario || '';
-    const personality = row.personality || row.tagline || '';
+    const description = row.description || '';
+    const personality = row.personality || '';
     const scenario = maybeDistinct(row.scenario, description);
     const sourceUrl = row.id ? getCharacterPageUrl(row.id) : MASQUERADE_SITE_BASE;
 
@@ -344,7 +341,7 @@ export function buildCharacterCardFromMasquerade(rawRow = {}) {
             scenario,
             first_mes: row.greeting || '',
             mes_example: '',
-            creator_notes: buildCreatorNotes(row, sourceUrl),
+            creator_notes: getCreatorNotes(row),
             system_prompt: '',
             post_history_instructions: '',
             alternate_greetings: Array.isArray(row.alternate_greetings)
