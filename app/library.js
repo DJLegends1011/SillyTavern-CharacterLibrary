@@ -7699,6 +7699,7 @@ const CARD_ASPECT_RATIO = 2 / 3; // width/height for portrait cards
 const GRID_GAP_FALLBACK = 20;
 let cachedGridGap = 0; // Read from CSS computed styles - invalidated on resize
 let _gridMetricsCorrection = false; // recursion guard for fallback self-correction
+const _seenAvatarUrls = new Set(); // populatd as avatars load so rerenders can skip the fade
 
 function getGridGap() {
     if (cachedGridGap > 0) return cachedGridGap;
@@ -8175,12 +8176,15 @@ function createCharacterCard(char) {
     const img = document.createElement('img');
     img.className = 'card-image';
     img.src = imgPath;
-    // Skip the fade-in when the avatar is already decoded in the browser cache;
-    // re-renders (view switch, post-import, post-recovery) won't replay the cascade.
-    if (img.complete && img.naturalWidth > 0) {
+    // Mobile sometimes reports img.complete=false right after src= even on cached avatars, so the Set lets rerenders skip the fade anyway
+    if (_seenAvatarUrls.has(imgPath) || (img.complete && img.naturalWidth > 0)) {
         card.classList.add('loaded');
+        _seenAvatarUrls.add(imgPath);
     } else {
-        img.addEventListener('load', () => card.classList.add('loaded'), { once: true });
+        img.addEventListener('load', () => {
+            _seenAvatarUrls.add(imgPath);
+            card.classList.add('loaded');
+        }, { once: true });
     }
     card.appendChild(img);
     
