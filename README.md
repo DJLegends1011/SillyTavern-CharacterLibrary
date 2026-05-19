@@ -424,6 +424,8 @@ When **Unique Gallery Folders** is enabled, each character's gallery depends on 
 
 The **Online** tab lets you browse, search, and import characters from multiple online sources. Switch between providers using the provider selector dropdown.
 
+> **Provider development:** See [New Provider Superpower Guide](docs/provider-superpower-guide.md) for the agent-friendly workflow for inspecting a target site, choosing the closest existing provider to copy, and deciding when `cl-helper` server plugin support is needed.
+
 All providers share a common set of capabilities:
 - **Browse & search** with filtering and sorting
 - **Infinite scroll** with automatic page loading as you scroll (toggleable per provider)
@@ -440,16 +442,16 @@ Providers with Following support include a **Followed Creators Manager** panel f
 
 ### Provider Feature Matrix
 
-| Feature | ChubAI | JanitorAI | CharacterTavern | Pygmalion | Wyvern | DataCat |
-|---------|--------|-----------|-----------------|-----------|--------|----------|
-| Browse & Search | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Card Updates | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Character Linking | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Gallery Downloads | ✅ | -- | -- | ✅ | ✅ | -- |
-| Remote Version History | ✅ | -- | -- | -- | -- | -- |
-| Following / Timeline | ✅ | -- | -- | ✅ | ✅ | ✅ |
-| Favorites | ✅ | -- | -- | -- | -- | -- |
-| Auth Required | Optional | None | Optional | Optional | Optional | None |
+| Feature | ChubAI | JanitorAI | CharacterTavern | Pygmalion | Wyvern | MasqueradeAI | DataCat |
+|---------|--------|-----------|-----------------|-----------|--------|--------------|----------|
+| Browse & Search | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Card Updates | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Character Linking | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Gallery Downloads | ✅ | -- | -- | ✅ | ✅ | ✅ | -- |
+| Remote Version History | ✅ | -- | -- | -- | -- | -- | -- |
+| Following / Timeline | ✅ | -- | -- | ✅ | ✅ | -- | ✅ |
+| Favorites | ✅ | -- | -- | -- | -- | -- | -- |
+| Auth Required | Optional | None | Optional | Optional | Optional | None | None |
 
 <details>
 <summary><h3>ChubAI</h3></summary>
@@ -565,6 +567,22 @@ CharacterTavern requires a session cookie for NSFW content. To set it up:
 1. When you enable NSFW or access a login-required feature, a login modal will appear
 2. Enter your Wyvern email and password (or set them in Settings)
 3. *(Optional)* Check "Remember credentials" for auto-refresh
+
+</details>
+
+<details>
+<summary><h3>MasqueradeAI</h3></summary>
+
+**Auth:** None required for public browsing and imports.
+
+- Browse and search public MasqueradeAI characters
+- Sort by popularity, newest, quality, saved count, and active chatters
+- Optional NSFW toggle
+- In-app character preview with description, first message, tags, and stats
+- Character linking and card updates through Masquerade UUIDs
+- Gallery downloads for distinct background and circle avatar images
+
+Account-backed saved characters and followed creators are planned as a later phase if browser-side Supabase auth proves reliable in the extension.
 
 </details>
 

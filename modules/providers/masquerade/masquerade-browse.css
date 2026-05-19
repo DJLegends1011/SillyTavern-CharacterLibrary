@@ -1,0 +1,88 @@
+/* MasqueradeAI provider polish. Shared browse layout lives in browse-shared.css. */
+
+.masquerade-provider-root {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.masquerade-search-row {
+    display: grid;
+    grid-template-columns: minmax(180px, 1fr) auto auto;
+    gap: 8px;
+    align-items: center;
+}
+
+.masquerade-search-input-wrap {
+    position: relative;
+    min-width: 0;
+}
+
+.masquerade-search-input-wrap i {
+    position: absolute;
+    left: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--text-muted);
+    pointer-events: none;
+}
+
+#masqueradeSearchInput {
+    width: 100%;
+    min-width: 0;
+    height: 36px;
+    padding: 0 12px 0 36px;
+    border: 1px solid var(--glass-border);
+    border-radius: 8px;
+    background: var(--SmartThemeBlurTintColor);
+    color: var(--SmartThemeBodyColor);
+}
+
+#masqueradeSearchInput:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+.masquerade-nsfw-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 36px;
+    padding: 0 10px;
+    white-space: nowrap;
+}
+
+.masquerade-empty {
+    min-height: 220px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    color: var(--text-muted);
+    text-align: center;
+}
+
+.masquerade-empty i {
+    font-size: 2rem;
+    opacity: 0.65;
+}
+
+#masqueradeCharModal .browse-char-tagline:empty,
+#masqueradeCharModal .browse-rich-text:empty {
+    display: none;
+}
+
+@media (max-width: 640px) {
+    .masquerade-search-row {
+        grid-template-columns: 1fr auto;
+    }
+
+    #masqueradeSearchBtn {
+        min-width: 44px;
+    }
+
+    #masqueradeSearchBtn span {
+        display: none;
+    }
+}
