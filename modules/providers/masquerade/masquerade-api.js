@@ -72,12 +72,13 @@ const MASQUERADE_FIELDS = [
 export const MASQUERADE_SELECT = MASQUERADE_FIELDS.join(',');
 
 export const MASQUERADE_SORT_OPTIONS = {
-    popular: { label: 'Popular', order: 'total_messages.desc.nullslast' },
-    newest: { label: 'Newest', order: 'created_at.desc' },
-    quality: { label: 'Quality', order: 'quality_score.desc.nullslast' },
-    subscribers: { label: 'Most Saved', order: 'subscriber_count.desc.nullslast' },
-    chatters: { label: 'Most Chatters', order: 'unique_chatters.desc.nullslast' },
+    popular: { label: 'Popular', order: 'total_messages.desc.nullslast,id.desc', websiteRanked: true },
+    new: { label: 'New', order: 'created_at.desc,id.desc', websiteRanked: false },
+    amplified: { label: 'Amplified', order: 'total_messages.desc.nullslast,id.desc', websiteRanked: true },
+    shuffle: { label: 'Shuffle', order: 'total_messages.desc.nullslast,id.desc', websiteRanked: true },
 };
+
+const WEBSITE_RANKED_LIMIT = 1000;
 
 let _getSetting = null;
 let _debugLog = null;
@@ -109,6 +110,15 @@ function buildRestUrl(table, params = {}) {
         if (value != null && value !== '') url.searchParams.set(key, String(value));
     }
     return url.toString();
+}
+
+export function normalizeMasqueradeSort(sort) {
+    if (sort === 'newest') return 'new';
+    return MASQUERADE_SORT_OPTIONS[sort] ? sort : 'popular';
+}
+
+export function isMasqueradePagedSort(sort) {
+    return !MASQUERADE_SORT_OPTIONS[normalizeMasqueradeSort(sort)]?.websiteRanked;
 }
 
 async function fetchJson(url, options = {}) {
@@ -162,21 +172,27 @@ export async function browseMasqueradeCharacters(opts = {}) {
         nsfw = false,
         excludeTags = [],
     } = opts;
-    const offset = Math.max(0, (Number(page) - 1) * Number(limit));
+    const normalizedSort = normalizeMasqueradeSort(sort);
+    const sortConfig = MASQUERADE_SORT_OPTIONS[normalizedSort] || MASQUERADE_SORT_OPTIONS.popular;
+    const fetchLimit = sortConfig.websiteRanked ? WEBSITE_RANKED_LIMIT : Number(limit);
+    const offset = sortConfig.websiteRanked ? 0 : Math.max(0, (Number(page) - 1) * Number(limit));
     const params = {
         select: MASQUERADE_SELECT,
         is_public: 'eq.true',
         is_unlisted: 'neq.true',
         force_private: 'neq.true',
         is_obliterated: 'neq.true',
-        order: MASQUERADE_SORT_OPTIONS[sort]?.order || MASQUERADE_SORT_OPTIONS.popular.order,
-        limit,
+        order: sortConfig.order,
+        limit: fetchLimit,
         offset,
     };
     if (!nsfw) params.is_nsfw = 'neq.true';
 
     const rows = await fetchJson(buildRestUrl('characters', params), { headers: getMasqueradeHeaders(false) });
-    return filterAndNormalizeRows(rows, { nsfw, excludeTags });
+    return sortMasqueradeCharactersForBrowse(filterAndNormalizeRows(rows, { nsfw, excludeTags }), {
+        sort: normalizedSort,
+        nsfw,
+    });
 }
 
 export async function searchMasqueradeCharacters(opts = {}) {
@@ -221,6 +237,50 @@ function filterAndNormalizeRows(rows, options = {}) {
         .filter(isMasqueradeCharacterBrowsable)
         .filter(row => options.nsfw || row.is_nsfw !== true)
         .filter(row => !row.tags.some(tag => excludeTags.has(normalizeTag(tag))));
+}
+
+export function getMasqueradePopularityScore(row = {}, options = {}) {
+    const quality = (Number(row.quality_score) || 0) / 100;
+    const uniqueChatters = Number(row.unique_chatters) || 0;
+    const totalMessages = Number(row.total_messages) || 0;
+
+    const engagementScore = uniqueChatters >= 3
+        ? Math.min((totalMessages / uniqueChatters) / 500, 1)
+        : 0;
+    const messageScore = totalMessages > 0
+        ? Math.min(Math.log10(totalMessages) / 5, 1)
+        : 0;
+
+    return (0.45 * quality)
+        + (0.45 * engagementScore)
+        + (0.1 * messageScore)
+        + (row.is_amplified ? 0.1 : 0)
+        + (options.nsfw && row.is_nsfw ? 0.5 * quality : 0);
+}
+
+export function sortMasqueradeCharactersForBrowse(rows = [], options = {}) {
+    const sort = normalizeMasqueradeSort(options.sort);
+    const indexed = (Array.isArray(rows) ? rows : []).map((row, index) => ({ row, index }));
+
+    if (sort === 'popular') {
+        indexed.sort((a, b) => {
+            const delta = getMasqueradePopularityScore(b.row, options) - getMasqueradePopularityScore(a.row, options);
+            return delta || a.index - b.index;
+        });
+    } else if (sort === 'amplified') {
+        indexed.sort((a, b) => {
+            const amplifiedDelta = Number(!!b.row.is_amplified) - Number(!!a.row.is_amplified);
+            const messageDelta = (Number(b.row.total_messages) || 0) - (Number(a.row.total_messages) || 0);
+            return amplifiedDelta || messageDelta || a.index - b.index;
+        });
+    } else if (sort === 'shuffle') {
+        for (let i = indexed.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [indexed[i], indexed[j]] = [indexed[j], indexed[i]];
+        }
+    }
+
+    return indexed.map(item => item.row);
 }
 
 function normalizeTag(tag) {

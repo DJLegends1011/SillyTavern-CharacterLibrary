@@ -576,8 +576,8 @@ CharacterTavern requires a session cookie for NSFW content. To set it up:
 **Auth:** None required for public browsing and imports.
 
 - Browse and search public MasqueradeAI characters
-- Sort by popularity, newest, quality, saved count, and active chatters
-- Optional NSFW toggle
+- Sort by the same public modes as the website: Popular, New, Amplified, and Shuffle
+- Optional NSFW/"Going Feral" toggle
 - In-app character preview with description, first message, tags, and stats
 - Character linking and card updates through Masquerade UUIDs
 - Gallery downloads for distinct background and circle avatar images

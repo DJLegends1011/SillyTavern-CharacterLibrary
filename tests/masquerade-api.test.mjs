@@ -133,6 +133,56 @@ test('normalizeMasqueradeCharacter returns stable browse fields and gallery cand
     assert.deepEqual(normalized.galleryUrls, [sampleRow.background_url]);
 });
 
+test('sortMasqueradeCharactersForBrowse matches the website popular scoring', async () => {
+    const api = await loadApi();
+
+    const rawMessageLeader = {
+        ...sampleRow,
+        id: SAMPLE_UUID,
+        name: 'Raw message leader',
+        total_messages: 5000,
+        unique_chatters: 1,
+        quality_score: 0,
+        is_amplified: false,
+    };
+    const webPopularLeader = {
+        ...sampleRow,
+        id: 'c5f25770-af64-452d-9983-16676d1f47fe',
+        name: 'Website popular leader',
+        total_messages: 1000,
+        unique_chatters: 10,
+        quality_score: 100,
+        is_amplified: true,
+    };
+
+    const sorted = api.sortMasqueradeCharactersForBrowse([rawMessageLeader, webPopularLeader], {
+        sort: 'popular',
+        nsfw: false,
+    });
+
+    assert.equal(sorted[0].id, webPopularLeader.id);
+    assert.ok(
+        api.getMasqueradePopularityScore(webPopularLeader) > api.getMasqueradePopularityScore(rawMessageLeader),
+    );
+});
+
+test('Masquerade popular scoring boosts explicit rows only when feral mode is enabled', async () => {
+    const api = await loadApi();
+
+    const explicitRow = {
+        ...sampleRow,
+        is_nsfw: true,
+        quality_score: 80,
+        total_messages: 100,
+        unique_chatters: 10,
+    };
+
+    assert.ok(
+        api.getMasqueradePopularityScore(explicitRow, { nsfw: true })
+            > api.getMasqueradePopularityScore(explicitRow, { nsfw: false }),
+    );
+});
+
 test('visibility helpers reject force-private Masquerade rows', async () => {
     const api = await loadApi();
 

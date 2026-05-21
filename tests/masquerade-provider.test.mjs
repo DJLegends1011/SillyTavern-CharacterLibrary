@@ -51,6 +51,19 @@ test('Masquerade browse view keeps the copied provider topbar controls', async (
     assert.match(html, /id="refreshMasqueradeBtn"/);
 });
 
+test('Masquerade browse sort controls match the current website controls', async () => {
+    const provider = await loadProvider();
+    const html = provider.renderFilterBar();
+
+    assert.match(html, /<option value="popular" selected>.*Popular<\/option>/);
+    assert.match(html, /<option value="new">.*New<\/option>/);
+    assert.match(html, /<option value="amplified">.*Amplified<\/option>/);
+    assert.match(html, /<option value="shuffle">.*Shuffle<\/option>/);
+    assert.doesNotMatch(html, /<option value="quality">/);
+    assert.doesNotMatch(html, /<option value="subscribers">/);
+    assert.doesNotMatch(html, /<option value="chatters">/);
+});
+
 test('Masquerade preview modal uses the shared browse modal shell', async () => {
     const provider = await loadProvider();
     const html = provider.renderModals();
