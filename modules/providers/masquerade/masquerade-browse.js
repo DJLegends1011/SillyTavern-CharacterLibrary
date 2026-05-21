@@ -5,6 +5,7 @@ import CoreAPI from '../../core-api.js';
 import { IMG_PLACEHOLDER, formatNumber } from '../provider-utils.js';
 import {
     MASQUERADE_SORT_OPTIONS,
+    isMasqueradePagedSort,
     browseMasqueradeCharacters,
     searchMasqueradeCharacters,
     fetchMasqueradeMetadata,
@@ -202,7 +203,7 @@ function updateMasqueradeNsfwToggle() {
     btn.classList.toggle('active', masqueradeNsfwEnabled);
     if (masqueradeNsfwEnabled) {
         btn.style.opacity = '1';
-        btn.innerHTML = '<i class="fa-solid fa-fire"></i> <span>NSFW On</span>';
+        btn.innerHTML = '<i class="fa-solid fa-fire"></i> <span>Feral On</span>';
     } else {
         btn.style.opacity = '0.5';
         btn.innerHTML = '<i class="fa-solid fa-shield-halved"></i> <span>SFW Only</span>';
@@ -333,7 +334,9 @@ async function loadMasqueradeCharacters(append = false) {
         }
 
         extractMasqueradeTagsFromResults(results);
-        masqueradeHasMore = !masqueradeCurrentSearch && results.length >= PAGE_SIZE;
+        masqueradeHasMore = !masqueradeCurrentSearch
+            && isMasqueradePagedSort(masqueradeCurrentSort)
+            && results.length >= PAGE_SIZE;
         renderGrid(masqueradeCharacters, append);
         if (!append && masqueradeCharacters.length === 0) renderEmpty('No characters found');
         debugLog?.('[MasqueradeBrowse] Loaded', results.length, 'characters');
@@ -793,10 +796,9 @@ class MasqueradeBrowseView extends BrowseView {
             <div class="browse-sort-container">
                 <select id="masqueradeSortSelect" class="glass-select" title="Sort characters">
                     <option value="popular" selected>&#128293; Popular</option>
-                    <option value="newest">&#127381; Newest</option>
-                    <option value="quality">&#11088; Quality</option>
-                    <option value="subscribers">&#128150; Most Saved</option>
-                    <option value="chatters">&#128172; Most Chatters</option>
+                    <option value="new">&#127381; New</option>
+                    <option value="amplified">&#9889; Amplified</option>
+                    <option value="shuffle">&#127922; Shuffle</option>
                 </select>
             </div>
 
@@ -831,7 +833,7 @@ class MasqueradeBrowseView extends BrowseView {
                 </div>
             </div>
 
-            <button id="masqueradeNsfwToggle" class="glass-btn nsfw-toggle" style="opacity: 0.5;" title="Toggle NSFW content">
+            <button id="masqueradeNsfwToggle" class="glass-btn nsfw-toggle" style="opacity: 0.5;" title="Toggle Going Feral (NSFW) content">
                 <i class="fa-solid fa-shield-halved"></i> <span>SFW Only</span>
             </button>
             <button id="refreshMasqueradeBtn" class="glass-btn icon-only" title="Refresh">
@@ -1058,10 +1060,11 @@ class MasqueradeBrowseView extends BrowseView {
     }
 
     applyDefaults(defaults) {
-        if (defaults?.sort && MASQUERADE_SORT_OPTIONS[defaults.sort]) {
-            masqueradeCurrentSort = defaults.sort;
+        const sort = defaults?.sort === 'newest' ? 'new' : defaults?.sort;
+        if (sort && MASQUERADE_SORT_OPTIONS[sort]) {
+            masqueradeCurrentSort = sort;
             const select = document.getElementById('masqueradeSortSelect');
-            if (select) select.value = defaults.sort;
+            if (select) select.value = sort;
         }
     }
 

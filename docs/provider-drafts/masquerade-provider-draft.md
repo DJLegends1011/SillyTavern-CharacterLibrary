@@ -66,6 +66,7 @@ Do not add `cl-helper` at first because:
 - Supabase REST/RPC responds with usable CORS headers.
 - The backend catalog endpoint has `Access-Control-Allow-Origin: *`.
 - No Cloudflare challenge page appeared on public data routes.
+- The site's current "Going Feral?" 18+ toggle is local browser state, not a server auth gate. It flips the public Supabase query from SFW-only to NSFW-inclusive and changes the local popular score.
 
 Add optional `cl-helper` support only if one of these becomes true:
 
@@ -104,8 +105,10 @@ Suggested provider identity:
 Browse:
 
 1. Query Supabase `characters` directly with `is_public=eq.true`, `is_unlisted=neq.true`, and a stable limit/range.
-2. Default sort can be `total_messages.desc`, with options for newest, quality, subscribers, and possibly NSFW-inclusive popular.
-3. Use the backend `/api/characters` endpoint as a fallback or lightweight browse source only.
+2. Mirror the website sort controls: Popular, New, Amplified, and Shuffle.
+3. For Popular, Amplified, and Shuffle, fetch the top 1000 public rows by `total_messages.desc,id.desc`, then sort locally like the website. Popular uses `quality_score`, messages-per-chatter, log message count, amplified status, and an extra NSFW quality boost only when the NSFW/"Going Feral" toggle is enabled.
+4. For New, page by `created_at.desc,id.desc`.
+5. Use the backend `/api/characters` endpoint as a fallback or lightweight browse source only.
 
 Search:
 
@@ -223,7 +226,7 @@ Preferred auth path:
 - Open Online tab and switch to MasqueradeAI.
 - Browse public characters without `cl-helper`.
 - Search a known name through `search_characters_fuzzy`.
-- Toggle NSFW filtering and confirm results change.
+- Toggle NSFW/"Going Feral" filtering and confirm explicit rows appear and the popular order changes.
 - Open preview and confirm full description/greeting are present.
 - Import a character and confirm the PNG card opens in SillyTavern.
 - Confirm `data.extensions.masquerade` has the UUID and source URL data.
@@ -243,4 +246,4 @@ Preferred auth path:
 
 Build MasqueradeAI as a Wyvern-style browser-only provider first.
 
-The first useful provider should support public browse, search, preview, import, linking, update checks, and optional extra gallery images. Account sync can follow after that, using Chub as the feature model but Supabase auth as the network model.
+The first useful provider should support public browse, search, preview, import, linking, update checks, optional extra gallery images, and website-matched public sort behavior. Account sync can follow after that, using Chub as the feature model but Supabase auth as the network model.
