@@ -18,6 +18,8 @@ Before coding, create a draft note for the target provider under `docs/provider-
 - server-plugin decision and why,
 - planned files,
 - provider ID, display name, extension key, and URL ID format,
+- user-facing stat labels and the source fields behind them,
+- internal-only ranking or quality fields that must not appear in UI,
 - copied provider folder and every copied control kept, changed, or removed,
 - copied preview/card-open path and every modal shell class kept, changed, or removed,
 - verification checklist for the provider.
@@ -253,9 +255,11 @@ Card rules:
 - Use shared icon button styles for search, refresh, filters, and NSFW controls.
 - Preserve lazy image loading through `observeImages()`.
 - Use the same modal listener persistence pattern as the copied provider. Modal DOM persists across provider switches.
+- Use the website's visible metric names for preview and link stats. If the API exposes internal fields such as quality, rank, score, weight, recommendation, or boost values, keep them internal to sorting or provider extension metadata unless the website displays that metric to normal users.
+- When replacing copied provider stat slots, update the icon, label, and value source together. Do not leave a copied label connected to a different source field, and do not expose internal ranking fields because a copied provider had an empty stat slot.
 - Do not declare preview open complete until clicking a real rendered card opens the modal in the browser.
 
-After rendering, compare the new provider against the copied provider in the browser. Fix visible differences unless the draft note records an intentional reason.
+After rendering, compare the new provider against the copied baseline provider in the browser. Topbar controls, card density, preview shell, stat row spacing, action buttons, and close behavior should look like the baseline provider unless the draft note records an intentional target-site reason.
 
 ## Phase 8: Card Data Mapping
 
@@ -284,6 +288,8 @@ Do not add the provider's own name as a card tag. Provider identity belongs in `
 Do not store volatile stats in comparable card fields. Store volatile stats in provider extension metadata only when the UI needs them.
 
 Do not overwrite local card content during enrichment unless the current import flow fetched that card from the provider. For existing local cards, add provider metadata only after strict matching.
+
+For provider stat displays, map source fields by user-facing meaning instead of column name. Prefer the labels shown on a normal source character page. Keep ranking-only fields in API helpers or extension metadata; they can influence browse ordering but should not become card preview stats, link stat labels, creator notes, or imported tags.
 
 ## Phase 9: Account Sync
 
@@ -358,14 +364,15 @@ Run browser visual QA before merge:
 9. Confirm the preview overlay becomes visible.
 10. Confirm the preview uses the same modal shell as the copied provider.
 11. Confirm the preview shows the clicked card's name/avatar/tags/stats.
-12. Confirm preview closes by close button.
-13. Confirm preview closes by overlay click.
-14. Confirm import works.
-15. Confirm imported card shows In Library.
-16. Confirm provider link metadata exists.
-17. Confirm Check for Updates returns sane diffs.
-18. Confirm provider URL import routes to the provider.
-19. Confirm mobile viewport has no overlapping text or controls.
+12. Confirm preview stats use website-visible labels and do not expose internal ranking fields.
+13. Confirm preview closes by close button.
+14. Confirm preview closes by overlay click.
+15. Confirm import works.
+16. Confirm imported card shows In Library.
+17. Confirm provider link metadata exists.
+18. Confirm Check for Updates returns sane diffs.
+19. Confirm provider URL import routes to the provider.
+20. Confirm mobile viewport has no overlapping text or controls.
 
 Do not mark the task complete without recording which checks passed and which checks were not run.
 
