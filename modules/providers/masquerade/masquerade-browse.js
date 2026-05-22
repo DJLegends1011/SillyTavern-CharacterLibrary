@@ -249,7 +249,7 @@ function createMasqueradeCard(char) {
             </div>
             <div class="browse-card-footer">
                 <span class="browse-card-stat" title="Messages"><i class="fa-solid fa-message"></i> ${formatNumber(char.total_messages || 0)}</span>
-                <span class="browse-card-stat" title="Saved"><i class="fa-solid fa-bookmark"></i> ${formatNumber(char.subscriber_count || 0)}</span>
+                <span class="browse-card-stat" title="Fans"><i class="fa-solid fa-bookmark"></i> ${formatNumber(char.subscriber_count || 0)}</span>
                 ${createdDate ? `<span class="browse-card-date"><i class="fa-solid fa-clock"></i> ${esc(createdDate)}</span>` : ''}
             </div>
         </div>
@@ -394,8 +394,8 @@ function openPreviewModal(char) {
     const taglineSection = document.getElementById('masqueradeCharTaglineSection');
     if (taglineSection) taglineSection.style.display = tagline ? 'flex' : 'none';
     setText('masqueradeCharMessages', formatNumber(char.total_messages || 0));
-    setText('masqueradeCharSaved', formatNumber(char.subscriber_count || 0));
-    setText('masqueradeCharQuality', formatNumber(char.quality_score || 0));
+    setText('masqueradeCharUsers', formatNumber(char.unique_chatters || 0));
+    setText('masqueradeCharFans', formatNumber(char.subscriber_count || 0));
     setHtml('masqueradeCharDescription', richText(char.description || char.scenario || '', name));
     setHtml('masqueradeCharGreeting', richText(char.greeting || '', name));
     setHtml('masqueradeCharScenario', char.scenario && char.scenario !== char.description ? richText(char.scenario, name) : '');
@@ -899,16 +899,16 @@ class MasqueradeBrowseView extends BrowseView {
                         <div class="browse-char-meta-grid">
                             <div class="browse-char-stats">
                                 <div class="browse-stat">
-                                    <i class="fa-solid fa-comments"></i>
+                                    <i class="fa-solid fa-message"></i>
                                     <span id="masqueradeCharMessages">0</span> messages
                                 </div>
                                 <div class="browse-stat">
-                                    <i class="fa-solid fa-bookmark"></i>
-                                    <span id="masqueradeCharSaved">0</span> saved
+                                    <i class="fa-solid fa-users"></i>
+                                    <span id="masqueradeCharUsers">0</span> users
                                 </div>
                                 <div class="browse-stat">
-                                    <i class="fa-solid fa-star"></i>
-                                    <span id="masqueradeCharQuality">0</span> quality
+                                    <i class="fa-solid fa-heart"></i>
+                                    <span id="masqueradeCharFans">0</span> fans
                                 </div>
                             </div>
                             <div id="masqueradeCharTags" class="browse-char-tags"></div>

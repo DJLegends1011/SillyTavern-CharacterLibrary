@@ -76,6 +76,48 @@ test('Masquerade preview modal uses the shared browse modal shell', async () => 
     assert.doesNotMatch(html, /class="modal-content browse-char-content"/);
 });
 
+test('Masquerade preview modal shows website-visible stats only', async () => {
+    const provider = await loadProvider();
+    const html = provider.renderModals();
+
+    assert.match(html, /id="masqueradeCharMessages"[^>]*>0<\/span> messages/);
+    assert.match(html, /id="masqueradeCharUsers"[^>]*>0<\/span> users/);
+    assert.match(html, /id="masqueradeCharFans"[^>]*>0<\/span> fans/);
+    assert.doesNotMatch(html, /masqueradeCharSaved/);
+    assert.doesNotMatch(html, /masqueradeCharQuality/);
+    assert.doesNotMatch(html, />\s*saved\s*</);
+    assert.doesNotMatch(html, />\s*quality\s*</);
+});
+
+test('Masquerade link stats match the website-visible message user and fan counts', async () => {
+    const provider = await loadProvider();
+    const originalFetchMetadata = provider.fetchMetadata;
+
+    assert.deepEqual(provider.linkStatFields, {
+        stat1: { icon: 'fa-solid fa-message', label: 'Messages' },
+        stat2: { icon: 'fa-solid fa-users', label: 'Users' },
+        stat3: { icon: 'fa-solid fa-heart', label: 'Fans' },
+    });
+
+    provider.fetchMetadata = async id => ({
+        id,
+        total_messages: 12,
+        unique_chatters: 3,
+        subscriber_count: 4,
+        quality_score: 95,
+    });
+    try {
+        assert.deepEqual(await provider.fetchLinkStats({ id: SAMPLE_UUID, fullPath: SAMPLE_UUID }), {
+            stat1: 12,
+            stat2: 3,
+            stat3: 4,
+        });
+    } finally {
+        provider.fetchMetadata = originalFetchMetadata;
+        provider.clearCachedLinkNode();
+    }
+});
+
 test('Masquerade preview fetches the requested character instead of reusing stale cache', async () => {
     const provider = await loadProvider();
     const originalFetchMetadata = provider.fetchMetadata;

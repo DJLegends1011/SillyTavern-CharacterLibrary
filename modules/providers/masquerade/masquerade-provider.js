@@ -37,9 +37,9 @@ class MasqueradeProvider extends ProviderBase {
 
     get linkStatFields() {
         return {
-            stat1: { icon: 'fa-solid fa-comments', label: 'Messages' },
-            stat2: { icon: 'fa-solid fa-bookmark', label: 'Saved' },
-            stat3: { icon: 'fa-solid fa-star', label: 'Quality' },
+            stat1: { icon: 'fa-solid fa-message', label: 'Messages' },
+            stat2: { icon: 'fa-solid fa-users', label: 'Users' },
+            stat3: { icon: 'fa-solid fa-heart', label: 'Fans' },
         };
     }
 
@@ -180,8 +180,8 @@ class MasqueradeProvider extends ProviderBase {
             _cachedLinkNode = node;
             return {
                 stat1: node.total_messages || 0,
-                stat2: node.subscriber_count || 0,
-                stat3: node.quality_score || 0,
+                stat2: node.unique_chatters || 0,
+                stat3: node.subscriber_count || 0,
             };
         } catch (error) {
             api?.debugLog?.('[MasqueradeProvider] fetchLinkStats:', error.message);
