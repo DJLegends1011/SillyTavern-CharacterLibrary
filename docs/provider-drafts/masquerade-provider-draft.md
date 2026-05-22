@@ -106,9 +106,10 @@ Browse:
 
 1. Query Supabase `characters` directly with `is_public=eq.true`, `is_unlisted=neq.true`, and a stable limit/range.
 2. Mirror the website sort controls: Popular, New, Amplified, and Shuffle.
-3. For Popular, Amplified, and Shuffle, fetch the top 1000 public rows by `total_messages.desc,id.desc`, then sort locally like the website. Popular uses `quality_score`, messages-per-chatter, log message count, amplified status, and an extra NSFW quality boost only when the NSFW/"Going Feral" toggle is enabled.
+3. For Popular, Amplified, and Shuffle, fetch the top 1000 public rows by `total_messages.desc,id.desc`, then sort locally like the website. Popular uses `quality_score`, messages-per-chatter, log message count, amplified status, and an extra NSFW quality boost only when the NSFW/"Going Feral" toggle is enabled. Keep `quality_score` internal to sorting/import metadata; do not expose it as a user-facing stat.
 4. For New, page by `created_at.desc,id.desc`.
-5. Use the backend `/api/characters` endpoint as a fallback or lightweight browse source only.
+5. Show public stats with the website labels: messages from `total_messages`, users from `unique_chatters`, and fans from `subscriber_count`.
+6. Use the backend `/api/characters` endpoint as a fallback or lightweight browse source only.
 
 Search:
 
@@ -142,13 +143,13 @@ Update check:
 Recommended first mapping:
 
 - `data.name`: `row.name`
-- `data.description`: `row.description || row.scenario || ''`
-- `data.personality`: `row.personality || row.tagline || ''`
+- `data.description`: `row.description || ''`
+- `data.personality`: `row.personality` with any trailing duplicate tagline stripped
 - `data.scenario`: `row.scenario` only when it differs from `row.description`
 - `data.first_mes`: `row.greeting || ''`
 - `data.alternate_greetings`: `row.alternate_greetings || []`
-- `data.tags`: combine `origin_tag`, `identity_tags`, `personality_tags`, plus `masquerade` and `nsfw` when applicable
-- `data.creator_notes`: short provider note with source URL, tagline, and stats
+- `data.tags`: combine `origin_tag`, `identity_tags`, `personality_tags`, plus `nsfw` when applicable
+- `data.creator_notes`: preserve real source creator notes only; do not synthesize provider notes or stats
 
 Provider metadata:
 
