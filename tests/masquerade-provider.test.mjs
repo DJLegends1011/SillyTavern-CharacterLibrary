@@ -176,10 +176,39 @@ test('Masquerade preview fetches the requested character instead of reusing stal
     }
 });
 
-test('Masquerade browse view binds persistent modal listeners only once', async () => {
+test('Masquerade browse import shows summary for gallery-only cards and binds modal listeners once', async () => {
     const provider = await loadProvider();
+    const registry = await import('../modules/providers/provider-registry.js');
     const oldDocument = globalThis.document;
     const oldWindow = globalThis.window;
+    const oldRequestAnimationFrame = globalThis.requestAnimationFrame;
+    const openPreview = globalThis.window?.openMasqueradeCharPreview;
+    const originalImportCharacter = provider.importCharacter;
+
+    class FakeClassList {
+        constructor() {
+            this.values = new Set();
+        }
+
+        add(...classes) {
+            for (const cls of classes) this.values.add(cls);
+        }
+
+        remove(...classes) {
+            for (const cls of classes) this.values.delete(cls);
+        }
+
+        toggle(cls, force) {
+            const shouldAdd = force ?? !this.values.has(cls);
+            if (shouldAdd) this.values.add(cls);
+            else this.values.delete(cls);
+            return shouldAdd;
+        }
+
+        contains(cls) {
+            return this.values.has(cls);
+        }
+    }
 
     class FakeElement {
         constructor(id) {
@@ -187,12 +216,28 @@ test('Masquerade browse view binds persistent modal listeners only once', async 
             this.listeners = {};
             this.dataset = {};
             this.style = {};
-            this.classList = { add() {}, remove() {}, toggle() {} };
+            this.classList = new FakeClassList();
         }
 
         addEventListener(event, handler) {
             this.listeners[event] ||= [];
             this.listeners[event].push(handler);
+        }
+
+        removeEventListener(event, handler) {
+            this.listeners[event] = (this.listeners[event] || []).filter(fn => fn !== handler);
+        }
+
+        async dispatch(event, payload = {}) {
+            for (const handler of this.listeners[event] || []) {
+                await handler({
+                    target: this,
+                    currentTarget: this,
+                    stopPropagation() {},
+                    preventDefault() {},
+                    ...payload,
+                });
+            }
         }
 
         querySelector() { return null; }
@@ -203,13 +248,49 @@ test('Masquerade browse view binds persistent modal listeners only once', async 
         if (!elements.has(id)) elements.set(id, new FakeElement(id));
         return elements.get(id);
     };
+    const shownSummaries = [];
+    const toasts = [];
+    provider.importCharacter = async () => ({
+        success: true,
+        characterName: 'Lucoa & Lucow (Astrodragon)',
+        fileName: 'masquerade_lucoa.png',
+        avatarUrl: 'https://example.test/avatar.png',
+        hasGallery: true,
+        providerCharId: SAMPLE_UUID,
+        fullPath: SAMPLE_UUID,
+        galleryId: 'gallery-lucoa',
+        embeddedMediaUrls: [],
+        galleryPageUrls: [],
+        cardData: { name: 'Lucoa & Lucow (Astrodragon)' },
+    });
+    provider.browseView.provider = provider;
+    registry.registerProvider(provider);
 
     globalThis.document = {
         getElementById: getElement,
         querySelector: () => null,
+        querySelectorAll: () => [],
+        addEventListener() {},
+        removeEventListener() {},
         body: { style: {} },
     };
-    globalThis.window = { registerOverlay() {} };
+    globalThis.window = {
+        openMasqueradeCharPreview: openPreview,
+        registerOverlay() {},
+        checkCharacterForDuplicatesAsync: async () => [],
+        getSetting: () => undefined,
+        showToast: (message, type) => toasts.push({ message, type }),
+        hideModal: id => getElement(id).classList.add('hidden'),
+        showImportSummaryModal(summary) {
+            shownSummaries.push(summary);
+            getElement('importSummaryModal').classList.remove('hidden');
+        },
+        fetchAndAddCharacter: async () => true,
+        fetchCharacters: async () => {},
+        getAllCharacters: () => [],
+        escapeHtml: value => String(value),
+    };
+    globalThis.requestAnimationFrame = callback => callback();
 
     try {
         provider.browseView.init();
@@ -218,8 +299,24 @@ test('Masquerade browse view binds persistent modal listeners only once', async 
         assert.equal(getElement('masqueradeImportBtn').listeners.click.length, 1);
         assert.equal(getElement('masqueradeCharClose').listeners.click.length, 1);
         assert.equal(getElement('masqueradeCharModal').listeners.click.length, 1);
+
+        window.openMasqueradeCharPreview({
+            id: SAMPLE_UUID,
+            name: 'Lucoa & Lucow (Astrodragon)',
+            image_url: 'https://example.test/avatar.png',
+            background_url: 'https://example.test/background.png',
+        });
+        await getElement('masqueradeImportBtn').dispatch('click');
+
+        assert.equal(shownSummaries.length, 1);
+        assert.equal(getElement('importSummaryModal').classList.contains('hidden'), false);
+        assert.equal(shownSummaries[0].galleryCharacters.length, 1);
+        assert.deepEqual(shownSummaries[0].mediaCharacters, []);
+        assert.equal(toasts.some(toast => toast.type === 'error'), false);
     } finally {
         globalThis.document = oldDocument;
         globalThis.window = oldWindow;
+        globalThis.requestAnimationFrame = oldRequestAnimationFrame;
+        provider.importCharacter = originalImportCharacter;
     }
 });
