@@ -14,6 +14,16 @@ async function loadProvider() {
     }
 }
 
+async function loadBrowseModule() {
+    globalThis.window ||= {};
+    globalThis.document ||= {};
+    try {
+        return await import('../modules/providers/masquerade/masquerade-browse.js');
+    } catch (error) {
+        assert.fail(`masquerade-browse.js should be importable: ${error.message}`);
+    }
+}
+
 test('Masquerade provider exposes identity, URL handling, and link metadata', async () => {
     const provider = await loadProvider();
     const card = { data: { extensions: {} } };
@@ -116,6 +126,36 @@ test('Masquerade link stats match the website-visible message user and fan count
         provider.fetchMetadata = originalFetchMetadata;
         provider.clearCachedLinkNode();
     }
+});
+
+test('Masquerade import summary includes provider gallery-only cards', async () => {
+    const { buildMasqueradeImportSummary } = await loadBrowseModule();
+    assert.equal(typeof buildMasqueradeImportSummary, 'function');
+
+    const summary = buildMasqueradeImportSummary({
+        characterName: 'Vicky',
+        fileName: 'masquerade_vicky.png',
+        avatarUrl: 'https://example.test/vicky.png',
+        hasGallery: true,
+        providerCharId: SAMPLE_UUID,
+        fullPath: SAMPLE_UUID,
+        galleryId: 'gallery-123',
+        embeddedMediaUrls: [],
+        galleryPageUrls: [],
+        cardData: { name: 'Vicky' },
+    }, { name: 'MasqueradeAI' });
+
+    assert.deepEqual(summary.mediaCharacters, []);
+    assert.equal(summary.galleryCharacters.length, 1);
+    assert.deepEqual(summary.galleryCharacters[0], {
+        name: 'Vicky',
+        fullPath: SAMPLE_UUID,
+        provider: { name: 'MasqueradeAI' },
+        linkInfo: { id: SAMPLE_UUID, fullPath: SAMPLE_UUID },
+        url: `https://www.masqueradeproductions.org/character/${SAMPLE_UUID}`,
+        avatar: 'masquerade_vicky.png',
+        galleryId: 'gallery-123',
+    });
 });
 
 test('Masquerade preview fetches the requested character instead of reusing stale cache', async () => {

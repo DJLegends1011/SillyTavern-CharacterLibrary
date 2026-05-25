@@ -431,6 +431,37 @@ function closePreviewModal() {
     hideModal?.('masqueradeCharModal');
 }
 
+export function buildMasqueradeImportSummary(result, provider) {
+    const mediaUrls = result?.embeddedMediaUrls || [];
+    const galleryPageUrls = result?.galleryPageUrls || [];
+    const hasProviderGallery = !!result?.hasGallery;
+    if (!hasProviderGallery && mediaUrls.length === 0 && galleryPageUrls.length === 0) return null;
+
+    const fullPath = result?.fullPath || result?.providerCharId || '';
+    const providerCharId = result?.providerCharId || fullPath || null;
+
+    return {
+        galleryCharacters: hasProviderGallery ? [{
+            name: result.characterName,
+            fullPath,
+            provider,
+            linkInfo: { id: providerCharId, fullPath },
+            url: providerCharId ? getCharacterPageUrl(providerCharId) : '',
+            avatar: result.fileName,
+            galleryId: result.galleryId,
+        }] : [],
+        mediaCharacters: (mediaUrls.length > 0 || galleryPageUrls.length > 0) ? [{
+            name: result.characterName,
+            avatar: result.fileName,
+            avatarUrl: result.avatarUrl,
+            mediaUrls,
+            galleryPageUrls,
+            galleryId: result.galleryId,
+            cardData: result.cardData,
+        }] : [],
+    };
+}
+
 async function importSelectedCharacter() {
     const charData = masqueradeSelectedChar;
     if (!charData?.id) return;
@@ -494,20 +525,9 @@ async function importSelectedCharacter() {
 
         showToast?.(`Imported "${result.characterName}"`, 'success');
 
-        const mediaUrls = result.embeddedMediaUrls || [];
-        const galleryPageUrls = result.galleryPageUrls || [];
-        if ((mediaUrls.length > 0 || galleryPageUrls.length > 0) && getSetting?.('notifyAdditionalContent') !== false) {
-            showImportSummaryModal?.({
-                mediaCharacters: [{
-                    name: result.characterName,
-                    avatar: result.fileName,
-                    avatarUrl: result.avatarUrl,
-                    mediaUrls,
-                    galleryPageUrls,
-                    galleryId: result.galleryId,
-                    cardData: result.cardData,
-                }],
-            });
+        const importSummary = buildMasqueradeImportSummary(result, provider);
+        if (importSummary && getSetting?.('notifyAdditionalContent') !== false) {
+            showImportSummaryModal?.(importSummary);
         }
 
         const added = await fetchAndAddCharacter?.(result.fileName);
