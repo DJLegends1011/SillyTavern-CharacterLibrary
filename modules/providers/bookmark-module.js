@@ -223,7 +223,7 @@ export function createBookmarkModule(config) {
     }
 
     function renderModalBtn() {
-        return `<button id="${modalBtnId}" class="action-btn secondary ${BOOKMARK_CLASS} ${legacyClass}" title="Bookmark this character"><i class="fa-regular fa-bookmark"></i></button>`;
+        return `<button id="${modalBtnId}" class="action-btn secondary ${BOOKMARK_CLASS} ${legacyClass}" title="Bookmark this character"><i class="fa-regular fa-bookmark"></i> Bookmark</button>`;
     }
 
     function renderFilterCheckbox() {
