@@ -56,6 +56,40 @@ Borrow ideas from `modules/providers/chub/` only for phase-two account sync:
 
 Do not start from `janny` or `datacat` unless the public API path breaks. Masquerade does not currently look like an HTML scraping or server-plugin-first provider.
 
+## Mirror Sync Audit
+
+Baseline provider: `modules/providers/wyvern/`.
+
+Reference files inspected:
+
+- `modules/providers/wyvern/wyvern-api.js`
+- `modules/providers/wyvern/wyvern-provider.js`
+- `modules/providers/wyvern/wyvern-browse.js`
+- `modules/providers/wyvern/wyvern-browse.css`
+- `modules/providers/masquerade/masquerade-api.js`
+- `modules/providers/masquerade/masquerade-provider.js`
+- `modules/providers/masquerade/masquerade-browse.js`
+- `modules/providers/masquerade/masquerade-browse.css`
+
+Mirror checklist:
+
+| Surface | Result | Notes |
+| --- | --- | --- |
+| Provider class delegates `renderFilterBar()`, `renderView()`, `renderModals()`, and `openPreview()` to the browse view | same | Masquerade follows the Wyvern provider delegation shape with Masquerade IDs and URL parsing. |
+| Topbar mode toggle | same shell, intentional behavior difference | Browse/Following buttons stay in the Wyvern/Chub visual shell. Masquerade Following remains disabled in phase one because public account sync is not implemented. |
+| Sort dropdown | intentional difference | Masquerade mirrors the website sort choices: Popular, New, Amplified, Shuffle. Wyvern-specific Recommended/Likes/Messages sorts do not apply. |
+| Tags and feature filters | same shell, intentional fields difference | Masquerade keeps the shared tags/features dropdown shell. Feature filters map to Masquerade data: Extra Images, Alt Greetings, Amplified, library hide filters. |
+| NSFW toggle | same shell, intentional label difference | Masquerade uses the site's "Going Feral" behavior and labels it Feral On/SFW Only. |
+| Search panel | same core search shell, intentional creator-search omission | Masquerade keeps the main browse search shell. Wyvern creator search/banner/follow controls are omitted because the phase-one public API path does not define a stable public creator page/follow flow. |
+| Card grid | same | Cards use `browse-card`, `browse-card-image`, `browse-card-body`, `browse-card-tags`, `browse-card-footer`, lazy images, imported/possible-match badges, compact tags, footer stats, and timestamps. |
+| Card stats | intentional difference | Masquerade website-visible stats are Messages, Fans, and created date. Internal quality score stays out of the UI. |
+| Preview modal shell | same | `modal-overlay hidden` plus `modal-glass browse-char-modal`, shared header/body/action button patterns, open/import/close controls. |
+| Preview stats | intentional difference | Masquerade preview shows website-visible Messages, Users, Fans. It does not show Wyvern likes/views because those are not the Masquerade public labels. |
+| Creator Notes renderer | not supported by target site | Masquerade source rows do not expose rich creator notes equivalent to Wyvern/Chub Creator Notes. Preview uses sanitized Description, First Message, and Scenario sections instead. |
+| `dataset.fullContent` expansion | same where applicable | Long text preview sections set expandable content for Description/Greeting/Scenario. No secure Creator Notes iframe is created because there is no rich notes source field. |
+| Following manager | not supported by phase one | Account sync is deferred. The Following button intentionally returns an info toast rather than rendering a partial manager. |
+| Mobile filter IDs | same shell | `mobileFilterIds` exposes sort, tags, filters, nsfw, refresh, and browse/follow selectors with Masquerade IDs. |
+
 ## Server Plugin Decision
 
 Phase one should be browser-only.

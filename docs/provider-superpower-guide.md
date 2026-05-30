@@ -18,6 +18,8 @@ Before coding, create a draft note for the target provider under `docs/provider-
 - server-plugin decision and why,
 - planned files,
 - provider ID, display name, extension key, and URL ID format,
+- mirror baseline provider and exact files used as references,
+- mirror-only deviations with evidence and reason,
 - user-facing stat labels and the source fields behind them,
 - internal-only ranking or quality fields that must not appear in UI,
 - copied provider folder and every copied control kept, changed, or removed,
@@ -261,6 +263,55 @@ Card rules:
 
 After rendering, compare the new provider against the copied baseline provider in the browser. Topbar controls, card density, preview shell, stat row spacing, action buttons, and close behavior should look like the baseline provider unless the draft note records an intentional target-site reason.
 
+## Phase 7A: Mirror Sync Contract
+
+Use this phase when the request says the provider should mirror another provider, such as BotBooru mirroring ChubAI.
+
+Mirror means same behavior, layout contract, event flow, and shared renderer usage. It does not mean "similar enough." Only the provider identity, source endpoints, source field names, and target-site-specific capabilities should differ.
+
+Required mirror baseline:
+
+1. Write the baseline provider name in the draft note.
+2. Record the exact baseline files inspected.
+3. Record every intentionally different control, stat, endpoint, and unsupported feature.
+4. Record every copied behavior that must remain identical.
+
+Required side-by-side audit:
+
+- topbar order, spacing, active states, and mobile collapse behavior,
+- Browse/Following/Curated or equivalent mode placement,
+- search panel layout, creator search behavior, clear/search buttons, and result count placement,
+- sort/filter/dropdown custom select behavior,
+- card grid density, image sizing, tag clamping, footer stat icons, and timestamp display,
+- preview modal shell, close behavior, stats row, tag row, action buttons, creator link, and import flow,
+- Creator Notes rendering path, including secure iframe usage, fullscreen expansion, HTML/entity decoding, media sizing, and cleanup,
+- followed creator manager placement, counts, sorting, add/remove actions, and empty states,
+- mobile viewport behavior for all controls above.
+
+Required code audit:
+
+```bash
+rg -n "renderFilterBar|renderView|renderModals|create.*Card|open.*Preview|close.*Preview" modules/providers/<baseline> modules/providers/<provider>
+rg -n "renderCreatorNotesSecure|cleanupCreatorNotesContainer|dataset.fullContent|currentCreatorNotesContent" app modules/providers/<baseline> modules/providers/<provider>
+rg -n "mobileFilterIds|getSearchModes|getSearchInputId|initCustomSelect" modules/providers/<baseline> modules/providers/<provider>
+```
+
+Do not add provider-specific markup for a mirrored surface until the same surface in the baseline provider has been read and the difference is written down.
+
+When a mirrored provider has malformed upstream data, normalize that provider's input before it enters the shared baseline renderer. Do not fork the shared renderer unless the same bug affects multiple providers. For rich notes, this means:
+
+- feed rich notes through `renderCreatorNotesSecure()` when the baseline does,
+- do not set `dataset.fullContent` on secure Creator Notes if the baseline expands the iframe output,
+- decode provider-specific escaped HTML before sanitization,
+- preserve the shared fullscreen media sizing rules,
+- add a regression test with the malformed provider payload, not only a clean synthetic payload.
+
+Before calling mirror work complete, capture a checklist comparing the baseline and mirrored provider. Each row must be one of:
+
+- `same`,
+- `intentional difference: <reason>`,
+- `not supported by target site: <evidence>`.
+
 ## Phase 8: Card Data Mapping
 
 Map source fields deliberately:
@@ -375,6 +426,53 @@ Run browser visual QA before merge:
 20. Confirm mobile viewport has no overlapping text or controls.
 
 Do not mark the task complete without recording which checks passed and which checks were not run.
+
+## Phase 12: AIO Integration Branches
+
+Use this phase when combining multiple provider, bookmark, helper, or UI feature branches into one all-in-one branch.
+
+Treat an AIO branch as disposable integration output, not as a development source of truth.
+
+1. Start from fresh `origin/main`.
+2. Create a new branch with an explicit rebuild name such as `codex/aio-clean-rebuild`.
+3. Keep every feature branch independently working against `main` when practical.
+4. Integrate one feature at a time as a clean logical commit.
+5. Prefer squash commits or carefully selected commits over merging exploratory branch history.
+6. Prefix AIO commits with the source feature branch or feature area, for example `[botbooru-provider]`, `[masquerade-provider]`, or `[extended-bookmarks]`.
+7. Include the source commit hash in the commit body when cherry-picking or re-creating a feature branch commit.
+8. If a feature patch depends on earlier commits from the same branch, bring the dependency chain too. Do not cherry-pick only the final symptom fix when the AIO branch lacks the renderer, API, or UI contract it depends on.
+9. Run the focused test suite after each feature lands.
+10. Inspect shared files after every integration:
+   - `app/library.js`
+   - `app/library.html`
+   - `modules/module-loader.js`
+   - `modules/providers/browse-shared.css`
+   - `extras/cl-helper/index.js`
+11. Keep provider-specific edits when the feature is expected to touch each provider, such as bookmarks.
+12. Do not treat provider-specific edits as accidental until the originating branch or commit is checked.
+13. Do not carry AIO-only fixes silently. Move fixes back to the feature branch or document why the fix only belongs in AIO.
+14. If a shared behavior breaks only on the AIO branch, rebuild the AIO branch from `origin/main` before patching symptoms.
+15. Delete or archive dirty AIO branches after the clean rebuild is pushed and verified.
+
+Minimum AIO verification:
+
+```bash
+node --test tests/*.mjs
+git diff --check
+git log --oneline origin/main..HEAD
+```
+
+The final AIO history should read like a checklist, for example:
+
+```text
+feat: integrate BotBooru provider
+feat: integrate MasqueradeAI provider
+feat: add provider bookmarks
+fix: harden Saucepan helper proxy
+[botbooru-provider] Decode BotBooru escaped creator notes HTML
+```
+
+Do not merge a dirty AIO branch forward just because it already contains everything. Rebuild from a clean base when upstream has changed heavily or when shared behavior breaks in the integration branch.
 
 ## Stop Rules
 
