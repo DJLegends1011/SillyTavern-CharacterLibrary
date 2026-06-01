@@ -2,7 +2,7 @@
 
 import { BrowseView } from '../browse-view.js';
 import CoreAPI from '../../core-api.js';
-import { IMG_PLACEHOLDER, formatNumber } from '../provider-utils.js';
+import { IMG_PLACEHOLDER, formatNumber, BROWSE_PURIFY_CONFIG, skeletonLines } from '../provider-utils.js';
 import {
     MASQUERADE_SORT_OPTIONS,
     isMasqueradePagedSort,
@@ -36,20 +36,6 @@ const {
 } = CoreAPI;
 
 const PAGE_SIZE = 60;
-const BROWSE_PURIFY_CONFIG = {
-    ALLOWED_TAGS: [
-        'p', 'br', 'hr', 'div', 'span', 'strong', 'b', 'em', 'i', 'u', 's', 'del',
-        'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote', 'code', 'pre',
-        'ul', 'ol', 'li', 'a', 'img', 'center', 'font', 'style',
-        'table', 'thead', 'tbody', 'tr', 'th', 'td', 'details', 'summary'
-    ],
-    ALLOWED_ATTR: [
-        'href', 'src', 'alt', 'title', 'class', 'style', 'target', 'rel',
-        'width', 'height', 'loading', 'color', 'size', 'align'
-    ],
-    ALLOW_DATA_ATTR: false
-};
-
 let masqueradeCharacters = [];
 let masqueradeCurrentPage = 1;
 let masqueradeHasMore = true;
@@ -430,6 +416,23 @@ function setSectionHtml(sectionId, contentId, value, name) {
     }
 }
 
+function renderMasqueradePreviewSkeletons() {
+    for (const [sectionId, contentId, count] of [
+        ['masqueradeCharDescriptionSection', 'masqueradeCharDescription', 3],
+        ['masqueradeCharPersonalitySection', 'masqueradeCharPersonality', 2],
+        ['masqueradeCharScenarioSection', 'masqueradeCharScenario', 2],
+        ['masqueradeCharFirstMsgSection', 'masqueradeCharFirstMsg', 4],
+    ]) {
+        const section = document.getElementById(sectionId);
+        const content = document.getElementById(contentId);
+        if (section) section.style.display = 'block';
+        if (content) {
+            content.innerHTML = skeletonLines(count);
+            delete content.dataset.fullContent;
+        }
+    }
+}
+
 function renderMasqueradeAltGreetings(greetings, name) {
     const section = document.getElementById('masqueradeCharAltGreetingsSection');
     const list = document.getElementById('masqueradeCharAltGreetings');
@@ -537,7 +540,7 @@ function cleanupMasqueradeCharModal() {
     masqueradeSelectedChar = null;
 }
 
-function openPreviewModal(char) {
+function openPreviewModal(char, { loading = false } = {}) {
     masqueradeSelectedChar = char;
     const modal = document.getElementById('masqueradeCharModal');
     if (!modal) return;
@@ -567,15 +570,19 @@ function openPreviewModal(char) {
     setText('masqueradeCharUsers', formatNumber(char.unique_chatters || 0));
     setText('masqueradeCharFans', formatNumber(char.subscriber_count || 0));
     setText('masqueradeCharDate', char.created_at ? new Date(char.created_at).toLocaleDateString() : 'Unknown');
-    setSectionHtml('masqueradeCharDescriptionSection', 'masqueradeCharDescription', char.description || '', name);
-    setSectionHtml('masqueradeCharPersonalitySection', 'masqueradeCharPersonality', char.personality || '', name);
-    setSectionHtml(
-        'masqueradeCharScenarioSection',
-        'masqueradeCharScenario',
-        char.scenario && char.scenario !== char.description ? char.scenario : '',
-        name,
-    );
-    setSectionHtml('masqueradeCharFirstMsgSection', 'masqueradeCharFirstMsg', char.greeting || char.first_mes || '', name);
+    if (loading) {
+        renderMasqueradePreviewSkeletons();
+    } else {
+        setSectionHtml('masqueradeCharDescriptionSection', 'masqueradeCharDescription', char.description || '', name);
+        setSectionHtml('masqueradeCharPersonalitySection', 'masqueradeCharPersonality', char.personality || '', name);
+        setSectionHtml(
+            'masqueradeCharScenarioSection',
+            'masqueradeCharScenario',
+            char.scenario && char.scenario !== char.description ? char.scenario : '',
+            name,
+        );
+        setSectionHtml('masqueradeCharFirstMsgSection', 'masqueradeCharFirstMsg', char.greeting || char.first_mes || '', name);
+    }
     renderMasqueradeAltGreetings(char.alternate_greetings || [], name);
     renderMasqueradeGallery(char);
 
@@ -696,15 +703,20 @@ async function importSelectedCharacter() {
         const result = await provider.importCharacter(charData.id, charData, { inheritedGalleryId });
         if (!result.success) throw new Error(result.error || 'Import failed');
 
-        closePreviewModal();
-        if (typeof requestAnimationFrame === 'function') await new Promise(resolve => requestAnimationFrame(resolve));
+        const importSummary = buildMasqueradeImportSummary(result, provider);
+        const shouldShowSummary = importSummary && getSetting?.('notifyAdditionalContent') !== false;
+        const isMobile = window.matchMedia?.('(max-width: 768px)').matches === true;
+        if (shouldShowSummary && isMobile) {
+            showImportSummaryModal?.(importSummary);
+            await new Promise(resolve => setTimeout(resolve, 220));
+            closePreviewModal();
+        } else {
+            closePreviewModal();
+            if (typeof requestAnimationFrame === 'function') await new Promise(resolve => requestAnimationFrame(resolve));
+            if (shouldShowSummary) showImportSummaryModal?.(importSummary);
+        }
 
         showToast?.(`Imported "${result.characterName}"`, 'success');
-
-        const importSummary = buildMasqueradeImportSummary(result, provider);
-        if (importSummary && getSetting?.('notifyAdditionalContent') !== false) {
-            showImportSummaryModal?.(importSummary);
-        }
 
         const added = await fetchAndAddCharacter?.(result.fileName);
         if (!added) await fetchCharacters?.(true);
@@ -970,6 +982,7 @@ class MasqueradeBrowseView extends BrowseView {
 
     get previewModalId() { return 'masqueradeCharModal'; }
     _getImageGridIds() { return ['masqueradeGrid']; }
+    getSearchInputId() { return 'masqueradeSearchInput'; }
 
     get mobileFilterIds() {
         return {
@@ -1294,10 +1307,12 @@ class MasqueradeBrowseView extends BrowseView {
             const id = card.dataset.masqueradeId;
             let char = masqueradeCharacters.find(c => c.id === id);
             if (!char) return;
+            openPreviewModal(char, { loading: true });
             try {
                 const detail = await fetchMasqueradeMetadata(id);
                 if (detail) char = detail;
             } catch { /* preview can use card data */ }
+            if (String(masqueradeSelectedChar?.id || '') !== String(id)) return;
             openPreviewModal(char);
         });
 

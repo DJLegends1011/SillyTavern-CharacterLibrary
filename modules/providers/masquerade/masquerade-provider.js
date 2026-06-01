@@ -83,11 +83,13 @@ class MasqueradeProvider extends ProviderBase {
 
         if (linkInfo) {
             const existing = char.data.extensions.masquerade || {};
+            const clFallback = char.data.extensions.cl || {};
             const id = linkInfo.id || linkInfo.fullPath;
             char.data.extensions.masquerade = {
                 ...existing,
                 id,
-                pageName: linkInfo.pageName || existing.pageName || null,
+                tagline: 'tagline' in existing ? existing.tagline : (clFallback.tagline || ''),
+                pageName: linkInfo.pageName || ('pageName' in existing ? existing.pageName : (clFallback.pageName || null)),
                 linkedAt: linkInfo.linkedAt || existing.linkedAt || new Date().toISOString(),
             };
         } else {

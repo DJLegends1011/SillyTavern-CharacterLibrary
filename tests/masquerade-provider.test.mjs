@@ -49,6 +49,45 @@ test('Masquerade provider exposes identity, URL handling, and link metadata', as
     assert.match(provider.getCharacterUrl(provider.getLinkInfo(card)), /masqueradeproductions\.org\/character\//);
 });
 
+test('Masquerade linking preserves unlinked CL display metadata without clobbering provider metadata', async () => {
+    const provider = await loadProvider();
+    const fallbackCard = {
+        data: {
+            extensions: {
+                cl: { tagline: 'Unlinked tagline', pageName: 'Unlinked listing name' },
+            },
+        },
+    };
+
+    provider.setLinkInfo(fallbackCard, { id: SAMPLE_UUID, fullPath: SAMPLE_UUID });
+    assert.equal(fallbackCard.data.extensions.masquerade.tagline, 'Unlinked tagline');
+    assert.equal(fallbackCard.data.extensions.masquerade.pageName, 'Unlinked listing name');
+
+    const authoritativeCard = {
+        data: {
+            extensions: {
+                cl: { tagline: 'Fallback tagline', pageName: 'Fallback listing name' },
+                masquerade: { tagline: 'Provider tagline', pageName: 'Provider listing name' },
+            },
+        },
+    };
+    provider.setLinkInfo(authoritativeCard, { id: SAMPLE_UUID, fullPath: SAMPLE_UUID });
+    assert.equal(authoritativeCard.data.extensions.masquerade.tagline, 'Provider tagline');
+    assert.equal(authoritativeCard.data.extensions.masquerade.pageName, 'Provider listing name');
+
+    const emptyProviderCard = {
+        data: {
+            extensions: {
+                cl: { tagline: 'Fallback tagline', pageName: 'Fallback listing name' },
+                masquerade: { tagline: '', pageName: '' },
+            },
+        },
+    };
+    provider.setLinkInfo(emptyProviderCard, { id: SAMPLE_UUID, fullPath: SAMPLE_UUID });
+    assert.equal(emptyProviderCard.data.extensions.masquerade.tagline, '');
+    assert.equal(emptyProviderCard.data.extensions.masquerade.pageName, '');
+});
+
 test('Masquerade browse view keeps the copied provider topbar controls', async () => {
     const provider = await loadProvider();
     const html = provider.renderFilterBar();
@@ -73,6 +112,17 @@ test('Masquerade browse sort controls match the current website controls', async
     assert.doesNotMatch(html, /<option value="quality">/);
     assert.doesNotMatch(html, /<option value="subscribers">/);
     assert.doesNotMatch(html, /<option value="chatters">/);
+});
+
+test('Masquerade browse follows shared 6.1 mobile and preview contracts', async () => {
+    const provider = await loadProvider();
+    const browseSource = await readFile(new URL('../modules/providers/masquerade/masquerade-browse.js', import.meta.url), 'utf8');
+
+    assert.equal(provider.browseView.getSearchInputId('character'), 'masqueradeSearchInput');
+    assert.match(browseSource, /import\s*{[^}]*\bBROWSE_PURIFY_CONFIG\b[^}]*\bskeletonLines\b[^}]*}\s*from\s*'\.\.\/provider-utils\.js';/s);
+    assert.doesNotMatch(browseSource, /const BROWSE_PURIFY_CONFIG\s*=/);
+    assert.match(browseSource, /openPreviewModal\(char,\s*{\s*loading:\s*true\s*}\)/);
+    assert.match(browseSource, /setTimeout\(resolve,\s*220\)/);
 });
 
 test('Masquerade preview modal uses the shared browse modal shell', async () => {
