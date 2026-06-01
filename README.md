@@ -64,7 +64,8 @@ A powerful SillyTavern extension for discovering, organizing, and managing your 
 - **Right-click context menu** on any character card for quick actions
 - **Version history & snapshots** with save/restore, remote version browsing, and full diff preview
 - **Playlists** for organizing characters into named, ordered virtual folders with icons and colors
-- **Filter presets** to save and restore your current filter configuration (tags, sort, search, advanced filters). Open the **Presets** dropdown in the Advanced Filters panel to load, save, rename, or delete presets. Type a name in the input to save the current filter state; click an existing preset to load it. Set a **Default Filter Preset** in Settings to auto-apply one on page load. Presets are also available in the **Chats** tab for filtering chat history.
+- **Filter presets** to save and restore your current filter configuration (tags, sort, search, advanced filters). Open the **Presets** dropdown in the Advanced Filters panel to load, save, rename, or delete presets. Type a name in the input to save the current filter state; click an existing preset to load it. Presets are also available in the **Chats** tab for filtering chat history.
+- **Default Filter Preset** in Settings to auto-apply one preset every time the library opens, so you land in your most-used view without re-applying filters.
 - **Character Creator** with built-in AI Studio for assisted card authoring, brainstorming, and iterative refinement
 - **Animated card info** on hover with configurable visibility options
 
@@ -82,7 +83,12 @@ Click any character for a **rich tabbed interface**:
 | **Versions** | Local snapshots and remote version history with diff preview (shown when history exists) |
 | **Info** | Debug/metadata panel for power users (enable in Settings) |
 
-**Edit Lock** prevents accidental changes.
+**Detail modal UX:**
+
+- **Edit Lock** prevents accidental changes. The Edit tab opens locked; click **Unlock Editing** to enable field changes
+- **Prev/Next navigation** lets you cycle through the current sort + filter view without returning to the grid. Desktop shows chevron buttons on the sides of the modal; mobile swipes left/right on the modal header. Toggle via Settings, **Card Grid & Browse → Prev/Next navigation in character details** (on by default)
+- **Unsaved-edits confirmation** when you close the modal or navigate to another character with pending edits in the Edit tab. Save success and programmatic closes (e.g. after delete) skip the prompt
+- **Tap-to-scroll on long titles** (mobile): tap a long character name in the modal header or chat preview title to scroll through the full text
 
 ---
 
@@ -120,12 +126,13 @@ These options apply when Embedded Panel mode is selected:
 
 - **Gallery tab** for all character images, video, and audio in one place
 - **Embedded media downloads** for images linked in creator notes, descriptions, and greetings
-- **External image-host extractors** for content embedded as gallery/album links (not direct image URLs). Supports Civitai, Imgchest, Mega, Imgur, PostImg, Imgbox, ImgBB, Catbox, and Google Drive. The library walks each link, resolves the actual image URLs, and downloads them into the gallery folder
+- **External image-host extractors** for content embedded as gallery/album links (not direct image URLs). Supports Civitai, Imgchest, Mega, Imgur, PostImg, Imgbox, ImgBB, Catbox, Dropbox, and Google Drive. The library walks each link, resolves the actual image URLs, and downloads them into the gallery folder
 - **Provider gallery downloads** from linked characters on ChubAI, Wyvern, or Pygmalion
 - **Audio & video support** including MP3, WAV, OGG, M4A with built-in player; video thumbnails with inline playback
 - **Full-screen viewer** with keyboard navigation (← → 0 Esc) and scroll-wheel zoom up to 5× with drag-to-pan
 - **Bulk localization** across your whole library from Settings, with progress tracking, abort, and history
 - **Optional provider gallery** inclusion in bulk localization
+- **Grid card thumbnails** (opt-in) to cut decode cost and bandwidth on the characters grid. Enable in **Settings → Character Library → Grid Card Thumbnails**. By default thumbnails are served on mobile-sized viewports only; toggle "Also use on desktop" to extend coverage. With the [cl-helper plugin](#cl-helper-plugin-not-detected) installed, cl-helper resizes via jimp and caches each thumbnail on disk at a configurable size (384 / 512 / 640 / 768px wide). Without cl-helper, ST's built-in `/thumbnail` endpoint is used (fixed 96x144, can look blurry on high-DPR screens). Two cache management buttons: **Populate at current size** pre-generates a thumbnail for every character (skipping already-cached) and **Purge cache** deletes every cached thumbnail. The detail modal and gallery always use the full-resolution image
 
 > **Civitai API key** (optional): Required only for private or hidden Civitai posts. Public content extracts without a key. Configure in **Settings → Online → Civitai API Key**. Generate one at [civitai.com/user/account](https://civitai.com/user/account).
 
@@ -682,16 +689,20 @@ Prefixes can be combined with each other and with free text. For example, `creat
 
 The full app is optimized for mobile with:
 
-- **Touch-optimized** tap targets and swipe gestures
+- **Touch-optimized** tap targets and swipe gestures throughout
 - **View swipe**: swipe left/right on the main screen to switch between Characters, Chats, and Online views
 - **Tab swipe**: swipe left/right on character detail tabs to navigate between them
 - **Greetings swipe**: swipe left/right to cycle alternate greetings
-- **Bottom sheets** for context menus, tag editor, filters, and settings (replacing desktop dropdowns)
+- **Card swipe gestures**: swipe right on a card to toggle favorite, swipe left to open the context menu. Card swipes are suppressed in the outer 12% of each card and the bottom 25%, so view-swipe and tab-swipe gestures starting near card edges aren't hijacked. Toggle the whole feature in Settings if you find swipes triggering accidentally
+- **Prev/Next character navigation**: swipe left/right on the character detail modal header to step through the current sort + filter view (toggleable in Settings)
+- **Mobile search overlay**: bottom-pinned and keyboard-aware. The search box opens above the bottom nav when the keyboard is closed, and lifts above the keyboard when it opens, so the whole flow stays in the thumb zone
+- **Title scroll-reveal**: tap a long character name in the modal header, or a long chat title in the chat preview header, to scroll through the full text
+- **Bottom sheets** for context menus, tag editor, filters, settings, and confirm dialogs (replacing desktop dropdowns)
 - **Full-viewport modals** for character details and previews
-- **Mobile search overlay** with dedicated search UI
-- **Gallery viewer** with zoom, drag pan, and swipe navigation
-- **Title scroll-reveal**: Tap long character names or titles in modals to scroll through the full text
-- **Back button handling** for modal navigation
+- **Top-bias face crop** on avatar thumbs across chat list rows, group composites, message bubbles, and the mobile detail-modal header thumb, so faces survive the circular and square crops
+- **Gallery viewer** with pinch / scroll-wheel zoom, drag pan, and swipe navigation
+- **Haptic feedback** on swipe actions, toggles, and destructive confirms (requires device support)
+- **Back button handling** for modal navigation: Android back closes the top overlay in tier order before exiting the app
 
 ---
 

@@ -22,6 +22,14 @@ export function closeEmbeddedPanel() {
     return window.closeEmbeddedPanel?.();
 }
 
+export function resolveProxyForProfile(profile) {
+    return window.resolveProxyForProfile?.(profile);
+}
+
+export function flattenContentBlocks(blocks) {
+    return window.flattenContentBlocks?.(blocks) ?? '';
+}
+
 // ========================================
 // STATE ACCESS
 // ========================================
@@ -148,7 +156,7 @@ export function openCharacterModal(char) {
 }
 
 /**
- * Open character detail modal elevated above confirm-modals
+ * Open character detail modal elevated above other open modals (confirm or cl-modal).
  * @param {Object} char - Character object
  */
 export function openCharModalElevated(char) {
@@ -195,6 +203,10 @@ export function setActiveChar(char) {
  */
 export function showToast(message, type = 'info', duration = 3000) {
     window.showToast?.(message, type, duration);
+}
+
+export function hapticFeedback(pattern) {
+    window.hapticFeedback?.(pattern);
 }
 
 /**
@@ -522,6 +534,18 @@ export function renderLoadingState(container, message, className = 'loading-spin
     window.renderLoadingState?.(container, message, className);
 }
 
+export function renderSkeletonGrid(container, count = 12) {
+    window.renderSkeletonGrid?.(container, count);
+}
+
+export function renderSkeletonList(container, count = 6) {
+    window.renderSkeletonList?.(container, count);
+}
+
+export function renderEmptyState(container, opts) {
+    window.renderEmptyState?.(container, opts);
+}
+
 /**
  * Get avatar URL for a character
  * @param {string} avatar - Avatar filename
@@ -529,6 +553,10 @@ export function renderLoadingState(container, message, className = 'loading-spin
  */
 export function getCharacterAvatarUrl(avatar) {
     return window.getCharacterAvatarUrl?.(avatar) ?? '';
+}
+
+export function getCharacterAvatarStThumbUrl(avatar) {
+    return window.getCharacterAvatarStThumbUrl?.(avatar) ?? '';
 }
 
 /**
@@ -602,6 +630,20 @@ export function fetchCharacters(forceRefresh = false) {
  */
 export function fetchAndAddCharacter(avatarFileName) {
     return window.fetchAndAddCharacter?.(avatarFileName) || Promise.resolve(false);
+}
+
+/**
+ * @param {string} avatar
+ */
+export function notifySTCharacterAdded(avatar) {
+    return window.notifySTCharacterAdded?.(avatar);
+}
+
+/**
+ * @param {string} avatar
+ */
+export function notifySTCharacterEdited(avatar) {
+    return window.notifySTCharacterEdited?.(avatar);
 }
 
 /**
@@ -1061,6 +1103,7 @@ export function openPlaylistPicker(...args) { return window.openPlaylistPicker?.
 export function closePlaylistPicker() { return window.closePlaylistPicker?.(); }
 export function setPlaylistFilter(...args) { return window.setPlaylistFilter?.(...args); }
 export function clearPlaylistFilter() { return window.clearPlaylistFilter?.(); }
+export function refreshPlaylistFilterIfActive(...args) { return window.refreshPlaylistFilterIfActive?.(...args); }
 export function openPlaylistManager() { return window.openPlaylistManager?.(); }
 export function closePlaylistManager() { return window.closePlaylistManager?.(); }
 export function refreshPlaylistBadges() { return window.refreshPlaylistBadges?.(); }
@@ -1096,6 +1139,7 @@ export default {
     getActiveChar,
     setActiveChar,
     showToast,
+    hapticFeedback,
     showConfirm,
     refreshCharacters,
     
@@ -1147,7 +1191,11 @@ export default {
     
     // Rendering
     renderLoadingState,
+    renderSkeletonGrid,
+    renderSkeletonList,
+    renderEmptyState,
     getCharacterAvatarUrl,
+    getCharacterAvatarStThumbUrl,
     getListingNameFromExtensions,
     getCharacterName,
     formatRichText,
@@ -1158,6 +1206,8 @@ export default {
     deleteCharacter,
     fetchCharacters,
     fetchAndAddCharacter,
+    notifySTCharacterAdded,
+    notifySTCharacterEdited,
     removeCharacterFromList,
     hydrateCharacter,
     performSearch,
@@ -1241,6 +1291,7 @@ export default {
     closePlaylistPicker,
     setPlaylistFilter,
     clearPlaylistFilter,
+    refreshPlaylistFilterIfActive,
     openPlaylistManager,
     closePlaylistManager,
     refreshPlaylistBadges,
@@ -1251,4 +1302,6 @@ export default {
     getSTContext,
     getIsEmbedded,
     closeEmbeddedPanel,
+    resolveProxyForProfile,
+    flattenContentBlocks,
 };

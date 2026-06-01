@@ -59,6 +59,7 @@
     --font-xl: 1.3rem;
     --font-2xl: 1.5rem;
     --font-3xl: 2rem;
+    --font-4xl: 3rem;
 
     /* Spacing scale */
     --space-2xs: 2px;
@@ -85,11 +86,20 @@
     --radius-4xl: 20px;
     --radius-circle: 50%;
     --radius-pill: 999px;
+
+    /* Mobile chrome tokens */
+    --touch-target-min: 44px;        /* WCAG / iOS / Android floor */
+    --chrome-h-mobile: 56px;          /* mobile modal headers + bottom nav */
+    --back-arrow-zone: 56px;          /* header padding-left reserved for the back-arrow */
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 /* ========================================
    Modal Size Overrides (body class approach)
-   Small = 0.8x, Large = 1.25x, Medium = default (no class)
+   Small = 0.8x, Medium = 1x (no class), Large = 1.25x, XL = 1.4x
+   XL has no explicit per-modal overrides yet, modals scale via the
+   --modal-scale variable on their base rule. Add explicit XL rules
+   below if a specific modal needs tuning at the larger size.
    ======================================== */
 
 /* --- Small --- */
@@ -108,33 +118,33 @@ body.modal-size-small .lorebook-expand-modal { max-width: 880px !important; }
 body.modal-size-small .browse-expand-modal[data-size="compact"] { width: 440px !important; height: 56vh; }
 body.modal-size-small .browse-expand-modal[data-size="normal"] { width: 600px !important; height: 64vh; }
 body.modal-size-small .browse-expand-modal[data-size="wide"] { width: 800px !important; height: 68vh; }
-body.modal-size-small .provider-link-modal-content { max-width: 480px; }
-body.modal-size-small .confirm-modal-content.gallery-info-modal-content { max-width: 840px; max-height: 68vh; }
+body.modal-size-small .cl-modal-content.provider-link-modal-content { max-width: 480px; }
+body.modal-size-small .cl-modal-content.gallery-info-modal-content { max-width: 840px; max-height: 68vh; }
 body.modal-size-small .confirm-modal-content { max-width: 480px; max-height: 64vh; }
-body.modal-size-small .confirm-modal-content.recommender-modal-content { max-width: 544px; max-height: 76vh; }
+body.modal-size-small .cl-modal-content.recommender-modal-content { max-width: 544px; max-height: 76vh; }
 body.modal-size-small #disableGalleryFoldersModal .confirm-modal-content { max-width: 400px; }
-body.modal-size-small .settings-modal-content { max-width: 440px; }
-body.modal-size-small .settings-with-sidebar { width: 680px; max-width: 95vw; height: min(560px, 72vh); max-height: 72vh; }
-body.modal-size-small .bulk-auto-link-modal-content { max-width: 640px; max-height: 68vh; }
-body.modal-size-small .bulk-localize-modal-content { max-width: 440px; }
-body.modal-size-small .bulk-summary-modal-content { max-width: 640px; max-height: 72vh; }
+body.modal-size-small .cl-modal-content.settings-modal-content { max-width: 440px; }
+body.modal-size-small .cl-modal-content.settings-with-sidebar { width: 680px; max-width: 95vw; height: min(560px, 72vh); max-height: 72vh; }
+body.modal-size-small .cl-modal-content.bulk-auto-link-modal-content { max-width: 640px; max-height: 68vh; }
+body.modal-size-small .cl-modal-content.bulk-localize-modal-content { max-width: 440px; }
+body.modal-size-small .cl-modal-content.bulk-summary-modal-content { max-width: 640px; max-height: 72vh; }
 body.modal-size-small .browse-char-modal { max-width: 656px; max-height: 68vh; }
 body.modal-size-small .orphaned-folders-modal { max-width: 720px; max-height: 68vh; }
 body.modal-size-small .cl-modal-content { max-width: 400px; max-height: 64vh; }
 body.modal-size-small .card-update-modal .cl-modal-content { max-width: 600px; }
 body.modal-size-small .card-update-modal .cl-modal-body { max-height: 52vh; }
 body.modal-size-small .custom-css-modal .cl-modal-content { max-width: 880px; max-height: 76vh; }
-body.modal-size-small .chub-gallery-modal-content { max-width: 440px; }
+body.modal-size-small .cl-modal-content.chub-gallery-modal-content { max-width: 440px; }
 body.modal-size-small .chub-gallery-list { max-height: 240px; }
 body.modal-size-small .vt-dialog { max-width: 320px; }
 body.modal-size-small .ai-studio-modal { width: min(720px, 92vw); height: min(68vh, 640px); }
 body.modal-size-small .chub-login-modal { max-width: 400px; }
-body.modal-size-small .import-modal-content { max-width: 520px; max-height: 72vh; }
-body.modal-size-small .pre-import-duplicate-content { max-width: 680px; }
-body.modal-size-small .char-duplicates-modal-content { min-width: 960px; max-height: 76vh; }
+body.modal-size-small .cl-modal-content.import-modal-content { max-width: 520px; max-height: 72vh; }
+body.modal-size-small .cl-modal-content.pre-import-duplicate-content { max-width: 680px; }
+body.modal-size-small .cl-modal-content.char-duplicates-modal-content { min-width: 960px; max-height: 76vh; }
 body.modal-size-small .dup-delete-modal-content { max-width: 400px; }
 body.modal-size-small .creator-import-panel { width: min(384px, 92vw); max-height: min(480px, 68vh); }
-body.modal-size-small .creator-saveas-diff-content { max-width: 512px; }
+body.modal-size-small .cl-modal-content.creator-saveas-diff-content { max-width: 512px; }
 
 /* --- Large --- */
 body.modal-size-large .modal-glass { max-width: 1250px; height: 100vh; max-height: 97vh; }
@@ -152,33 +162,33 @@ body.modal-size-large .lorebook-expand-modal { max-width: 1375px !important; }
 body.modal-size-large .browse-expand-modal[data-size="compact"] { width: 687px !important; height: 87vh; }
 body.modal-size-large .browse-expand-modal[data-size="normal"] { width: 937px !important; height: 100vh; max-height: 97vh; }
 body.modal-size-large .browse-expand-modal[data-size="wide"] { width: 1250px !important; height: 100vh; max-height: 97vh; }
-body.modal-size-large .provider-link-modal-content { max-width: 750px; }
-body.modal-size-large .confirm-modal-content.gallery-info-modal-content { max-width: 1312px; max-height: 100vh; }
+body.modal-size-large .cl-modal-content.provider-link-modal-content { max-width: 750px; }
+body.modal-size-large .cl-modal-content.gallery-info-modal-content { max-width: 1312px; max-height: 100vh; }
 body.modal-size-large .confirm-modal-content { max-width: 750px; max-height: 100vh; }
-body.modal-size-large .confirm-modal-content.recommender-modal-content { max-width: 850px; max-height: 100vh; }
+body.modal-size-large .cl-modal-content.recommender-modal-content { max-width: 850px; max-height: 100vh; }
 body.modal-size-large #disableGalleryFoldersModal .confirm-modal-content { max-width: 625px; }
-body.modal-size-large .settings-modal-content { max-width: 687px; }
-body.modal-size-large .settings-with-sidebar { width: 1062px; max-width: 96vw; height: min(875px, 97vh); max-height: 97vh; }
-body.modal-size-large .bulk-auto-link-modal-content { max-width: 1000px; max-height: 100vh; }
-body.modal-size-large .bulk-localize-modal-content { max-width: 687px; }
-body.modal-size-large .bulk-summary-modal-content { max-width: 1000px; max-height: 100vh; }
+body.modal-size-large .cl-modal-content.settings-modal-content { max-width: 687px; }
+body.modal-size-large .cl-modal-content.settings-with-sidebar { width: 1062px; max-width: 96vw; height: min(875px, 97vh); max-height: 97vh; }
+body.modal-size-large .cl-modal-content.bulk-auto-link-modal-content { max-width: 1000px; max-height: 100vh; }
+body.modal-size-large .cl-modal-content.bulk-localize-modal-content { max-width: 687px; }
+body.modal-size-large .cl-modal-content.bulk-summary-modal-content { max-width: 1000px; max-height: 100vh; }
 body.modal-size-large .browse-char-modal { max-width: 1025px; max-height: 100vh; }
 body.modal-size-large .orphaned-folders-modal { max-width: 1125px; max-height: 100vh; }
 body.modal-size-large .cl-modal-content { max-width: 625px; max-height: 100vh; }
 body.modal-size-large .card-update-modal .cl-modal-content { max-width: 937px; }
 body.modal-size-large .card-update-modal .cl-modal-body { max-height: 81vh; }
 body.modal-size-large .custom-css-modal .cl-modal-content { max-width: 1375px; max-height: 100vh; }
-body.modal-size-large .chub-gallery-modal-content { max-width: 687px; }
+body.modal-size-large .cl-modal-content.chub-gallery-modal-content { max-width: 687px; }
 body.modal-size-large .chub-gallery-list { max-height: 375px; }
 body.modal-size-large .vt-dialog { max-width: 500px; }
 body.modal-size-large .ai-studio-modal { width: min(1125px, 96vw); height: min(97vh, 1000px); }
 body.modal-size-large .chub-login-modal { max-width: 625px; }
-body.modal-size-large .import-modal-content { max-width: 812px; max-height: 100vh; }
-body.modal-size-large .pre-import-duplicate-content { max-width: 1062px; }
-body.modal-size-large .char-duplicates-modal-content { min-width: 1500px; max-height: 100vh; }
+body.modal-size-large .cl-modal-content.import-modal-content { max-width: 812px; max-height: 100vh; }
+body.modal-size-large .cl-modal-content.pre-import-duplicate-content { max-width: 1062px; }
+body.modal-size-large .cl-modal-content.char-duplicates-modal-content { min-width: 1500px; max-height: 100vh; }
 body.modal-size-large .dup-delete-modal-content { max-width: 625px; }
 body.modal-size-large .creator-import-panel { width: min(600px, 96vw); max-height: min(750px, 97vh); }
-body.modal-size-large .creator-saveas-diff-content { max-width: 800px; }
+body.modal-size-large .cl-modal-content.creator-saveas-diff-content { max-width: 800px; }
 
 /* ========================================================================
  * COMPONENT CATALOG
@@ -206,8 +216,8 @@ body.modal-size-large .creator-saveas-diff-content { max-width: 800px; }
  *   .modal-glass            - Full-screen detail/viewer panel
  *   .cl-modal               - Lightweight dialog overlay (confirm, edit)
  *   .cl-modal-content       - Dialog box inside .cl-modal
- *     .cl-modal-feature     - Modifier: richer chrome for feature/AI modals
- *     .cl-modal-header-icon - Gradient-text icon helper in feature headers
+ *     .cl-modal-header-icon - Opt-in helper: gradient-clipped title icon (add to <i> inside h3)
+ *     .cl-modal-drawer      - Marker: hides back-arrow on tap-away bottom-sheet drawers
  *
  * TAGS
  *   .cl-tag                 - Pill-style tag (.removable variant adds ×)
@@ -313,6 +323,15 @@ body.modal-size-large .creator-saveas-diff-content { max-width: 800px; }
     background: rgba(var(--accent-rgb), 0.1);
 }
 
+.custom-select-item.disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+.custom-select-item.disabled:hover {
+    background: transparent;
+}
+
 * {
     box-sizing: border-box;
     margin: 0;
@@ -357,11 +376,13 @@ input[type='range'] {
 body {
     font-family: 'Noto Sans', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
     background-color: var(--bg-primary);
-    background-image: 
+    background-image:
         radial-gradient(circle at 10% 20%, rgba(var(--accent-rgb), 0.05) 0%, transparent 20%),
         radial-gradient(circle at 90% 80%, rgba(var(--accent-secondary-rgb), 0.05) 0%, transparent 20%);
     color: var(--text-primary);
+    /* lvh = large viewport height: stays at the full screen size even when the mobile soft keyboard opens. Plain 100vh would let the body shrink under the OSK on some Android browsers, dragging .gallery-content (flex:1) with it and shifting the virtual-scroll window. */
     height: 100vh;
+    height: 100lvh;
     overflow: hidden;
 }
 
@@ -374,7 +395,7 @@ body {
 /* Topbar */
 .topbar {
     height: 70px;
-    background: rgba(20, 20, 20, 0.8);
+    background: var(--cl-topbar-bg);
     backdrop-filter: blur(10px);
     border-bottom: 1px solid var(--glass-border);
     display: flex;
@@ -409,6 +430,7 @@ body {
     flex: 1;
     min-width: 200px;
     display: flex;
+    align-items: center;
     gap: var(--space-sm-md);
     position: relative;
 }
@@ -1234,12 +1256,13 @@ body {
 
 .card-overlay {
     position: absolute;
-    bottom: 0;
+    /* zoom != 100% (UI scale) makes every dimension fractional; combined with virtual-scroll layer churn this leaves a 1px gap at the overlay bottom on recycled cards. Overdraw 2px past card bottom + match padding so content stays in place; .char-card overflow:hidden clips the excess so the visible result is exact card-bottom coverage regardless. */
+    bottom: -2px;
     left: 0;
     right: 0;
     z-index: 2;
     background: linear-gradient(to top, rgba(0,0,0,0.9), transparent);
-    padding: 20px 15px 15px;
+    padding: 20px 15px 17px;
     display: flex;
     flex-direction: column;
     justify-content: flex-end;
@@ -1459,11 +1482,12 @@ body {
     pointer-events: none;
 }
 
-/* Character details modal opened above another modal (confirm-modal, card-updates, etc.) */
+/* Character details modal opened above another modal (cl-modal or confirm-modal). */
 body.char-modal-above #charModal {
     z-index: 10002 !important;
 }
-body.char-modal-above .confirm-modal:not(.hidden) {
+body.char-modal-above .confirm-modal:not(.hidden),
+body.char-modal-above .cl-modal.visible {
     z-index: 10003 !important;
 }
 .folder-map-char-link:hover {
@@ -1492,6 +1516,63 @@ body.char-modal-above .confirm-modal:not(.hidden) {
 .modal-glass.chat-preview-modal {
     max-width: calc(800px * var(--modal-scale, 1));
     height: calc(85vh * var(--modal-scale, 1));
+}
+
+/* @canonical char-modal-nav */
+.char-modal-nav {
+    --cmn-bg: rgba(0, 0, 0, 0.5);
+    --cmn-bg-hover: rgba(255, 255, 255, 0.1);
+    --cmn-border: 1px solid rgba(255, 255, 255, 0.1);
+    --cmn-color: #fff;
+    --cmn-width: 50px;
+    --cmn-height: 80px;
+    --cmn-side-offset: 1%;
+    --cmn-icon-size: var(--font-2xl);
+    --cmn-icon-prev: '\f053';
+    --cmn-icon-next: '\f054';
+    --cmn-disabled-opacity: 0.3;
+
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    background: var(--cmn-bg);
+    border: var(--cmn-border);
+    color: var(--cmn-color);
+    width: var(--cmn-width);
+    height: var(--cmn-height);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.2s, opacity 0.2s;
+    z-index: 10;
+}
+.char-modal-nav:hover:not(:disabled) {
+    background: var(--cmn-bg-hover);
+}
+.char-modal-nav:disabled {
+    opacity: var(--cmn-disabled-opacity);
+    cursor: not-allowed;
+}
+.char-modal-nav::before {
+    font-family: 'Font Awesome 6 Free';
+    font-weight: 900;
+    font-size: var(--cmn-icon-size);
+    line-height: 1;
+}
+.char-modal-nav-prev {
+    left: var(--cmn-side-offset);
+    border-radius: 0 var(--radius-lg) var(--radius-lg) 0;
+}
+.char-modal-nav-prev::before {
+    content: var(--cmn-icon-prev);
+}
+.char-modal-nav-next {
+    right: var(--cmn-side-offset);
+    border-radius: var(--radius-lg) 0 0 var(--radius-lg);
+}
+.char-modal-nav-next::before {
+    content: var(--cmn-icon-next);
 }
 
 .modal-header {
@@ -3934,6 +4015,154 @@ input[type="search"]::-webkit-search-results-decoration {
     font-size: 1.25rem;
 }
 
+/* @canonical cl-skeleton-card */
+.cl-skeleton-card {
+    border-radius: var(--radius-2xl);
+    overflow: hidden;
+    background: var(--card-bg);
+    border: 1px solid var(--glass-border);
+    display: flex;
+    flex-direction: column;
+    position: relative;
+}
+.cl-skeleton-card .cl-skeleton-img {
+    aspect-ratio: 1;
+    background: var(--glass-border);
+    position: relative;
+    overflow: hidden;
+}
+.cl-skeleton-card .cl-skeleton-meta {
+    padding: var(--space-md);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+    min-height: 90px;
+    flex: 0 0 auto;
+}
+
+/* Mobile: tighter meta block to match browse-card's 8px / 60px sizing */
+@media screen and (max-width: 768px) {
+    .cl-skeleton-card {
+        border-radius: var(--radius-xl);
+    }
+    .cl-skeleton-card .cl-skeleton-meta {
+        padding: var(--space-sm);
+        gap: var(--space-xs-sm);
+        min-height: 60px;
+    }
+}
+.cl-skeleton-line {
+    height: 8px;
+    margin-bottom: var(--space-sm);
+    border-radius: var(--radius-xs);
+    background: var(--glass-border);
+    position: relative;
+    overflow: hidden;
+}
+.cl-skeleton-line:last-child { margin-bottom: 0; }
+.cl-skeleton-line.short { width: 60%; }
+.cl-skeleton-line.shorter { width: 40%; }
+.cl-skeleton-img::before,
+.cl-skeleton-line::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+        90deg,
+        rgba(255, 255, 255, 0) 0%,
+        rgba(255, 255, 255, 0.08) 50%,
+        rgba(255, 255, 255, 0) 100%
+    );
+    background-size: 200% 100%;
+    animation: cl-skeleton-shimmer 1.6s ease-in-out infinite;
+}
+@keyframes cl-skeleton-shimmer {
+    0%   { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+}
+
+/* @canonical cl-empty-state */
+.cl-empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 56px var(--space-2xl);
+    min-height: 280px;
+    color: var(--text-secondary);
+    gap: var(--space-md);
+    grid-column: 1 / -1;
+}
+.cl-empty-state-icon {
+    color: var(--accent);
+    font-size: var(--font-4xl);
+    margin-bottom: var(--space-xs-sm);
+    line-height: 1;
+}
+.cl-empty-state-title {
+    font-size: var(--font-lg);
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0;
+    letter-spacing: -0.01em;
+}
+.cl-empty-state-hint {
+    font-size: var(--font-md);
+    line-height: 1.5;
+    max-width: 360px;
+    margin: 0;
+    color: var(--text-secondary);
+}
+.cl-empty-state-action {
+    margin-top: var(--space-sm);
+}
+
+/* @canonical cl-skeleton-list */
+.cl-skeleton-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+    padding: var(--space-md);
+}
+.cl-skeleton-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-md);
+    padding: var(--space-sm-md);
+    border-radius: var(--radius-md);
+    background: var(--card-bg);
+    border: 1px solid var(--glass-border);
+}
+.cl-skeleton-row .cl-skeleton-avatar {
+    width: 44px;
+    height: 44px;
+    border-radius: var(--radius-circle);
+    background: var(--glass-border);
+    position: relative;
+    overflow: hidden;
+    flex-shrink: 0;
+}
+.cl-skeleton-row .cl-skeleton-avatar::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+        90deg,
+        rgba(255, 255, 255, 0) 0%,
+        rgba(255, 255, 255, 0.08) 50%,
+        rgba(255, 255, 255, 0) 100%
+    );
+    background-size: 200% 100%;
+    animation: cl-skeleton-shimmer 1.6s ease-in-out infinite;
+}
+.cl-skeleton-row .cl-skeleton-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs-sm);
+}
+
 .sprite-item {
     background: var(--card-bg);
     border-radius: var(--radius-lg);
@@ -4542,6 +4771,12 @@ input[type="search"]::-webkit-search-results-decoration {
     display: none !important;
 }
 
+/* Hidden on desktop, mobile stylesheet flips them on */
+.mobile-bottom-nav,
+.mobile-fab {
+    display: none;
+}
+
 /* Toasts */
 .toast-container {
     position: fixed;
@@ -5011,6 +5246,10 @@ input[type="search"]::-webkit-search-results-decoration {
 
 
 /* Import Summary Modal */
+.cl-modal-content.chub-gallery-modal-content {
+    max-width: calc(600px * var(--modal-scale, 1));
+}
+
 .import-summary-list {
     display: flex;
     flex-direction: column;
@@ -5268,7 +5507,7 @@ input[type="search"]::-webkit-search-results-decoration {
 }
 
 /* Modal content */
-.provider-link-modal-content {
+.cl-modal-content.provider-link-modal-content {
     max-width: calc(600px * var(--modal-scale, 1));
     width: 95vw;
 }
@@ -5710,7 +5949,7 @@ input[type="search"]::-webkit-search-results-decoration {
    Help & Tips Modal
    ================================================ */
 
-.confirm-modal-content.gallery-info-modal-content {
+.cl-modal-content.gallery-info-modal-content {
     max-width: calc(1050px * var(--modal-scale, 1));
     max-height: calc(85vh * var(--modal-scale, 1));
     width: 95vw;
@@ -5902,14 +6141,14 @@ input[type="search"]::-webkit-search-results-decoration {
    Character Duplicates Detection System
    ================================================ */
 
-.char-duplicates-modal-content {
+.cl-modal-content.char-duplicates-modal-content {
     max-width: 98vw;
     max-height: calc(95vh * var(--modal-scale, 1));
     width: 98vw;
     min-width: calc(1200px * var(--modal-scale, 1));
 }
 
-.char-duplicates-modal-content .confirm-modal-body {
+.char-duplicates-modal-content .cl-modal-body {
     max-height: calc(95vh - 120px);
     overflow-y: auto;
     overflow-x: auto;
@@ -6909,7 +7148,7 @@ input[type="search"]::-webkit-search-results-decoration {
 }
 
 /* Pre-Import Duplicate Modal */
-.pre-import-duplicate-content {
+.cl-modal-content.pre-import-duplicate-content {
     max-width: calc(850px * var(--modal-scale, 1));
     width: 95vw;
 }
@@ -7037,7 +7276,7 @@ input[type="search"]::-webkit-search-results-decoration {
     flex-direction: column;
     box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
 }
-.confirm-modal-content.recommender-modal-content {
+.cl-modal-content.recommender-modal-content {
     max-width: calc(680px * var(--modal-scale, 1));
     max-height: calc(95vh * var(--modal-scale, 1));
 }
@@ -7292,29 +7531,33 @@ input[type="search"]::-webkit-search-results-decoration {
 }
 
 /* Settings Modal */
-.settings-modal-content {
+.cl-modal-content.settings-modal-content {
     max-width: calc(550px * var(--modal-scale, 1));
 }
 
 /* Settings Search Bar */
 .settings-search-bar {
+    position: relative;
     display: flex;
     align-items: center;
-    gap: var(--space-xs-sm);
     margin-left: auto;
     margin-right: 12px;
 }
 
 .settings-search-bar i {
-    color: var(--text-secondary);
-    opacity: 0.6;
+    position: absolute;
+    left: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--text-faint);
     font-size: var(--font-sm);
+    pointer-events: none;
 }
 
 .settings-search-bar .glass-input {
     border: 1px solid var(--glass-border);
     background: rgba(0, 0, 0, 0.2);
-    padding: 5px 10px;
+    padding: 5px 10px 5px 28px;
     font-size: var(--font-sm);
     border-radius: var(--radius-md);
     width: 150px;
@@ -7366,23 +7609,27 @@ input[type="search"]::-webkit-search-results-decoration {
 
 /* Help Search Bar */
 .help-search-bar {
+    position: relative;
     display: flex;
     align-items: center;
-    gap: var(--space-xs-sm);
     margin-left: auto;
     margin-right: 12px;
 }
 
 .help-search-bar i {
-    color: var(--text-secondary);
-    opacity: 0.6;
+    position: absolute;
+    left: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--text-faint);
     font-size: var(--font-sm);
+    pointer-events: none;
 }
 
 .help-search-bar .glass-input {
     border: 1px solid var(--glass-border);
     background: rgba(0, 0, 0, 0.2);
-    padding: 5px 10px;
+    padding: 5px 10px 5px 28px;
     font-size: var(--font-sm);
     border-radius: var(--radius-md);
     width: 150px;
@@ -7408,7 +7655,8 @@ input[type="search"]::-webkit-search-results-decoration {
 }
 
 /* Settings Modal with Sidebar Layout */
-.settings-with-sidebar {
+/* Compound class beats .cl-modal-content's 500px base */
+.cl-modal-content.settings-with-sidebar {
     width: calc(850px * var(--modal-scale, 1));
     max-width: 95vw;
     height: min(calc(700px * var(--modal-scale, 1)), 97vh);
@@ -8150,6 +8398,11 @@ details.settings-provider-section > .settings-provider-body {
     margin-bottom: 0;
 }
 
+.settings-row.disabled {
+    opacity: 0.45;
+    pointer-events: none;
+}
+
 .settings-row > label {
     display: block;
     margin-bottom: 6px;
@@ -8557,7 +8810,7 @@ details.settings-provider-section > .settings-provider-body {
 }
 
 /* Import Modal */
-.import-modal-content {
+.cl-modal-content.import-modal-content {
     max-width: calc(650px * var(--modal-scale, 1));
     max-height: calc(90vh * var(--modal-scale, 1));
 }
@@ -9024,7 +9277,7 @@ details.settings-provider-section > .settings-provider-body {
 /* ========================================
    Bulk Provider Link Modal
    ======================================== */
-.bulk-auto-link-modal-content {
+.cl-modal-content.bulk-auto-link-modal-content {
     max-width: calc(800px * var(--modal-scale, 1));
     max-height: calc(85vh * var(--modal-scale, 1));
 }
@@ -9406,7 +9659,7 @@ details.settings-provider-section > .settings-provider-body {
 /* ========================================
    Bulk Localization Modal
    ======================================== */
-.bulk-localize-modal-content {
+.cl-modal-content.bulk-localize-modal-content {
     max-width: calc(550px * var(--modal-scale, 1));
 }
 
@@ -9456,7 +9709,7 @@ details.settings-provider-section > .settings-provider-body {
 }
 
 /* Bulk Summary Modal */
-.bulk-summary-modal-content {
+.cl-modal-content.bulk-summary-modal-content {
     max-width: calc(800px * var(--modal-scale, 1));
     max-height: calc(90vh * var(--modal-scale, 1));
 }
@@ -9881,6 +10134,22 @@ details.settings-provider-section > .settings-provider-body {
     color: var(--accent-text);
     background: rgba(255, 255, 255, 0.2);
     filter: drop-shadow(0 0 6px rgba(255, 255, 255, 0.3));
+}
+
+/* Lockout chrome while initial fetchCharacters is in flight */
+html.cl-initial-loading .view-toggle,
+html.cl-initial-loading .mobile-bottom-nav-tab {
+    pointer-events: none;
+    opacity: 0.45;
+    cursor: wait;
+    transition: opacity 0.2s ease;
+}
+html.cl-initial-loading .view-toggle-btn,
+html.cl-initial-loading .mobile-bottom-nav-tab {
+    cursor: wait !important;
+}
+html.cl-initial-loading .mobile-fab {
+    display: none !important;
 }
 
 /* Filters wrapper - prevents layout shift */
@@ -10902,6 +11171,7 @@ details.settings-provider-section > .settings-provider-body {
     --cl-accent: rgb(var(--cl-accent-rgb));
     --cl-accent-hover: color-mix(in srgb, var(--cl-accent), white 20%);
     --cl-glass-bg: rgba(30, 30, 30, 0.95);
+    --cl-topbar-bg: rgba(20, 20, 20, 0.8);
     --cl-border: rgba(58, 58, 58, 0.6);
     --cl-text-primary: var(--SmartThemeBodyColor, #e0e0e0);
     --cl-text-secondary: var(--SmartThemeQuoteColor, #a0a0a0);
@@ -10972,14 +11242,20 @@ details.settings-provider-section > .settings-provider-body {
 
 .cl-modal-content {
     background: var(--cl-glass-bg);
-    border-radius: var(--radius-2xl);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: var(--radius-3xl);
+    overflow: hidden;
     width: 90%;
     max-width: calc(500px * var(--modal-scale, 1));
     max-height: calc(80vh * var(--modal-scale, 1));
     display: flex;
     flex-direction: column;
-    box-shadow: var(--cl-shadow-xl);
-    border: 1px solid var(--cl-border);
+    box-shadow:
+        0 24px 80px rgba(0, 0, 0, 0.6),
+        0 0 0 1px rgba(255, 255, 255, 0.04),
+        inset 0 1px 0 rgba(255, 255, 255, 0.06);
     transform: scale(0.95);
     transition: transform 0.2s;
 }
@@ -10997,15 +11273,20 @@ details.settings-provider-section > .settings-provider-body {
 .cl-modal-header {
     display: flex;
     align-items: center;
-    padding: 16px 20px;
-    border-bottom: 1px solid var(--cl-border);
+    padding: 12px 20px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
     gap: var(--space-md);
+    background: linear-gradient(135deg,
+        rgba(var(--accent-rgb), 0.10) 0%,
+        rgba(var(--accent-secondary-rgb), 0.08) 100%);
+    border-radius: var(--radius-2xl) var(--radius-2xl) 0 0;
 }
 
 .cl-modal-header h3 {
     margin: 0;
     font-size: 1.1em;
-    font-weight: 600;
+    font-weight: 700;
+    letter-spacing: -0.01em;
     color: var(--cl-text-primary);
     flex: 1;
     display: flex;
@@ -11042,45 +11323,12 @@ details.settings-provider-section > .settings-provider-body {
     border-top: 1px solid var(--cl-border);
 }
 
-/* @canonical modal-feature
-   Container-agnostic modifier: add .cl-modal-feature to any modal-content variant
-   (.cl-modal-content or .confirm-modal-content) to give it the "feature" chrome:
-   richer shadow stack, accent-gradient header background, and helpers for a
-   gradient-text icon in the title. Use for modals that frame a feature rather than
-   a utility workflow: the AI recommender, the AI css assistant, etc. Confirm modals
-   and standard utility dialogs do not use this. */
-.cl-modal-feature {
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: var(--radius-3xl);
-    overflow: hidden;
-    box-shadow:
-        0 24px 80px rgba(0, 0, 0, 0.6),
-        0 0 0 1px rgba(255, 255, 255, 0.04),
-        inset 0 1px 0 rgba(255, 255, 255, 0.06);
-}
-
-.cl-modal-feature .cl-modal-header,
-.cl-modal-feature .confirm-modal-header {
-    padding: 12px 20px;
-    background: linear-gradient(135deg,
-        rgba(var(--accent-rgb), 0.10) 0%,
-        rgba(var(--accent-secondary-rgb), 0.08) 100%);
-    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-}
-
-.cl-modal-feature .cl-modal-header h3,
-.cl-modal-feature .confirm-modal-header h3 {
-    font-weight: 700;
-    letter-spacing: -0.01em;
-}
-
-/* Clipped accent gradient on the icon, used inside feature headers. */
-.cl-modal-feature .cl-modal-header-icon {
+/* @canonical modal-header-icon: opt-in gradient-clip on header title icons */
+.cl-modal-header-icon {
     background: linear-gradient(135deg, var(--accent), var(--accent-secondary));
     -webkit-background-clip: text;
     background-clip: text;
     -webkit-text-fill-color: transparent;
-    font-size: var(--font-sm);
 }
 
 /* @canonical button-module */
@@ -11379,7 +11627,7 @@ details.settings-provider-section > .settings-provider-body {
     /* Header optimization */
     .modal-header {
         padding: 8px 12px;
-        min-height: 44px;
+        min-height: var(--touch-target-min);
     }
     .modal-header h2 {
         font-size: var(--font-base);

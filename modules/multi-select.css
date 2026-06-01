@@ -8,8 +8,9 @@ body.multi-select-mode .char-card {
     position: relative;
 }
 
-body.multi-select-mode .char-card::before {
-    content: '';
+/* always in dom (display:none), revealed in multi-select mode; real div + i for themer control */
+.char-card-checkbox {
+    display: none;
     position: absolute;
     top: 8px;
     left: 8px;
@@ -18,20 +19,33 @@ body.multi-select-mode .char-card::before {
     border: 2px solid rgba(255, 255, 255, 0.5);
     border-radius: var(--radius-sm);
     background: rgba(0, 0, 0, 0.3);
-    background-repeat: no-repeat;
-    background-position: center;
-    background-size: 14px;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-size: var(--font-md-lg);
     z-index: 10;
     transition: all 0.2s;
 }
 
-body.multi-select-mode .char-card.selected::before {
-    background-color: var(--accent);
-    border-color: var(--accent);
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='4 12 10 18 20 6'/%3E%3C/svg%3E");
+.char-card-checkbox i {
+    opacity: 0;
+    transition: opacity 0.15s;
 }
 
-body.multi-select-mode .char-card:hover::before {
+body.multi-select-mode .char-card-checkbox {
+    display: flex;
+}
+
+body.multi-select-mode .char-card.selected .char-card-checkbox {
+    background: var(--accent);
+    border-color: var(--accent);
+}
+
+body.multi-select-mode .char-card.selected .char-card-checkbox i {
+    opacity: 1;
+}
+
+body.multi-select-mode .char-card:hover .char-card-checkbox {
     border-color: var(--accent);
 }
 
@@ -192,7 +206,10 @@ body.multi-select-mode .char-card:hover::before {
     }
 
     /* Kill per-card checkbox transition */
-    body.multi-select-mode .char-card::before {
+    body.multi-select-mode .char-card .char-card-checkbox {
+        transition: none !important;
+    }
+    body.multi-select-mode .char-card .char-card-checkbox i {
         transition: none !important;
     }
     .multi-select-left {

@@ -164,7 +164,7 @@
 
     .bt-suggestion-item {
         padding: 12px 14px;
-        min-height: 44px;
+        min-height: var(--touch-target-min);
         display: flex;
         align-items: center;
         font-size: var(--font-sm);
@@ -179,7 +179,7 @@
     #batchTagModal .cl-modal-footer {
         flex-direction: column;
         gap: var(--space-sm);
-        padding-bottom: max(14px, env(safe-area-inset-bottom));
+        padding-bottom: max(14px, var(--safe-bottom));
     }
 
     #batchTagModal .cl-modal-footer .cl-btn {

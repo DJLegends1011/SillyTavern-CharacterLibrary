@@ -243,7 +243,7 @@ body.modal-size-large .css-assistant-modal .cl-modal-content { max-width: 1125px
 .css-assistant-input {
     width: 100%;
     resize: vertical;
-    min-height: 44px;
+    min-height: var(--touch-target-min);
     max-height: 120px;
     font-size: var(--font-sm);
     line-height: 1.5;
@@ -255,42 +255,41 @@ body.modal-size-large .css-assistant-modal .cl-modal-content { max-width: 1125px
 }
 
 @media (max-width: 768px) {
-    /* Full-viewport modal on touch devices */
-    .css-assistant-modal .cl-modal-content {
-        width: 100% !important;
-        max-width: 100% !important;
-        height: 100% !important;
-        max-height: 100% !important;
-        border-radius: 0 !important;
-    }
     .cl-modal-body.css-assistant-body {
         padding: var(--space-md);
         gap: var(--space-md);
     }
 
-    /* Toolbar: profile row spans full width, Reset moves below */
     .css-assistant-toolbar {
-        flex-wrap: wrap;
-        gap: var(--space-sm);
+        flex-wrap: nowrap;
+        gap: var(--space-md);
     }
     .css-assistant-profile-row {
-        flex-basis: 100%;
-        flex-wrap: wrap;
+        flex: 1;
+        flex-wrap: nowrap;
+        min-width: 0;
     }
+    .css-assistant-profile-row label { display: none; }
     .css-assistant-profile-row select {
         flex: 1;
         min-width: 0;
         max-width: none;
     }
-    .css-assistant-status { flex-basis: 100%; }
+    #cssAssistantConnectionStatus { display: none; }
     #cssAssistantResetBtn {
-        min-height: 44px;
-        margin-left: auto;
+        min-width: var(--touch-target-min);
+        min-height: var(--touch-target-min);
+        padding: 0;
+        gap: 0;
+        font-size: 0;
+        justify-content: center;
+        flex-shrink: 0;
     }
+    #cssAssistantResetBtn i { font-size: var(--font-md); }
 
     /* Context banner: tighter padding, larger dismiss touch target */
     .css-assistant-context-banner { padding: var(--space-sm); flex-wrap: wrap; }
-    .css-assistant-context-dismiss { min-width: 44px; min-height: 44px; }
+    .css-assistant-context-dismiss { min-width: var(--touch-target-min); min-height: var(--touch-target-min); }
 
     /* Chat: tighter padding */
     .css-assistant-chat {
@@ -298,7 +297,11 @@ body.modal-size-large .css-assistant-modal .cl-modal-content { max-width: 1125px
         gap: var(--space-sm);
     }
 
-    /* Empty state: smaller hero icon */
+    /* Centering reflows under the keyboard, icon slides */
+    .css-assistant-empty {
+        justify-content: flex-start;
+        padding-top: var(--space-xl);
+    }
     .css-assistant-empty i { font-size: var(--font-xl); }
 
     /* Code blocks: smaller, scroll horizontally, shorter cap */
@@ -319,15 +322,30 @@ body.modal-size-large .css-assistant-modal .cl-modal-content { max-width: 1125px
         font-size: var(--font-xs);
     }
 
-    /* Footer: ensure Send/Stop are tap-friendly */
     .cl-modal-footer.css-assistant-footer {
+        flex-direction: row;
+        align-items: flex-end;
+        gap: var(--space-sm);
         padding: var(--space-md);
     }
     .css-assistant-input {
+        flex: 1;
         font-size: 16px;
-        min-height: 48px;
+        min-height: var(--touch-target-min);
+        max-height: 120px;
+        resize: none;
+    }
+    .css-assistant-footer-actions {
+        flex-direction: column;
+        flex-shrink: 0;
     }
     .css-assistant-footer-actions .cl-btn {
-        min-height: 44px;
+        min-width: var(--touch-target-min);
+        min-height: var(--touch-target-min);
+        padding: 0;
+        gap: 0;
+        font-size: 0;
+        justify-content: center;
     }
+    .css-assistant-footer-actions .cl-btn i { font-size: var(--font-md); }
 }

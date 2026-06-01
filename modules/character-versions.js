@@ -444,6 +444,7 @@ export async function saveCurrentSnapshot(char, label = '') {
     const charName = char.data?.name || char.name || 'Unknown';
     const finalLabel = label || `Snapshot ${new Date().toLocaleString()}`;
     await storageSaveSnapshot(char.avatar, charName, finalLabel, 'local', data, uid);
+    CoreAPI.hapticFeedback(12);
     CoreAPI.showToast(`Snapshot saved: "${finalLabel}"`, 'success');
 }
 

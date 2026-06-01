@@ -112,6 +112,30 @@ export class BrowseView {
         // Base implementation - no-op. Subclasses override.
     }
 
+    // ── Search contract (mobile FAB overlay) ──
+
+    /** @returns {Array<'character' | 'creator'>} */
+    getSearchModes() { return ['character']; }
+
+    /** @returns {string | null} DOM id of the inline input to proxy. */
+    getSearchInputId(mode) { return null; }
+
+    /** Default proxies through the inline input + submit button (or Enter). */
+    performSearch(mode, query) {
+        const inputId = this.getSearchInputId(mode);
+        if (!inputId) return;
+        const input = document.getElementById(inputId);
+        if (!input) return;
+        input.value = query;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        const submitBtn = input.parentElement?.querySelector('.browse-search-submit');
+        if (submitBtn) {
+            submitBtn.click();
+        } else {
+            input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        }
+    }
+
     /**
      * Called when leaving this provider's view.
      * Disconnect observers, abort fetches, etc.
@@ -310,16 +334,19 @@ export class BrowseView {
             const grid = document.getElementById(gridId);
             if (!grid) continue;
 
+            // Skip the top-left source-badge container (datacat reuses the base class).
+            const BOTTOM_BADGES_SEL = '.browse-feature-badges:not(.browse-feature-badges-tl)';
+
             for (const card of grid.querySelectorAll('.browse-card:not(.in-library)')) {
                 if (!checkCard(card)) continue;
                 card.classList.add('in-library');
                 card.classList.remove('possible-library');
-                let badgesEl = card.querySelector('.browse-feature-badges');
+                let badgesEl = card.querySelector(BOTTOM_BADGES_SEL);
                 if (!badgesEl) {
                     const imgWrap = card.querySelector('.browse-card-image');
                     if (imgWrap) {
                         imgWrap.insertAdjacentHTML('beforeend', '<div class="browse-feature-badges"></div>');
-                        badgesEl = imgWrap.querySelector('.browse-feature-badges');
+                        badgesEl = imgWrap.querySelector(BOTTOM_BADGES_SEL);
                     }
                 }
                 if (badgesEl) {
@@ -336,12 +363,12 @@ export class BrowseView {
                 const creator = creatorEl?.dataset.author || creatorEl?.dataset.creatorName || '';
                 if (!this.isCharPossibleMatch(name, creator)) continue;
                 card.classList.add('possible-library');
-                let badgesEl = card.querySelector('.browse-feature-badges');
+                let badgesEl = card.querySelector(BOTTOM_BADGES_SEL);
                 if (!badgesEl) {
                     const imgWrap = card.querySelector('.browse-card-image');
                     if (imgWrap) {
                         imgWrap.insertAdjacentHTML('beforeend', '<div class="browse-feature-badges"></div>');
-                        badgesEl = imgWrap.querySelector('.browse-feature-badges');
+                        badgesEl = imgWrap.querySelector(BOTTOM_BADGES_SEL);
                     }
                 }
                 if (badgesEl && !badgesEl.querySelector('.possible-library')) {
@@ -658,6 +685,25 @@ export class BrowseView {
             }
         };
         document.addEventListener('click', this._dropdownCloseHandler);
+
+        // Direct hook: on each dropdown's button click, push a back-button guard
+        // when the dropdown transitions from hidden to open. The mobile back-stack
+        // catches the body-relocated dropdown at Tier 6 once a guard is queued.
+        this._dropdownGuardCleanups = [];
+        for (const { dropdownId, buttonId } of pairs) {
+            const btn = document.getElementById(buttonId);
+            const dropdown = document.getElementById(dropdownId);
+            if (!btn || !dropdown) continue;
+            const onClick = () => {
+                requestAnimationFrame(() => {
+                    if (!dropdown.classList.contains('hidden')) {
+                        window.pushOverlayGuard?.();
+                    }
+                });
+            };
+            btn.addEventListener('click', onClick);
+            this._dropdownGuardCleanups.push(() => btn.removeEventListener('click', onClick));
+        }
     }
 
     /**
@@ -667,6 +713,10 @@ export class BrowseView {
         if (this._dropdownCloseHandler) {
             document.removeEventListener('click', this._dropdownCloseHandler);
             this._dropdownCloseHandler = null;
+        }
+        if (this._dropdownGuardCleanups) {
+            for (const cleanup of this._dropdownGuardCleanups) cleanup();
+            this._dropdownGuardCleanups = null;
         }
     }
 

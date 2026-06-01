@@ -119,14 +119,14 @@ function setOpt(key, value) {
 
 function createModal() {
     const html = `
-    <div id="recommenderModal" class="confirm-modal hidden">
-        <div class="confirm-modal-content recommender-modal-content cl-modal-feature">
-            <div class="confirm-modal-header">
+    <div id="recommenderModal" class="cl-modal">
+        <div class="cl-modal-content recommender-modal-content">
+            <div class="cl-modal-header">
                 <h3>
-                    <i class="fa-solid fa-wand-magic-sparkles cl-modal-header-icon"></i>
+                    <i class="fa-solid fa-wand-magic-sparkles"></i>
                     <span>Card Recommender</span>
                 </h3>
-                <button class="close-confirm-btn" id="recommenderCloseBtn" title="Close">
+                <button class="cl-modal-close" id="recommenderCloseBtn" title="Close">
                     <i class="fa-solid fa-xmark"></i>
                 </button>
             </div>
@@ -324,7 +324,7 @@ function openModal() {
     }
     loadSettingsIntoUI();
     clearResults();
-    modal.classList.remove('hidden');
+    modal.classList.add('visible');
     if (!matchMedia('(pointer: coarse)').matches) document.getElementById('recommenderPrompt')?.focus();
     loadProfiles();
 }
@@ -350,7 +350,7 @@ function closeModal() {
 
 function forceCloseModal() {
     abortController?.abort();
-    document.getElementById('recommenderModal')?.classList.add('hidden');
+    document.getElementById('recommenderModal')?.classList.remove('visible');
     _lastPrompt = '';
     _excludedAvatars = new Set();
 }
@@ -649,6 +649,7 @@ function attachEvents() {
         id: 'recommenderModal',
         tier: 5,
         close: () => closeModal(),
+        visible: (el) => el.classList.contains('visible'),
     });
 
     // Enter key to submit
@@ -995,6 +996,14 @@ function cleanTextForLLM(raw) {
     return text.trim();
 }
 
+// orphan halves bonk Python-strict encoders downstream (LiteLLM, ai-horde, etc).
+function stripOrphanSurrogates(str) {
+    if (!str) return str;
+    return str
+        .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g, '')
+        .replace(/(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '');
+}
+
 const PROVIDER_TAGLINE_KEYS = ['chub', 'chartavern', 'jannyai', 'pygmalion', 'wyvern'];
 
 function getProviderTagline(char) {
@@ -1188,16 +1197,20 @@ async function callSillyTavernAPI(messages, temperature, signal) {
             body.minimax_endpoint = profile['api-url'];
         }
         if (profile['prompt-post-processing']) body.custom_prompt_post_processing = profile['prompt-post-processing'];
-    } else if (activePreset) {
-        if (activePreset.custom_url) body.custom_url = activePreset.custom_url;
-        if (activePreset.reverse_proxy) body.reverse_proxy = activePreset.reverse_proxy;
-        if (activePreset.proxy_password) body.proxy_password = activePreset.proxy_password;
+    } else if (activePreset && activePreset.custom_url) {
+        body.custom_url = activePreset.custom_url;
     }
+
+    const proxy = await CoreAPI.resolveProxyForProfile(profile);
+    if (proxy?.url) body.reverse_proxy = proxy.url;
+    if (proxy?.password) body.proxy_password = proxy.password;
 
     CoreAPI.debugLog('[Recommender] ST request:', {
         source, model, temperature,
         profileName: profile?.name, hasSecretId: !!body.secret_id,
         customUrl: body.custom_url || null,
+        reverseProxy: body.reverse_proxy || null,
+        hasProxyPassword: !!body.proxy_password,
         messageCount: messages.length, userMsgLength: messages[1]?.content?.length,
     });
 
@@ -1291,29 +1304,34 @@ function extractContent(data) {
     }
 
     const msg = data?.choices?.[0]?.message;
-    if (msg && 'content' in msg) return msg.content ?? '';
-    if (data?.choices?.[0]?.text != null) return data.choices[0].text;
+    if (msg && typeof msg.content === 'string') return msg.content;
+    if (msg && 'content' in msg && msg.content == null) return '';
+    const msgBlocks = CoreAPI.flattenContentBlocks(msg?.content);
+    if (msgBlocks) return msgBlocks;
+    if (typeof data?.choices?.[0]?.text === 'string') return data.choices[0].text;
     const delta = data?.choices?.[0]?.delta;
-    if (delta && 'content' in delta) return delta.content ?? '';
-    if (data?.message && 'content' in data.message) return data.message.content ?? '';
+    if (delta && typeof delta.content === 'string') return delta.content;
+    if (typeof data?.message?.content === 'string') return data.message.content;
     if (typeof data?.content === 'string') return data.content;
+    const rootBlocks = CoreAPI.flattenContentBlocks(data?.content);
+    if (rootBlocks) return rootBlocks;
     if (typeof data?.response === 'string') return data.response;
     if (typeof data?.output?.text === 'string') return data.output.text;
     if (typeof data?.result === 'string') return data.result;
     if (typeof data === 'string') return data;
 
     CoreAPI.debugLog('[Recommender] Unrecognized response shape:', JSON.stringify(data).slice(0, 500));
-    throw new Error('Unexpected API response format — could not extract content');
+    throw new Error('Unexpected API response format: could not extract content');
 }
 
 async function generate(userPrompt, chars, opts, signal) {
     const charList = buildCharacterList(chars, opts);
+    const userMessage = stripOrphanSurrogates(
+        `CHARACTER LIBRARY (${chars.length} characters):\n${charList}\n\nUSER REQUEST: ${userPrompt}\n\nRecommend up to ${opts.maxResults} characters. Respond with a JSON array only.`
+    );
     const messages = [
         { role: 'system', content: SYSTEM_PROMPT },
-        {
-            role: 'user',
-            content: `CHARACTER LIBRARY (${chars.length} characters):\n${charList}\n\nUSER REQUEST: ${userPrompt}\n\nRecommend up to ${opts.maxResults} characters. Respond with a JSON array only.`
-        },
+        { role: 'user', content: userMessage },
     ];
 
     const mode = getOpt('apiMode');
@@ -1716,7 +1734,7 @@ function renderResults(recommendations) {
         rank++;
         if (char.avatar) renderedAvatars.push(char.avatar);
 
-        const avatarUrl = CoreAPI.getCharacterAvatarUrl(char.avatar);
+        const avatarUrl = CoreAPI.getCharacterAvatarStThumbUrl(char.avatar);
         const tags = CoreAPI.getCharacterTags(char);
         const tagsHtml = tags.slice(0, 5).map(t =>
             `<span class="recommender-tag">${CoreAPI.escapeHtml(t)}</span>`

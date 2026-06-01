@@ -219,7 +219,7 @@
     // ── Expose parseDate + formatDate for DOM fixer ──
     window.__mobileDateParse = parseDate;
     window.__mobileDateFormat = formatDate;
-    console.log('[MobileDatePatch] v3 loaded — manual parser active');
+    console.log('[MobileDatePatch] v3 loaded, manual parser active');
 })();
 
 /* ========================================
@@ -235,7 +235,7 @@
      close     {function} - called with the element to close it
      static    {boolean}  - protect from catch-all el.remove() (default: true)
      escape    {boolean}  - respond to Escape key (default: true)
-     visible   {function} - optional override: (el) => bool. Default: !el.classList.contains('hidden')
+     visible   {function} - optional override: (el) => bool. Default auto-detects: cl-modal uses .visible, others use !.hidden.
    ======================================== */
 window._overlayRegistry = window._overlayRegistry || [];
 window.registerOverlay = window.registerOverlay || function(cfg) {
@@ -254,6 +254,10 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
     }
 
     if (!isMobile()) return;
+
+    // Shared signal: card-swipe sets this true when it commits to a horizontal
+    // gesture so pull-to-refresh and view-swipe back off in the same touch.
+    let activeCardSwipe = false;
 
     // Ensure viewport-fit=cover for safe-area-inset to work
     (function fixViewport() {
@@ -283,11 +287,19 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
         createSettingsButton(topbar);
         createMenuButton(topbar);
         createProviderQuickSwitch(topbar);
+        setupBottomNav();
+        migrateTopbarToBottomNav();
+        setupHideTopbarOnScroll();
+        setupBottomSheetDismiss();
+        setupPullToRefresh();
+        setupCardSwipeGestures();
+        setupOnlineSearchOverlay();
         setupModalAvatar();
         setupGallerySwipe();
         setupBrowseGallerySwipe();
         setupGreetingsSwipe();
         setupTabSwipe();
+        setupCharModalNavSwipe();
         setupViewSwipe();
         setupContextMenu();
         setupViewportFix();
@@ -305,15 +317,682 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
         setupModalHeaderCollapse();
         setupTitleScrollReveal();
         setupMultiSelectConfirm();
+        setupBrowseModalActionsMenu();
         setupBackButton();
     }
 
-    /* ========================================
-       ANDROID BACK BUTTON
-       ======================================== */
+    /* ========== BOTTOM NAVIGATION + FAB ========== */
+
+    function setupBottomNav() {
+        const bottomNav = document.getElementById('mobileBottomNav');
+        const fab = document.getElementById('mobileFab');
+        if (!bottomNav) return;
+
+        const tabs = bottomNav.querySelectorAll('.mobile-bottom-nav-tab');
+
+        tabs.forEach(tab => {
+            tab.addEventListener('click', () => {
+                const view = tab.dataset.view;
+                if (typeof window.switchView === 'function') {
+                    window.switchView(view);
+                }
+                window.hapticFeedback?.(8);
+            });
+        });
+
+        // Mirror .view-toggle.active so library.js doesn't need to know about us
+        const desktopToggle = document.querySelector('.view-toggle');
+        if (desktopToggle) {
+            const syncBottomNav = () => {
+                const activeBtn = desktopToggle.querySelector('.view-toggle-btn.active');
+                if (!activeBtn) return;
+                const activeView = activeBtn.dataset.view;
+                tabs.forEach(t => t.classList.toggle('active', t.dataset.view === activeView));
+                updateFab(activeView);
+            };
+            const observer = new MutationObserver(syncBottomNav);
+            observer.observe(desktopToggle, {
+                subtree: true,
+                attributes: true,
+                attributeFilter: ['class'],
+            });
+            syncBottomNav();
+        }
+
+        // Soft keyboard open: hide nav so it doesnt stack above the keyboard
+        if (window.visualViewport) {
+            const KEYBOARD_THRESHOLD = 150; // px of viewport reduction = keyboard
+            const checkKeyboard = () => {
+                const reduction = window.innerHeight - window.visualViewport.height;
+                const open = reduction > KEYBOARD_THRESHOLD;
+                bottomNav.classList.toggle('hidden-by-keyboard', open);
+                if (fab) fab.classList.toggle('hidden-by-keyboard', open);
+                document.documentElement.classList.toggle('cl-keyboard-open', open);
+            };
+            window.visualViewport.addEventListener('resize', checkKeyboard);
+        }
+    }
+
+    /* ========== TOPBAR MIGRATION (mobile only) ========== */
+
+    function migrateTopbarToBottomNav() {
+        const filtersBtn = document.getElementById('mobileNavFiltersBtn');
+        const moreBtn = document.getElementById('mobileNavMoreBtn');
+
+        if (filtersBtn) {
+            filtersBtn.addEventListener('click', () => {
+                window.hapticFeedback?.(8);
+                document.getElementById('mobileSettingsBtn')?.click();
+            });
+        }
+        if (moreBtn) {
+            moreBtn.addEventListener('click', () => {
+                window.hapticFeedback?.(8);
+                document.getElementById('mobileMenuBtn')?.click();
+            });
+        }
+
+        // Reparent as a SIBLING of #onlineView (not child); activateProvider
+        // does container.innerHTML = renderView() and would wipe a child.
+        const onlineFilterArea = document.getElementById('onlineFilterArea');
+        const onlineView = document.getElementById('onlineView');
+        if (onlineFilterArea && onlineView && onlineFilterArea.parentElement !== onlineView.parentElement) {
+            onlineView.parentNode.insertBefore(onlineFilterArea, onlineView);
+            onlineFilterArea.classList.add('mobile-reparented');
+        }
+
+    }
+
+    /* ========== HIDE TOPBAR ON SCROLL ========== */
+
+    function setupHideTopbarOnScroll() {
+        const topbar = document.querySelector('.topbar');
+        const gallery = document.querySelector('.gallery-content');
+        if (!topbar || !gallery) return;
+
+        const HIDE_THRESHOLD = 80;   // scrollTop < this -> always show
+        const DELTA_THRESHOLD = 6;   // ignore micro-deltas (touch jitter)
+        let lastY = gallery.scrollTop;
+        let ticking = false;
+
+        function getFab() { return document.querySelector('.mobile-fab'); }
+
+        function onScroll() {
+            if (ticking) return;
+            ticking = true;
+            requestAnimationFrame(() => {
+                const curY = gallery.scrollTop;
+                const delta = curY - lastY;
+                const fab = getFab();
+
+                if (curY < HIDE_THRESHOLD) {
+                    topbar.classList.remove('topbar-hidden-on-scroll');
+                    fab?.classList.remove('fab-hidden-on-scroll');
+                } else if (Math.abs(delta) > DELTA_THRESHOLD) {
+                    if (delta > 0) {
+                        topbar.classList.add('topbar-hidden-on-scroll');
+                        fab?.classList.add('fab-hidden-on-scroll');
+                    } else {
+                        topbar.classList.remove('topbar-hidden-on-scroll');
+                        fab?.classList.remove('fab-hidden-on-scroll');
+                    }
+                }
+
+                lastY = curY;
+                ticking = false;
+            });
+        }
+
+        gallery.addEventListener('scroll', onScroll, { passive: true });
+
+        const desktopToggle = document.querySelector('.view-toggle');
+        if (desktopToggle) {
+            new MutationObserver(() => {
+                topbar.classList.remove('topbar-hidden-on-scroll');
+                getFab()?.classList.remove('fab-hidden-on-scroll');
+                lastY = 0;
+            }).observe(desktopToggle, {
+                subtree: true,
+                attributes: true,
+                attributeFilter: ['class'],
+            });
+        }
+    }
+
+    /* ========== BOTTOM-SHEET DRAG-TO-DISMISS ========== */
+
+    function setupBottomSheetDismiss() {
+        const DRAG_ZONE_HEIGHT = 80;     // upper area where drag activates
+        const DISMISS_THRESHOLD = 100;   // px of downward drag = dismiss
+        let activeSheet = null;
+        let startY = 0;
+        let currentY = 0;
+        let dragging = false;
+
+        // Both class systems get drag-dismiss when marked .cl-modal-drawer:
+        //   confirm-modal: outer .cl-confirm-overlay:not(.hidden), inner .confirm-modal-content
+        //   cl-modal:      outer .cl-modal.visible (.cl-modal-drawer), inner .cl-modal-content
+        const DRAGGABLE_SHEET_SELECTOR = [
+            '.cl-confirm-overlay:not(.hidden) .confirm-modal-content',
+            '.cl-modal.cl-modal-drawer.visible .cl-modal-content',
+        ].join(', ');
+
+        document.addEventListener('touchstart', (e) => {
+            const sheet = e.target.closest(DRAGGABLE_SHEET_SELECTOR);
+            if (!sheet) return;
+            // Don't hijack touches on interactive controls (buttons, inputs).
+            if (e.target.closest('button, a, input, textarea, select, label')) return;
+            const rect = sheet.getBoundingClientRect();
+            const offsetY = e.touches[0].clientY - rect.top;
+            if (offsetY > DRAG_ZONE_HEIGHT) return;
+            activeSheet = sheet;
+            startY = e.touches[0].clientY;
+            currentY = startY;
+            dragging = true;
+            sheet.style.transition = 'none';
+        }, { passive: true });
+
+        document.addEventListener('touchmove', (e) => {
+            if (!dragging || !activeSheet) return;
+            currentY = e.touches[0].clientY;
+            const delta = Math.max(0, currentY - startY);
+            activeSheet.style.transform = `translateY(${delta}px)`;
+        }, { passive: true });
+
+        function endDrag() {
+            if (!dragging || !activeSheet) return;
+            const delta = currentY - startY;
+            const sheet = activeSheet;
+            // .cl-confirm-overlay wraps confirm modals; .cl-modal IS the overlay for the cl-modal family.
+            const overlay = sheet.closest('.cl-confirm-overlay, .cl-modal');
+            sheet.style.transition = 'transform 0.22s cubic-bezier(0.32, 0.72, 0, 1)';
+
+            if (delta > DISMISS_THRESHOLD) {
+                sheet.style.transform = 'translateY(100%)';
+                setTimeout(() => {
+                    if (overlay) {
+                        // Dual class system: confirm-modal toggles .hidden, cl-modal toggles .visible.
+                        if (overlay.classList.contains('cl-modal')) {
+                            overlay.classList.remove('visible');
+                        } else {
+                            overlay.classList.add('hidden');
+                        }
+                        overlay._resolve?.(false);
+                    }
+                    sheet.style.transition = '';
+                    sheet.style.transform = '';
+                }, 220);
+            } else {
+                sheet.style.transform = '';
+                setTimeout(() => { sheet.style.transition = ''; }, 220);
+            }
+            activeSheet = null;
+            dragging = false;
+        }
+
+        document.addEventListener('touchend', endDrag);
+        document.addEventListener('touchcancel', endDrag);
+    }
+
+    /* ========== PULL TO REFRESH ========== */
+
+    function setupPullToRefresh() {
+        const scrollContainer = document.querySelector('.gallery-content');
+        if (!scrollContainer) return;
+
+        const indicator = document.createElement('div');
+        indicator.className = 'mobile-pull-refresh-indicator';
+        const ICON_PULL = '<i class="fa-solid fa-arrow-down"></i>';
+        const ICON_LOAD = '<i class="fa-solid fa-circle-notch fa-spin"></i>';
+        indicator.innerHTML = ICON_PULL;
+        scrollContainer.style.position = scrollContainer.style.position || 'relative';
+        scrollContainer.appendChild(indicator);
+
+        const PULL_THRESHOLD = 80;     // px past which release triggers refresh
+        const MAX_PULL = 140;          // px upper clamp on visual travel
+        const REST_POSITION = 36;      // px the indicator parks at while refreshing
+        let startY = 0;
+        let curY = 0;
+        let pullDist = 0;
+        let pulling = false;
+        let refreshing = false;
+
+        scrollContainer.addEventListener('touchstart', (e) => {
+            if (refreshing) return;
+            if (scrollContainer.scrollTop > 0) return;
+            startY = e.touches[0].clientY;
+            curY = startY;
+            pulling = true;
+        }, { passive: true });
+
+        scrollContainer.addEventListener('touchmove', (e) => {
+            if (!pulling || refreshing) return;
+            if (activeCardSwipe) {
+                // Card swipe has committed horizontally; release pull state cleanly.
+                pulling = false;
+                pullDist = 0;
+                indicator.style.transform = 'translateY(-100%)';
+                indicator.classList.remove('ready');
+                return;
+            }
+            if (scrollContainer.scrollTop > 0) { pulling = false; return; }
+            curY = e.touches[0].clientY;
+            const raw = curY - startY;
+            if (raw <= 0) {
+                pullDist = 0;
+                indicator.style.transform = 'translateY(-100%)';
+                indicator.classList.remove('ready');
+                return;
+            }
+            // dampened pull: resistance grows with distance
+            pullDist = Math.min(MAX_PULL, raw * 0.6);
+            indicator.style.transform = `translateY(${pullDist}px)`;
+            indicator.style.opacity = String(Math.min(1, pullDist / 40));
+            indicator.classList.toggle('ready', pullDist >= PULL_THRESHOLD);
+        }, { passive: true });
+
+        async function endPull() {
+            if (!pulling || refreshing) {
+                pulling = false;
+                return;
+            }
+            pulling = false;
+
+            if (pullDist >= PULL_THRESHOLD) {
+                refreshing = true;
+                indicator.classList.remove('ready');
+                indicator.classList.add('refreshing');
+                indicator.innerHTML = ICON_LOAD;
+                indicator.style.transition = 'transform 0.22s cubic-bezier(0.32, 0.72, 0, 1), opacity 0.22s ease';
+                indicator.style.transform = `translateY(${REST_POSITION}px)`;
+                window.hapticFeedback?.(15);
+
+                try {
+                    await triggerViewRefresh();
+                } finally {
+                    indicator.classList.remove('refreshing');
+                    indicator.style.transition = 'transform 0.22s cubic-bezier(0.32, 0.72, 0, 1), opacity 0.18s ease';
+                    indicator.style.transform = 'translateY(-100%)';
+                    indicator.style.opacity = '0';
+                    setTimeout(() => {
+                        indicator.innerHTML = ICON_PULL;
+                        indicator.style.transition = '';
+                        refreshing = false;
+                    }, 240);
+                }
+            } else {
+                indicator.style.transition = 'transform 0.18s ease, opacity 0.18s ease';
+                indicator.style.transform = 'translateY(-100%)';
+                indicator.style.opacity = '0';
+                setTimeout(() => {
+                    indicator.style.transition = '';
+                }, 180);
+            }
+            pullDist = 0;
+        }
+
+        scrollContainer.addEventListener('touchend', endPull);
+        scrollContainer.addEventListener('touchcancel', endPull);
+    }
+
+    async function triggerViewRefresh() {
+        const activeBtn = document.querySelector('.view-toggle-btn.active');
+        const view = activeBtn?.dataset.view || 'characters';
+
+        if (view === 'characters') {
+            if (typeof window.fetchCharacters === 'function') {
+                await window.fetchCharacters(true);
+            }
+            return;
+        }
+
+        if (view === 'chats') {
+            document.getElementById('refreshChatsViewBtn')?.click();
+            await new Promise(r => setTimeout(r, 600));
+            return;
+        }
+
+        if (view === 'online') {
+            const reg = window.ProviderRegistry;
+            const provider = reg?.getActiveProvider?.();
+            if (provider?.browseView) {
+                const container = document.getElementById('onlineView');
+                try {
+                    provider.browseView.deactivate?.();
+                    provider.browseView.activate?.(container, { domRecreated: false });
+                } catch (err) {
+                    console.warn('[PullToRefresh] online refresh failed:', err);
+                }
+            }
+            await new Promise(r => setTimeout(r, 600));
+        }
+    }
+
+    /* ========== CARD SWIPE GESTURES ========== */
+
+    function setupCardSwipeGestures() {
+        const grid = document.getElementById('characterGrid');
+        if (!grid) return;
+
+        const HORIZONTAL_INTENT = 10;    // px to commit to horizontal swipe
+        const TRIGGER_THRESHOLD = 60;    // px of damped drag to fire action
+        const DAMP = 0.7;                // resistance factor on the drag
+        // Card-edge dead zones so a tab swipe starting on a card edge yields to view-swipe instead of triggering favorite/menu.
+        const EDGE_DEAD_ZONE = 0.12;     // outer 12% of card width per side
+        const BOTTOM_DEAD_ZONE = 0.75;   // touches below 75% of card height yield
+        let card = null;
+        let chip = null;
+        let startX = 0;
+        let startY = 0;
+        let curX = 0;
+        let direction = 0;               // -1 left, 1 right
+        let swiping = false;
+        let effectiveThreshold = TRIGGER_THRESHOLD;
+        let swipedRecently = false;      // suppress synthesized click
+
+        grid.addEventListener('touchstart', (e) => {
+            // Re-checked every interaction so the setting toggle takes effect live.
+            if (window.getSetting?.('mobileSwipeGestures') === false) return;
+            if (e.touches.length > 1) return;
+            const target = e.target.closest('.char-card');
+            if (!target) return;
+            // Don't engage on interactive controls inside the card.
+            if (e.target.closest('button, a, .favorite-indicator')) return;
+            // Spatial dead zone: edges + bottom overlay belong to view-swipe, only the central card hero engages card-swipe.
+            const rect = target.getBoundingClientRect();
+            const xFrac = (e.touches[0].clientX - rect.left) / rect.width;
+            const yFrac = (e.touches[0].clientY - rect.top) / rect.height;
+            if (xFrac < EDGE_DEAD_ZONE || xFrac > 1 - EDGE_DEAD_ZONE || yFrac > BOTTOM_DEAD_ZONE) return;
+            card = target;
+            startX = e.touches[0].clientX;
+            startY = e.touches[0].clientY;
+            curX = startX;
+            direction = 0;
+            swiping = false;
+        }, { passive: true });
+
+        grid.addEventListener('touchmove', (e) => {
+            if (!card) return;
+            curX = e.touches[0].clientX;
+            const dx = curX - startX;
+            const dy = e.touches[0].clientY - startY;
+
+            if (!swiping) {
+                if (Math.abs(dx) > HORIZONTAL_INTENT && Math.abs(dx) > Math.abs(dy) * 1.2) {
+                    swiping = true;
+                    activeCardSwipe = true;
+                    direction = dx > 0 ? 1 : -1;
+                    // Edge-aware: cap threshold to what the user can physically reach.
+                    // Available travel from startX to the screen edge, minus 8px margin, damped.
+                    const reach = (direction > 0 ? window.innerWidth - startX : startX) - 8;
+                    effectiveThreshold = Math.max(28, Math.min(TRIGGER_THRESHOLD, reach * DAMP * 0.85));
+                    card.classList.add('swiping');
+                    chip = document.createElement('div');
+                    chip.className = `char-card-swipe-chip ${direction > 0 ? 'right' : 'left'}`;
+                    chip.innerHTML = direction > 0
+                        ? '<i class="fa-solid fa-star"></i>'
+                        : '<i class="fa-solid fa-ellipsis-vertical"></i>';
+                    card.appendChild(chip);
+                } else if (Math.abs(dy) > HORIZONTAL_INTENT) {
+                    // Vertical intent: abort swipe candidate, let scroll handle it.
+                    card = null;
+                    return;
+                }
+            } else if (chip) {
+                // Mid-swipe direction reversal: thumb crossed zero and committed
+                // the other way. Swap chip side/icon + recompute edge-aware threshold.
+                const wantsDir = dx > HORIZONTAL_INTENT ? 1 : dx < -HORIZONTAL_INTENT ? -1 : 0;
+                if (wantsDir !== 0 && wantsDir !== direction) {
+                    direction = wantsDir;
+                    const reach = (direction > 0 ? window.innerWidth - startX : startX) - 8;
+                    effectiveThreshold = Math.max(28, Math.min(TRIGGER_THRESHOLD, reach * DAMP * 0.85));
+                    chip.classList.remove('right', 'left', 'armed');
+                    chip.classList.add(direction > 0 ? 'right' : 'left');
+                    chip.innerHTML = direction > 0
+                        ? '<i class="fa-solid fa-star"></i>'
+                        : '<i class="fa-solid fa-ellipsis-vertical"></i>';
+                }
+            }
+
+            if (swiping) {
+                const damped = dx * DAMP;
+                card.style.transform = `translateX(${damped}px)`;
+                // Only arm when drag sign matches the committed direction.
+                const armed = Math.sign(dx) === direction && Math.abs(damped) >= effectiveThreshold;
+                if (chip) chip.classList.toggle('armed', armed);
+            }
+        }, { passive: true });
+
+        function endSwipe() {
+            if (!card) return;
+            const cardRef = card;
+            const chipRef = chip;
+            const wasSwipe = swiping;
+            const dx = curX - startX;
+            const dir = direction;
+            const armed = Math.sign(dx) === direction && Math.abs(dx * DAMP) >= effectiveThreshold;
+
+            card = null;
+            chip = null;
+            swiping = false;
+            activeCardSwipe = false;
+            direction = 0;
+
+            if (!wasSwipe) return;
+
+            cardRef.classList.remove('swiping');
+            cardRef.classList.add('swiping-released');
+
+            if (armed) {
+                const avatar = cardRef.dataset.avatar;
+                const char = avatar && typeof window.getCharacterByAvatar === 'function'
+                    ? window.getCharacterByAvatar(avatar)
+                    : null;
+                window.hapticFeedback?.(20);
+                if (dir > 0 && char && typeof window.toggleCharacterFavorite === 'function') {
+                    window.toggleCharacterFavorite(char);
+                } else if (dir < 0) {
+                    // Fire a contextmenu event on the card to open the existing
+                    // mobile context sheet (long-press path already wired).
+                    const rect = cardRef.getBoundingClientRect();
+                    cardRef.dispatchEvent(new MouseEvent('contextmenu', {
+                        bubbles: true,
+                        cancelable: true,
+                        clientX: rect.left + rect.width / 2,
+                        clientY: rect.top + rect.height / 2,
+                    }));
+                }
+            }
+
+            cardRef.style.transform = '';
+            if (chipRef) {
+                chipRef.style.opacity = '0';
+                setTimeout(() => chipRef.remove(), 200);
+            }
+            swipedRecently = true;
+            setTimeout(() => {
+                cardRef.classList.remove('swiping-released');
+                swipedRecently = false;
+            }, 240);
+        }
+
+        grid.addEventListener('touchend', endSwipe);
+        grid.addEventListener('touchcancel', endSwipe);
+
+        // Suppress the synthesized click after a swipe so the card doesn't open.
+        grid.addEventListener('click', (e) => {
+            if (swipedRecently) {
+                e.stopPropagation();
+                e.preventDefault();
+            }
+        }, true);
+    }
+
+    function updateFab(view) {
+        const fab = document.getElementById('mobileFab');
+        if (!fab) return;
+        const icon = fab.querySelector('i');
+
+        // Reset before reconfiguring
+        fab.onclick = null;
+
+        // Shared trigger: clicks the topbar's mobileSearchBtn which opens the
+        // standard search overlay. Same input drives chars and chats filters
+        // (chats module also listens to 'input' on #searchInput).
+        const triggerSharedSearch = () => {
+            window.hapticFeedback?.(8);
+            const mobileSearch = document.getElementById('mobileSearchBtn');
+            if (mobileSearch) {
+                mobileSearch.click();
+            } else {
+                document.getElementById('searchInput')?.focus();
+            }
+        };
+
+        const triggerOnlineSearch = () => {
+            window.hapticFeedback?.(8);
+            openOnlineSearchOverlay();
+        };
+
+        switch (view) {
+            case 'characters':
+                fab.classList.remove('hidden');
+                fab.setAttribute('aria-label', 'Search characters');
+                if (icon) icon.className = 'fa-solid fa-magnifying-glass';
+                fab.onclick = triggerSharedSearch;
+                break;
+            case 'chats':
+                fab.classList.remove('hidden');
+                fab.setAttribute('aria-label', 'Search chats');
+                if (icon) icon.className = 'fa-solid fa-magnifying-glass';
+                fab.onclick = triggerSharedSearch;
+                break;
+            case 'online':
+                fab.classList.remove('hidden');
+                fab.setAttribute('aria-label', 'Search online');
+                if (icon) icon.className = 'fa-solid fa-magnifying-glass';
+                fab.onclick = triggerOnlineSearch;
+                break;
+            default:
+                fab.classList.add('hidden');
+                break;
+        }
+    }
+
+    /* ========== MOBILE ONLINE SEARCH OVERLAY ========== */
+
+    function getActiveBrowseView() {
+        const provider = window.ProviderRegistry?.getActiveProvider?.();
+        return provider?.browseView || null;
+    }
+
+    function _hideSearchOverlayUI() {
+        const overlay = document.getElementById('mobileOnlineSearchOverlay');
+        if (!overlay) return;
+        overlay.classList.add('hidden');
+        overlay.setAttribute('aria-hidden', 'true');
+        overlay.querySelector('.mobile-online-search-input')?.blur();
+    }
+
+    function openOnlineSearchOverlay() {
+        const overlay = document.getElementById('mobileOnlineSearchOverlay');
+        if (!overlay) return;
+        const browseView = getActiveBrowseView();
+        const modes = browseView?.getSearchModes?.() || ['character'];
+        const modesContainer = overlay.querySelector('.mobile-online-search-modes');
+        const modeButtons = overlay.querySelectorAll('.mobile-online-search-mode');
+        const input = overlay.querySelector('.mobile-online-search-input');
+        const title = overlay.querySelector('.mobile-online-search-title');
+        const providerName = window.ProviderRegistry?.getActiveProvider?.()?.name || 'online';
+
+        if (modes.length > 1) {
+            modesContainer.hidden = false;
+            modeButtons.forEach(btn => {
+                const mode = btn.dataset.mode;
+                btn.classList.toggle('active', mode === modes[0]);
+                btn.style.display = modes.includes(mode) ? '' : 'none';
+            });
+        } else {
+            modesContainer.hidden = true;
+        }
+
+        const initialMode = modes[0];
+        title.textContent = `Search ${providerName}`;
+        input.placeholder = initialMode === 'creator' ? 'Creator name...' : 'Character name...';
+        input.dataset.activeMode = initialMode;
+        input.value = '';
+        overlay.querySelector('.mobile-online-search-clear').classList.add('hidden');
+
+        overlay.classList.remove('hidden');
+        overlay.setAttribute('aria-hidden', 'false');
+
+        // Tier 1.55 in setupBackButton handles the rest
+        window.pushOverlayGuard?.();
+
+        // iOS only surfaces the keyboard if focus lands on the next frame
+        requestAnimationFrame(() => input.focus());
+    }
+
+    function closeOnlineSearchOverlay() {
+        _hideSearchOverlayUI();
+    }
+
+    function setupOnlineSearchOverlay() {
+        const overlay = document.getElementById('mobileOnlineSearchOverlay');
+        if (!overlay) return;
+
+        const modeButtons = overlay.querySelectorAll('.mobile-online-search-mode');
+        const form = overlay.querySelector('.mobile-online-search-form');
+        const input = overlay.querySelector('.mobile-online-search-input');
+        const clearBtn = overlay.querySelector('.mobile-online-search-clear');
+
+        // Scrim tap dismisses (close button is hidden via CSS, scrim + back are the dismissal paths)
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) closeOnlineSearchOverlay();
+        });
+
+        modeButtons.forEach(btn => {
+            btn.addEventListener('click', () => {
+                const mode = btn.dataset.mode;
+                modeButtons.forEach(b => b.classList.toggle('active', b === btn));
+                input.dataset.activeMode = mode;
+                input.placeholder = mode === 'creator' ? 'Creator name...' : 'Character name...';
+                input.focus();
+            });
+        });
+
+        input.addEventListener('input', () => {
+            clearBtn.classList.toggle('hidden', input.value.length === 0);
+        });
+        clearBtn.addEventListener('click', () => {
+            input.value = '';
+            clearBtn.classList.add('hidden');
+            input.focus();
+        });
+
+        // Submit proxies to the provider's inline search via performSearch.
+        form.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const mode = input.dataset.activeMode || 'character';
+            const query = input.value.trim();
+            const browseView = getActiveBrowseView();
+            if (!browseView) return;
+            window.hapticFeedback?.(10);
+            browseView.performSearch?.(mode, query);
+            closeOnlineSearchOverlay();
+        });
+
+        // Escape only; back-button handled by Tier 1.55 in setupBackButton
+        window.registerOverlay?.({
+            id: 'mobileOnlineSearchOverlay',
+            tier: 2,
+            close: closeOnlineSearchOverlay,
+        });
+    }
+
+    /* ========== ANDROID BACK BUTTON ========== */
     function setupBackButton() {
-        // Built lazily - ProviderRegistry may not exist yet at setup time
-        // (ES modules load async, this runs 200ms after DOMContentLoaded)
+        // Built lazily; ProviderRegistry may not exist yet at setup time
         const BASE_STATIC_HARDCODED = ['charModal', 'chatPreviewModal', 'chubLoginModal', 'creatorModal'];
         let _staticOverlays = null;
         function getStaticOverlays() {
@@ -347,12 +1026,19 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
             // When char details is stacked above another modal, unwind its layers first
             () => {
                 if (!document.body.classList.contains('char-modal-above')) return false;
-                // Close the topmost non-pinned confirm-modal first (e.g. localizeModal over charModal)
-                const visibleConfirms = [...document.querySelectorAll('.confirm-modal:not(.hidden)')];
-                const unpinned = visibleConfirms.filter(m => !m.style.getPropertyPriority('z-index'));
-                if (unpinned.length > 0) { unpinned[unpinned.length - 1].classList.add('hidden'); return true; }
+                // Close the topmost non-pinned modal first (eg. preImportDuplicateModal
+                // or localizeModal opened on top of charModal). Covers both class
+                // systems since the pinned-z-index marker is the same trick for both.
+                const visible = [...document.querySelectorAll('.confirm-modal:not(.hidden), .cl-modal.visible')];
+                const unpinned = visible.filter(m => !m.style.getPropertyPriority('z-index'));
+                if (unpinned.length > 0) {
+                    const top = unpinned[unpinned.length - 1];
+                    if (top.classList.contains('cl-modal')) top.classList.remove('visible');
+                    else top.classList.add('hidden');
+                    return true;
+                }
                 const charModal = document.getElementById('charModal');
-                if (charModal && !charModal.classList.contains('hidden')) { window.closeModal?.(); return true; }
+                if (charModal && !charModal.classList.contains('hidden')) { window.maybeCloseModal?.(); return true; }
                 return false;
             },
 
@@ -367,6 +1053,40 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
                 return false;
             },
 
+            // Tier 1.55 - online search overlay (close + rearm in one shot)
+            // Must run before Tier 1.6 so the rearm isn't bypassed
+            () => {
+                const ov = document.getElementById('mobileOnlineSearchOverlay');
+                if (!ov || ov.classList.contains('hidden')) return false;
+                const reg = (window._overlayRegistry || []).find(r => r.id === 'mobileOnlineSearchOverlay');
+                if (reg?.close) reg.close(ov);
+                else ov.classList.add('hidden');
+                // Rearm if provider query active so next back pops Tier 7
+                const provider = window.ProviderRegistry?.getActiveProvider?.();
+                const browseView = provider?.browseView;
+                if (browseView) {
+                    const modes = browseView.getSearchModes?.() || ['character'];
+                    for (const mode of modes) {
+                        const inputId = browseView.getSearchInputId?.(mode);
+                        if (!inputId) continue;
+                        const input = document.getElementById(inputId);
+                        if (input && input.value.trim()) { pushGuard(); break; }
+                    }
+                }
+                return true;
+            },
+
+            // Tier 1.56 - mobile chars search overlay (close only; rearm comes from input listener)
+            () => {
+                const ov = document.querySelector('.mobile-search-overlay:not(.hidden)');
+                if (!ov) return false;
+                ov.classList.add('hidden');
+                const searchBox = document.querySelector('.search-box');
+                const searchArea = document.querySelector('.search-area');
+                if (searchBox && searchArea) searchArea.insertBefore(searchBox, searchArea.firstChild);
+                return true;
+            },
+
             // Tier 1.6 - registered overlays. Must close before Tier 2 confirm modals.
             () => {
                 const regs = [...(window._overlayRegistry || [])]
@@ -374,7 +1094,11 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
                 for (const reg of regs) {
                     const el = document.getElementById(reg.id);
                     if (!el) continue;
-                    const visible = reg.visible ? reg.visible(el) : !el.classList.contains('hidden');
+                    const visible = reg.visible
+                        ? reg.visible(el)
+                        : el.classList.contains('cl-modal')
+                            ? el.classList.contains('visible')
+                            : !el.classList.contains('hidden');
                     if (visible) { reg.close(el); return true; }
                 }
                 return false;
@@ -382,30 +1106,7 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
 
             // Tier 2 - confirm/dialog modals (z-2000+)
             ['#disableGalleryFoldersModal',          el => el.remove()],
-            ['#confirmSaveModal:not(.hidden)',        el => el.classList.add('hidden')],
-            ['#preImportDuplicateModal:not(.hidden)', el => el.classList.add('hidden')],
-            ['#providerLinkModal:not(.hidden)',           el => el.classList.add('hidden')],
-            ['#bulkAutoLinkModal:not(.hidden)',       el => el.classList.add('hidden')],
-            ['#galleryInfoModal:not(.hidden)',        el => el.classList.add('hidden')],
-            ['#gallerySettingsModal:not(.hidden)',    el => el.classList.add('hidden')],
-            ['#localizeModal:not(.hidden)',           el => el.classList.add('hidden')],
-            ['#bulkLocalizeModal:not(.hidden)',       el => el.classList.add('hidden')],
-            ['#bulkLocalizeSummaryModal:not(.hidden)', el => el.classList.add('hidden')],
-            ['#charDuplicatesModal:not(.hidden)',     el => el.classList.add('hidden')],
-            ['#importModal:not(.hidden)',             el => el.classList.add('hidden')],
-            ['#deleteConfirmModal',                   el => el.remove()],
-            ['#deleteDuplicateModal',                 el => el.remove()],
-            ['#legacyFolderModal',                    el => el.remove()],
-            ['#folderMappingModal',                   el => el.remove()],
-            ['#orphanedFoldersModal',                 el => el.remove()],
-            // Tier 2.5 - mobile sheets & overlays
-            ['.mobile-search-overlay:not(.hidden)', () => {
-                const overlay = document.querySelector('.mobile-search-overlay');
-                if (overlay) overlay.classList.add('hidden');
-                const searchBox = document.querySelector('.search-box');
-                const searchArea = document.querySelector('.search-area');
-                if (searchBox && searchArea) searchArea.insertBefore(searchBox, searchArea.firstChild);
-            }],
+            // Tier 2.5 - mobile sheets & overlays (.mobile-search-overlay lives in Tier 1.56)
             ['.mobile-sheet-overlay:not(.hidden)', el => {
                 el.querySelector('.mobile-sheet')?.classList.remove('open');
                 setTimeout(() => el.classList.add('hidden'), 300);
@@ -436,42 +1137,61 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
             ['.vt-container.vt-detail-open', el => el.classList.remove('vt-detail-open')],
 
             // Tier 5 - main modals (lowest priority full-screen)
-            ['#charModal:not(.hidden)',    () => window.closeModal?.()],
+            ['#charModal:not(.hidden)',    () => window.maybeCloseModal?.()],
             ['#creatorModal:not(.hidden)', () => window.closeCharacterCreator?.()],
 
             // Tier 6 - dropdowns (browse filter dropdowns are relocated to body on mobile)
             ['#moreOptionsMenu:not(.hidden)',     el => el.classList.add('hidden')],
             ['#settingsMenu:not(.hidden)',        el => el.classList.add('hidden')],
             () => {
+                // .browse-tags-dropdown and .browse-features-dropdown are also .dropdown-menu,
+                // so this single query catches all three.
                 const dd = document.querySelector('body > .dropdown-menu[data-mobile-relocated]:not(.hidden)');
                 if (dd) { dd.classList.add('hidden'); return true; }
-                const tags = document.querySelector('body > .browse-tags-dropdown[data-mobile-relocated]:not(.hidden)');
-                if (tags) { tags.classList.add('hidden'); return true; }
                 return false;
             },
 
-            // Tier 7 - active text search on characters view
+            // Tier 7 - active text search on characters / chats view
+            // (both views share #searchInput; chats listens to 'input' for re-render)
             () => {
-                if (window.getCurrentView?.() !== 'characters') return false;
+                const view = window.getCurrentView?.();
+                if (view !== 'characters' && view !== 'chats') return false;
                 const input = document.getElementById('searchInput');
                 if (!input || !input.value.trim()) return false;
                 input.value = '';
                 document.getElementById('clearSearchBtn')?.classList.add('hidden');
-                window.performSearch?.();
+                if (view === 'characters') window.performSearch?.();
+                // Always fire input event so the chats module (and any other
+                // input listeners) pick up the cleared state too.
+                input.dispatchEvent(new Event('input', { bubbles: true }));
                 return true;
+            },
+
+            // Tier 7 - active search on online view (current provider, any mode)
+            () => {
+                if (window.getCurrentView?.() !== 'online') return false;
+                const provider = window.ProviderRegistry?.getActiveProvider?.();
+                const browseView = provider?.browseView;
+                if (!browseView) return false;
+                const modes = browseView.getSearchModes?.() || ['character'];
+                let cleared = false;
+                for (const mode of modes) {
+                    const inputId = browseView.getSearchInputId?.(mode);
+                    if (!inputId) continue;
+                    const input = document.getElementById(inputId);
+                    if (input && input.value.trim()) {
+                        browseView.performSearch?.(mode, '');
+                        cleared = true;
+                    }
+                }
+                return cleared;
             },
         ];
 
-        // ── location.hash guards ──
-        // Chromium (and especially Brave) silently skips pushState entries
-        // during back-button traversal via the "history manipulation
-        // intervention." Using location.hash creates real same-document
-        // navigation entries that browsers treat as genuine history.
-        //
-        // Strategy: each modal open pushes one guard. Each back press
-        // consumes one guard and closes one layer. If the browser skips
-        // intermediate guards (landing on '' with modals still open), a
-        // new guard is pushed so remaining modals can still be closed.
+        // location.hash guards. Chromium / Brave silently skip pushState
+        // entries during back-button traversal (the "history manipulation
+        // intervention"); hash assignments survive. Each modal open pushes
+        // one guard, each back press consumes one and closes one layer.
         let guardId = 0;
         let processedHash = null;
 
@@ -506,7 +1226,11 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
             for (const reg of (window._overlayRegistry || [])) {
                 const el = document.getElementById(reg.id);
                 if (!el) continue;
-                const visible = reg.visible ? reg.visible(el) : !el.classList.contains('hidden');
+                const visible = reg.visible
+                    ? reg.visible(el)
+                    : el.classList.contains('cl-modal')
+                        ? el.classList.contains('visible')
+                        : !el.classList.contains('hidden');
                 if (visible) return true;
             }
             return false;
@@ -518,8 +1242,7 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
                 const oldClasses = m.oldValue || '';
 
                 if (el.classList.contains('modal-overlay') || el.classList.contains('confirm-modal') ||
-                    el.classList.contains('ai-studio-overlay') || el.classList.contains('creator-import-overlay') ||
-                    el.classList.contains('creator-saveas-diff-overlay')) {
+                    el.classList.contains('ai-studio-overlay') || el.classList.contains('creator-import-overlay')) {
                     const wasHidden = oldClasses.includes('hidden');
                     const isHidden = el.classList.contains('hidden');
                     if (wasHidden && !isHidden) {
@@ -535,6 +1258,16 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
                         return;
                     }
                 }
+                // Browse filter drawers (relocated to body on mobile, bottom-sheet styled).
+                // They sit outside the modal classes so they need their own watcher.
+                if (el.classList.contains('browse-tags-dropdown') || el.classList.contains('browse-features-dropdown')) {
+                    const wasHidden = oldClasses.includes('hidden');
+                    const isHidden = el.classList.contains('hidden');
+                    if (wasHidden && !isHidden) {
+                        pushGuard();
+                        return;
+                    }
+                }
                 if (el === document.body) {
                     const had = oldClasses.includes('multi-select-mode');
                     const has = el.classList.contains('multi-select-mode');
@@ -543,7 +1276,7 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
             }
         });
 
-        document.querySelectorAll('.modal-overlay, .cl-modal, .gv-modal, .confirm-modal').forEach(el => {
+        document.querySelectorAll('.modal-overlay, .cl-modal, .gv-modal, .confirm-modal, .browse-tags-dropdown, .browse-features-dropdown').forEach(el => {
             classObserver.observe(el, { attributes: true, attributeFilter: ['class'], attributeOldValue: true });
         });
         classObserver.observe(document.body, { attributes: true, attributeFilter: ['class'], attributeOldValue: true });
@@ -563,11 +1296,15 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
                         classObserver.observe(node, { attributes: true, attributeFilter: ['class'], attributeOldValue: true });
                     }
                     if (node.classList.contains('ai-studio-overlay') ||
-                        node.classList.contains('creator-import-overlay') ||
-                        node.classList.contains('creator-saveas-diff-overlay')) {
+                        node.classList.contains('creator-import-overlay')) {
                         classObserver.observe(node, { attributes: true, attributeFilter: ['class'], attributeOldValue: true });
-                        // Inject + show often happen in the same sync block - by the time
-                        // childObserver fires, 'hidden' is already gone. Push now if visible.
+                        // Inject + show fire same tick; push guard if already visible
+                        if (!node.classList.contains('hidden')) pushGuard();
+                    }
+                    // Filter dropdowns get appendChild-relocated to body on mobile.
+                    // Observe them so .hidden toggles emit a guard.
+                    if (node.classList.contains('browse-tags-dropdown') || node.classList.contains('browse-features-dropdown')) {
+                        classObserver.observe(node, { attributes: true, attributeFilter: ['class'], attributeOldValue: true });
                         if (!node.classList.contains('hidden')) pushGuard();
                     }
                 }
@@ -578,15 +1315,9 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
         // ── Back-press handler ──
         function onBack() {
             const h = location.hash;
-            // Ignore our own guard pushes, and deduplicate hashchange+popstate
-            // firing for the same back press (both see the same hash value).
-            // processedHash is null (not '') so it never collides with the base URL.
             if (h === '#g' + guardId || (processedHash !== null && h === processedHash)) return;
             processedHash = h;
             if (closeTopLayer() && !location.hash && hasOpenModals()) {
-                // Browser skipped intermediate guards and landed at the base URL
-                // while modals are still open - replenish so the next press closes
-                // the remaining layer instead of letting the tab navigate away.
                 pushGuard();
             }
         }
@@ -594,10 +1325,7 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
         window.addEventListener('hashchange', onBack);
         window.addEventListener('popstate', onBack);
 
-        // ── Safety net: prevent tab close when modals are open ──
-        // On Android, if hash guards are exhausted or skipped by the
-        // browser, this shows a native "Leave site?" dialog instead of
-        // silently killing the tab.
+        // Safety net for Android skipping our guards: show "Leave site?" instead of dropping the tab.
         window.addEventListener('beforeunload', function(e) {
             if (hasOpenModals()) {
                 e.preventDefault();
@@ -607,14 +1335,11 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
         });
     }
 
-    /* ========================================
-       SEARCH OVERLAY
-       ======================================== */
+    /* ========== SEARCH OVERLAY ========== */
     function createSearchButton(topbar) {
         const searchArea = topbar.querySelector('.search-area');
         if (!searchArea) return;
 
-        // Create the search button
         const btn = document.createElement('button');
         btn.id = 'mobileSearchBtn';
         btn.innerHTML = '<i class="fa-solid fa-search"></i>';
@@ -622,7 +1347,6 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
         btn.style.cssText = 'display:flex!important;align-items:center;justify-content:center';
         searchArea.appendChild(btn);
 
-        // Build overlay (starts hidden)
         const overlay = document.createElement('div');
         overlay.className = 'mobile-search-overlay hidden';
 
@@ -632,49 +1356,97 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
         overlay.appendChild(container);
         document.body.appendChild(overlay);
 
-        // Get the original search box (with all its event bindings intact)
         const searchBox = searchArea.querySelector('.search-box');
 
+        // Brave/Chrome mobile drop hash pushes made from inside hashchange/popstate;
+        // rearm from the input event (a fresh task). Resets on overlay close.
+        let filterGuardPushed = false;
+
+        // Lock the underlying grid scroll while search is open so soft-keyboard transitions on Android dont drift the character list. Save on open, restore any drift via a scroll listener, release on close.
+        let scrollLock = null;
+        // Keyboard tracker: layout viewport stays full-size (interactive-widget=overlays-content + lvh body) so the OSK is just an overlay; visualViewport tells us how tall it is and we lift the search overlays bottom edge by that amount.
+        let viewportTracker = null;
         function openSearch() {
             if (searchBox) {
-                // Move original search box into the overlay to preserve bindings
                 container.appendChild(searchBox);
             }
             overlay.style.top = `${topbar.offsetHeight}px`;
             overlay.classList.remove('hidden');
-            // Focus after transition
+
+            const galleryContent = document.querySelector('.gallery-content');
+            if (galleryContent) {
+                const savedTop = galleryContent.scrollTop;
+                const onScroll = () => { if (galleryContent.scrollTop !== savedTop) galleryContent.scrollTop = savedTop; };
+                galleryContent.addEventListener('scroll', onScroll, { passive: true });
+                scrollLock = { galleryContent, onScroll };
+            }
+
+            if (window.visualViewport) {
+                const sync = () => {
+                    const vv = window.visualViewport;
+                    const keyboardH = Math.max(0, window.innerHeight - vv.height);
+                    overlay.style.bottom = keyboardH > 0 ? `${keyboardH}px` : '';
+                };
+                window.visualViewport.addEventListener('resize', sync);
+                window.visualViewport.addEventListener('scroll', sync);
+                viewportTracker = sync;
+                sync();
+            }
+
+            window.pushOverlayGuard?.();
+
             setTimeout(() => {
                 const input = document.getElementById('searchInput');
-                if (input) input.focus();
+                // preventScroll: true tells the browser not to auto-scrollIntoView when focusing; some Android Chromes use that path to scroll the nearest scrollable container (.gallery-content, even as a sibling), drifting the grid.
+                if (input) input.focus({ preventScroll: true });
             }, 50);
         }
 
         function closeSearch() {
             overlay.classList.add('hidden');
+            overlay.style.bottom = '';
             if (searchBox) {
-                // Move search box back to its original parent
                 searchArea.insertBefore(searchBox, searchArea.firstChild);
+            }
+            if (scrollLock) {
+                scrollLock.galleryContent.removeEventListener('scroll', scrollLock.onScroll);
+                scrollLock = null;
+            }
+            if (viewportTracker && window.visualViewport) {
+                window.visualViewport.removeEventListener('resize', viewportTracker);
+                window.visualViewport.removeEventListener('scroll', viewportTracker);
+                viewportTracker = null;
             }
         }
 
         btn.addEventListener('click', openSearch);
-        // Close on backdrop tap (but not on the container itself)
         overlay.addEventListener('click', (e) => {
             if (e.target === overlay) closeSearch();
         });
-
-        // Close on Escape
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape' && !overlay.classList.contains('hidden')) {
                 closeSearch();
             }
         });
+
+        const searchInputForGuard = document.getElementById('searchInput');
+        if (searchInputForGuard) {
+            searchInputForGuard.addEventListener('input', () => {
+                if (overlay.classList.contains('hidden')) return;
+                const hasValue = !!searchInputForGuard.value.trim();
+                if (hasValue && !filterGuardPushed) {
+                    window.pushOverlayGuard?.();
+                    filterGuardPushed = true;
+                }
+            });
+        }
+
+        new MutationObserver(() => {
+            if (overlay.classList.contains('hidden')) filterGuardPushed = false;
+        }).observe(overlay, { attributes: true, attributeFilter: ['class'] });
     }
 
-    /* ========================================
-       SETTINGS BOTTOM SHEET (view-aware)
-       Shows different controls based on active view
-       ======================================== */
+    /* ========== SETTINGS BOTTOM SHEET (view-aware) ========== */
     function createSettingsButton(topbar) {
         const btn = document.createElement('button');
         btn.id = 'mobileSettingsBtn';
@@ -751,6 +1523,13 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
             const plBtn = document.getElementById('playlistFilterBtn');
             if (plBtn) { close(); setTimeout(() => plBtn.click(), 300); }
         });
+
+        function syncCharFilterChips() {
+            const s = window.getActiveFilterState?.() || {};
+            favChip.classList.toggle('active', !!s.fav);
+            tagChip.classList.toggle('active', !!s.tag);
+            playlistChip.classList.toggle('active', !!s.playlist);
+        }
 
         filterRow.appendChild(favChip);
         filterRow.appendChild(tagChip);
@@ -1096,18 +1875,15 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
         btn.addEventListener('click', () => {
             const activeView = getActiveView();
 
-            // Show/hide sections based on active view
             body.querySelectorAll('.mobile-settings-view-section').forEach(s => {
                 s.style.display = s.dataset.view === activeView ? '' : 'none';
             });
 
-            // Sync state before opening
             if (activeView === 'online') {
                 const reg = window.ProviderRegistry;
                 const hasModeToggle = reg?.activeProviderHasModeToggle?.() || false;
                 const ids = reg?.getActiveMobileFilterIds?.();
 
-                // Toggle mode-toggle section vs generic section
                 modeToggleSection.style.display = hasModeToggle ? '' : 'none';
                 genericSection.style.display = hasModeToggle ? 'none' : '';
 
@@ -1126,16 +1902,13 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
                 if (hasModeToggle) {
                     const realBrowseSort = ids?.sort ? document.getElementById(ids.sort) : null;
                     if (realBrowseSort) {
-                        // Always re-copy options - some providers (e.g. DataCat) rebuild
-                        // their sort options dynamically based on sort mode (creator browse,
-                        // saucepan/janny/hampter modes), so we cannot cache.
+                        // DataCat etc rebuild sort options on mode switch, so re-copy every time
                         mtBrowseSortSelect.innerHTML = realBrowseSort.innerHTML;
                         mtBrowseSortSelect.value = realBrowseSort.value;
                     }
 
                     const realTimelineSort = ids?.timelineSort ? document.getElementById(ids.timelineSort) : null;
                     if (realTimelineSort) {
-                        // Always re-copy timeline sort options too, for symmetry.
                         mtFollowSortSelect.innerHTML = '';
                         Array.from(realTimelineSort.options).forEach(opt => {
                             const o = document.createElement('option');
@@ -1155,6 +1928,7 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
                 if (realChatsSort) chatsSortSelect.value = realChatsSort.value;
             } else {
                 if (realSort) sortSelect.value = realSort.value;
+                syncCharFilterChips();
             }
 
             openSheet(overlay, sheet);
@@ -1290,6 +2064,31 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
         });
 
         document.body.appendChild(provSubOverlay);
+
+        // Embedded-mode escape hatch: when CL is embedded in a SillyTavern pane
+        // and the ST topbar is hidden, the desktop puts a back-arrow on the
+        // logo area. On mobile we drop a sheet entry at the bottom instead
+        // (the desktop arrow is hidden via mobile CSS).
+        const backToSTItem = document.createElement('button');
+        backToSTItem.className = 'mobile-sheet-item';
+        backToSTItem.id = 'mobileBackToSTItem';
+        backToSTItem.innerHTML = '<i class="fa-solid fa-arrow-left"></i> Back to SillyTavern';
+        backToSTItem.style.display = (window.isEmbedded && !window.embeddedShowTopBar) ? '' : 'none';
+        backToSTItem.addEventListener('click', () => {
+            close();
+            window.closeEmbeddedPanel?.();
+        });
+        sheet.appendChild(backToSTItem);
+
+        // ST host may toggle the topbar at runtime; mirror the desktop back-arrow logic.
+        window.addEventListener('message', (e) => {
+            if (e.origin !== window.location.origin) return;
+            const msg = e.data;
+            if (!msg || msg.source !== 'character-library-host') return;
+            if (msg.type === 'cl-show-topbar') {
+                backToSTItem.style.display = (window.isEmbedded && !msg.value) ? '' : 'none';
+            }
+        });
 
         btn.addEventListener('click', () => {
             const isOnline = getActiveView() === 'online';
@@ -1461,6 +2260,9 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
         // Force reflow then animate
         sheet.offsetHeight; // eslint-disable-line no-unused-expressions
         requestAnimationFrame(() => sheet.classList.add('open'));
+        // Every mobile bottom-sheet flows through here; push a back-guard so
+        // Android back closes the sheet instead of falling through to nav.
+        window.pushOverlayGuard?.();
     }
 
     function createSection(label) {
@@ -1617,6 +2419,14 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
         const modal = document.getElementById('charModal');
         if (!modal) return;
 
+        // 32x32 target, so use ST's /thumbnail (96x144) and only fall back to the hero src for blob/data URLs (pending avatar previews where no server thumbnail exists yet).
+        const thumbSrcFor = (heroSrc) => {
+            if (!heroSrc) return heroSrc;
+            const m = /\/characters\/([^?#]+)(\?[^#]*)?/.exec(heroSrc);
+            if (!m) return heroSrc;
+            return `/thumbnail?type=avatar&file=${m[1]}${m[2] || ''}`;
+        };
+
         const observer = new MutationObserver(() => {
             if (modal.classList.contains('hidden')) return;
 
@@ -1627,13 +2437,13 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
             const existing = header.querySelector('.mobile-header-avatar');
             if (existing) {
                 // Always update to current character's avatar
-                existing.src = modalImg.src;
+                existing.src = thumbSrcFor(modalImg.src);
                 return;
             }
 
             const avatar = document.createElement('img');
             avatar.className = 'mobile-header-avatar';
-            avatar.src = modalImg.src;
+            avatar.src = thumbSrcFor(modalImg.src);
             avatar.alt = 'Avatar';
             avatar.addEventListener('click', (e) => {
                 e.stopPropagation();
@@ -1646,7 +2456,9 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
                         return;
                     }
                 }
-                openAvatarViewer(avatar.src);
+                // The header thumbnail loads a low-res variant; open the viewer with the modal hero's full src so the fullscreen image is sharp.
+                const heroSrc = document.getElementById('modalImage')?.src || avatar.src;
+                openAvatarViewer(heroSrc, avatar.src);
             });
             // Insert before the title h2
             header.insertBefore(avatar, header.firstChild);
@@ -1818,6 +2630,13 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
             wireTitle(modalTitle, charModal, charModal.querySelector('.modal-glass'));
         }
 
+        // chatPreviewModal: same long-title-tap-to-scroll behaviour
+        const chatPreviewModal = document.getElementById('chatPreviewModal');
+        const chatPreviewTitle = document.getElementById('chatPreviewTitle');
+        if (chatPreviewModal && chatPreviewTitle) {
+            wireTitle(chatPreviewTitle, chatPreviewModal, chatPreviewModal.querySelector('.modal-glass'));
+        }
+
         // Browse preview modals (lazy discovery)
         const wiredTitles = new WeakSet();
         function scanBrowseTitles() {
@@ -1907,6 +2726,66 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
                 }
             }
         }, { passive: true });
+
+        // iOS multitasking gesture / incoming call cancels touches without firing touchend.
+        tabContainer.addEventListener('touchcancel', () => {
+            tracking = false;
+            swiping = false;
+        }, { passive: true });
+    }
+
+    /* ========================================
+       CHAR DETAIL MODAL: PREV/NEXT SWIPE
+       Bound to .modal-header only so it doesnt collide with .modal-content-tabs's tab swipe.
+       ======================================== */
+    function setupCharModalNavSwipe() {
+        const modal = document.getElementById('charModal');
+        if (!modal) return;
+        const header = modal.querySelector('.modal-header');
+        if (!header) return;
+
+        let startX = 0, startY = 0, tracking = false, swiping = false;
+        const SWIPE_THRESHOLD = 50, LOCK_THRESHOLD = 10;
+
+        function isInteractive(el) {
+            return !!(el && el.closest && el.closest('button, input, textarea, select, a, .action-btn, .close-btn'));
+        }
+
+        header.addEventListener('touchstart', (e) => {
+            if (e.touches.length !== 1) return;
+            if (isInteractive(e.target)) return;
+            if (window.getSetting?.('enableCharDetailNav') === false) return;
+            startX = e.touches[0].clientX;
+            startY = e.touches[0].clientY;
+            tracking = true;
+            swiping = false;
+        }, { passive: true });
+
+        header.addEventListener('touchmove', (e) => {
+            if (!tracking || e.touches.length !== 1) return;
+            const dx = e.touches[0].clientX - startX;
+            const dy = e.touches[0].clientY - startY;
+            if (!swiping && Math.abs(dx) > LOCK_THRESHOLD && Math.abs(dx) > Math.abs(dy)) {
+                swiping = true;
+            }
+            if (swiping) e.preventDefault();
+        }, { passive: false });
+
+        header.addEventListener('touchend', (e) => {
+            if (!tracking) return;
+            tracking = false;
+            if (!swiping) return;
+            const dx = (e.changedTouches[0]?.clientX || 0) - startX;
+            if (Math.abs(dx) < SWIPE_THRESHOLD) return;
+            // Swipe-left goes to NEXT, swipe-right goes to PREVIOUS (standard pager convention).
+            window.navigateModal?.(dx < 0 ? 1 : -1);
+        }, { passive: true });
+
+        // iOS multitasking gesture / incoming call cancels touches without firing touchend.
+        header.addEventListener('touchcancel', () => {
+            tracking = false;
+            swiping = false;
+        }, { passive: true });
     }
 
     /* ========================================
@@ -1967,6 +2846,12 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
             if (nextIdx >= 0 && nextIdx < btns.length) {
                 btns[nextIdx].click();
             }
+        }, { passive: true });
+
+        // iOS may cancel touches mid-swipe (system gestures, calls); reset state.
+        body.addEventListener('touchcancel', () => {
+            tracking = false;
+            swiping = false;
         }, { passive: true });
     }
 
@@ -2214,6 +3099,21 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
             // Clear recentTouch after the browser fires its synthetic click
             setTimeout(() => { recentTouch = false; }, 400);
         }, { passive: true });
+
+        // Snap back + reset on iOS system-canceled touches so the image isnt
+        // left mid-drag with stale tracking flags.
+        container.addEventListener('touchcancel', () => {
+            const imageContainer = container.querySelector('.gv-image-container');
+            if (imageContainer) {
+                imageContainer.style.transition = 'transform 0.2s ease-out, opacity 0.2s ease-out';
+                imageContainer.style.transform = 'translateX(0)';
+                imageContainer.style.opacity = '1';
+            }
+            tracking = false;
+            swiping = false;
+            isPanning = false;
+            recentTouch = false;
+        }, { passive: true });
     }
 
     /* ========================================
@@ -2318,6 +3218,19 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
             }
             swiping = false;
         }, { passive: true });
+
+        // Mid-swipe cancel (iOS system gesture, etc.): snap image back so it
+        // doesnt sit off-frame with the tracking flag still armed.
+        overlay.addEventListener('touchcancel', () => {
+            const img = getImg();
+            if (img) {
+                img.style.transition = 'transform 0.25s ease-out, opacity 0.25s ease-out';
+                img.style.transform = 'translateX(0)';
+                img.style.opacity = '1';
+            }
+            tracking = false;
+            swiping = false;
+        }, { passive: true });
     }
 
     /* ========================================
@@ -2341,6 +3254,8 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
 
         function hasBlockingUI() {
             return !!(
+                // Initial character fetch not done; same gate as view-toggle.
+                document.documentElement.classList.contains('cl-initial-loading') ||
                 document.querySelector('.modal-overlay:not(.hidden)') ||
                 document.querySelector('.cl-modal.visible') ||
                 document.querySelector('.confirm-modal:not(.hidden)') ||
@@ -2356,7 +3271,6 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
                 document.querySelector('#moreOptionsMenu:not(.hidden)') ||
                 document.querySelector('#settingsMenu:not(.hidden)') ||
                 document.querySelector('body > .dropdown-menu[data-mobile-relocated]:not(.hidden)') ||
-                document.querySelector('body > .browse-tags-dropdown[data-mobile-relocated]:not(.hidden)') ||
                 window.MultiSelect?.enabled
             );
         }
@@ -2388,6 +3302,12 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
 
         surface.addEventListener('touchmove', (e) => {
             if (!active || locked || e.touches.length !== 1) return;
+            if (activeCardSwipe) {
+                // Per-card swipe owns horizontal intent on this touch.
+                locked = true;
+                if (dragging) clearDrag();
+                return;
+            }
             const dx = e.touches[0].clientX - startX;
             const dy = e.touches[0].clientY - startY;
             const absDx = Math.abs(dx);
@@ -2437,48 +3357,58 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
             const nextIdx = dx < 0 ? idx + 1 : idx - 1;
             if (nextIdx < 0 || nextIdx >= VIEW_ORDER.length) { clearDrag(); return; }
 
-            // Transition: set start offset, switch view, then transition to neutral
+            // Defer switchView a frame so the slide-back transition starts before its sync cost lands.
             transitioning = true;
             const startShift = dx < 0 ? '5%' : '-5%';
             surface.style.willChange = 'transform, opacity';
             surface.style.transition = 'none';
-            window.switchView(VIEW_ORDER[nextIdx]);
             surface.style.transform = `translateX(${startShift})`;
             surface.style.opacity = '0.86';
             void surface.offsetWidth;
             surface.style.transition = 'transform 0.22s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.22s cubic-bezier(0.22, 1, 0.36, 1)';
             surface.style.transform = 'translateX(0)';
             surface.style.opacity = '1';
+
+            requestAnimationFrame(() => {
+                window.switchView(VIEW_ORDER[nextIdx]);
+            });
+
             surface.addEventListener('transitionend', () => {
                 surface.style.transition = '';
                 clearDrag();
                 transitioning = false;
             }, { once: true });
         }, { passive: true });
+
+        // Cancelled touches (iOS multitasking gesture, incoming call) skip
+        // touchend; snap back so the surface isnt stuck mid-drag.
+        surface.addEventListener('touchcancel', () => {
+            if (!active) return;
+            active = false;
+            locked = false;
+            if (dragging) {
+                surface.style.transition = 'transform 0.15s ease-out, opacity 0.15s ease-out';
+                clearDrag();
+                surface.addEventListener('transitionend', () => { surface.style.transition = ''; }, { once: true });
+            }
+        }, { passive: true });
     }
 
-    /* ========================================
-       RELOCATE TAG POPUP
-       Move #tagFilterPopup out of hidden .filter-area
-       and add a scrim + close mechanism
-       ======================================== */
+    /* ========== RELOCATE TAG POPUP: move to body + scrim + handle ========== */
     function relocateTagPopup() {
         const popup = document.getElementById('tagFilterPopup');
         if (!popup || popup.dataset.relocated) return;
         popup.dataset.relocated = 'true';
 
-        // Move out of hidden .filter-area
         if (popup.closest('.filter-area')) {
             document.body.appendChild(popup);
         }
 
-        // Create scrim (backdrop)
         const scrim = document.createElement('div');
         scrim.className = 'mobile-tag-scrim';
         scrim.style.display = 'none';
         document.body.appendChild(scrim);
 
-        // Add a handle/close bar at top of popup
         const handle = document.createElement('div');
         handle.style.cssText = 'display:flex;align-items:center;justify-content:center;padding:10px;cursor:pointer;';
         const bar = document.createElement('div');
@@ -2491,23 +3421,16 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
             scrim.style.display = 'none';
         }
 
-        // Tap scrim to close
         scrim.addEventListener('click', closeTagPopup);
-        // Tap handle to close
         handle.addEventListener('click', closeTagPopup);
 
-        // Watch for popup visibility changes to sync scrim
         const obs = new MutationObserver(() => {
             scrim.style.display = popup.classList.contains('hidden') ? 'none' : 'block';
         });
         obs.observe(popup, { attributes: true, attributeFilter: ['class'] });
     }
 
-    /* ========================================
-       RELOCATE PLAYLIST POPUP
-       Same pattern as tag popup - move to body,
-       add scrim + handle
-       ======================================== */
+    /* ========== RELOCATE PLAYLIST POPUP: same pattern as tag popup ========== */
     function relocatePlaylistPopup() {
         const popup = document.getElementById('playlistFilterPopup');
         if (!popup || popup.dataset.relocated) return;
@@ -2523,9 +3446,9 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
         document.body.appendChild(scrim);
 
         const handle = document.createElement('div');
-        handle.style.cssText = 'display:flex;align-items:center;justify-content:center;padding:10px;cursor:pointer;';
+        handle.className = 'mobile-sheet-handle-wrap';
         const bar = document.createElement('div');
-        bar.style.cssText = 'width:40px;height:4px;border-radius:var(--radius-2xs);background:rgba(255,255,255,0.3);';
+        bar.className = 'mobile-sheet-handle';
         handle.appendChild(bar);
         popup.insertBefore(handle, popup.firstChild);
 
@@ -2561,9 +3484,9 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
         document.body.appendChild(scrim);
 
         const handle = document.createElement('div');
-        handle.style.cssText = 'display:flex;align-items:center;justify-content:center;padding:10px;cursor:pointer;';
+        handle.className = 'mobile-sheet-handle-wrap';
         const bar = document.createElement('div');
-        bar.style.cssText = 'width:40px;height:4px;border-radius:var(--radius-2xs);background:rgba(255,255,255,0.3);';
+        bar.className = 'mobile-sheet-handle';
         handle.appendChild(bar);
         panel.insertBefore(handle, panel.firstChild);
 
@@ -2701,6 +3624,200 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
         }
     }
 
+    /* ========== BROWSE PREVIEW MODAL: KEBAB / QUICK-IMPORT ========== */
+    function setupBrowseModalActionsMenu() {
+        let openMenu = null;
+        let openTriggerBtn = null;
+
+        function closeMenu() {
+            if (!openMenu) return;
+            openMenu.remove();
+            openMenu = null;
+            openTriggerBtn = null;
+        }
+
+        function openMenuFor(triggerBtn, controls) {
+            closeMenu();
+
+            const menu = document.createElement('div');
+            menu.className = 'mobile-more-actions-menu';
+
+            const originals = controls.querySelectorAll(
+                '.action-btn:not(.mobile-more-actions-btn)'
+            );
+            originals.forEach(orig => {
+                if (orig.classList.contains('close-btn')) return;
+
+                const item = document.createElement('button');
+                item.type = 'button';
+                item.className = 'mobile-more-actions-item';
+                item.innerHTML = orig.innerHTML;
+                item.title = orig.title || orig.getAttribute('aria-label') || '';
+                if (orig.disabled || orig.classList.contains('disabled')) {
+                    item.disabled = true;
+                    item.classList.add('disabled');
+                    item.style.opacity = '0.5';
+                    item.style.pointerEvents = 'none';
+                }
+                item.addEventListener('click', (ev) => {
+                    ev.stopPropagation();
+                    closeMenu();
+                    orig.click();
+                });
+                menu.appendChild(item);
+            });
+
+            if (!menu.children.length) return;
+
+            document.body.appendChild(menu);
+            const rect = triggerBtn.getBoundingClientRect();
+            const menuRect = menu.getBoundingClientRect();
+            let top = rect.bottom + 6;
+            if (top + menuRect.height > window.innerHeight - 12) {
+                top = Math.max(12, rect.top - menuRect.height - 6);
+            }
+            let left = rect.right - menuRect.width;
+            if (left < 12) left = 12;
+            menu.style.top = `${top}px`;
+            menu.style.left = `${left}px`;
+
+            openMenu = menu;
+            openTriggerBtn = triggerBtn;
+        }
+
+        function findPrimarySourceBtn(controls) {
+            const candidates = controls.querySelectorAll('.action-btn');
+            for (const c of candidates) {
+                if (/(?:Download|Import|Extract)Btn$/i.test(c.id || '')) return c;
+            }
+            for (const c of candidates) {
+                if (!c.classList.contains('secondary')) return c;
+            }
+            return null;
+        }
+
+        function syncQuickImportState(quickBtn, sourceBtn) {
+            if (!sourceBtn) {
+                quickBtn.setAttribute('data-state', 'primary');
+                quickBtn.innerHTML = '<i class="fa-solid fa-download"></i>';
+                quickBtn.disabled = false;
+                return;
+            }
+            let state = 'primary';
+            if (sourceBtn.classList.contains('warning')) state = 'warning';
+            else if (sourceBtn.classList.contains('secondary')) state = 'secondary';
+            quickBtn.setAttribute('data-state', state);
+            const icon = sourceBtn.querySelector('i');
+            if (icon) {
+                quickBtn.innerHTML = '';
+                const clone = icon.cloneNode(true);
+                clone.removeAttribute('style');
+                quickBtn.appendChild(clone);
+            } else {
+                quickBtn.innerHTML = '<i class="fa-solid fa-download"></i>';
+            }
+            quickBtn.disabled = !!sourceBtn.disabled;
+            const title = sourceBtn.title || sourceBtn.textContent.trim();
+            if (title) quickBtn.title = title.replace(/\s+/g, ' ');
+        }
+
+        function injectKebabIntoModal(modal) {
+            const controls = modal.querySelector('.modal-controls');
+            if (!controls) return;
+
+            if (!controls.querySelector('.mobile-more-actions-btn')) {
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'mobile-more-actions-btn';
+                btn.setAttribute('aria-label', 'More actions');
+                btn.innerHTML = '<i class="fa-solid fa-ellipsis-vertical"></i>';
+
+                const closeBtn = controls.querySelector('.close-btn');
+                if (closeBtn) controls.insertBefore(btn, closeBtn);
+                else controls.appendChild(btn);
+
+                btn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    if (openTriggerBtn === btn) closeMenu();
+                    else openMenuFor(btn, controls);
+                });
+            }
+
+            if (!controls.querySelector('.mobile-quick-import-btn')) {
+                const sourceBtn = findPrimarySourceBtn(controls);
+                const quickBtn = document.createElement('button');
+                quickBtn.type = 'button';
+                quickBtn.className = 'mobile-quick-import-btn';
+                quickBtn.setAttribute('aria-label', 'Import');
+                syncQuickImportState(quickBtn, sourceBtn);
+
+                const closeBtn = controls.querySelector('.close-btn');
+                if (closeBtn) controls.insertBefore(quickBtn, closeBtn);
+                else controls.appendChild(quickBtn);
+
+                quickBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    // Re-find each click; providers swap source-btn class on state change (ie. in-library)
+                    const src = findPrimarySourceBtn(controls);
+                    src?.click();
+                });
+
+                if (sourceBtn) {
+                    new MutationObserver(() => {
+                        const src = findPrimarySourceBtn(controls);
+                        syncQuickImportState(quickBtn, src);
+                    }).observe(sourceBtn, {
+                        attributes: true,
+                        attributeFilter: ['class', 'disabled', 'title'],
+                        childList: true,
+                        subtree: true,
+                    });
+                }
+            }
+        }
+
+        function scan() {
+            document.querySelectorAll('.browse-char-modal').forEach(injectKebabIntoModal);
+        }
+
+        scan();
+        new MutationObserver((mutations) => {
+            for (const m of mutations) {
+                for (const node of m.addedNodes) {
+                    if (node.nodeType !== 1) continue;
+                    if (node.matches?.('.browse-char-modal')) injectKebabIntoModal(node);
+                    node.querySelectorAll?.('.browse-char-modal').forEach(injectKebabIntoModal);
+                }
+            }
+        }).observe(document.body, { childList: true, subtree: true });
+
+        document.addEventListener('click', (e) => {
+            if (!openMenu) return;
+            if (openMenu.contains(e.target)) return;
+            if (e.target === openTriggerBtn || openTriggerBtn?.contains(e.target)) return;
+            closeMenu();
+        }, true);
+
+        const modalClassObs = new MutationObserver(() => {
+            if (!openMenu) return;
+            const overlay = openTriggerBtn?.closest('.modal-overlay');
+            if (overlay && overlay.classList.contains('hidden')) closeMenu();
+        });
+        document.querySelectorAll('.modal-overlay').forEach(o => {
+            modalClassObs.observe(o, { attributes: true, attributeFilter: ['class'] });
+        });
+        new MutationObserver((mutations) => {
+            for (const m of mutations) {
+                for (const node of m.addedNodes) {
+                    if (node.nodeType !== 1) continue;
+                    if (node.matches?.('.modal-overlay')) {
+                        modalClassObs.observe(node, { attributes: true, attributeFilter: ['class'] });
+                    }
+                }
+            }
+        }).observe(document.body, { childList: true });
+    }
+
     /* ========================================
        CONTEXT MENU → BOTTOM SHEET
        ======================================== */
@@ -2768,6 +3885,7 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
 
             scrimEl.classList.add('visible');
             sheetEl.classList.add('visible');
+            window.pushOverlayGuard?.();
         }
 
         function closeSheet() {

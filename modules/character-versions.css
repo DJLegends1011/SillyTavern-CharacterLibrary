@@ -455,7 +455,7 @@
         gap: var(--space-xs-sm);
     }
 
-    .vt-item { padding: 10px 12px; min-height: 44px; }
+    .vt-item { padding: 10px 12px; min-height: var(--touch-target-min); }
     .vt-item-header { gap: var(--space-xs); }
     .vt-item-id { font-size: var(--font-xs); }
     .vt-item-label { font-size: var(--font-sm); }
@@ -486,7 +486,7 @@
     }
     .vt-diff-label { font-size: var(--font-xs); min-width: unset; flex-shrink: 1; overflow: hidden; text-overflow: ellipsis; }
     .vt-diff-vals { width: 100%; font-size: var(--font-xs); }
-    .vt-diff-header { padding: 8px 10px; min-height: 44px; flex-wrap: wrap; gap: var(--space-xs-sm); }
+    .vt-diff-header { padding: 8px 10px; min-height: var(--touch-target-min); flex-wrap: wrap; gap: var(--space-xs-sm); }
     .vt-diff-stats { max-width: 100%; gap: var(--space-2xs) var(--space-xs); }
     .vt-stat { font-size: var(--font-3xs); padding: 1px 4px; }
     .vt-lb-header { gap: var(--space-2xs); }
@@ -498,7 +498,7 @@
     .vt-lb-content { padding: 6px 8px; gap: var(--space-2xs); }
     .vt-lb-section { border-radius: var(--radius-sm-alt); }
     .vt-lb-section-header {
-        padding: 6px 8px; min-height: 44px;
+        padding: 6px 8px; min-height: var(--touch-target-min);
         font-size: var(--font-xs); gap: var(--space-xs-sm);
         touch-action: manipulation;
     }

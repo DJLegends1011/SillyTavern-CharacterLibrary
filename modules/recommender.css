@@ -1,8 +1,6 @@
 /* ========================================
  * Card Recommender Modal
- * Container chrome (shadow, border, header gradient, gradient-text icon) is provided
- * by the canonical .cl-modal-feature modifier on .confirm-modal-content. The styles
- * below are recommender-specific body content.
+ * Chrome comes from .cl-modal-content. Rules below are body content only.
  * ======================================== */
 
 /* --- Body --- */
@@ -1007,25 +1005,14 @@
     /* --- Card Recommender --- */
 
     .recommender-modal-content {
-        width: 100% !important;
-        max-width: 100% !important;
-        height: 100% !important;
-        max-height: 100% !important;
-        border-radius: 0 !important;
-        border: none !important;
-        display: flex !important;
-        flex-direction: column !important;
+        height: 100dvh !important;
+        max-height: 100dvh !important;
         overflow: hidden;
         box-shadow: none !important;
     }
 
-    .recommender-modal-content .confirm-modal-header {
-        padding: 10px 14px;
+    .recommender-modal-content .cl-modal-header {
         flex-shrink: 0;
-    }
-
-    .recommender-modal-content .confirm-modal-header h3 {
-        font-size: var(--font-md);
     }
 
     .recommender-body {
@@ -1034,7 +1021,7 @@
         overflow-y: auto !important;
         overflow-x: hidden;
         -webkit-overflow-scrolling: touch;
-        padding: 12px 14px max(16px, env(safe-area-inset-bottom));
+        padding: 12px 14px max(16px, var(--safe-bottom));
         overscroll-behavior: contain;
         justify-content: flex-start;
     }
@@ -1058,9 +1045,9 @@
 
     .recommender-submit-btn {
         width: 100%;
-        height: 44px;
+        height: var(--touch-target-min);
         min-width: unset;
-        min-height: 44px;
+        min-height: var(--touch-target-min);
         border-radius: var(--radius-xl);
         flex-shrink: 0;
         touch-action: manipulation;
@@ -1073,9 +1060,9 @@
         display: inline;
     }
 
-    .recommender-modal-content .close-confirm-btn {
-        min-width: 44px;
-        min-height: 44px;
+    .recommender-modal-content .cl-modal-close {
+        min-width: var(--touch-target-min);
+        min-height: var(--touch-target-min);
         touch-action: manipulation;
     }
 
@@ -1118,8 +1105,8 @@
     }
 
     .recommender-toolbar-btn {
-        min-width: 44px;
-        min-height: 44px;
+        min-width: var(--touch-target-min);
+        min-height: var(--touch-target-min);
         flex-shrink: 0;
         touch-action: manipulation;
     }
@@ -1274,7 +1261,7 @@
     }
 
     .recommender-tag-ac-item {
-        min-height: 44px;
+        min-height: var(--touch-target-min);
         display: flex;
         align-items: center;
         padding: 10px 14px;

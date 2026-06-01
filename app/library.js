@@ -194,6 +194,12 @@ function initCustomSelect(select) {
         const isSelected = option.value === nativeValueGetter.call(select);
         if (isSelected) item.classList.add('selected');
 
+        if (option.disabled) {
+            item.classList.add('disabled');
+            item.setAttribute('aria-disabled', 'true');
+            if (option.title) item.title = option.title;
+        }
+
         const iconClass = option.dataset.icon;
         const iconUrl = option.dataset.iconUrl;
         let iconHtml = '';
@@ -207,6 +213,7 @@ function initCustomSelect(select) {
 
         item.addEventListener('click', (e) => {
             e.stopPropagation();
+            if (option.disabled) return;
             nativeValueSetter.call(select, option.value);
             select.dispatchEvent(new Event('change', { bubbles: true }));
             syncVisuals();
@@ -522,6 +529,15 @@ const DEFAULT_SETTINGS = {
     browseSnapSections: false,
     collapseAllBrowseSections: false,
     mobileProviderQuickSwitch: true,
+    mobileHideBackArrows: false,
+    mobileBrowseQuickImport: true,
+    mobileSwipeGestures: true,
+    mobileHaptics: true,
+    useGridThumbnails: false,
+    gridThumbnailsDesktop: false,
+    gridThumbnailsClHelper: true,
+    gridThumbnailSize: 512,
+    enableCharDetailNav: true,
 
     // ---- Provider Config ----
     chubUseV4Api: false,
@@ -581,6 +597,37 @@ function getSTContext() {
         console.warn('[Settings] Cannot access main window context:', e);
     }
     return null;
+}
+
+// Mirrors STs name-to-url proxy lookup; "None" forced empty to stop shared-entry leak.
+async function resolveProxyForProfile(profile) {
+    try {
+        const response = await apiRequest('/settings/get', 'POST', {});
+        if (!response.ok) return { url: '', password: '' };
+        const data = await response.json();
+        const settings = typeof data.settings === 'string' ? JSON.parse(data.settings) : data.settings;
+        if (!settings) return { url: '', password: '' };
+        const oai = settings.oai_settings || {};
+        const proxies = settings.proxies || oai.proxies || [];
+
+        if (profile) {
+            if (!profile.proxy || profile.proxy === 'None') return { url: '', password: '' };
+            const entry = proxies.find(p => p.name === profile.proxy);
+            return { url: entry?.url || '', password: entry?.password || '' };
+        }
+        return { url: oai.reverse_proxy || '', password: oai.proxy_password || '' };
+    } catch {
+        return { url: '', password: '' };
+    }
+}
+
+// Anthropic-format responses use content blocks: [{type, text}, ...] instead of a string.
+function flattenContentBlocks(blocks) {
+    if (!Array.isArray(blocks)) return '';
+    return blocks
+        .filter(b => b?.type === 'text' && typeof b?.text === 'string')
+        .map(b => b.text)
+        .join('');
 }
 
 // Fire-and-forget; 3s timeout. Active chat panel refreshes only when chid matches.
@@ -829,6 +876,14 @@ function setSettings(settings) {
     saveGallerySettings();
 }
 
+// Respects mobileHaptics setting and silently no-ops on unsupported devices.
+function hapticFeedback(pattern) {
+    if (getSetting('mobileHaptics') === false) return;
+    if (typeof navigator.vibrate !== 'function') return;
+    try { navigator.vibrate(pattern); } catch { /* unsupported */ }
+}
+window.hapticFeedback = hapticFeedback;
+
 function getProviderExcludeTags(providerId) {
     const map = getSetting('providerExcludeTags') || {};
     const tags = map[providerId];
@@ -936,14 +991,31 @@ function applyUiScale(level) {
     document.body.style.height = zoom !== 1 ? `calc(100vh / ${zoom})` : '';
 }
 
-const MODAL_SIZE_MAP = { 1: 0.8, 2: 1, 3: 1.25 };
+const MODAL_SIZE_MAP = { 1: 0.8, 2: 1, 3: 1.25, 4: 1.4 };
 
 function applyModalSize(level) {
     const scale = MODAL_SIZE_MAP[level] || 1;
     document.body.style.setProperty('--modal-scale', scale);
-    document.body.classList.remove('modal-size-small', 'modal-size-large');
+    document.body.classList.remove('modal-size-small', 'modal-size-large', 'modal-size-xlarge');
     if (level === 1) document.body.classList.add('modal-size-small');
     else if (level === 3) document.body.classList.add('modal-size-large');
+    else if (level === 4) document.body.classList.add('modal-size-xlarge');
+}
+
+// XL only fits at 80% ui scale, grey it out otherwise and downgrade to medium if it was active
+function syncXlModalSizeAvailability() {
+    const sel = document.getElementById('settingsModalSize');
+    const xlOption = sel?.querySelector('option[value="4"]');
+    if (!sel || !xlOption) return;
+    const allow = (parseInt(getSetting('uiScale')) || 3) === 1;
+    xlOption.disabled = !allow;
+    xlOption.title = allow ? '' : 'Available only at the smallest UI Scale (80%)';
+    if (!allow && sel.value === '4') {
+        sel.value = '2';
+        setSetting('modalSize', 2);
+        applyModalSize(2);
+    }
+    sel._customSelect?.refresh();
 }
 
 function applyButtonStyle(style) {
@@ -961,6 +1033,31 @@ function applyAnimateTagPills(enabled, keepName) {
 
 function applyHidePlaylistBadges(hidden) {
     document.documentElement.classList.toggle('hide-playlist-badges', !!hidden);
+}
+
+function applyMobileHideBackArrows(hidden) {
+    document.documentElement.classList.toggle('cl-hide-back-arrows', !!hidden);
+}
+
+function applyMobileBrowseQuickImport(enabled) {
+    document.documentElement.classList.toggle('cl-browse-quick-import', !!enabled);
+}
+
+function applyMobileProviderQuickSwitch(enabled) {
+    document.documentElement.classList.toggle('cl-no-provider-quick-switch', !enabled);
+}
+
+function getActiveFilterState() {
+    return {
+        fav: !!document.getElementById('searchFavoritesOnly')?.checked,
+        tag: !!(activeTagFilters && activeTagFilters.size > 0),
+        playlist: !!activePlaylistFilter,
+    };
+}
+
+function updateMobileFilterIndicator() {
+    const s = getActiveFilterState();
+    document.documentElement.classList.toggle('cl-filters-active', s.fav || s.tag || s.playlist);
 }
 
 function updateThemeCustomizerVisibility() {
@@ -1082,6 +1179,21 @@ function setupSettingsModal() {
     const browseSnapSectionsCheckbox = document.getElementById('settingsBrowseSnapSections');
     const collapseAllBrowseSectionsCheckbox = document.getElementById('settingsCollapseAllBrowseSections');
     const mobileProviderQuickSwitchCheckbox = document.getElementById('settingsMobileProviderQuickSwitch');
+    const mobileHideBackArrowsCheckbox = document.getElementById('settingsMobileHideBackArrows');
+    const mobileBrowseQuickImportCheckbox = document.getElementById('settingsMobileBrowseQuickImport');
+    const mobileSwipeGesturesCheckbox = document.getElementById('settingsMobileSwipeGestures');
+    const mobileHapticsCheckbox = document.getElementById('settingsMobileHaptics');
+    const useGridThumbnailsCheckbox = document.getElementById('settingsUseGridThumbnails');
+    const gridThumbDesktopCheckbox = document.getElementById('settingsGridThumbDesktop');
+    const gridThumbClHelperCheckbox = document.getElementById('settingsGridThumbClHelper');
+    const gridThumbSizeSelect = document.getElementById('settingsGridThumbSize');
+    const gridThumbDesktopRow = document.getElementById('settingsGridThumbDesktopRow');
+    const gridThumbClHelperRow = document.getElementById('settingsGridThumbClHelperRow');
+    const gridThumbSizeRow = document.getElementById('settingsGridThumbSizeRow');
+    const gridThumbCacheRow = document.getElementById('settingsGridThumbCacheRow');
+    const gridThumbCacheStats = document.getElementById('settingsGridThumbCacheStats');
+    const gridThumbPopulateBtn = document.getElementById('settingsGridThumbPopulate');
+    const gridThumbPurgeBtn = document.getElementById('settingsGridThumbPurge');
     
     // Appearance
     const uiScaleSelect = document.getElementById('settingsUiScale');
@@ -1091,6 +1203,7 @@ function setupSettingsModal() {
     const animateKeepNameCheckbox = document.getElementById('settingsAnimateKeepName');
     const animateKeepNameRow = document.getElementById('animateKeepNameRow');
     const hidePlaylistBadgesCheckbox = document.getElementById('settingsHidePlaylistBadges');
+    const enableCharDetailNavCheckbox = document.getElementById('settingsEnableCharDetailNav');
     const highlightColorInput = document.getElementById('settingsHighlightColor');
     const themeCustomizerCheckbox = document.getElementById('settingsThemeCustomizer');
     
@@ -1782,6 +1895,31 @@ function setupSettingsModal() {
         if (mobileProviderQuickSwitchCheckbox) {
             mobileProviderQuickSwitchCheckbox.checked = getSetting('mobileProviderQuickSwitch') !== false;
         }
+        if (mobileHideBackArrowsCheckbox) {
+            mobileHideBackArrowsCheckbox.checked = getSetting('mobileHideBackArrows') === true;
+        }
+        if (mobileBrowseQuickImportCheckbox) {
+            mobileBrowseQuickImportCheckbox.checked = getSetting('mobileBrowseQuickImport') !== false;
+        }
+        if (mobileSwipeGesturesCheckbox) {
+            mobileSwipeGesturesCheckbox.checked = getSetting('mobileSwipeGestures') !== false;
+        }
+        if (mobileHapticsCheckbox) {
+            mobileHapticsCheckbox.checked = getSetting('mobileHaptics') !== false;
+        }
+        if (useGridThumbnailsCheckbox) {
+            useGridThumbnailsCheckbox.checked = getSetting('useGridThumbnails') === true;
+        }
+        if (gridThumbDesktopCheckbox) {
+            gridThumbDesktopCheckbox.checked = getSetting('gridThumbnailsDesktop') === true;
+        }
+        if (gridThumbClHelperCheckbox) {
+            gridThumbClHelperCheckbox.checked = getSetting('gridThumbnailsClHelper') !== false;
+        }
+        if (gridThumbSizeSelect) {
+            gridThumbSizeSelect.value = String(getSetting('gridThumbnailSize') || 512);
+        }
+        applyGridThumbsDisabledStates();
         if (themeCustomizerCheckbox) {
             themeCustomizerCheckbox.checked = getSetting('themeCustomizer') || false;
         }
@@ -1795,6 +1933,7 @@ function setupSettingsModal() {
             modalSizeSelect.value = String(getSetting('modalSize') ?? 2);
             if (modalSizeSelect._customSelect) modalSizeSelect._customSelect.refresh();
         }
+        syncXlModalSizeAvailability();
         if (buttonStyleSelect) {
             buttonStyleSelect.value = getSetting('buttonStyle') || 'glass';
             if (buttonStyleSelect._customSelect) buttonStyleSelect._customSelect.refresh();
@@ -1808,6 +1947,9 @@ function setupSettingsModal() {
         }
         if (hidePlaylistBadgesCheckbox) {
             hidePlaylistBadgesCheckbox.checked = getSetting('hidePlaylistBadges') || false;
+        }
+        if (enableCharDetailNavCheckbox) {
+            enableCharDetailNavCheckbox.checked = getSetting('enableCharDetailNav') !== false;
         }
         if (highlightColorInput) {
             highlightColorInput.value = getSetting('highlightColor') || DEFAULT_SETTINGS.highlightColor;
@@ -1845,8 +1987,15 @@ function setupSettingsModal() {
             settingsSearchInput.value = '';
             settingsSearchInput.dispatchEvent(new Event('input'));
         }
-        
-        settingsModal.classList.remove('hidden');
+
+        settingsModal.classList.add('visible');
+        // cl-helper may not be ready at page load, so refresh stats every time the panel opens.
+        refreshGridThumbCacheStats?.();
+        // If a populate job is running (from earlier in this or a previous session), reattach to it.
+        fetch('/api/plugins/cl-helper/avatar-thumb-populate-status').then(r => r.ok ? r.json() : null).then(job => {
+            if (job?.running) startPopulatePolling?.();
+            else paintPopulateButton?.(null);
+        }).catch(() => {});
     };
     
     // Settings sidebar navigation
@@ -1921,7 +2070,7 @@ function setupSettingsModal() {
     }
     
     // Close modal
-    const closeModal = () => settingsModal.classList.add('hidden');
+    const closeModal = () => settingsModal.classList.remove('visible');
     closeSettingsModal.onclick = closeModal;
     settingsModal.onclick = (e) => {
         if (e.target === settingsModal) closeModal();
@@ -2000,6 +2149,7 @@ function setupSettingsModal() {
             const level = parseInt(uiScaleSelect.value) || 3;
             setSetting('uiScale', level);
             applyUiScale(level);
+            syncXlModalSizeAvailability();
         });
     }
 
@@ -2032,6 +2182,125 @@ function setupSettingsModal() {
     if (animateTagPillsCheckbox && animateKeepNameRow) {
         animateTagPillsCheckbox.addEventListener('change', () => {
             animateKeepNameRow.style.display = animateTagPillsCheckbox.checked ? '' : 'none';
+        });
+    }
+
+    function applyGridThumbsDisabledStates() {
+        const masterOn = !!(useGridThumbnailsCheckbox && useGridThumbnailsCheckbox.checked);
+        const clHelperOn = !!(gridThumbClHelperCheckbox && gridThumbClHelperCheckbox.checked);
+        const sizeOn = masterOn && clHelperOn;
+        if (gridThumbDesktopCheckbox) gridThumbDesktopCheckbox.disabled = !masterOn;
+        if (gridThumbDesktopRow) gridThumbDesktopRow.classList.toggle('disabled', !masterOn);
+        if (gridThumbClHelperCheckbox) gridThumbClHelperCheckbox.disabled = !masterOn;
+        if (gridThumbClHelperRow) gridThumbClHelperRow.classList.toggle('disabled', !masterOn);
+        // Size + cache management only meaningful when master AND cl-helper are on.
+        if (gridThumbSizeSelect) gridThumbSizeSelect.disabled = !sizeOn;
+        if (gridThumbSizeRow) gridThumbSizeRow.classList.toggle('disabled', !sizeOn);
+        if (gridThumbPopulateBtn) gridThumbPopulateBtn.disabled = !sizeOn;
+        if (gridThumbPurgeBtn) gridThumbPurgeBtn.disabled = !sizeOn;
+        if (gridThumbCacheRow) gridThumbCacheRow.classList.toggle('disabled', !sizeOn);
+    }
+    if (useGridThumbnailsCheckbox) {
+        useGridThumbnailsCheckbox.addEventListener('change', applyGridThumbsDisabledStates);
+    }
+    if (gridThumbClHelperCheckbox) {
+        gridThumbClHelperCheckbox.addEventListener('change', applyGridThumbsDisabledStates);
+    }
+
+    function formatBytes(b) {
+        if (b < 1024) return `${b} B`;
+        if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`;
+        if (b < 1024 * 1024 * 1024) return `${(b / (1024 * 1024)).toFixed(1)} MB`;
+        return `${(b / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+    }
+    async function refreshGridThumbCacheStats() {
+        if (!gridThumbCacheStats) return;
+        try {
+            const r = await fetch('/api/plugins/cl-helper/avatar-thumb-stats');
+            if (!r.ok) { gridThumbCacheStats.textContent = 'cl-helper unavailable'; return; }
+            const d = await r.json();
+            if (!d.available) { gridThumbCacheStats.textContent = 'cl-helper unavailable'; return; }
+            gridThumbCacheStats.textContent = `${d.count} file(s), ${formatBytes(d.bytes)}`;
+        } catch {
+            gridThumbCacheStats.textContent = 'cl-helper unreachable';
+        }
+    }
+    let _populatePollTimer = null;
+    function stopPopulatePolling() {
+        if (_populatePollTimer) { clearInterval(_populatePollTimer); _populatePollTimer = null; }
+    }
+    function paintPopulateButton(job) {
+        if (!gridThumbPopulateBtn) return;
+        if (!job || !job.running) {
+            gridThumbPopulateBtn.innerHTML = '<i class="fa-solid fa-download"></i> Populate at current size';
+            applyGridThumbsDisabledStates();
+            return;
+        }
+        gridThumbPopulateBtn.disabled = true;
+        gridThumbPopulateBtn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> ${job.processed}/${job.total}`;
+    }
+    async function pollPopulateStatus() {
+        try {
+            const r = await fetch('/api/plugins/cl-helper/avatar-thumb-populate-status');
+            if (!r.ok) return;
+            const job = await r.json();
+            paintPopulateButton(job);
+            refreshGridThumbCacheStats();
+            if (job && !job.running && job.finishedAt) {
+                stopPopulatePolling();
+                showToast?.(`Populate done: ${job.generated} new, ${job.skipped} cached, ${job.failed} failed`, job.failed ? 'warning' : 'success');
+            }
+        } catch { /* keep polling until next tick */ }
+    }
+    function startPopulatePolling() {
+        stopPopulatePolling();
+        pollPopulateStatus();
+        _populatePollTimer = setInterval(pollPopulateStatus, 1500);
+    }
+    if (gridThumbPopulateBtn) {
+        gridThumbPopulateBtn.addEventListener('click', async () => {
+            const size = parseInt(gridThumbSizeSelect?.value) || 512;
+            gridThumbPopulateBtn.disabled = true;
+            try {
+                const r = await apiRequest(`/plugins/cl-helper/avatar-thumb-populate?s=${size}`, 'POST');
+                if (r.ok) {
+                    const d = await r.json();
+                    showToast?.(`Populating ${d.total} characters in the background...`, 'info');
+                    startPopulatePolling();
+                } else if (r.status === 409) {
+                    showToast?.('Populate already running, attaching to existing job', 'info');
+                    startPopulatePolling();
+                } else {
+                    showToast?.(`Populate failed to start (HTTP ${r.status})`, 'error');
+                    applyGridThumbsDisabledStates();
+                }
+            } catch (e) {
+                showToast?.(`Populate failed: ${e.message}`, 'error');
+                applyGridThumbsDisabledStates();
+            }
+        });
+    }
+    if (gridThumbPurgeBtn) {
+        gridThumbPurgeBtn.addEventListener('click', async () => {
+            if (!confirm('Purge all cached avatar thumbnails? They will be regenerated on next scroll.')) return;
+            const original = gridThumbPurgeBtn.innerHTML;
+            gridThumbPurgeBtn.disabled = true;
+            gridThumbPurgeBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Purging...';
+            try {
+                const r = await apiRequest('/plugins/cl-helper/avatar-thumb-cleanup', 'POST');
+                if (r.ok) {
+                    const d = await r.json();
+                    showToast?.(`Purged ${d.deleted} cached thumbnail(s)`, 'success');
+                } else {
+                    showToast?.(`Purge failed (HTTP ${r.status})`, 'error');
+                }
+            } catch (e) {
+                showToast?.(`Purge failed: ${e.message}`, 'error');
+            } finally {
+                gridThumbPurgeBtn.innerHTML = original;
+                applyGridThumbsDisabledStates();
+                refreshGridThumbCacheStats();
+            }
         });
     }
 
@@ -2104,12 +2373,21 @@ function setupSettingsModal() {
             browseSnapSections: browseSnapSectionsCheckbox ? browseSnapSectionsCheckbox.checked : false,
             collapseAllBrowseSections: collapseAllBrowseSectionsCheckbox ? collapseAllBrowseSectionsCheckbox.checked : false,
             mobileProviderQuickSwitch: mobileProviderQuickSwitchCheckbox ? mobileProviderQuickSwitchCheckbox.checked : true,
+            mobileHideBackArrows: mobileHideBackArrowsCheckbox ? mobileHideBackArrowsCheckbox.checked : false,
+            mobileBrowseQuickImport: mobileBrowseQuickImportCheckbox ? mobileBrowseQuickImportCheckbox.checked : true,
+            mobileSwipeGestures: mobileSwipeGesturesCheckbox ? mobileSwipeGesturesCheckbox.checked : true,
+            mobileHaptics: mobileHapticsCheckbox ? mobileHapticsCheckbox.checked : true,
+            useGridThumbnails: useGridThumbnailsCheckbox ? useGridThumbnailsCheckbox.checked : false,
+            gridThumbnailsDesktop: gridThumbDesktopCheckbox ? gridThumbDesktopCheckbox.checked : false,
+            gridThumbnailsClHelper: gridThumbClHelperCheckbox ? gridThumbClHelperCheckbox.checked : true,
+            gridThumbnailSize: gridThumbSizeSelect ? parseInt(gridThumbSizeSelect.value) || 512 : 512,
             buttonStyle: buttonStyleSelect ? buttonStyleSelect.value || 'glass' : 'glass',
             uiScale: uiScaleSelect ? parseInt(uiScaleSelect.value) || 3 : 3,
             modalSize: modalSizeSelect ? parseInt(modalSizeSelect.value) || 2 : 2,
             animateTagPills: animateTagPillsCheckbox ? animateTagPillsCheckbox.checked : false,
             animateKeepName: animateKeepNameCheckbox ? animateKeepNameCheckbox.checked : false,
             hidePlaylistBadges: hidePlaylistBadgesCheckbox ? hidePlaylistBadgesCheckbox.checked : false,
+            enableCharDetailNav: enableCharDetailNavCheckbox ? enableCharDetailNavCheckbox.checked : true,
             uniqueGalleryFolders: uniqueGalleryFoldersCheckbox ? uniqueGalleryFoldersCheckbox.checked : false,
             chubUseV4Api: chubUseV4ApiCheckbox ? chubUseV4ApiCheckbox.checked : false,
             autoSnapshotOnEdit: autoSnapshotOnEditCheckbox ? autoSnapshotOnEditCheckbox.checked : false,
@@ -2148,6 +2426,17 @@ function setupSettingsModal() {
 
         // Apply hide playlist badges
         applyHidePlaylistBadges(hidePlaylistBadgesCheckbox ? hidePlaylistBadgesCheckbox.checked : false);
+
+        updateCharModalNavState();
+
+        // Mobile back-arrow visibility toggle
+        applyMobileHideBackArrows(mobileHideBackArrowsCheckbox ? mobileHideBackArrowsCheckbox.checked : false);
+
+        // Mobile compact-import on browse preview modals
+        applyMobileBrowseQuickImport(mobileBrowseQuickImportCheckbox ? mobileBrowseQuickImportCheckbox.checked : true);
+
+        // Mobile provider quick-switch (topbar icon + Online dropdown)
+        applyMobileProviderQuickSwitch(mobileProviderQuickSwitchCheckbox ? mobileProviderQuickSwitchCheckbox.checked : true);
 
         // Keep import modal defaults in sync with settings
         syncImportAutoDownloadGallery();
@@ -2289,6 +2578,31 @@ function setupSettingsModal() {
         if (mobileProviderQuickSwitchCheckbox) {
             mobileProviderQuickSwitchCheckbox.checked = DEFAULT_SETTINGS.mobileProviderQuickSwitch;
         }
+        if (mobileHideBackArrowsCheckbox) {
+            mobileHideBackArrowsCheckbox.checked = DEFAULT_SETTINGS.mobileHideBackArrows;
+        }
+        if (mobileBrowseQuickImportCheckbox) {
+            mobileBrowseQuickImportCheckbox.checked = DEFAULT_SETTINGS.mobileBrowseQuickImport;
+        }
+        if (mobileSwipeGesturesCheckbox) {
+            mobileSwipeGesturesCheckbox.checked = DEFAULT_SETTINGS.mobileSwipeGestures;
+        }
+        if (mobileHapticsCheckbox) {
+            mobileHapticsCheckbox.checked = DEFAULT_SETTINGS.mobileHaptics;
+        }
+        if (useGridThumbnailsCheckbox) {
+            useGridThumbnailsCheckbox.checked = DEFAULT_SETTINGS.useGridThumbnails;
+        }
+        if (gridThumbDesktopCheckbox) {
+            gridThumbDesktopCheckbox.checked = DEFAULT_SETTINGS.gridThumbnailsDesktop;
+        }
+        if (gridThumbClHelperCheckbox) {
+            gridThumbClHelperCheckbox.checked = DEFAULT_SETTINGS.gridThumbnailsClHelper;
+        }
+        if (gridThumbSizeSelect) {
+            gridThumbSizeSelect.value = String(DEFAULT_SETTINGS.gridThumbnailSize);
+        }
+        applyGridThumbsDisabledStates();
 
         // Provider Order & Defaults - reset to registration order
         resetProviderOrderUI();
@@ -2732,7 +3046,7 @@ function setupSettingsModal() {
     if (batchCheckUpdatesBtn) {
         batchCheckUpdatesBtn.onclick = () => {
             if (typeof window.checkAllCardUpdates === 'function') {
-                settingsModal.classList.add('hidden');
+                settingsModal.classList.remove('visible');
                 window.checkAllCardUpdates();
             } else {
                 showToast('Card updates module not loaded', 'error');
@@ -3621,18 +3935,17 @@ function switchView(view) {
             mainSearch.style.pointerEvents = '';
         }
         show('chatsView');
-        // Trigger lazy-load of chats module and initial data fetch
-        window.chatsModule?.loadAllChats?.();
+        // rAF defer so swipe transitions can paint first
+        requestAnimationFrame(() => window.chatsModule?.loadAllChats?.());
     } else if (view === 'online') {
         if (onlineFilters) onlineFilters.style.display = 'flex';
         if (importBtn) importBtn.style.display = 'none';
         if (searchSettings) searchSettings.style.display = 'none';
-        // Hide search area entirely - each provider has its own search
         if (mainSearch) {
             mainSearch.style.display = 'none';
         }
         show('onlineView');
-        activateOnlineProvider();
+        requestAnimationFrame(() => activateOnlineProvider());
     }
 
     // Fire registered callbacks for this view
@@ -3708,6 +4021,89 @@ function renderSimpleEmpty(container, message, className = 'empty-state') {
     if (el) {
         el.innerHTML = `<div class="${className}">${escapeHtml(message)}</div>`;
     }
+}
+
+/**
+ * Skeleton card grid for loading states. Mobile shows shimmer cards;
+ * desktop falls back to the hero spinner so canon UX is unchanged.
+ * Cards inject as direct children of `container` so the parent's grid
+ * layout drives placement (no layout shift when real cards arrive).
+ * @param {HTMLElement|string} container
+ * @param {number} [count=12]
+ * @param {string} [desktopLabel='Loading…'] hero spinner text on desktop
+ */
+function renderSkeletonGrid(container, count = 12, desktopLabel = 'Loading…') {
+    const isMobile = window.matchMedia('(max-width: 768px)').matches;
+    if (!isMobile) {
+        renderLoadingState(container, desktopLabel, 'browse-loading');
+        return;
+    }
+    const el = typeof container === 'string' ? document.getElementById(container) : container;
+    if (!el) return;
+    const cards = Array.from({ length: count }, () => `
+        <div class="cl-skeleton-card">
+            <div class="cl-skeleton-img"></div>
+            <div class="cl-skeleton-meta">
+                <div class="cl-skeleton-line"></div>
+                <div class="cl-skeleton-line short"></div>
+            </div>
+        </div>
+    `).join('');
+    el.innerHTML = cards;
+}
+
+/**
+ * Rich empty-state UI. Mobile shows icon + headline + hint + CTA; desktop
+ * falls back to renderSimpleEmpty using `desktopText` (or `title`).
+ * @param {HTMLElement|string} container
+ * @param {{icon?:string, title:string, hint?:string, actionLabel?:string,
+ *          onAction?:Function, actionIcon?:string, desktopText?:string}} opts
+ */
+function renderEmptyState(container, opts = {}) {
+    const isMobile = window.matchMedia('(max-width: 768px)').matches;
+    if (!isMobile) {
+        renderSimpleEmpty(container, opts.desktopText || opts.title || '');
+        return;
+    }
+    const el = typeof container === 'string' ? document.getElementById(container) : container;
+    if (!el) return;
+    const { icon, title, hint, actionLabel, onAction, actionIcon } = opts;
+    const iconClass = icon || 'fa-solid fa-ghost';
+    const actionHtml = (actionLabel && onAction)
+        ? `<button type="button" class="action-btn primary cl-empty-state-action">${actionIcon ? `<i class="${actionIcon}"></i> ` : ''}${escapeHtml(actionLabel)}</button>`
+        : '';
+    el.innerHTML = `
+        <div class="cl-empty-state">
+            <div class="cl-empty-state-icon"><i class="${iconClass}"></i></div>
+            <h3 class="cl-empty-state-title">${escapeHtml(title || '')}</h3>
+            ${hint ? `<p class="cl-empty-state-hint">${escapeHtml(hint)}</p>` : ''}
+            ${actionHtml}
+        </div>
+    `;
+    if (actionLabel && onAction) {
+        el.querySelector('.cl-empty-state-action')?.addEventListener('click', onAction);
+    }
+}
+
+/**
+ * Render a shimmering skeleton list of rows. For chats and other row-based
+ * surfaces.
+ * @param {HTMLElement|string} container
+ * @param {number} count - row count, default 6
+ */
+function renderSkeletonList(container, count = 6) {
+    const el = typeof container === 'string' ? document.getElementById(container) : container;
+    if (!el) return;
+    const rows = Array.from({ length: count }, () => `
+        <div class="cl-skeleton-row">
+            <div class="cl-skeleton-avatar"></div>
+            <div class="cl-skeleton-content">
+                <div class="cl-skeleton-line"></div>
+                <div class="cl-skeleton-line shorter"></div>
+            </div>
+        </div>
+    `).join('');
+    el.innerHTML = `<div class="cl-skeleton-list">${rows}</div>`;
 }
 
 // ========================================
@@ -3996,7 +4392,7 @@ function showDisableGalleryFoldersModal(onConfirm, onCancel) {
     }
     
     const modalHtml = `
-        <div id="disableGalleryFoldersModal" class="confirm-modal">
+        <div id="disableGalleryFoldersModal" class="confirm-modal cl-modal-drawer">
             <div class="confirm-modal-content" style="max-width: calc(500px * var(--modal-scale, 1));">
                     <button class="close-confirm-btn" id="closeDisableGalleryModal">&times;</button>
                 </div>
@@ -4272,7 +4668,7 @@ function showFolderMappingModal() {
                                 return `
                                     <div style="margin: 6px 0; padding: 6px 8px; background: rgba(255,255,255,0.05); border-radius: var(--radius-sm);">
                                         <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
-                                            <img src="${getCharacterAvatarUrl(char.avatar)}" 
+                                            <img src="${getCharacterAvatarStThumbUrl(char.avatar)}"
                                                  style="width: 32px; height: 32px; border-radius: var(--radius-sm); object-fit: cover;"
                                                  onerror="this.src='/img/ai4.png'">
                                             <span class="folder-map-char-link" data-avatar="${escapeHtml(char.avatar)}" style="color: var(--accent); cursor: pointer;">${escapeHtml(char.name)}</span>${provLabel}
@@ -4342,7 +4738,7 @@ function showFolderMappingModal() {
     
     // Create modal
     const modal = document.createElement('div');
-    modal.className = 'confirm-modal';
+    modal.className = 'confirm-modal cl-modal-drawer';
     modal.id = 'folderMappingModal';
     modal.innerHTML = `
         <div class="confirm-modal-content" style="max-width: calc(700px * var(--modal-scale, 1)); max-height: calc(80vh * var(--modal-scale, 1));">
@@ -4386,7 +4782,7 @@ function showFolderMappingModal() {
         if (!avatar) return;
         const char = allCharacters.find(c => c.avatar === avatar);
         if (!char) return;
-        openCharModalElevated(char, modal);
+        openCharModalElevated(char);
     });
 
     // Setup copy buttons with fallback for non-secure contexts
@@ -4603,7 +4999,7 @@ async function showOrphanedFoldersModal(initialMode = 'legacy') {
 
     // Create initial modal with loading state
     const modal = document.createElement('div');
-    modal.className = 'confirm-modal';
+    modal.className = 'confirm-modal cl-modal-drawer';
     modal.id = 'orphanedFoldersModal';
     modal.innerHTML = `
         <div class="confirm-modal-content orphaned-folders-modal">
@@ -4727,7 +5123,7 @@ async function showOrphanedFoldersModal(initialMode = 'legacy') {
                                 ${escapeHtml(folder.name)}
                             </div>
                             <div class="orphaned-folder-count">${folder.files.length} file${folder.files.length !== 1 ? 's' : ''}</div>
-                            ${matchChar ? `<div class="orphaned-folder-char"><img src="${getCharacterAvatarUrl(matchChar.avatar)}" class="orphaned-char-avatar" onerror="this.style.display='none'"><span class="orphaned-char-link" data-avatar="${escapeHtml(matchChar.avatar)}" title="View character details">${escapeHtml(matchChar.name)}</span></div>` : ''}
+                            ${matchChar ? `<div class="orphaned-folder-char"><img src="${getCharacterAvatarStThumbUrl(matchChar.avatar)}" class="orphaned-char-avatar" onerror="this.style.display='none'"><span class="orphaned-char-link" data-avatar="${escapeHtml(matchChar.avatar)}" title="View character details">${escapeHtml(matchChar.name)}</span></div>` : ''}
                             ${isDuplicateMode && folder.correctFolder ? `<div class="orphaned-folder-correct" title="Correct folder: ${escapeHtml(folder.correctFolder)}"><i class="fa-solid fa-arrow-right"></i> ${escapeHtml(folder.correctFolder.length > 40 ? folder.correctFolder.slice(0, 37) + '...' : folder.correctFolder)}</div>` : ''}
                         </div>`;
                     }).join('')}
@@ -4785,7 +5181,7 @@ async function showOrphanedFoldersModal(initialMode = 'legacy') {
                                 const provLabel = provInfo ? `<span class="dest-chub-id">${provInfo.provider.name}: ${provInfo.linkInfo.id || ''}</span>` : '';
                                 return `
                                     <div class="orphaned-dest-item" data-avatar="${escapeHtml(char.avatar)}" data-folder="${escapeHtml(uniqueFolder)}" data-name="${escapeHtml(char.name.toLowerCase())}">
-                                        <img src="${getCharacterAvatarUrl(char.avatar)}" class="dest-avatar" onerror="this.src='${FALLBACK_AVATAR_SVG}'">
+                                        <img src="${getCharacterAvatarStThumbUrl(char.avatar)}" class="dest-avatar" onerror="this.src='${FALLBACK_AVATAR_SVG}'">
                                         <div class="dest-info">
                                             <div class="dest-name"><span class="dest-name-link" data-avatar="${escapeHtml(char.avatar)}" title="View character details">${escapeHtml(char.name)}</span> ${provLabel}</div>
                                             <div class="dest-folder">${escapeHtml(uniqueFolder)}</div>
@@ -4824,7 +5220,7 @@ async function showOrphanedFoldersModal(initialMode = 'legacy') {
         if (charSpan) {
             const matchChar = isDuplicateMode && folder.matchingChars?.[0];
             if (matchChar) {
-                charSpan.innerHTML = `<img src="${getCharacterAvatarUrl(matchChar.avatar)}" class="orphaned-char-avatar" onerror="this.style.display='none'"><span class="orphaned-char-link" data-avatar="${escapeHtml(matchChar.avatar)}" title="View character details">${escapeHtml(matchChar.name)}</span>`;
+                charSpan.innerHTML = `<img src="${getCharacterAvatarStThumbUrl(matchChar.avatar)}" class="orphaned-char-avatar" onerror="this.style.display='none'"><span class="orphaned-char-link" data-avatar="${escapeHtml(matchChar.avatar)}" title="View character details">${escapeHtml(matchChar.name)}</span>`;
             } else {
                 charSpan.innerHTML = '';
             }
@@ -5354,7 +5750,7 @@ async function showOrphanedFoldersModal(initialMode = 'legacy') {
     function openCharAboveOrphaned(avatar) {
         const char = allCharacters.find(c => c.avatar === avatar);
         if (!char) return;
-        openCharModalElevated(char, document.getElementById('orphanedFoldersModal'));
+        openCharModalElevated(char);
     }
 
     body.addEventListener('click', (e) => {
@@ -5479,7 +5875,7 @@ async function showOrphanedFoldersModal(initialMode = 'legacy') {
                             ${escapeHtml(folder.name)}
                         </div>
                         <div class="orphaned-folder-count">${folder.files.length} file${folder.files.length !== 1 ? 's' : ''}</div>
-                        ${matchChar ? `<div class="orphaned-folder-char"><img src="${getCharacterAvatarUrl(matchChar.avatar)}" class="orphaned-char-avatar" onerror="this.style.display='none'"><span class="orphaned-char-link" data-avatar="${escapeHtml(matchChar.avatar)}" title="View character details">${escapeHtml(matchChar.name)}</span></div>` : ''}
+                        ${matchChar ? `<div class="orphaned-folder-char"><img src="${getCharacterAvatarStThumbUrl(matchChar.avatar)}" class="orphaned-char-avatar" onerror="this.style.display='none'"><span class="orphaned-char-link" data-avatar="${escapeHtml(matchChar.avatar)}" title="View character details">${escapeHtml(matchChar.name)}</span></div>` : ''}
                         ${isDuplicateMode && folder.correctFolder ? `<div class="orphaned-folder-correct" title="Correct folder: ${escapeHtml(folder.correctFolder)}"><i class="fa-solid fa-arrow-right"></i> ${escapeHtml(folder.correctFolder.length > 40 ? folder.correctFolder.slice(0, 37) + '...' : folder.correctFolder)}</div>` : ''}
                     </div>`;
                 }).join('');
@@ -6322,7 +6718,9 @@ function setupEmbeddedUI() {
 
 // Init
 document.addEventListener('DOMContentLoaded', async () => {
-    // Inject embedded mode UI adjustments
+    // Lock view-toggle / bottom-nav until fetchCharacters finishes (eg. user cant tap into Chats mid-load)
+    document.documentElement.classList.add('cl-initial-loading');
+
     if (isEmbedded) {
         setupEmbeddedUI();
     }
@@ -6347,10 +6745,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (!window.matchMedia('(max-width: 768px)').matches) {
         applyUiScale(getSetting('uiScale'));
         applyModalSize(getSetting('modalSize'));
+        // Self-correct XL if saved alongside a non-80% ui scale.
+        syncXlModalSizeAvailability();
     }
     
     // Apply button style
     applyButtonStyle(getSetting('buttonStyle'));
+
+    applyMobileHideBackArrows(getSetting('mobileHideBackArrows'));
+    applyMobileBrowseQuickImport(getSetting('mobileBrowseQuickImport') !== false);
+    applyMobileProviderQuickSwitch(getSetting('mobileProviderQuickSwitch') !== false);
 
     // Apply collapse-all browse sections preference
     applyCollapseAllBrowseSections(getSetting('collapseAllBrowseSections'));
@@ -6374,7 +6778,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Always use API for initial load to get authoritative data from disk.
     // The opener's in-memory character list may be stale if another client
     // (e.g. mobile) imported characters since the opener last refreshed.
-    await fetchCharacters(true);
+    try {
+        await fetchCharacters(true);
+    } finally {
+        // Unlock even on fetch failure so the user isnt stranded
+        document.documentElement.classList.remove('cl-initial-loading');
+    }
     setupEventListeners();
 
     // Apply default filter preset (if any) after the initial render is done.
@@ -7212,7 +7621,6 @@ let tagExcludeMode = 'all';
 
 // Playlist filter state
 let activePlaylistFilter = null;
-let activePlaylistAvatarSet = null;
 
 function initTagLogicToggles() {
     const includeBtn = document.getElementById('includeLogicBtn');
@@ -7419,14 +7827,22 @@ function getTags(char) {
 // ========================================
 
 function setPlaylistFilter(uid) {
+    // avatar set is rebuilt fresh inside performSearch so picker/manage/bulk
+    // mutations land in the grid right away. no caching here.
     activePlaylistFilter = uid || null;
-    if (uid) {
-        activePlaylistAvatarSet = window.playlistsGetAvatarSet?.(uid) || new Set();
-    } else {
-        activePlaylistAvatarSet = null;
-    }
     updatePlaylistFilterLabel();
     performSearch();
+}
+
+// called from playlists.js after add/remove/delete; drops the filter if the playlist got deleted out from under us
+function refreshPlaylistFilterIfActive(uid) {
+    if (!activePlaylistFilter || activePlaylistFilter !== uid) return;
+    const stillExists = !!window.playlistsGetPlaylist?.(uid);
+    if (stillExists) {
+        performSearch();
+    } else {
+        setPlaylistFilter(null);
+    }
 }
 
 function clearPlaylistFilter() {
@@ -7494,13 +7910,23 @@ function renderSidebarPlaylists(avatar) {
         const icon = pl.icon
             ? `<i class="pl-chip-icon ${escapeHtml(pl.icon)}"${iconColor}></i>`
             : '';
-        return `<span class="pl-chip" data-uid="${escapeHtml(pl.uid)}">${icon}${escapeHtml(pl.name)}</span>`;
+        const removeBtn = `<button class="pl-chip-remove" title="Remove from playlist" aria-label="Remove from playlist"><i class="fa-solid fa-xmark"></i></button>`;
+        return `<span class="pl-chip" data-uid="${escapeHtml(pl.uid)}">${icon}${escapeHtml(pl.name)}${removeBtn}</span>`;
     }).join('') + '<button class="pl-chip pl-chip-add" title="Add to playlist"><i class="fa-solid fa-plus"></i></button>';
 
     container.onclick = (e) => {
         const addBtn = e.target.closest('.pl-chip-add');
         if (addBtn) {
             window.openPlaylistPicker?.([avatar]);
+            return;
+        }
+        // x button has to be checked before the chip itself, otherwise the
+        // filter-set click would fire before the remove
+        const removeBtn = e.target.closest('.pl-chip-remove');
+        if (removeBtn) {
+            e.stopPropagation();
+            const chip = removeBtn.closest('.pl-chip[data-uid]');
+            if (chip) window.playlistsRemoveFromPlaylist?.(chip.dataset.uid, [avatar]);
             return;
         }
         const chip = e.target.closest('.pl-chip[data-uid]');
@@ -7538,6 +7964,7 @@ const CARD_ASPECT_RATIO = 2 / 3; // width/height for portrait cards
 const GRID_GAP_FALLBACK = 20;
 let cachedGridGap = 0; // Read from CSS computed styles - invalidated on resize
 let _gridMetricsCorrection = false; // recursion guard for fallback self-correction
+const _seenAvatarUrls = new Set(); // populatd as avatars load so rerenders can skip the fade
 
 function getGridGap() {
     if (cachedGridGap > 0) return cachedGridGap;
@@ -7576,7 +8003,32 @@ function renderGrid(chars) {
     if (existingSentinel) existingSentinel.remove();
     
     if (chars.length === 0) {
-        renderSimpleEmpty(grid, 'No characters found');
+        const libraryEmpty = !Array.isArray(allCharacters) || allCharacters.length === 0;
+        if (libraryEmpty) {
+            renderEmptyState(grid, {
+                icon: 'fa-solid fa-user-plus',
+                title: 'Your library is empty',
+                hint: 'Import a character card to get started. Drop a PNG anywhere on this page, paste a URL, or use the Import button.',
+                actionLabel: 'Import a character',
+                actionIcon: 'fa-solid fa-plus',
+                onAction: () => document.getElementById('importBtn')?.click(),
+                desktopText: 'No characters found',
+            });
+        } else {
+            renderEmptyState(grid, {
+                icon: 'fa-solid fa-ghost',
+                title: 'No characters match',
+                hint: 'Try clearing your filters or adjusting the search. Tag and creator filters may be too narrow.',
+                actionLabel: 'Clear filters',
+                actionIcon: 'fa-solid fa-xmark',
+                onAction: () => {
+                    const searchInput = document.getElementById('searchInput');
+                    if (searchInput) { searchInput.value = ''; searchInput.dispatchEvent(new Event('input', { bubbles: true })); }
+                    if (typeof clearAllAdvFilters === 'function') clearAllAdvFilters();
+                },
+                desktopText: 'No characters found',
+            });
+        }
         grid.style.minHeight = '';
         grid.style.paddingTop = '';
         return;
@@ -7660,31 +8112,29 @@ function updateVisibleCards(grid, scrollContainer, force = false) {
     
     const { cols, cardHeight, gap } = getGridMetrics(gridWidth);
     
+    const _isMobileMetrics = window.matchMedia?.('(max-width: 768px)').matches;
     const RENDER_BUFFER_PX = clientHeight * 2.5;
-    
-    // Preload buffer: 4 screens ahead for images
-    const PRELOAD_BUFFER_PX = clientHeight * 4;
+    const PRELOAD_BUFFER_PX = clientHeight * 6;
     
     // Calculate visible row range
     const startRow = Math.floor(Math.max(0, scrollTop - RENDER_BUFFER_PX) / (cardHeight + gap));
     const endRow = Math.ceil((scrollTop + clientHeight + RENDER_BUFFER_PX) / (cardHeight + gap));
-    
+
     const startIndex = startRow * cols;
     const endIndex = Math.min(currentCharsList.length, (endRow + 1) * cols);
-    
-    // Skip if nothing changed
-    if (!force && startIndex === lastRenderedStartIndex && endIndex === lastRenderedEndIndex) {
-        return;
+
+    const rangeChanged = force || startIndex !== lastRenderedStartIndex || endIndex !== lastRenderedEndIndex;
+    if (rangeChanged) {
+        lastRenderedStartIndex = startIndex;
+        lastRenderedEndIndex = endIndex;
     }
     
-    lastRenderedStartIndex = startIndex;
-    lastRenderedEndIndex = endIndex;
-    
+    let cardsChanged = false;
+    if (rangeChanged) {
     const paddingTop = startRow * (cardHeight + gap);
     grid.style.paddingTop = `${paddingTop}px`;
-    
+
     // Remove cards outside the visible range
-    let cardsChanged = false;
     for (const [index, card] of activeCards) {
         if (index < startIndex || index >= endIndex) {
             card.remove();
@@ -7693,17 +8143,38 @@ function updateVisibleCards(grid, scrollContainer, force = false) {
         }
     }
     
-    // Create missing cards and track which indices are new (already ascending order)
+    // Create missing cards and track which indices are new (already ascending order).
+    // Mobile: batch via innerHTML so 50+ cards in one fast-flick rAF fit in the frame budget (~10-20ms vs ~50-150ms with per-card createElement). Desktop keeps the existing per-card path.
     const newCardIndices = [];
-    for (let i = startIndex; i < endIndex; i++) {
-        if (!activeCards.has(i)) {
-            const char = currentCharsList[i];
-            if (char) {
-                const card = createCharacterCard(char);
-                card.dataset.virtualIndex = i;
-                activeCards.set(i, card);
-                newCardIndices.push(i);
-                cardsChanged = true;
+    if (_isMobileMetrics) {
+        const toCreate = [];
+        for (let i = startIndex; i < endIndex; i++) {
+            if (!activeCards.has(i)) {
+                const char = currentCharsList[i];
+                if (char) {
+                    toCreate.push({ char, index: i });
+                    newCardIndices.push(i);
+                    cardsChanged = true;
+                }
+            }
+        }
+        if (toCreate.length > 0) {
+            const cards = createCardsBatchHTML(toCreate);
+            for (let j = 0; j < toCreate.length; j++) {
+                activeCards.set(toCreate[j].index, cards[j]);
+            }
+        }
+    } else {
+        for (let i = startIndex; i < endIndex; i++) {
+            if (!activeCards.has(i)) {
+                const char = currentCharsList[i];
+                if (char) {
+                    const card = createCharacterCard(char);
+                    card.dataset.virtualIndex = i;
+                    activeCards.set(i, card);
+                    newCardIndices.push(i);
+                    cardsChanged = true;
+                }
             }
         }
     }
@@ -7776,51 +8247,54 @@ function updateVisibleCards(grid, scrollContainer, force = false) {
             }
         }
     }
-    
-    // Preload images only on scroll-end (force=true), not during active scrolling.
-    // During fast scroll, every preload batch gets immediately aborted by the next
-    // RAF frame - wasting CPU on AbortController + 12 fetch() calls per frame.
-    if (force) {
-        const preloadStartRow = Math.floor((scrollTop + clientHeight) / (cardHeight + gap));
-        const preloadEndRow = Math.ceil((scrollTop + clientHeight + PRELOAD_BUFFER_PX) / (cardHeight + gap));
-        const preloadStartIndex = preloadStartRow * cols;
-        const preloadEndIndex = Math.min(currentCharsList.length, preloadEndRow * cols);
 
-        preloadImages(preloadStartIndex, preloadEndIndex);
+    // Preload only fires when the range changed, so scroll-frame work stays bounded.
+    const visibleStartRow = Math.floor(scrollTop / (cardHeight + gap));
+    const visibleEndRow = Math.ceil((scrollTop + clientHeight) / (cardHeight + gap));
+    const aboveStartRow = Math.floor(Math.max(0, scrollTop - PRELOAD_BUFFER_PX) / (cardHeight + gap));
+    const belowEndRow = Math.ceil((scrollTop + clientHeight + PRELOAD_BUFFER_PX) / (cardHeight + gap));
+    const visibleStartIndex = visibleStartRow * cols;
+    const visibleEndIndex = visibleEndRow * cols;
+    const aboveStartIndex = aboveStartRow * cols;
+    const preloadBelowEndIndex = Math.min(currentCharsList.length, belowEndRow * cols);
+    // Below-visible first (typical scroll direction), then above; interleave so the cap covers both sides.
+    const indices = [];
+    const below = [];
+    const above = [];
+    for (let i = visibleEndIndex; i < preloadBelowEndIndex; i++) below.push(i);
+    for (let i = visibleStartIndex - 1; i >= aboveStartIndex; i--) above.push(i);
+    const maxLen = Math.max(below.length, above.length);
+    for (let i = 0; i < maxLen; i++) {
+        if (i < below.length) indices.push(below[i]);
+        if (i < above.length) indices.push(above[i]);
     }
+    preloadImages(indices);
+    } // end rangeChanged guard
+
 }
 
-// Abort controller for preload fetches - cancels previous batch when a new one starts
-let preloadAbortController = null;
-
-/**
- * Preload avatar images for a range of characters.
- * Uses fetch() to warm the HTTP cache without creating orphaned Image objects
- * that hold decoded bitmaps in memory indefinitely (critical for mobile).
- * Limited to a small batch to avoid memory pressure.
- * Each call aborts any pending preloads from the previous call.
- */
-function preloadImages(startIndex, endIndex) {
-    // Cancel any pending preloads from previous scroll to avoid accumulating
-    // unconsumed response bodies in memory
-    if (preloadAbortController) {
-        preloadAbortController.abort();
-    }
-    preloadAbortController = new AbortController();
-    const signal = preloadAbortController.signal;
-    
-    const MAX_PRELOAD = 12; // Limit concurrent preloads for mobile
-    let count = 0;
-    for (let i = startIndex; i < endIndex && count < MAX_PRELOAD; i++) {
+// Pre-decode via Image().decode() so the browser's decoded-image cache holds
+// the bitmap when the real <img> lands in DOM. URL must match the shape the
+// card path picks (gated on the same setting) so the cache key lines up.
+const inFlightPreloads = new Set();
+function preloadImages(indices) {
+    const isMobile = window.matchMedia?.('(max-width: 768px)').matches;
+    const cap = isMobile ? 10 : 12;
+    if (inFlightPreloads.size >= cap) return;
+    // Match the card path's URL choice exactly so the browser cache hits.
+    const masterOn = getSetting('useGridThumbnails') === true;
+    const useThumbs = masterOn && (isMobile || getSetting('gridThumbnailsDesktop') === true);
+    for (const i of indices) {
+        if (inFlightPreloads.size >= cap) break;
+        if (inFlightPreloads.has(i)) continue;
         const char = currentCharsList[i];
-        if (char && char.avatar) {
-            // Cache-only fetch - warms browser HTTP cache without decoding image pixels.
-            // Cancel the response body immediately to prevent memory accumulation.
-            fetch(getCharacterAvatarUrl(char.avatar), { mode: 'no-cors', priority: 'low', signal })
-                .then(r => { r.body?.cancel(); })
-                .catch(() => {});
-            count++;
-        }
+        if (!char || !char.avatar) continue;
+        inFlightPreloads.add(i);
+        const img = new Image();
+        img.src = useThumbs ? getCharacterAvatarThumbUrl(char.avatar) : getCharacterAvatarUrl(char.avatar);
+        img.decode()
+            .catch(() => {})
+            .finally(() => inFlightPreloads.delete(i));
     }
 }
 
@@ -7893,6 +8367,16 @@ function setupCharacterGridDelegates() {
         openModal(char);
     });
 
+    // Preload the full avatar on mousedown so the modal-open path finds it cached. Only matters when grid uses thumbs; otherwise the browser dedupes.
+    grid.addEventListener('mousedown', (e) => {
+        if (e.button !== 0) return;
+        if (document.body.classList.contains('multi-select-mode')) return;
+        const card = e.target.closest('.char-card');
+        if (!card || !grid.contains(card)) return;
+        const avatar = card.dataset.avatar;
+        if (avatar) new Image().src = getCharacterAvatarUrl(avatar);
+    });
+
     grid.addEventListener('load', (e) => {
         if (e.target.classList.contains('card-image')) {
             e.target.closest('.char-card')?.classList.add('loaded');
@@ -7912,6 +8396,8 @@ function setupCharacterGridDelegates() {
 // Update grid height on window resize (throttled to avoid jank during drag-resize)
 let resizeRAF = null;
 window.addEventListener('resize', () => {
+    // Soft keyboard up on mobile fires this with the shrunk layout viewport on Android; reflowing the grid then visibly shifts cards under the search-overlay scrim.
+    if (document.documentElement.classList.contains('cl-keyboard-open')) return;
     if (resizeRAF) return; // Already scheduled
     resizeRAF = requestAnimationFrame(() => {
         resizeRAF = null;
@@ -7930,6 +8416,60 @@ window.addEventListener('resize', () => {
     });
 });
 
+// Mobile innerHTML batch path. 50 cards in one parse runs ~10-20ms vs ~50-150ms for per-card createElement, so a fast-flick rAF stays under frame budget. Tooltip omitted on mobile (no hover anyway, extractPlainText was the expensive part). Output DOM matches createCharacterCard.
+function buildCharacterCardHTML(char, virtualIndex) {
+    const isFav = isCharacterFavorite(char);
+    const name = getCharacterName(char);
+    // buildCharacterCardHTML is only invoked from the mobile branch of updateVisibleCards, so the master toggle alone is enough here.
+    const imgPath = getSetting('useGridThumbnails') === true
+        ? getCharacterAvatarThumbUrl(char.avatar)
+        : getCharacterAvatarUrl(char.avatar);
+    const tagsAll = getTags(char);
+    const tags = tagsAll.length > 3 ? tagsAll.slice(0, 3) : tagsAll;
+
+    const initiallyLoaded = _seenAvatarUrls.has(imgPath);
+    const isSelected = !!(window.MultiSelect?.isSelected?.(char.avatar));
+    const playlists = window.playlistsGetForChar?.(char.avatar) || [];
+
+    const classes = ['char-card'];
+    if (isFav) classes.push('is-favorite');
+    if (initiallyLoaded) classes.push('loaded');
+    if (isSelected) classes.push('selected');
+
+    const parts = ['<div class="', classes.join(' '), '" data-avatar="', escapeHtml(char.avatar), '" data-virtual-index="', virtualIndex, '">'];
+    if (isFav) parts.push('<div class="favorite-indicator"><i class="fa-solid fa-star"></i></div>');
+    if (playlists.length > 0) {
+        const firstIcon = playlists.length === 1 && playlists[0].icon ? playlists[0].icon : 'fa-solid fa-list';
+        const plTitle = playlists.map(p => p.name).join(', ');
+        parts.push('<div class="playlist-indicator" title="', escapeHtml(plTitle), '"><i class="', escapeHtml(firstIcon), '"></i></div>');
+    }
+    parts.push('<div class="char-card-checkbox" aria-hidden="true"><i class="fa-solid fa-check"></i></div>');
+    parts.push('<img class="card-image" src="', escapeHtml(imgPath), '" alt="" decoding="async">');
+    parts.push('<div class="card-overlay"><div class="card-name">', escapeHtml(name), '</div><div class="card-tags">');
+    for (const tag of tags) parts.push('<span class="card-tag">', escapeHtml(tag), '</span>');
+    parts.push('</div></div></div>');
+
+    return parts.join('');
+}
+
+function createCardsBatchHTML(charsWithIndices) {
+    if (charsWithIndices.length === 0) return [];
+    const html = charsWithIndices.map(({ char, index }) => buildCharacterCardHTML(char, index)).join('');
+    const tmp = document.createElement('div');
+    tmp.innerHTML = html;
+    const cards = Array.from(tmp.children);
+    // Sync cache-hit promotion: buildCharacterCardHTML only consults the Set, so urls cached by the browser but not yet in the Set (eg. first view-switch) still flash. img.complete catches those.
+    for (const card of cards) {
+        if (card.classList.contains('loaded')) continue;
+        const img = card.querySelector('.card-image');
+        if (img && img.complete && img.naturalWidth > 0) {
+            _seenAvatarUrls.add(img.src);
+            card.classList.add('loaded');
+        }
+    }
+    return cards;
+}
+
 /**
  * Create a single character card element
  */
@@ -7943,7 +8483,10 @@ function createCharacterCard(char) {
     }
     
     const name = getCharacterName(char);
-    const imgPath = getCharacterAvatarUrl(char.avatar);
+    // createCharacterCard is desktop-only; thumbs require both master AND the explicit desktop opt-in.
+    const imgPath = (getSetting('useGridThumbnails') === true && getSetting('gridThumbnailsDesktop') === true)
+        ? getCharacterAvatarThumbUrl(char.avatar)
+        : getCharacterAvatarUrl(char.avatar);
     const tags = getTags(char);
     
     // Use creator_notes as hover tooltip - extract plain text only
@@ -7984,17 +8527,31 @@ function createCharacterCard(char) {
         plDiv.appendChild(plIcon);
         card.appendChild(plDiv);
     }
+
+    // always in dom, body.multi-select-mode reveals; real div not pseudo so themers can target it like .favorite-indicator
+    const checkbox = document.createElement('div');
+    checkbox.className = 'char-card-checkbox';
+    checkbox.setAttribute('aria-hidden', 'true');
+    const checkIcon = document.createElement('i');
+    checkIcon.className = 'fa-solid fa-check';
+    checkbox.appendChild(checkIcon);
+    card.appendChild(checkbox);
     
     // Avatar image
     const img = document.createElement('img');
     img.className = 'card-image';
+    img.decoding = 'async';
     img.src = imgPath;
-    // Skip the fade-in when the avatar is already decoded in the browser cache;
-    // re-renders (view switch, post-import, post-recovery) won't replay the cascade.
-    if (img.complete && img.naturalWidth > 0) {
+    // Mobile sometimes reports img.complete=false right after src= even on cached avatars, so the Set lets rerenders skip the fade anyway
+    const looksCached = _seenAvatarUrls.has(imgPath) || (img.complete && img.naturalWidth > 0);
+    if (looksCached) {
+        _seenAvatarUrls.add(imgPath);
         card.classList.add('loaded');
     } else {
-        img.addEventListener('load', () => card.classList.add('loaded'), { once: true });
+        img.addEventListener('load', () => {
+            _seenAvatarUrls.add(imgPath);
+            card.classList.add('loaded');
+        }, { once: true });
     }
     card.appendChild(img);
     
@@ -8033,6 +8590,11 @@ function createCharacterCard(char) {
 }
 
 function refreshPlaylistBadges() {
+    // detail-modal sidebar chips reflect membership too, refresh together
+    const charModal = document.getElementById('charModal');
+    if (activeChar && charModal && !charModal.classList.contains('hidden')) {
+        renderSidebarPlaylists(activeChar.avatar);
+    }
     for (const [, card] of activeCards) {
         const avatar = card.dataset.avatar;
         const existing = card.querySelector('.playlist-indicator');
@@ -8792,7 +9354,7 @@ async function showLegacyFolderModal(char) {
     
     // Create modal
     const modal = document.createElement('div');
-    modal.className = 'confirm-modal';
+    modal.className = 'confirm-modal cl-modal-drawer';
     modal.id = 'legacyFolderModal';
     
     const safeLegacyFolder = sanitizeFolderName(legacyInfo.legacyFolder);
@@ -8989,12 +9551,13 @@ async function showLegacyFolderModal(char) {
     });
 }
 
-function openCharModalElevated(char, pinnedModal) {
+function openCharModalElevated(char) {
     const charModal = document.getElementById('charModal');
     if (!charModal) return;
-    // Pin ALL currently-visible confirm-modals at their default z-index so the
-    // body.char-modal-above CSS rule only elevates modals opened AFTER this point
-    const pinnedModals = [...document.querySelectorAll('.confirm-modal:not(.hidden)')];
+    // Pin existing visible modals so char-modal-above only elevates new ones
+    const pinnedModals = [
+        ...document.querySelectorAll('.confirm-modal:not(.hidden), .cl-modal.visible'),
+    ];
     pinnedModals.forEach(m => m.style.setProperty('z-index', '2000', 'important'));
     document.body.classList.add('char-modal-above');
     const restore = () => {
@@ -9009,7 +9572,74 @@ function openCharModalElevated(char, pinnedModal) {
     openModal(char);
 }
 
+// Walks currentCharsList (the live filtered+sorted view) so nav order tracks the user's current sort/filter state. Dirty-edit gate + teardown live inside openModal so this stays thin.
+function navigateModal(direction) {
+    if (!activeChar) return;
+    if (getSetting('enableCharDetailNav') === false) return;
+    const idx = currentCharsList.findIndex(c => c.avatar === activeChar.avatar);
+    if (idx === -1) return;
+    const targetIdx = idx + direction;
+    if (targetIdx < 0 || targetIdx >= currentCharsList.length) return;
+    openModal(currentCharsList[targetIdx]);
+}
+
+function isCharModalDirty() {
+    if (!activeChar || isEditLocked) return false;
+    if (pendingAvatarFile) return true;
+    try {
+        const current = collectEditValues();
+        return generateChangesDiff(originalValues, current).length > 0;
+    } catch (_) {
+        return false;
+    }
+}
+
+function confirmDiscardCharModalEdits() {
+    return showConfirm({
+        title: 'Discard unsaved edits?',
+        message: `You have unsaved changes to ${getCharacterName(activeChar) || 'this character'}. Discard them?`,
+        confirmLabel: 'Discard',
+        cancelLabel: 'Keep Editing',
+        danger: true,
+    });
+}
+
+// User-initiated close. Programmatic closers (post-delete cleanup, save success) keep calling closeModal directly.
+async function maybeCloseModal() {
+    if (isCharModalDirty()) {
+        const ok = await confirmDiscardCharModalEdits();
+        if (!ok) return;
+    }
+    closeModal();
+}
+
+function updateCharModalNavState() {
+    const prevBtn = document.getElementById('charModalNavPrev');
+    const nextBtn = document.getElementById('charModalNavNext');
+    if (!prevBtn || !nextBtn) return;
+    const enabled = getSetting('enableCharDetailNav') !== false && !!activeChar;
+    const idx = enabled ? currentCharsList.findIndex(c => c.avatar === activeChar.avatar) : -1;
+    const show = idx !== -1;
+    prevBtn.style.display = show ? '' : 'none';
+    nextBtn.style.display = show ? '' : 'none';
+    if (!show) return;
+    prevBtn.disabled = idx === 0;
+    nextBtn.disabled = idx >= currentCharsList.length - 1;
+}
+
 async function openModal(char) {
+    // Swap-while-open gate: dirty-edit prompt + per-character teardown live here so every modal-to-modal entry point (navigateModal, openRelatedCharacter, anywhere else) inherits the same protection.
+    const charModalEl = document.getElementById('charModal');
+    const isSwap = charModalEl && !charModalEl.classList.contains('hidden') && activeChar && activeChar.avatar !== char.avatar;
+    if (isSwap && isCharModalDirty()) {
+        const ok = await confirmDiscardCharModalEdits();
+        if (!ok) return;
+    }
+    if (isSwap) {
+        setEditLock(true);
+        clearPendingAvatar();
+    }
+
     if (window.matchMedia && window.matchMedia('(max-width: 768px)').matches) {
         const modal = document.getElementById('charModal');
         if (modal) {
@@ -9028,10 +9658,18 @@ async function openModal(char) {
 
     const gen = ++_modalOpenGen;
     activeChar = char;
+    updateCharModalNavState();
 
     // Show loading state for avatar while new image loads
     const modalImg = document.getElementById('modalImage');
     modalImg.classList.add('loading');
+
+    // Race the full-avatar fetch with hydrate so when grid uses thumbs we dont serialize the two network waits.
+    new Image().src = getCharacterAvatarUrl(char.avatar);
+
+    // Update the mobile header thumbnail src as early as possible so by the time the modal becomes visible the new char's thumb is already decoded; otherwise the previous char's thumb stays painted until the lazy observer-driven update fires.
+    const _mobileHeader = document.querySelector('#charModal .mobile-header-avatar');
+    if (_mobileHeader) _mobileHeader.src = getCharacterAvatarStThumbUrl(char.avatar);
 
     // Fetch heavy fields on demand (slim index keeps only grid/search data in memory)
     await hydrateCharacter(char);
@@ -9453,9 +10091,9 @@ function populateEditAvatarPreview() {
     if (!img || !activeChar) return;
     const url = getCharacterAvatarUrl(activeChar.avatar);
     img.src = url;
-    // Mobile mirrors the hero on the small header thumbnail (sidebar is hidden).
+    // Mobile mirrors the hero on the small header thumbnail (sidebar is hidden). 32x32 target, so ST's built-in /thumbnail is plenty and avoids re-fetching the full PNG just to shrink it.
     const headerAvatar = document.querySelector('#charModal .mobile-header-avatar');
-    if (headerAvatar) headerAvatar.src = url;
+    if (headerAvatar) headerAvatar.src = getCharacterAvatarStThumbUrl(activeChar.avatar);
 }
 
 function clearPendingAvatar() {
@@ -10427,7 +11065,7 @@ function renderRelatedCards(related) {
         const char = r.char;
         const name = getCharField(char, 'name') || 'Unknown';
         const creator = getCharField(char, 'creator') || '';
-        const avatarPath = getCharacterAvatarUrl(char.avatar);
+        const avatarPath = getCharacterAvatarStThumbUrl(char.avatar);
         
         // Build score breakdown pills - show tag count and rarity info
         const pills = [];
@@ -10493,7 +11131,7 @@ async function showDeleteConfirmation(char) {
     
     // Show modal immediately with a loading placeholder for gallery info
     const deleteModal = document.createElement('div');
-    deleteModal.className = 'confirm-modal';
+    deleteModal.className = 'confirm-modal cl-modal-drawer';
     deleteModal.id = 'deleteConfirmModal';
     deleteModal.innerHTML = `
         <div class="confirm-modal-content" style="max-width: calc(450px * var(--modal-scale, 1));">
@@ -10664,8 +11302,10 @@ async function deleteCharacter(char, deleteChats = false) {
     try {
         const avatar = char.avatar || '';
         const charName = getCharField(char, 'name') || avatar;
-        
+
         debugLog('[Delete] Starting deletion for:', charName, 'avatar:', avatar);
+
+        hapticFeedback([20, 30, 20]);
         
         // Delete character via SillyTavern API
         const response = await apiRequest(ENDPOINTS.CHARACTERS_DELETE, 'POST', {
@@ -11269,7 +11909,7 @@ async function performSave() {
                 const heroImg = document.getElementById('modalImage');
                 if (heroImg) heroImg.src = newUrl;
                 const headerAvatar = document.querySelector('#charModal .mobile-header-avatar');
-                if (headerAvatar) headerAvatar.src = newUrl;
+                if (headerAvatar) headerAvatar.src = getCharacterAvatarStThumbUrl(activeChar.avatar);
                 clearPendingAvatar();
             }
             
@@ -11775,10 +12415,12 @@ async function toggleCharacterFavorite(char) {
         showToast('No character selected', 'error');
         return;
     }
-    
+
     const currentFavStatus = isCharacterFavorite(char);
     const newFavStatus = !currentFavStatus;
-    
+
+    hapticFeedback(12);
+
     try {
         // fav lives in data.extensions.fav; full data must be passed through.
         const existingData = char.data || {};
@@ -13438,9 +14080,26 @@ function addAdvFilterRule() {
         operator: fields[firstField].operators[0],
         value: '',
     };
+    rule.value = getAdvFilterDefaultValue(rule);
     getAdvFilterRules().push(rule);
     rerenderAdvFilterRows();
     updateAdvFilterIndicator();
+}
+
+// Operators with a UI-displayed default (date "7", first provider, first playlist) need
+// the rule's stored value seeded to match, or evaluateAdvancedFilters skips the rule
+// for being empty while the user sees a configured filter that silently does nothing.
+function getAdvFilterDefaultValue(rule) {
+    if (rule.operator === 'in_the_last') return '7';
+    const fieldDef = getActiveAdvFilterFields()[rule.field];
+    if (!fieldDef) return '';
+    if (fieldDef.type === 'provider' && (rule.operator === 'linked_to' || rule.operator === 'not_linked_to')) {
+        return ADV_FILTER_PROVIDERS[0]?.value || '';
+    }
+    if (fieldDef.type === 'playlist' && (rule.operator === 'in' || rule.operator === 'not_in')) {
+        return (window.playlistsGetAll?.() || [])[0]?.uid || '';
+    }
+    return '';
 }
 
 function removeAdvFilterRule(id) {
@@ -13724,6 +14383,7 @@ function getAdvFilterRulesForChats() {
 
 // Search and Filter Functionality (Global so it can be called from view switching)
 function performSearch() {
+    updateMobileFilterIndicator();
     const rawQuery = document.getElementById('searchInput').value;
     
     const useName = document.getElementById('searchName').checked;
@@ -13784,6 +14444,12 @@ function performSearch() {
     }
     
     query = query.trim().toLowerCase();
+
+    // built once outside the per-char loop, picks up whatever the playlist
+    // actually contains right now (no stale cache between mutations).
+    const playlistAvatarSet = activePlaylistFilter
+        ? (window.playlistsGetAvatarSet?.(activePlaylistFilter) || null)
+        : null;
 
     const filtered = allCharacters.filter(c => {
         
@@ -13859,8 +14525,8 @@ function performSearch() {
         }
 
         // Playlist filter (outermost constraint)
-        if (activePlaylistFilter && activePlaylistAvatarSet) {
-            if (!activePlaylistAvatarSet.has(c.avatar)) return false;
+        if (playlistAvatarSet) {
+            if (!playlistAvatarSet.has(c.avatar)) return false;
         }
 
         // Favorites-only filter (from toolbar button)
@@ -14189,13 +14855,13 @@ function setupEventListeners() {
                     rule.field = e.target.value;
                     const newField = getActiveAdvFilterFields()[rule.field];
                     rule.operator = newField.operators[0];
-                    rule.value = '';
+                    rule.value = getAdvFilterDefaultValue(rule);
                     rerenderAdvFilterRows();
                     updateAdvFilterIndicator();
                     triggerAdvFilterSearch();
                 } else if (e.target.classList.contains('adv-filter-operator')) {
                     rule.operator = e.target.value;
-                    rule.value = '';
+                    rule.value = getAdvFilterDefaultValue(rule);
                     rerenderAdvFilterRows();
                     updateAdvFilterIndicator();
                     triggerAdvFilterSearch();
@@ -14380,9 +15046,40 @@ function setupEventListeners() {
     }
 
     // Close Modal
-    on('modalClose', 'click', closeModal);
+    on('modalClose', 'click', maybeCloseModal);
     modal.addEventListener('click', (e) => {
-        if (e.target === modal) closeModal();
+        if (e.target === modal) maybeCloseModal();
+    });
+
+    // Char detail prev/next nav (desktop chevrons + keyboard; mobile swipe wired in library-mobile.js).
+    on('charModalNavPrev', 'click', () => navigateModal(-1));
+    on('charModalNavNext', 'click', () => navigateModal(1));
+    // Hover preload: same shape as the grid mousedown preload so the avatar is cache-warm by the time openModal sets src.
+    const navPrevBtn = document.getElementById('charModalNavPrev');
+    const navNextBtn = document.getElementById('charModalNavNext');
+    const previewSiblingAt = (offset) => {
+        if (!activeChar) return null;
+        const idx = currentCharsList.findIndex(c => c.avatar === activeChar.avatar);
+        if (idx === -1) return null;
+        return currentCharsList[idx + offset] || null;
+    };
+    navPrevBtn?.addEventListener('mouseenter', () => {
+        const s = previewSiblingAt(-1);
+        if (s) new Image().src = getCharacterAvatarUrl(s.avatar);
+    });
+    navNextBtn?.addEventListener('mouseenter', () => {
+        const s = previewSiblingAt(1);
+        if (s) new Image().src = getCharacterAvatarUrl(s.avatar);
+    });
+    document.addEventListener('keydown', (e) => {
+        if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+        if (modal.classList.contains('hidden')) return;
+        if (getSetting('enableCharDetailNav') === false) return;
+        const t = e.target;
+        const tag = t?.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || t?.isContentEditable) return;
+        e.preventDefault();
+        navigateModal(e.key === 'ArrowLeft' ? -1 : 1);
     });
 
     // Tabs
@@ -14903,6 +15600,30 @@ function getCharacterAvatarUrl(avatar) {
         : `/characters/${encodeURIComponent(avatar)}`;
 }
 
+// ST's built-in /thumbnail (96x144). For small avatars (chat list rows, modal header thumb, message bubbles, dupe-finder cards, recommender results) where even the cl-helper thumb is overkill. Soft above ~64px target on retina; use the cl-helper helper instead for hero-sized previews.
+function getCharacterAvatarStThumbUrl(avatar) {
+    if (!avatar) return '';
+    const bust = _avatarCacheBust.get(avatar);
+    return bust
+        ? `/thumbnail?type=avatar&file=${encodeURIComponent(avatar)}&v=${bust}`
+        : `/thumbnail?type=avatar&file=${encodeURIComponent(avatar)}`;
+}
+
+// Returns the URL the grid should request, picking based on the three-tier
+// thumbnail setting. Callers should gate on getSetting('useGridThumbnails')
+// first; this helper assumes the user wants a thumb.
+function getCharacterAvatarThumbUrl(avatar) {
+    if (!avatar) return '';
+    const bust = _avatarCacheBust.get(avatar);
+    const tail = bust ? `&v=${bust}` : '';
+    if (getSetting('gridThumbnailsClHelper') !== false) {
+        const size = getSetting('gridThumbnailSize') || 512;
+        return `/api/plugins/cl-helper/avatar-thumb/${encodeURIComponent(avatar)}?s=${size}${tail}`;
+    }
+    // ST built-in fallback: tiny 96x144 default but works without cl-helper.
+    return `/thumbnail?type=avatar&file=${encodeURIComponent(avatar)}${tail}`;
+}
+
 // Per-avatar cache-bust tokens, set after an in-place image swap so freshly rendered
 // <img> tags request the new bytes instead of the browser cache.
 const _avatarCacheBust = new Map();
@@ -14957,12 +15678,12 @@ function renderLorebookEntriesHtml(entries) {
     return entries.map((entry, i) => renderLorebookEntryHtml(entry, i)).join('');
 }
 
-/**
- * Hide a modal by ID
- * @param {string} modalId - Modal element ID
- */
+// Handles both class systems (cl-modal uses .visible, confirm-modal uses .hidden).
 function hideModal(modalId) {
-    document.getElementById(modalId)?.classList.add('hidden');
+    const el = document.getElementById(modalId);
+    if (!el) return;
+    if (el.classList.contains('cl-modal')) el.classList.remove('visible');
+    else el.classList.add('hidden');
 }
 
 // Escape HTML characters
@@ -15477,7 +16198,7 @@ function cancelActiveImport() {
 
 // Open/close import modal
 importBtn?.addEventListener('click', () => {
-    importModal.classList.remove('hidden');
+    importModal.classList.add('visible');
     importUrlsInput.value = '';
     importProgress.classList.add('hidden');
     importLog.innerHTML = '';
@@ -15523,7 +16244,7 @@ closeImportModal?.addEventListener('click', async () => {
         if (!confirmClose) return;
         cancelActiveImport();
     }
-    importModal.classList.add('hidden');
+    importModal.classList.remove('visible');
 });
 
 importModal?.addEventListener('click', async (e) => {
@@ -15541,7 +16262,7 @@ importModal?.addEventListener('click', async (e) => {
         if (!confirmClose) return;
         cancelActiveImport();
     }
-    importModal.classList.add('hidden');
+    importModal.classList.remove('visible');
 });
 
 // ==================== IMPORT SOURCE TOGGLE ====================
@@ -16179,7 +16900,7 @@ function updateLogEntry(entry, message, status) {
 startImportBtn?.addEventListener('click', async () => {
     // If in "Done" / "Cancelled" state, just close the modal
     if (startImportBtn.classList.contains('success') || startImportBtn.classList.contains('cancelled')) {
-        importModal.classList.add('hidden');
+        importModal.classList.remove('visible');
         return;
     }
     
@@ -16801,8 +17522,8 @@ function showImportSummaryModal({ galleryCharacters = [], mediaCharacters = [] }
         progressLabel.textContent = 'Preparing downloads...';
         progressCount.textContent = '0/0';
     }
-    
-    modal.classList.remove('hidden');
+
+    modal.classList.add('visible');
 }
 
 // Import Summary Modal Event Listeners
@@ -17174,8 +17895,8 @@ function openProviderLinkModal(char) {
         if (urlInput) urlInput.value = '';
         if (searchResults) searchResults.innerHTML = '';
     }
-    
-    modal.classList.remove('hidden');
+
+    modal.classList.add('visible');
 }
 
 /**
@@ -17650,7 +18371,7 @@ on('providerLinkVersionsBtn', 'click', () => {
     if (activeChar) {
         // Close the link modal, then switch to the Versions tab
         const linkModal = document.getElementById('providerLinkModal');
-        if (linkModal) linkModal.classList.add('hidden');
+        if (linkModal) linkModal.classList.remove('visible');
         const editVBtn = document.getElementById('editPaneVersionsBtn');
         if (editVBtn) editVBtn.click();
     }
@@ -17713,7 +18434,7 @@ function openBulkAutoLinkModal() {
     
     if (hasResults) {
         // We have existing results - show them
-        modal.classList.remove('hidden');
+        modal.classList.add('visible');
         
         if (bulkAutoLinkScanState.scanComplete || bulkAutoLinkAborted) {
             // Scan was finished or stopped - show results directly
@@ -17767,8 +18488,8 @@ function openBulkAutoLinkModal() {
         document.getElementById('bulkAutoLinkConfidentCount').textContent = '0';
         document.getElementById('bulkAutoLinkUncertainCount').textContent = '0';
         document.getElementById('bulkAutoLinkNoMatchCount').textContent = '0';
-        
-        modal.classList.remove('hidden');
+
+        modal.classList.add('visible');
         
         // Start scanning
         runBulkAutoLinkScan();
@@ -17826,7 +18547,7 @@ async function runBulkAutoLinkScan() {
         const currentProgress = alreadyScanned + i + 1;
         
         // Update UI
-        document.getElementById('bulkAutoLinkScanAvatar').src = getCharacterAvatarUrl(char.avatar);
+        document.getElementById('bulkAutoLinkScanAvatar').src = getCharacterAvatarStThumbUrl(char.avatar);
         document.getElementById('bulkAutoLinkScanName').textContent = charName;
         document.getElementById('bulkAutoLinkScanStatus').textContent = `Searching ${providers.length} providers for "${charName}"...`;
         document.getElementById('bulkAutoLinkScanProgress').textContent = `${currentProgress}/${total}`;
@@ -18220,7 +18941,7 @@ function renderBulkAutoLinkConfidentList() {
                 <div class="bulk-auto-link-item-confident-header">
                     <input type="checkbox" class="bulk-auto-link-item-checkbox" ${item.selected ? 'checked' : ''}>
                     <div class="bulk-auto-link-item-local">
-                        <img src="${getCharacterAvatarUrl(item.char.avatar)}" alt="" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect fill=%22%23333%22 width=%22100%22 height=%22100%22/></svg>'">
+                        <img src="${getCharacterAvatarStThumbUrl(item.char.avatar)}" alt="" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect fill=%22%23333%22 width=%22100%22 height=%22100%22/></svg>'">
                         <div class="bulk-auto-link-item-local-info">
                             <span class="bulk-auto-link-item-local-name" title="${escapeHtml(charName)}">${escapeHtml(charName)}</span>
                             <span class="bulk-auto-link-item-local-creator">${charCreator ? 'by ' + escapeHtml(charCreator) : 'No creator'}</span>
@@ -18286,7 +19007,7 @@ function renderBulkAutoLinkUncertainList() {
                 <div class="bulk-auto-link-item-uncertain-header">
                     <input type="checkbox" class="bulk-auto-link-item-checkbox" ${hasSelection ? 'checked' : ''}>
                     <div class="bulk-auto-link-item-local">
-                        <img src="${getCharacterAvatarUrl(item.char.avatar)}" alt="" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect fill=%22%23333%22 width=%22100%22 height=%22100%22/></svg>'">
+                        <img src="${getCharacterAvatarStThumbUrl(item.char.avatar)}" alt="" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect fill=%22%23333%22 width=%22100%22 height=%22100%22/></svg>'">
                         <div class="bulk-auto-link-item-local-info">
                             <span class="bulk-auto-link-item-local-name" title="${escapeHtml(charName)}">${escapeHtml(charName)}</span>
                             <span class="bulk-auto-link-item-local-creator">${charCreator ? 'by ' + escapeHtml(charCreator) : 'No creator'}</span>
@@ -18328,7 +19049,7 @@ function renderBulkAutoLinkNoMatchList() {
         return `
             <div class="bulk-auto-link-item bulk-auto-link-item-nomatch">
                 <div class="bulk-auto-link-item-local">
-                    <img src="${getCharacterAvatarUrl(item.char.avatar)}" alt="" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect fill=%22%23333%22 width=%22100%22 height=%22100%22/></svg>'">
+                    <img src="${getCharacterAvatarStThumbUrl(item.char.avatar)}" alt="" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect fill=%22%23333%22 width=%22100%22 height=%22100%22/></svg>'">
                     <div class="bulk-auto-link-item-local-info">
                         <span class="bulk-auto-link-item-local-name" title="${escapeHtml(charName)}">${escapeHtml(charName)}</span>
                         <span class="bulk-auto-link-item-local-creator">${charCreator ? 'by ' + escapeHtml(charCreator) : 'No creator'}</span>
@@ -18596,7 +19317,7 @@ async function applyBulkAutoLinks() {
     }
     
     // Close modal
-    document.getElementById('bulkAutoLinkModal').classList.add('hidden');
+    document.getElementById('bulkAutoLinkModal').classList.remove('visible');
     
     // Reset state since we linked characters - they're no longer in the unlinked pool
     bulkAutoLinkResults = { confident: [], uncertain: [], nomatch: [] };
@@ -18618,7 +19339,7 @@ document.getElementById('creatorBtn')?.addEventListener('click', () => window.op
 document.getElementById('closeBulkAutoLinkModal')?.addEventListener('click', () => {
     // Just set abort flag and close - state is preserved for resuming
     bulkAutoLinkAborted = true;
-    document.getElementById('bulkAutoLinkModal').classList.add('hidden');
+    document.getElementById('bulkAutoLinkModal').classList.remove('visible');
 });
 document.getElementById('bulkAutoLinkCancelBtn')?.addEventListener('click', () => {
     // If we're in scanning phase, just stop (let the scan loop show results)
@@ -18626,7 +19347,7 @@ document.getElementById('bulkAutoLinkCancelBtn')?.addEventListener('click', () =
     const resultsPhase = document.getElementById('bulkAutoLinkResults');
     if (resultsPhase && !resultsPhase.classList.contains('hidden')) {
         // Results phase - close modal
-        document.getElementById('bulkAutoLinkModal').classList.add('hidden');
+        document.getElementById('bulkAutoLinkModal').classList.remove('visible');
     } else {
         // Scanning phase - just set abort flag, scan loop will handle showing results
         bulkAutoLinkAborted = true;
@@ -18729,14 +19450,14 @@ function clearHighlights(container) {
 // ==============================================
 
 function openGalleryInfoModal() {
-    document.getElementById('galleryInfoModal').classList.remove('hidden');
+    document.getElementById('galleryInfoModal').classList.add('visible');
 }
 
 document.getElementById('galleryInfoBtn')?.addEventListener('click', openGalleryInfoModal);
 
 function closeGalleryInfoModal() {
     const modal = document.getElementById('galleryInfoModal');
-    modal.classList.add('hidden');
+    modal.classList.remove('visible');
     const searchInput = document.getElementById('helpSearchInput');
     if (searchInput && searchInput.value) {
         searchInput.value = '';
@@ -20285,7 +21006,7 @@ charLocalizeToggle?.addEventListener('change', async () => {
 function closeLocalizeModalHandler() {
     localizeAbortController?.abort();
     localizeAbortController = null;
-    localizeModal.classList.add('hidden');
+    localizeModal.classList.remove('visible');
 }
 closeLocalizeModal?.addEventListener('click', closeLocalizeModalHandler);
 closeLocalizeBtn?.addEventListener('click', closeLocalizeModalHandler);
@@ -20298,7 +21019,7 @@ localizeMediaBtn?.addEventListener('click', async () => {
     }
     
     // Show modal
-    localizeModal.classList.remove('hidden');
+    localizeModal.classList.add('visible');
     localizeStatus.textContent = 'Scanning character...';
     localizeLog.innerHTML = '';
     localizeProgressFill.style.width = '0%';
@@ -20489,7 +21210,7 @@ const BULK_SUMMARY_PAGE_SIZE = 50;
 closeBulkLocalizeModal?.addEventListener('click', () => {
     bulkLocalizeAborted = true;
     bulkLocalizeAbortController?.abort();
-    bulkLocalizeModal.classList.add('hidden');
+    bulkLocalizeModal.classList.remove('visible');
 });
 
 cancelBulkLocalizeBtn?.addEventListener('click', () => {
@@ -20501,11 +21222,11 @@ cancelBulkLocalizeBtn?.addEventListener('click', () => {
 
 // Close summary modal
 closeBulkSummaryModal?.addEventListener('click', () => {
-    bulkSummaryModal.classList.add('hidden');
+    bulkSummaryModal.classList.remove('visible');
 });
 
 closeBulkSummaryBtn?.addEventListener('click', () => {
-    bulkSummaryModal.classList.add('hidden');
+    bulkSummaryModal.classList.remove('visible');
 });
 
 // Summary filter and search handlers
@@ -20572,7 +21293,7 @@ function getFilteredBulkResults() {
  */
 function saveBulkSummaryModalState() {
     const modal = bulkSummaryModal;
-    bulkSummaryModalState.wasOpen = modal && !modal.classList.contains('hidden');
+    bulkSummaryModalState.wasOpen = modal && modal.classList.contains('visible');
     bulkSummaryModalState.scrollPosition = bulkSummaryList ? bulkSummaryList.scrollTop : 0;
     bulkSummaryModalState.currentPage = bulkSummaryCurrentPage;
     bulkSummaryModalState.filterValue = bulkSummaryFilterSelect?.value || 'all';
@@ -20590,7 +21311,7 @@ function restoreBulkSummaryModalState() {
     if (bulkSummarySearch) bulkSummarySearch.value = bulkSummaryModalState.searchValue;
     bulkSummaryCurrentPage = bulkSummaryModalState.currentPage;
     
-    bulkSummaryModal.classList.remove('hidden');
+    bulkSummaryModal.classList.add('visible');
     
     // Re-render and restore scroll position
     renderBulkSummaryList();
@@ -20615,7 +21336,7 @@ function openCharFromBulkSummary(avatar) {
     saveBulkSummaryModalState();
     
     // Hide bulk summary modal
-    bulkSummaryModal.classList.add('hidden');
+    bulkSummaryModal.classList.remove('visible');
     
     // Open character modal
     openModal(char);
@@ -20676,7 +21397,7 @@ function renderBulkSummaryList() {
             
             return `
             <div class="bulk-summary-item${r.incomplete ? ' incomplete' : ''}">
-                <img src="${getCharacterAvatarUrl(r.avatar)}" alt="" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect fill=%22%23333%22 width=%22100%22 height=%22100%22/><text x=%2250%22 y=%2255%22 text-anchor=%22middle%22 fill=%22%23666%22 font-size=%2240%22>?</text></svg>'">
+                <img src="${getCharacterAvatarStThumbUrl(r.avatar)}" alt="" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect fill=%22%23333%22 width=%22100%22 height=%22100%22/><text x=%2250%22 y=%2255%22 text-anchor=%22middle%22 fill=%22%23666%22 font-size=%2240%22>?</text></svg>'">
                 <a class="char-name-link" href="#" data-avatar="${escapeHtml(r.avatar)}" title="Click to view ${escapeHtml(r.name)}">${escapeHtml(r.name)}</a>
                 <div class="char-stats">
                     ${r.incomplete ? '<span class="incomplete-badge" title="Has errors or was interrupted"><i class="fa-solid fa-exclamation-triangle"></i></span>' : ''}
@@ -20879,7 +21600,7 @@ function showBulkSummary(wasAborted = false, skippedCompleted = 0) {
     renderBulkSummaryList();
     
     // Show modal
-    bulkSummaryModal.classList.remove('hidden');
+    bulkSummaryModal.classList.add('visible');
 }
 
 /**
@@ -20921,7 +21642,7 @@ async function runBulkLocalization() {
     const completedAvatars = getCompletedMediaLocalizations();
     
     // Reset UI
-    bulkLocalizeModal.classList.remove('hidden');
+    bulkLocalizeModal.classList.add('visible');
     bulkLocalizeCharAvatar.src = '';
     bulkLocalizeCharName.textContent = 'Preparing...';
     bulkLocalizeStatus.textContent = 'Scanning library...';
@@ -20966,7 +21687,7 @@ async function runBulkLocalization() {
             continue;
         }
         
-        bulkLocalizeCharAvatar.src = getCharacterAvatarUrl(char.avatar);
+        bulkLocalizeCharAvatar.src = getCharacterAvatarStThumbUrl(char.avatar);
         bulkLocalizeCharName.textContent = charName;
         bulkLocalizeProgressCount.textContent = `${i + 1}/${totalChars} characters`;
         bulkLocalizeProgressFill.style.width = `${((i + 1) / totalChars) * 100}%`;
@@ -21075,7 +21796,7 @@ async function runBulkLocalization() {
     }
     
     // Hide progress modal and show summary
-    bulkLocalizeModal.classList.add('hidden');
+    bulkLocalizeModal.classList.remove('visible');
     showBulkSummary(bulkLocalizeAborted, skippedCompleted);
     
     // Show toast
@@ -21090,7 +21811,7 @@ async function runBulkLocalization() {
 // Bulk Localize button in settings
 document.getElementById('bulkLocalizeBtn')?.addEventListener('click', () => {
     // Close settings modal
-    document.getElementById('gallerySettingsModal')?.classList.add('hidden');
+    document.getElementById('gallerySettingsModal')?.classList.remove('visible');
     
     // Confirm with user
     if (allCharacters.length === 0) {
@@ -21616,14 +22337,16 @@ function buildNormalizedCharacterData(fullDataMap) {
         const personality = getCharField(src, 'personality') || '';
         const scenario = getCharField(src, 'scenario') || '';
         const creatorNotes = getCharField(char, 'creator_notes') || '';
-        
+        const mesExample = getCharField(src, 'mes_example') || '';
+        const systemPrompt = getCharField(src, 'system_prompt') || '';
+
         // Pre-extract words for content similarity (expensive operation)
         const getWords = (text) => {
             if (!text || text.length < 50) return null;
             const words = text.toLowerCase().match(/\b\w{3,}\b/g) || [];
             return new Set(words);
         };
-        
+
         return {
             avatar: char.avatar,
             char: char,
@@ -21638,11 +22361,15 @@ function buildNormalizedCharacterData(fullDataMap) {
             personality: personality,
             scenario: scenario,
             creatorNotes: creatorNotes,
+            mesExample: mesExample,
+            systemPrompt: systemPrompt,
             descWords: getWords(description),
             firstMesWords: getWords(firstMes),
             persWords: getWords(personality),
             scenWords: getWords(scenario),
-            creatorNotesWords: getWords(creatorNotes)
+            creatorNotesWords: getWords(creatorNotes),
+            mesExWords: getWords(mesExample),
+            sysPromptWords: getWords(systemPrompt)
         };
     }).filter(Boolean);
 }
@@ -21815,20 +22542,31 @@ function calculateFastSimilarity(normA, normB) {
     let contentIdentical = false;
     let strictIdentical = false;
     if (breakdown.name && breakdown.creator && substantialPairs >= 1) {
+        // asymmetric catches "A has field, B doesnt" which threshold-gated checks used to miss.
+        const has = (t) => !!(t && t.length > 0);
+        const asymmetric = (a, b) => has(a) !== has(b);
+        const wordsMismatch = (wA, wB, tA, tB) => has(tA) && has(tB) && wA && wB && wordSetSimilarity(wA, wB) < 1.0;
+
         contentIdentical = true;
-        if (normA.descWords && normB.descWords && normA.description.length > 50 && normB.description.length > 50 && wordSetSimilarity(normA.descWords, normB.descWords) < 1.0) contentIdentical = false;
-        if (normA.firstMesWords && normB.firstMesWords && normA.firstMes.length > 30 && normB.firstMes.length > 30 && wordSetSimilarity(normA.firstMesWords, normB.firstMesWords) < 1.0) contentIdentical = false;
-        if (normA.persWords && normB.persWords && normA.personality.length > 20 && normB.personality.length > 20 && wordSetSimilarity(normA.persWords, normB.persWords) < 1.0) contentIdentical = false;
-        if (normA.scenWords && normB.scenWords && normA.scenario.length > 20 && normB.scenario.length > 20 && wordSetSimilarity(normA.scenWords, normB.scenWords) < 1.0) contentIdentical = false;
-        if (normA.creatorNotesWords && normB.creatorNotesWords && normA.creatorNotes.length > 50 && normB.creatorNotes.length > 50 && wordSetSimilarity(normA.creatorNotesWords, normB.creatorNotesWords) < 1.0) contentIdentical = false;
+        if (asymmetric(normA.description, normB.description) || wordsMismatch(normA.descWords, normB.descWords, normA.description, normB.description)) contentIdentical = false;
+        if (asymmetric(normA.firstMes, normB.firstMes) || wordsMismatch(normA.firstMesWords, normB.firstMesWords, normA.firstMes, normB.firstMes)) contentIdentical = false;
+        if (asymmetric(normA.personality, normB.personality) || wordsMismatch(normA.persWords, normB.persWords, normA.personality, normB.personality)) contentIdentical = false;
+        if (asymmetric(normA.scenario, normB.scenario) || wordsMismatch(normA.scenWords, normB.scenWords, normA.scenario, normB.scenario)) contentIdentical = false;
+        if (asymmetric(normA.creatorNotes, normB.creatorNotes) || wordsMismatch(normA.creatorNotesWords, normB.creatorNotesWords, normA.creatorNotes, normB.creatorNotes)) contentIdentical = false;
+        if (asymmetric(normA.mesExample, normB.mesExample) || wordsMismatch(normA.mesExWords, normB.mesExWords, normA.mesExample, normB.mesExample)) contentIdentical = false;
+        if (asymmetric(normA.systemPrompt, normB.systemPrompt) || wordsMismatch(normA.sysPromptWords, normB.sysPromptWords, normA.systemPrompt, normB.systemPrompt)) contentIdentical = false;
+
         if (contentIdentical) {
-            const eq = (a, b) => a.replace(/\s+/g, ' ').trim() === b.replace(/\s+/g, ' ').trim();
+            // Exact-mode gate: byte equality only. Any drift bumps token count.
+            const eq = (a, b) => (a || '') === (b || '');
             strictIdentical = true;
-            if (normA.description && normB.description && normA.description.length > 50 && normB.description.length > 50 && !eq(normA.description, normB.description)) strictIdentical = false;
-            if (normA.firstMes && normB.firstMes && normA.firstMes.length > 30 && normB.firstMes.length > 30 && !eq(normA.firstMes, normB.firstMes)) strictIdentical = false;
-            if (normA.personality && normB.personality && normA.personality.length > 20 && normB.personality.length > 20 && !eq(normA.personality, normB.personality)) strictIdentical = false;
-            if (normA.scenario && normB.scenario && normA.scenario.length > 20 && normB.scenario.length > 20 && !eq(normA.scenario, normB.scenario)) strictIdentical = false;
-            if (normA.creatorNotes && normB.creatorNotes && normA.creatorNotes.length > 50 && normB.creatorNotes.length > 50 && !eq(normA.creatorNotes, normB.creatorNotes)) strictIdentical = false;
+            if (!eq(normA.description, normB.description)) strictIdentical = false;
+            if (!eq(normA.firstMes, normB.firstMes)) strictIdentical = false;
+            if (!eq(normA.personality, normB.personality)) strictIdentical = false;
+            if (!eq(normA.scenario, normB.scenario)) strictIdentical = false;
+            if (!eq(normA.creatorNotes, normB.creatorNotes)) strictIdentical = false;
+            if (!eq(normA.mesExample, normB.mesExample)) strictIdentical = false;
+            if (!eq(normA.systemPrompt, normB.systemPrompt)) strictIdentical = false;
         }
     }
     
@@ -22187,18 +22925,34 @@ function calculateCharacterSimilarity(charA, charB) {
     let contentIdentical = false;
     let strictIdentical = false;
     if (breakdown.name && breakdown.creator && substantialPairs >= 1) {
+        const has = (t) => !!(t && t.length > 0);
+        const asymmetric = (a, b) => has(a) !== has(b);
+        const textMismatch = (a, b) => has(a) && has(b) && contentSimilarity(a, b) < 1.0;
+
+        const mesExA = getCharField(charA, 'mes_example') || '';
+        const mesExB = getCharField(charB, 'mes_example') || '';
+        const sysPromptA = getCharField(charA, 'system_prompt') || '';
+        const sysPromptB = getCharField(charB, 'system_prompt') || '';
+
         contentIdentical = true;
-        if (descA && descB && descA.length > 50 && descB.length > 50 && contentSimilarity(descA, descB) < 1.0) contentIdentical = false;
-        if (firstMesA && firstMesB && firstMesA.length > 30 && firstMesB.length > 30 && contentSimilarity(firstMesA, firstMesB) < 1.0) contentIdentical = false;
-        if (persA && persB && persA.length > 20 && persB.length > 20 && contentSimilarity(persA, persB) < 1.0) contentIdentical = false;
-        if (notesA && notesB && notesA.length > 50 && notesB.length > 50 && contentSimilarity(notesA, notesB) < 1.0) contentIdentical = false;
+        if (asymmetric(descA, descB) || textMismatch(descA, descB)) contentIdentical = false;
+        if (asymmetric(firstMesA, firstMesB) || textMismatch(firstMesA, firstMesB)) contentIdentical = false;
+        if (asymmetric(persA, persB) || textMismatch(persA, persB)) contentIdentical = false;
+        if (asymmetric(scenA, scenB) || textMismatch(scenA, scenB)) contentIdentical = false;
+        if (asymmetric(notesA, notesB) || textMismatch(notesA, notesB)) contentIdentical = false;
+        if (asymmetric(mesExA, mesExB) || textMismatch(mesExA, mesExB)) contentIdentical = false;
+        if (asymmetric(sysPromptA, sysPromptB) || textMismatch(sysPromptA, sysPromptB)) contentIdentical = false;
+
         if (contentIdentical) {
-            const eq = (a, b) => a.replace(/\s+/g, ' ').trim() === b.replace(/\s+/g, ' ').trim();
+            const eq = (a, b) => (a || '') === (b || '');
             strictIdentical = true;
-            if (descA && descB && descA.length > 50 && descB.length > 50 && !eq(descA, descB)) strictIdentical = false;
-            if (firstMesA && firstMesB && firstMesA.length > 30 && firstMesB.length > 30 && !eq(firstMesA, firstMesB)) strictIdentical = false;
-            if (persA && persB && persA.length > 20 && persB.length > 20 && !eq(persA, persB)) strictIdentical = false;
-            if (notesA && notesB && notesA.length > 50 && notesB.length > 50 && !eq(notesA, notesB)) strictIdentical = false;
+            if (!eq(descA, descB)) strictIdentical = false;
+            if (!eq(firstMesA, firstMesB)) strictIdentical = false;
+            if (!eq(persA, persB)) strictIdentical = false;
+            if (!eq(scenA, scenB)) strictIdentical = false;
+            if (!eq(notesA, notesB)) strictIdentical = false;
+            if (!eq(mesExA, mesExB)) strictIdentical = false;
+            if (!eq(sysPromptA, sysPromptB)) strictIdentical = false;
         }
     }
     
@@ -22952,8 +23706,8 @@ function compareCharacterDifferences(refChar, dupChar) {
     };
 }
 
-function getDuplicateScoreLabel(score, isContentIdentical = false) {
-    if (isContentIdentical) return 'Identical';
+function getDuplicateScoreLabel(score, isStrictIdentical = false) {
+    if (isStrictIdentical) return 'Identical';
     if (score >= 80) return 'Near-Identical';
     if (score >= 60) return 'Very Similar';
     if (score >= 40) return 'Similar';
@@ -22963,7 +23717,7 @@ function getDuplicateScoreLabel(score, isContentIdentical = false) {
 function renderCharDupCard(char, type, groupIdx, charIdx = 0, diffs = null) {
     const name = getCharField(char, 'name') || 'Unknown';
     const creator = getCharField(char, 'creator') || 'Unknown creator';
-    const avatarPath = getCharacterAvatarUrl(char.avatar);
+    const avatarPath = getCharacterAvatarStThumbUrl(char.avatar);
     const tokens = estimateTokens(char);
     
     // Date
@@ -23143,12 +23897,13 @@ async function renderDuplicateGroups(groups) {
     groups.forEach((group, idx) => {
         const ref = group.reference;
         const refName = getCharField(ref, 'name') || 'Unknown';
-        const refAvatar = getCharacterAvatarUrl(ref.avatar);
+        const refAvatar = getCharacterAvatarStThumbUrl(ref.avatar);
         const maxScore = Math.max(...group.duplicates.map(d => d.score || 0));
         
         // Pre-compute content identity for each duplicate to inform the header
         const dupResults = [];
         let allContentIdentical = true;
+        let allStrictIdentical = group.duplicates.every(d => d.strictIdentical === true);
 
         group.duplicates.forEach((dup, dupIdx) => {
             const dupChar = dup.char;
@@ -23189,7 +23944,7 @@ async function renderDuplicateGroups(groups) {
             dupResults.push({ dup, dupIdx, dupChar, diffs, allDiffs, identicalCount, differentCount, isContentIdentical });
         });
 
-        const headerLabel = getDuplicateScoreLabel(maxScore, allContentIdentical);
+        const headerLabel = getDuplicateScoreLabel(maxScore, allStrictIdentical);
         
         html += `
             <div class="char-dup-group" id="dup-group-${idx}">
@@ -23230,7 +23985,7 @@ async function renderDuplicateGroups(groups) {
                 }
             }
 
-            const scoreLabel = getDuplicateScoreLabel(dup.score || 0, isContentIdentical);
+            const scoreLabel = getDuplicateScoreLabel(dup.score || 0, dup.strictIdentical === true);
             
             const wsNormalizedCount = allDiffs.filter(d => d.normalizedAway).length;
             
@@ -23493,8 +24248,8 @@ function toggleDupGroup(idx) {
 function saveDuplicateModalState() {
     const modal = document.getElementById('charDuplicatesModal');
     const resultsEl = document.getElementById('charDuplicatesResults');
-    
-    duplicateModalState.wasOpen = modal && !modal.classList.contains('hidden');
+
+    duplicateModalState.wasOpen = modal && modal.classList.contains('visible');
     duplicateModalState.scrollPosition = resultsEl ? resultsEl.scrollTop : 0;
     
     // Track which groups are expanded
@@ -23513,8 +24268,8 @@ function restoreDuplicateModalState() {
     
     const modal = document.getElementById('charDuplicatesModal');
     const resultsEl = document.getElementById('charDuplicatesResults');
-    
-    modal.classList.remove('hidden');
+
+    modal.classList.add('visible');
     
     // Restore expanded groups
     duplicateModalState.expandedGroups.forEach(idx => {
@@ -23541,7 +24296,7 @@ function viewCharFromDuplicates(avatar) {
     saveDuplicateModalState();
     
     // Hide duplicates modal
-    document.getElementById('charDuplicatesModal').classList.add('hidden');
+    document.getElementById('charDuplicatesModal').classList.remove('visible');
     
     // Open character modal
     openModal(char);
@@ -23584,7 +24339,7 @@ async function deleteDuplicateChar(avatar, groupIdx) {
     
     // Create enhanced delete confirmation modal
     const deleteModal = document.createElement('div');
-    deleteModal.className = 'confirm-modal';
+    deleteModal.className = 'confirm-modal cl-modal-drawer';
     deleteModal.id = 'deleteDuplicateModal';
     
     // Only allow gallery modification when:
@@ -23640,7 +24395,7 @@ async function deleteDuplicateChar(avatar, groupIdx) {
                     <div class="dup-delete-transfer-select-wrapper">
                         ${transferTargets.map((t, idx) => {
                             const tName = getCharField(t, 'name') || t.avatar;
-                            const tAvatar = getCharacterAvatarUrl(t.avatar);
+                            const tAvatar = getCharacterAvatarStThumbUrl(t.avatar);
                             return `
                                 <label class="dup-delete-transfer-radio ${idx === 0 ? 'selected' : ''}" data-avatar="${escapeHtml(t.avatar)}">
                                     <input type="radio" name="transferTarget" value="${escapeHtml(t.avatar)}" ${idx === 0 ? 'checked' : ''}>
@@ -23908,8 +24663,8 @@ async function openCharDuplicatesModal(useCache = true) {
     statusEl.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Scanning library for duplicates...';
     statusEl.className = 'char-duplicates-status';
     resultsEl.innerHTML = '';
-    
-    modal.classList.remove('hidden');
+
+    modal.classList.add('visible');
     
     // Run scan (async)
     await new Promise(r => setTimeout(r, 50)); // Let modal render
@@ -24004,7 +24759,7 @@ async function showPreImportDuplicateWarning(newCharInfo, matches) {
             const existingChar = match.char;
             const existingName = getCharField(existingChar, 'name');
             const existingCreator = getCharField(existingChar, 'creator');
-            const existingAvatar = getCharacterAvatarUrl(existingChar.avatar);
+            const existingAvatar = getCharacterAvatarStThumbUrl(existingChar.avatar);
             const tokens = estimateTokens(existingChar);
             const provInfo = window.ProviderRegistry?.getCharacterProvider(existingChar);
             const sourceName = provInfo?.provider?.name || 'Local';
@@ -24028,9 +24783,9 @@ async function showPreImportDuplicateWarning(newCharInfo, matches) {
         });
         
         matchesEl.innerHTML = matchesHtml;
-        
+
         // Show modal
-        modal.classList.remove('hidden');
+        modal.classList.add('visible');
     });
 }
 
@@ -24038,7 +24793,7 @@ async function showPreImportDuplicateWarning(newCharInfo, matches) {
  * Hide the pre-import modal and resolve with user choice
  */
 function resolvePreImportChoice(choice) {
-    document.getElementById('preImportDuplicateModal').classList.add('hidden');
+    document.getElementById('preImportDuplicateModal').classList.remove('visible');
     
     if (preImportResolveCallback) {
         preImportResolveCallback({
@@ -25322,7 +26077,7 @@ function initThemeCustomizer() {
 }
 
 // Overlay registrations for library.js modals
-window.registerOverlay?.({ id: 'charModal', tier: 8, close: () => closeModal() });
+window.registerOverlay?.({ id: 'charModal', tier: 8, close: () => maybeCloseModal() });
 window.registerOverlay?.({ id: 'disableGalleryFoldersModal', tier: 6, static: false, close: (el) => el.remove() });
 window.registerOverlay?.({ id: 'greetingsExpandModal', tier: 5, static: false, close: (el) => el.remove() });
 window.registerOverlay?.({ id: 'lorebookExpandModal', tier: 5, static: false, close: (el) => el.remove() });
@@ -25332,6 +26087,29 @@ window.registerOverlay?.({ id: 'creatorNotesFullscreenModal', tier: 3, static: f
 window.registerOverlay?.({ id: 'contentFullscreenModal', tier: 3, static: false, close: (el) => el.remove() });
 window.registerOverlay?.({ id: 'altGreetingsFullscreenModal', tier: 3, static: false, close: (el) => el.remove() });
 window.registerOverlay?.({ id: 'importSummaryModal', tier: 4, close: () => handleImportSummaryCloseRequest() });
+
+// Tier 7 so they close before charModal (tier 8) on back/Escape.
+const _hideClModalVisible = id => () => document.getElementById(id)?.classList.remove('visible');
+window.registerOverlay?.({ id: 'gallerySettingsModal',      tier: 7, close: _hideClModalVisible('gallerySettingsModal') });
+window.registerOverlay?.({ id: 'galleryInfoModal',          tier: 7, close: _hideClModalVisible('galleryInfoModal') });
+window.registerOverlay?.({ id: 'importModal',               tier: 7, close: _hideClModalVisible('importModal') });
+window.registerOverlay?.({ id: 'localizeModal',             tier: 7, close: _hideClModalVisible('localizeModal') });
+window.registerOverlay?.({ id: 'bulkLocalizeModal',         tier: 7, close: _hideClModalVisible('bulkLocalizeModal') });
+window.registerOverlay?.({ id: 'bulkLocalizeSummaryModal',  tier: 7, close: _hideClModalVisible('bulkLocalizeSummaryModal') });
+window.registerOverlay?.({ id: 'bulkAutoLinkModal',         tier: 7, close: _hideClModalVisible('bulkAutoLinkModal') });
+window.registerOverlay?.({ id: 'charDuplicatesModal',       tier: 7, close: _hideClModalVisible('charDuplicatesModal') });
+window.registerOverlay?.({ id: 'preImportDuplicateModal',   tier: 7, close: _hideClModalVisible('preImportDuplicateModal') });
+window.registerOverlay?.({ id: 'providerLinkModal',         tier: 7, close: _hideClModalVisible('providerLinkModal') });
+
+// Static .confirm-modal in HTML (uses .hidden toggle, not .visible).
+window.registerOverlay?.({ id: 'confirmSaveModal', tier: 7, close: (el) => el?.classList.add('hidden') });
+
+// Dynamic confirm-modals (created/removed each invocation; registry entry persists).
+window.registerOverlay?.({ id: 'deleteConfirmModal',  tier: 7, static: false, close: (el) => el?.remove() });
+window.registerOverlay?.({ id: 'deleteDuplicateModal', tier: 7, static: false, close: (el) => el?.remove() });
+window.registerOverlay?.({ id: 'legacyFolderModal',    tier: 7, static: false, close: (el) => el?.remove() });
+window.registerOverlay?.({ id: 'folderMappingModal',   tier: 7, static: false, close: (el) => el?.remove() });
+window.registerOverlay?.({ id: 'orphanedFoldersModal', tier: 7, static: false, close: (el) => el?.remove() });
 
 function openThemeCustomizer() {
     initThemeCustomizer();
@@ -25413,7 +26191,11 @@ document.addEventListener('keydown', (e) => {
         if (reg.escape === false) continue;
         const el = document.getElementById(reg.id);
         if (!el) continue;
-        const visible = reg.visible ? reg.visible(el) : !el.classList.contains('hidden');
+        const visible = reg.visible
+            ? reg.visible(el)
+            : el.classList.contains('cl-modal')
+                ? el.classList.contains('visible')
+                : !el.classList.contains('hidden');
         if (visible) {
             e.stopPropagation();
             reg.close(el);
@@ -25444,6 +26226,8 @@ window.getActiveChar = function() { return activeChar; };
 window.setActiveChar = function(c) { activeChar = c; };
 window.fetchCharacters = fetchCharacters;
 window.fetchAndAddCharacter = fetchAndAddCharacter;
+window.notifySTCharacterAdded = notifySTCharacterAdded;
+window.notifySTCharacterEdited = notifySTCharacterEdited;
 window.removeCharacterFromList = removeCharacterFromList;
 window.hydrateCharacter = hydrateCharacter;
 window.getTags = getTags;
@@ -25463,6 +26247,8 @@ window.setGallerySyncAuditDone = function(v) { gallerySyncAuditDone = v; };
 window.openModal = openModal;
 window.openCharModalElevated = openCharModalElevated;
 window.closeModal = closeModal;
+window.maybeCloseModal = maybeCloseModal;
+window.navigateModal = navigateModal;
 window.openProviderLinkModal = openProviderLinkModal;
 window.hideModal = hideModal;
 window.checkCharacterForDuplicates = checkCharacterForDuplicates;
@@ -25478,7 +26264,13 @@ window.onViewExit = onViewExit;
 
 // DOM / Rendering helpers
 window.renderLoadingState = renderLoadingState;
+window.renderSkeletonGrid = renderSkeletonGrid;
+window.renderSkeletonList = renderSkeletonList;
+window.renderEmptyState = renderEmptyState;
+window.updateMobileFilterIndicator = updateMobileFilterIndicator;
+window.getActiveFilterState = getActiveFilterState;
 window.getCharacterAvatarUrl = getCharacterAvatarUrl;
+window.getCharacterAvatarStThumbUrl = getCharacterAvatarStThumbUrl;
 window.getListingNameFromExtensions = getListingNameFromExtensions;
 window.getCharacterName = getCharacterName;
 window.formatRichText = formatRichText;
@@ -25487,6 +26279,7 @@ window.registerGalleryFolderOverride = registerGalleryFolderOverride;
 window.debugLog = debugLog;
 window.performSearch = performSearch;
 window.toggleFavoritesFilter = toggleFavoritesFilter;
+window.toggleCharacterFavorite = toggleCharacterFavorite;
 window.toggleAdvFilterPanel = toggleAdvFilterPanel;
 window.closeAdvFilterPanel = closeAdvFilterPanel;
 window.evaluateChatAdvancedFilters = evaluateChatAdvancedFilters;
@@ -25494,6 +26287,7 @@ window.resetChatFilterCaches = resetChatFilterCaches;
 window.getAdvFilterRulesForChats = getAdvFilterRulesForChats;
 window.setPlaylistFilter = setPlaylistFilter;
 window.clearPlaylistFilter = clearPlaylistFilter;
+window.refreshPlaylistFilterIfActive = refreshPlaylistFilterIfActive;
 window.populatePlaylistDropdown = populatePlaylistDropdown;
 window.renderSidebarPlaylists = renderSidebarPlaylists;
 window.refreshPlaylistBadges = refreshPlaylistBadges;
@@ -25506,7 +26300,10 @@ window.isMultiSelectEnabled = isMultiSelectEnabled;
 // Host window / ST context access
 window.getHostWindow = getHostWindow;
 window.getSTContext = getSTContext;
+window.resolveProxyForProfile = resolveProxyForProfile;
+window.flattenContentBlocks = flattenContentBlocks;
 window.isEmbedded = isEmbedded;
+window.embeddedShowTopBar = embeddedShowTopBar;
 window.closeEmbeddedPanel = closeEmbeddedPanel;
 
 // Settings

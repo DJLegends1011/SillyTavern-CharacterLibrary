@@ -26,7 +26,7 @@ COLOR TOKENS (override on :root to retheme the whole app):
   --glass-bg             Translucent surface for "glass" panels (rgba(30, 30, 30, 0.6)).
   --glass-border         Border for glass surfaces (rgba(255, 255, 255, 0.1)).
   --card-bg              Background for character grid cards (rgba(40, 40, 40, 0.4)).
-  --cl-favorite-gold     Gold accent for favorite indicators and the favorite-button hover treatment (#ffd54f). Has a matching --cl-favorite-gold-rgb (255, 213, 79) for rgba() tints.
+  --cl-favorite-gold     Gold accent for favorite indicators and the favorite-button hover treatment (#ffd700). Has a matching --cl-favorite-gold-rgb (255, 215, 0) for rgba() tints.
 
 PARALLEL --cl-* TOKEN FAMILY (separate chain that powers module dialogs):
   --cl-accent-rgb        Comma-separated RGB. The "source" of this chain.
@@ -38,11 +38,70 @@ PARALLEL --cl-* TOKEN FAMILY (separate chain that powers module dialogs):
   IMPORTANT for global accent retheme: override BOTH --accent / --accent-rgb AND --cl-accent-rgb. --accent-rgb drives --accent-glow. --cl-accent-rgb drives --cl-accent and --cl-accent-hover. Same hex value in both chains is the usual pattern. Setting --accent without --cl-accent-rgb leaves the .cl-btn family (used in every module dialog) on the default blue.
   CAVEAT: --text-primary and --cl-text-primary are INDEPENDENT vars. Overriding --text-primary does NOT change text inside module dialogs. To re-color module-dialog text, override --cl-text-primary directly.
 
-MODAL BACKGROUND VARS (three separate vars, gotcha!):
+MODAL BACKGROUND VARS:
   --modal-bg             Used by .modal-glass (character detail, creator, chat preview).
-  --bg-secondary         Used by .confirm-modal-content (settings, import, bulk ops).
-  --cl-glass-bg          Used by .cl-modal-content (card-update, batch-tagging, playlists, custom-css, css-assistant).
+  --cl-glass-bg          Used by .cl-modal-content shell on DESKTOP (translucent + backdrop blur) AND by inner surfaces inside module dialogs (batch-tagging header/footer, playlist manage panels, custom-css editor panels, card-updates progress strip, context-menu, vt-dialog, etc).
+  --cl-topbar-bg         Used ONLY by the .topbar chrome strip. Default is rgba(20, 20, 20, 0.8) (darker + more see-through than --cl-glass-bg so it sits under content without competing). Override separately if you want the topbar tinted independently of modal chrome.
+  --bg-secondary         Used by .cl-modal-content on MOBILE (overrides --cl-glass-bg via library-mobile.css; full-viewport bottom-sheets need solid bg or scrim-bleed reads as funhouse). Also used by .confirm-modal-content shells on both platforms.
   For a complete dark-mode reskin, override all three together. They look similar by default but read from independent vars.
+
+RESTORE SIMPLE / FLAT CHROME (anti-funhouse, "make modals opaque" / "kill the blur" / "flat modals" / "old chrome" / "performance" requests):
+  The desktop .cl-modal-content default is the full feature chrome: translucent var(--cl-glass-bg), 20px backdrop blur, inner-light tint border (rgba 255/255/255 0.08), triple-stack shadow, accent-gradient header, h3 weight 700. To revert to flatter pre-feature chrome (solid bg, no GPU blur, flat header, lighter title), apply this whole block globally:
+
+    .cl-modal-content {
+        background: var(--bg-secondary);
+        backdrop-filter: none;
+        -webkit-backdrop-filter: none;
+        border: 1px solid var(--glass-border);
+        box-shadow: var(--cl-shadow-lg);
+    }
+    .cl-modal-header {
+        background: transparent;
+    }
+    .cl-modal-header h3 {
+        font-weight: 600;
+    }
+
+  Or scoped to one or more modal IDs (mirror the same blocks under #specificModalId .cl-modal-content / .cl-modal-header / .cl-modal-header h3). Don't bias toward a preset of "heavy" modals - apply globally OR to exactly the IDs the user names.
+
+  What each rule undoes:
+    background + backdrop-filter:  kills translucent glass + the 20px GPU blur (this is also the perf win - drops the compositor layer cost on desktop)
+    border:                         swaps the hardcoded rgba(255,255,255,0.08) inner-light tint for the canonical --glass-border token (10% white)
+    box-shadow:                     swaps triple-stack (drop + outer stroke + inner top highlight) for the canonical modal-size single drop (--cl-shadow-lg)
+    .cl-modal-header background:    kills the accent gradient strip
+    h3 font-weight 600:             lighter title, matches the pre-feature look
+
+  Do NOT also touch: .cl-modal-content overflow: hidden (clips header to corners), border-radius (visual continuity with the rest of the system), .cl-modal-header padding (back-arrow zone reservation on mobile).
+
+  Modal IDs the user is most likely to ask about by feature name:
+    "Custom CSS" / "CSS editor"           -> #customCssModal
+    "Recommender" / "AI recommender"      -> #recommenderModal
+    "CSS assistant" / "AI CSS assistant"  -> #cssAssistantModal
+    "Add to playlist" / "playlist picker" -> #playlistPickerModal
+    "Manage playlists"                    -> #playlistManageModal
+    "Batch tagging" / "tag editor"        -> #batchTagModal
+    "Card updates" / "update checker"     -> #cardUpdateSingleModal, #cardUpdateBatchModal
+    "Settings"                            -> #gallerySettingsModal
+    "Help" / "Help & Tips"                -> #galleryInfoModal
+
+  When user wants only the blur amount tuned (not full revert): .cl-modal-content { backdrop-filter: blur(<n>px); -webkit-backdrop-filter: blur(<n>px); } - 12px subtle, 20px default, 40px heavy frost. When user wants only the blur off (keep translucent + gradient header): drop just backdrop-filter / -webkit-backdrop-filter, leave the rest.
+
+GRADIENT-CLIPPED TITLE ICON (.cl-modal-header-icon) - OPT-IN HELPER:
+  Modal header icons default to flat color (inherits text color). Users can opt one icon into a richer accent-gradient look by adding the .cl-modal-header-icon class to the <i> inside the h3. The class is defined globally so it works on any .cl-modal-header without further scoping.
+
+  When the user asks for "gradient icon", "make the title icon pop", "premium icon", "colored icon in the header", etc:
+    - If the icon is in shipped markup (e.g. settings, recommender, the dialog the user names), generate a Custom CSS snippet that scopes the icon directly via the modal ID, since you can't modify the shipped markup from Custom CSS. Example:
+        #recommenderModal .cl-modal-header h3 > i:first-child {
+            background: linear-gradient(135deg, var(--accent), var(--accent-secondary));
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+    - The .cl-modal-header-icon class achieves the same effect for markup that does carry it. Snippets generated for end users should use the structural selector pattern above since they can't add classes to existing markup.
+
+  When NOT to use:
+    - User asks for color/accent changes (override --accent tokens instead).
+    - User asks for chrome / shadow / shape changes (those are now the default cl-modal look; no opt-in needed).
 
 MODAL SCRIM (the dimming overlay BEHIND a modal; separate from the modal's own background):
   --cl-modal-scrim-light  Full rgba; default rgba(0, 0, 0, 0.6). Used on gentle overlays (image viewer, gallery viewer).
@@ -53,7 +112,7 @@ MODAL SCRIM (the dimming overlay BEHIND a modal; separate from the modal's own b
 STATUS COLORS (semantic, three tiers; override on :root to retheme toasts/badges/banners):
   Muted Material tier: --cl-success (#4caf50), --cl-error (#f44336), --cl-warning (#ff9800), --cl-info (#29b6f6).
   Punchy Flat UI tier: --cl-success-bright (#2ecc71), --cl-error-bright (#e74c3c), --cl-warning-bright (#f39c12), --cl-info-bright (#3498db).
-  Pale Material 300 tier: --cl-success-pale (#81c784), --cl-error-pale (#e57373), --cl-warning-pale (#ffb74d), --cl-info-pale (#64b5f6). Designed for legible text on translucent status backgrounds (tag pill labels, callout body text).
+  Pale Material 300 tier: --cl-success-pale (#81c784), --cl-error-pale (#e57373), --cl-warning-pale (#ffd54f), --cl-info-pale (#64b5f6). Designed for legible text on translucent status backgrounds (tag pill labels, callout body text).
   Each muted/bright token has a matching *-rgb companion (e.g. --cl-success-rgb) for rgba() tints. In practice: muted tier powers toast chrome/icons and most status pills/badges; bright tier powers hero banners, big action buttons (danger/cancel gradients), and prominent status indicators; pale tier powers text on top of translucent status backgrounds.
   KNOWN COUPLING GAPS:
     1. .toast.info uses --accent (not --cl-info). Re-color info toasts by overriding --accent or by targeting .toast.info directly.
@@ -78,12 +137,18 @@ BORDER RADIUS SCALE:
 TYPOGRAPHY SCALE (rem values; full set):
   --font-4xs (0.55rem), --font-3xs (0.65rem), --font-2xs (0.7rem), --font-xs (0.75rem),
   --font-sm (0.8rem), --font-md (0.85rem), --font-md-lg (0.9rem), --font-pre-base (0.95rem),
-  --font-base (1rem), --font-lg (1.15rem), --font-xl (1.3rem), --font-2xl (1.5rem), --font-3xl (2rem).
-  Picks: --font-xs for tags/captions, --font-sm for hints/metadata, --font-md for body, --font-base for inputs/emphasis, --font-lg for headings.
+  --font-base (1rem), --font-lg (1.15rem), --font-xl (1.3rem), --font-2xl (1.5rem), --font-3xl (2rem), --font-4xl (3rem).
+  Picks: --font-xs for tags/captions, --font-sm for hints/metadata, --font-md for body, --font-base for inputs/emphasis, --font-lg for headings, --font-4xl for empty-state ghost icons.
 
 BUTTON SIZING:
   --btn-pad-v-xl/lg/md/sm, --btn-pad-h-xl/lg/md/sm, --btn-font-xl/lg/md/sm.
   Default cl-btn/action-btn is the md tier. (Note: --btn-font-md and --btn-font-sm currently share the same 0.85rem value.)
+
+TOUCH + MOBILE CHROME:
+  --touch-target-min (44px)   WCAG/iOS/Android floor. Use for min-height/min-width on any interactive element on mobile.
+  --chrome-h-mobile (56px)    Mobile modal header height + bottom nav height. Apply as min-height on cl-modal-header / confirm-modal-header / mobile-bottom-nav-tab on mobile.
+  --back-arrow-zone (56px)    Header padding-left reserved for the absolutely-positioned mobile back-arrow.
+  --safe-bottom               env(safe-area-inset-bottom, 0px) alias. Use in padding-bottom + calc() expressions on bottom-stuck mobile elements (sticky footers, bottom sheets, FABs).
 `.trim();
 
 const CATALOGUE_COMPONENTS = `
@@ -101,9 +166,10 @@ Layout / Chrome (defined in library.css; no !important needed):
   .card-tag              Tag pill rendered on grid cards. Inside .card-tags container.
   .card-tags             Container for tags on a card.
   .favorite-indicator    Star/heart icon shown on .char-card.is-favorite.
-  .modal-glass           Full-screen detail viewer (character detail, gallery, character-creator).
+  .modal-glass           Full-viewport detail panel (character detail, character creator, chat preview). NOT gallery viewer (that's .gv-modal).
   .modal-sidebar         Right-side info pane inside the character detail modal.
   .tab-pane              Tab content panes inside the character detail modal. Use .tab-pane.active for the visible one.
+  .char-modal-nav        Prev/Next chevron buttons on the sides of the character detail modal (desktop only; mobile uses swipe). Variants: .char-modal-nav-prev, .char-modal-nav-next. Icon glyph is a ::before pseudo using Font Awesome 6 Free. Component-scoped vars for per-component theming (override on .char-modal-nav itself): --cmn-bg (default rgba(0,0,0,0.5)), --cmn-bg-hover (rgba(255,255,255,0.1)), --cmn-border (1px solid rgba(255,255,255,0.1)), --cmn-color (#fff), --cmn-width (50px), --cmn-height (80px), --cmn-side-offset (1%, distance from viewport edge), --cmn-icon-size (var(--font-2xl)), --cmn-icon-prev ('\\f053' = fa-chevron-left, override with any FA6 unicode), --cmn-icon-next ('\\f054' = fa-chevron-right), --cmn-disabled-opacity (0.3). Hidden on mobile via library-mobile.css; gated on the enableCharDetailNav setting.
   .toast / .toast-container  Toast notifications. Variants: .toast.success, .toast.error, .toast.warning, .toast.info.
   .toast-icon            Icon inside a toast.
   .close-btn             Generic X-close button on modals.
@@ -123,6 +189,21 @@ Settings UI (defined in library.css):
   .settings-action-btn                                            Inline action button (Open Editor, Migrate, etc). Variants: .primary, .danger.
   .settings-hint                                                  Subdued help text under a control.
 
+Multi-select mode (defined in modules/multi-select.css; NEEDS !important). Bespoke toolbar treatment that doesn't reuse .glass-btn / .action-btn so it can carry its own personality; flag the coupling gaps below when retheming:
+  body.multi-select-mode .char-card           Body flag set when multi-select is active; gives every card a pointer cursor + reveals the per-card checkbox.
+  .char-card-checkbox                         24x24 checkbox overlay top-left on every card (display:none normally, display:flex inside body.multi-select-mode). Selected paint: ".char-card.selected .char-card-checkbox" (accent bg + accent border + the inner <i> fades in). Hover preview: ".char-card:hover .char-card-checkbox" tints border to accent.
+  .multi-select-toolbar                       Persistent action bar inserted before .gallery-content when mode is on. Bg is a HARDCODED dark blue/purple gradient (rgba(26,26,46,0.95) -> rgba(30,30,50,0.95)) NOT bound to the accent token, so a global accent retheme leaves the bar visually disconnected; retarget .multi-select-toolbar background explicitly to follow accent. Border-bottom DOES use var(--accent-rgb) and follows the accent automatically.
+  .multi-select-toolbar.hidden                Hidden state (display:none).
+  .multi-select-badge                         Count chip on the left ("3"). Accent gradient via --accent + --accent-secondary; themes automatically.
+  .multi-select-label                         "characters selected" text next to the badge. Hidden on mobile (<=768px).
+  .multi-select-left / .multi-select-actions / .multi-select-right    Three flex sections of the toolbar.
+  .ms-divider                                 Vertical 1px divider between button groups inside .multi-select-actions. Hidden on mobile.
+  .ms-btn                                     Bespoke toolbar action button (Select All, Tags, Favorite, Export, Updates, Playlist, Delete, Exit). NOT .glass-btn. Translucent white bg (rgba(255,255,255,0.08)), --SmartThemeBodyColor text, hover adds 1px lift + brighter bg. On mobile collapses to 32x32 icon-only (span hidden). Variants:
+                                                 .ms-btn.ms-btn-ghost     Transparent bg. Used by the Favorite button when ALL selected are already favorited, signaling "click to unfavorite" with reduced emphasis. The button toggles between .ms-btn (favorite) and .ms-btn.ms-btn-ghost (unfavorite) via JS.
+                                                 .ms-btn.ms-btn-danger    Red tint for Delete. HARDCODED #f87171 text + rgba(239,68,68,*) bg/border, NOT linked to --cl-error-bright; retarget the .ms-btn-danger rule explicitly if you want it to follow the status token family.
+                                                 .ms-btn.ms-btn-exit      Slightly different bg tint (rgba(100,100,120,*)) and tighter padding for the rightmost exit-mode icon button.
+  #multiSelectToggleBtn.active                Active state of the topbar's "Multi-select" toggle button (when mode is on). Accent gradient via --accent + --accent-secondary; themes automatically.
+
 Context menu (defined in modules/context-menu.css; NEEDS !important):
   .cl-context-menu / .cl-context-menu-item   Right-click context menu and rows.
 
@@ -138,9 +219,17 @@ Buttons (the buttonStyle setting toggles glass vs solid chrome; theming applies 
 Inputs / Modals / Dropdowns:
   .glass-input             Text inputs and textareas across the app (topbar search, settings, character detail editor, etc.).
   .cl-input                Text inputs inside module dialogs (batch-tagging, playlists). Peer to .glass-input but scoped to .cl-modal-content surfaces; uses --cl-text-primary and --cl-border.
-  .confirm-modal-content   Settings/import/bulk dialogs. Recommender modal also uses this + .cl-modal-feature modifier.
-  .cl-modal-content        Module dialogs: card-update, playlists, custom-css, css-assistant, batch-tagging. (Character-creator uses .modal-glass instead.)
-  .cl-modal-feature        Modifier added to .cl-modal-content or .confirm-modal-content for AI feature modals (recommender, css-assistant). Gives gradient header + richer shadows.
+  .confirm-modal-content   Yes/No confirmation dialogs only (confirmSaveModal in HTML, plus delete confirms and similar Y/N flows built dynamically in JS). Toggled via the .hidden class on .confirm-modal parent (note: cl-modal uses .visible instead - dual class system, mind which you target).
+  .cl-modal-content        Every utility + feature dialog: Settings, Help & Tips, Provider Link, Import, Import Summary, Localize, Bulk Localize / Summary / Auto-Link, Character Duplicates, Pre-Import Duplicate, Save-As Diff, AI Recommender, CSS Assistant, Custom CSS, Card Update, Playlists, Batch Tagging. (Character creator uses .modal-glass instead.) Shared chrome (all cl-modal-content modals look identical by default):
+                             - Background: var(--cl-glass-bg) + backdrop-filter: blur(20px) on desktop; var(--bg-secondary) with no blur on mobile (full-viewport bottom-sheets).
+                             - Border: 1px solid rgba(255, 255, 255, 0.08) (inner-light tint).
+                             - Border-radius: var(--radius-3xl) (16px).
+                             - overflow: hidden (clips the gradient header to rounded corners).
+                             - Triple-stack box-shadow: outer 24px/80px drop + hairline outer stroke + inset top highlight.
+                             - Header: 12px padding, accent gradient (10%/8% stops), hairline white border-bottom.
+                             - Title h3: weight 700, letter-spacing -0.01em.
+                           Toggled open/closed via the .visible class on the .cl-modal parent (dual class system - cl-modal uses .visible, confirm-modal uses .hidden).
+  .cl-modal-drawer         OPT-IN MARKER on a .cl-modal OR .confirm-modal element. Marks the modal as a tap-away bottom-sheet drawer on mobile: hides the back-arrow (.cl-modal-close / .close-btn / .close-confirm-btn) since the scrim + Android back already close it, and reduces header padding-left from --back-arrow-zone back to --space-md across all three header types (cl-modal-header, confirm-modal-header, modal-header). Add to drawer-shaped modals so the chrome doesn't carry redundant affordances. Current consumers: playlistPickerModal (cl-modal), and the dynamic confirm-modals deleteConfirmModal / deleteDuplicateModal / legacyFolderModal / folderMappingModal / orphanedFoldersModal / disableGalleryFoldersModal / bulkDeleteConfirmModal.
   .dropdown-menu / .dropdown-item   Popover menus (sort, view, more-options).
 
 Tag pill families (FOUR distinct classes for different contexts; pick by surface):
@@ -163,6 +252,30 @@ Loaders & progress (CL does NOT use native <progress> elements):
     .import-progress-bar > .import-progress-fill                       Single-character import / apply-snippets progress.
     .import-summary-progress-bar > .import-summary-progress-fill       Bulk import summary.
     .gallery-sync-status-box .sync-progress-bar > .sync-progress-bar-fill   Gallery sync.
+
+Mobile chrome (defined in library-mobile.css and modules/chats.css; mobile viewport @media-gated). Rules using these selectors typically need !important to beat the mobile stylesheet's existing rules:
+  .mobile-bottom-nav            Persistent bottom navigation bar (mobile only; replaces topbar). Frosted-glass surface.
+  .mobile-bottom-nav-tab        One of the three view tabs inside .mobile-bottom-nav (Characters / Chats / Online). Takes flex: 1 to share space evenly. Active state: .mobile-bottom-nav-tab.active (gets --accent color + a 3px top stripe).
+  .mobile-bottom-nav-action     Small (40px) icon-only utility button (Filters, More). Renders as a floating --radius-circle with --text-faint color; active/press state tints to accent. Labels are hidden.
+  .mobile-bottom-nav-actions    Wrapper grouping the action buttons; visually offset from the view tabs with var(--space-md) margin-left.
+  .mobile-fab                   Floating action button (primary per-view action). Default solid-accent gradient; respects buttonStyle setting via :root[data-btn-style="glass"] override.
+  .mobile-search-overlay        Mobile search overlay shown on Characters / Chats views (FAB-triggered, full-viewport).
+  .mobile-online-search-overlay Mobile online-provider search overlay (FAB-triggered on Online view, full-viewport sheet).
+  .mobile-more-actions-btn      Kebab popover trigger inside .browse-char-modal .modal-controls (mobile only). Visible when the "Quick-import button on browse previews" setting is OFF.
+  .mobile-more-actions-menu     Popover menu spawned by .mobile-more-actions-btn. Contains .mobile-more-actions-item rows mirroring the provider's action buttons.
+  .mobile-quick-import-btn      Icon-only Download/Import/Extract square that mirrors the provider's primary action button state. Color-coded via the data-state attribute: data-state="primary" (accent), data-state="warning" (--cl-warning-bright, possible-match), data-state="secondary" (muted, in-library).
+  .mobile-provider-quick-switch Topbar provider-switch icon button on the Online view (small icon next to the view tabs).
+  .mobile-ctx-sheet / .mobile-ctx-scrim   Bottom-sheet context menu (right-click / long-press on cards). Visible state adds .visible.
+  .mobile-sheet-overlay / .mobile-sheet   Generic mobile bottom sheet shell (used by Filters / More sheets and the provider-switch bottom sheet). Open state: .mobile-sheet.open.
+  .mobile-avatar-viewer         Tap-on-avatar quick fullscreen image viewer.
+  .mobile-pull-refresh-indicator Pull-to-refresh affordance attached to .gallery-content; modifiers: .ready, .refreshing.
+  .char-card-swipe-chip         Swipe-action chip rendered on a card during left/right swipe. .char-card-swipe-chip.right is the favorite (gold) chip; .char-card-swipe-chip.left is the destructive (red) chip. .armed state activates on threshold crossing.
+
+Skeleton & empty states (mobile-first but used on both platforms):
+  .cl-skeleton-card             Skeleton placeholder matching the .char-card layout. Children: .cl-skeleton-img (image area), .cl-skeleton-line (text rows). All use --glass-border as the base + an animated shimmer overlay.
+  .cl-skeleton-row              Compact row-form skeleton (chats list). Children: .cl-skeleton-avatar (circular), .cl-skeleton-content (lines).
+  .cl-skeleton-line             Single shimmering line; use modifier widths via inline style or extra classes.
+  .cl-empty-state               Rich empty-state container with icon + title + hint + optional action button. Children: .cl-empty-state-icon, .cl-empty-state-title, .cl-empty-state-hint, .cl-empty-state-action.
 
 Scrollbars (webkit pseudo-elements; safe to theme globally):
   ::-webkit-scrollbar / ::-webkit-scrollbar-track / ::-webkit-scrollbar-thumb / ::-webkit-scrollbar-thumb:hover
@@ -304,6 +417,8 @@ KNOWN GOTCHAS (avoid these failure modes):
 7. Mobile (max-width 768px) disables hover transforms and backdrop-filter via "!important" rules in library-mobile.css. Hover-only styling silently no-ops on touch devices. If a theme effect needs to be visible on mobile, don't tie it to :hover alone. Desktop-only themes are fine; acknowledge the limitation if it matters.
 
 8. Custom CSS applies on all viewports. Wrap rules in "@media (max-width: 768px)" for mobile-specific behavior, or "@media (min-width: 769px)" for desktop-only. Layout-heavy themes (changing card sizes, repositioning the topbar) often need explicit mobile handling.
+
+9. Theme coherence on mobile. Mobile chrome is a fully separate surface (the topbar disappears; the persistent UI is .mobile-bottom-nav at the bottom plus .mobile-fab, bottom sheets, and overlays). A global retheme that only paints desktop chrome leaves these mobile-only surfaces looking off-brand. Most .mobile-* selectors (CATALOGUE_COMPONENTS → Mobile chrome) pick up token overrides automatically, but a few want explicit rules under "@media (max-width: 768px)" to feel coherent at narrow widths: .mobile-fab (solid-accent gradient in default buttonStyle), the .mobile-bottom-nav frosted-glass surface and its .mobile-bottom-nav-tab.active accent stripe, and the .mobile-quick-import-btn[data-state] color states. For any non-trivial global theme, include a small mobile block that re-applies the same visual identity to these elements.
 
 CONVERSATION:
 - The user can iterate: "make it more red", "add a glow on hover", etc. Modify the previous code block rather than restarting.
@@ -485,15 +600,19 @@ async function callSillyTavernAPI(messages, signal) {
             body.minimax_endpoint = profile['api-url'];
         }
         if (profile['prompt-post-processing']) body.custom_prompt_post_processing = profile['prompt-post-processing'];
-    } else if (activePreset) {
-        if (activePreset.custom_url) body.custom_url = activePreset.custom_url;
-        if (activePreset.reverse_proxy) body.reverse_proxy = activePreset.reverse_proxy;
-        if (activePreset.proxy_password) body.proxy_password = activePreset.proxy_password;
+    } else if (activePreset && activePreset.custom_url) {
+        body.custom_url = activePreset.custom_url;
     }
+
+    const proxy = await CoreAPI.resolveProxyForProfile(profile);
+    if (proxy?.url) body.reverse_proxy = proxy.url;
+    if (proxy?.password) body.proxy_password = proxy.password;
 
     CoreAPI.debugLog?.('[CSSAssistant] Sending request:', {
         source: body.chat_completion_source, model: body.model,
         customUrl: body.custom_url || null,
+        reverseProxy: body.reverse_proxy || null,
+        hasProxyPassword: !!body.proxy_password,
         hasSecretId: !!body.secret_id, profileName: profile?.name,
         messageCount: messages.length,
     });
@@ -559,20 +678,26 @@ function extractContent(data) {
         throw new Error(`API error: ${msg.slice(0, 300)}`);
     }
 
-    // Surface truncation explicitly so users don't get silently cut-off output.
+    // Surface truncation explicitly so users dont get silently cut-off output.
     const finish = data?.choices?.[0]?.finish_reason;
     if (finish === 'length') {
-        const partial = data?.choices?.[0]?.message?.content || '';
-        throw new Error(`Response truncated by token limit (got ${partial.length} chars before cutoff). Try again with a shorter request, or split the work into multiple snippets.`);
+        const partial = data?.choices?.[0]?.message?.content;
+        const len = typeof partial === 'string' ? partial.length : 0;
+        throw new Error(`Response truncated by token limit (got ${len} chars before cutoff). Try again with a shorter request, or split the work into multiple snippets.`);
     }
 
     const msg = data?.choices?.[0]?.message;
-    if (msg && 'content' in msg) return msg.content ?? '';
-    if (data?.choices?.[0]?.text != null) return data.choices[0].text;
+    if (msg && typeof msg.content === 'string') return msg.content;
+    if (msg && 'content' in msg && msg.content == null) return '';
+    const msgBlocks = CoreAPI.flattenContentBlocks(msg?.content);
+    if (msgBlocks) return msgBlocks;
+    if (typeof data?.choices?.[0]?.text === 'string') return data.choices[0].text;
     const delta = data?.choices?.[0]?.delta;
-    if (delta && 'content' in delta) return delta.content ?? '';
-    if (data?.message && 'content' in data.message) return data.message.content ?? '';
+    if (delta && typeof delta.content === 'string') return delta.content;
+    if (typeof data?.message?.content === 'string') return data.message.content;
     if (typeof data?.content === 'string') return data.content;
+    const rootBlocks = CoreAPI.flattenContentBlocks(data?.content);
+    if (rootBlocks) return rootBlocks;
     if (typeof data?.response === 'string') return data.response;
     if (typeof data?.output?.text === 'string') return data.output.text;
     if (typeof data?.result === 'string') return data.result;
@@ -650,9 +775,9 @@ function snippetNameFromCss(css) {
 function buildModalHTML() {
     return `
     <div class="cl-modal css-assistant-modal" id="cssAssistantModal">
-        <div class="cl-modal-content cl-modal-feature">
+        <div class="cl-modal-content">
             <div class="cl-modal-header">
-                <h3><i class="fa-solid fa-wand-magic-sparkles cl-modal-header-icon"></i> CSS Assistant</h3>
+                <h3><i class="fa-solid fa-wand-magic-sparkles"></i> CSS Assistant</h3>
                 <button class="cl-modal-close" id="cssAssistantCloseBtn" title="Close"><i class="fa-solid fa-xmark"></i></button>
             </div>
             <div class="cl-modal-body css-assistant-body">
@@ -681,7 +806,7 @@ function buildModalHTML() {
                 </div>
             </div>
             <div class="cl-modal-footer css-assistant-footer">
-                <textarea id="cssAssistantInput" class="glass-input css-assistant-input" placeholder="Describe a UI tweak (Enter to send, Shift+Enter for newline)" rows="2"></textarea>
+                <textarea id="cssAssistantInput" class="glass-input css-assistant-input" placeholder="Describe a UI tweak (Enter to send, Shift+Enter for newline)" rows="1"></textarea>
                 <div class="css-assistant-footer-actions">
                     <button class="cl-btn cl-btn-danger cl-hidden" id="cssAssistantCancelBtn"><i class="fa-solid fa-stop"></i> Stop</button>
                     <button class="cl-btn cl-btn-primary" id="cssAssistantSendBtn"><i class="fa-solid fa-paper-plane"></i> Send</button>
@@ -819,6 +944,7 @@ async function sendMessage() {
     const text = input.value.trim();
     if (!text) return;
     input.value = '';
+    input._autoGrow?.();
 
     ensureSystemPrompt();
 
@@ -953,12 +1079,21 @@ function injectModal() {
     });
 
     const input = document.getElementById('cssAssistantInput');
+    if (window.matchMedia('(max-width: 768px)').matches) {
+        input.placeholder = 'Describe a UI tweak';
+    }
+    const autoGrowInput = () => {
+        input.style.height = 'auto';
+        input.style.height = Math.min(input.scrollHeight, 120) + 'px';
+    };
     input.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
             sendMessage();
         }
     });
+    input.addEventListener('input', autoGrowInput);
+    input._autoGrow = autoGrowInput;
     document.getElementById('cssAssistantSendBtn').addEventListener('click', sendMessage);
     document.getElementById('cssAssistantCancelBtn').addEventListener('click', cancelSend);
     document.getElementById('cssAssistantResetBtn').addEventListener('click', resetConversation);

@@ -2,7 +2,7 @@
 
 import { BrowseView } from '../browse-view.js';
 import CoreAPI from '../../core-api.js';
-import { IMG_PLACEHOLDER, formatNumber } from '../provider-utils.js';
+import { IMG_PLACEHOLDER, formatNumber, BROWSE_PURIFY_CONFIG } from '../provider-utils.js';
 import {
     CHUB_API_BASE,
     CHUB_GATEWAY_BASE,
@@ -28,6 +28,7 @@ const {
     formatRichText,
     sanitizeTaglineHtml,
     renderLoadingState,
+    renderSkeletonGrid,
     getSetting,
     setSetting,
     setSettings,
@@ -47,20 +48,6 @@ const {
 /* eslint-enable no-unused-vars */
 
 const CHUB_TOKEN_KEY = 'st_gallery_chub_urql_token'; // Legacy localStorage key for token migration
-
-const BROWSE_PURIFY_CONFIG = {
-    ALLOWED_TAGS: [
-        'p', 'br', 'hr', 'div', 'span', 'strong', 'b', 'em', 'i', 'u', 's', 'del',
-        'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote', 'code', 'pre',
-        'ul', 'ol', 'li', 'a', 'img', 'center', 'font', 'style',
-        'table', 'thead', 'tbody', 'tr', 'th', 'td', 'details', 'summary'
-    ],
-    ALLOWED_ATTR: [
-        'href', 'src', 'alt', 'title', 'class', 'style', 'target', 'rel',
-        'width', 'height', 'loading', 'color', 'size', 'align'
-    ],
-    ALLOW_DATA_ATTR: false
-};
 
 // ========================================
 // STATE & HELPERS
@@ -311,9 +298,7 @@ class ChubBrowseView extends BrowseView {
     }
 
     closePreview() {
-        abortChubDetailFetch();
-        cleanupChubCharModal();
-        hideModal('chubCharModal');
+        closeChubCharPreview();
     }
 
     get mobileFilterIds() {
@@ -811,6 +796,11 @@ class ChubBrowseView extends BrowseView {
         ]);
     }
 
+    getSearchModes() { return ['character', 'creator']; }
+    getSearchInputId(mode) {
+        return mode === 'creator' ? 'chubCreatorSearchInput' : 'chubSearchInput';
+    }
+
     applyDefaults(defaults) {
         if (defaults.view === 'timeline') {
             chubViewMode = 'timeline';
@@ -1206,11 +1196,7 @@ function initChubView() {
             });
         }
 
-        on('chubCharClose', 'click', () => {
-            abortChubDetailFetch();
-            cleanupChubCharModal();
-            hideModal('chubCharModal');
-        });
+        on('chubCharClose', 'click', closeChubCharPreview);
         on('chubDownloadBtn', 'click', () => downloadChubCharacter());
 
         const chubGalleryGrid = document.getElementById('chubCharGalleryGrid');
@@ -1226,11 +1212,7 @@ function initChubView() {
         }
 
         on('chubCharModal', 'click', (e) => {
-            if (e.target.id === 'chubCharModal') {
-                abortChubDetailFetch();
-                cleanupChubCharModal();
-                hideModal('chubCharModal');
-            }
+            if (e.target.id === 'chubCharModal') closeChubCharPreview();
         });
 
         on('chubLoginClose', 'click', () => hideModal('chubLoginModal'));
@@ -1242,7 +1224,7 @@ function initChubView() {
         on('chubSaveKeyBtn', 'click', saveChubToken);
         on('chubClearKeyBtn', 'click', clearChubToken);
 
-        window.registerOverlay?.({ id: 'chubCharModal', tier: 7, close: () => hideModal('chubCharModal') });
+        window.registerOverlay?.({ id: 'chubCharModal', tier: 7, close: closeChubCharPreview });
         window.registerOverlay?.({ id: 'chubLoginModal', tier: 6, close: () => hideModal('chubLoginModal') });
         window.registerOverlay?.({ id: 'chubAuthorBanner', tier: 9, close: () => clearAuthorFilter() });
     }
@@ -1336,33 +1318,43 @@ function saveChubToken() {
 
 function clearChubToken() {
     chubToken = null;
-    
+
     setSettings({
         chubToken: null,
         chubRememberToken: false
     });
     debugLog('[ChubToken] Cleared from gallery settings');
-    
+
     // Also clear old localStorage key if it exists
     try {
         localStorage.removeItem(CHUB_TOKEN_KEY);
     } catch (e) {
         // Ignore
     }
-    
+
     const tokenInput = document.getElementById('chubApiKeyInput');
     if (tokenInput) tokenInput.value = '';
-    
+
     const rememberCheckbox = document.getElementById('chubRememberKey');
     if (rememberCheckbox) rememberCheckbox.checked = false;
-    
+
     if (chubFilterFavorites) {
         chubFilterFavorites = false;
         const favCheckbox = document.getElementById('chubFilterFavorites');
         if (favCheckbox) favCheckbox.checked = false;
         updateChubFiltersButtonState();
     }
-    
+
+    // Drop timeline / follows state so logged-out users dont see stale data.
+    // Token-bump cancels any in-flight chunked render.
+    chubTimelineRenderToken++;
+    chubTimelineCharacters = [];
+    chubTimelineLookup = new Map();
+    chubFollowsNodeMap.clear();
+    if (chubViewMode === 'timeline') {
+        switchChubViewMode('browse');
+    }
+
     showToast('Token cleared', 'info');
 }
 
@@ -1885,7 +1877,7 @@ async function switchChubViewMode(mode) {
         
         const grid = document.getElementById('chubGrid');
         if (grid) {
-            renderLoadingState(grid, 'Loading ChubAI characters...', 'browse-loading');
+            renderSkeletonGrid(grid);
         }
         
         // Always reload browse data when switching to it to avoid stale/mixed data
@@ -1945,7 +1937,7 @@ async function loadChubTimeline(forceRefresh = false, _isAutoPage = false, _appe
     if (!_isAutoPage) chubTimelineLoadInFlight = true;
 
     if (forceRefresh || (!chubTimelineCursor && chubTimelineCharacters.length === 0)) {
-        renderLoadingState(grid, 'Loading timeline...', 'browse-loading');
+        renderSkeletonGrid(grid);
         if (forceRefresh) {
             chubTimelineCharacters = [];
             chubTimelinePage = 1;
@@ -2767,7 +2759,7 @@ async function loadChubCharacters(forceRefresh = false) {
     const loadMoreBtn = document.getElementById('chubLoadMoreBtn');
 
     if (chubCurrentPage === 1) {
-        renderLoadingState(grid, 'Loading ChubAI characters...', 'browse-loading');
+        renderSkeletonGrid(grid);
     }
     
     chubIsLoading = true;
@@ -3048,7 +3040,7 @@ async function loadChubFavorites(forceRefresh = false, loadToken = 0) {
     const loadMoreContainer = document.getElementById('chubLoadMore');
     
     if (chubCurrentPage === 1) {
-        renderLoadingState(grid, 'Loading your favorites...', 'browse-loading');
+        renderSkeletonGrid(grid);
     }
     
     chubIsLoading = true;
@@ -3402,6 +3394,14 @@ function abortChubDetailFetch() {
     }
 }
 
+// Canonical close path. Match sibling-provider closePreviewModal shape so the
+// back-button / Escape registerOverlay close goes through the same cleanup.
+function closeChubCharPreview() {
+    abortChubDetailFetch();
+    cleanupChubCharModal();
+    hideModal('chubCharModal');
+}
+
 async function openChubCharPreview(char) {
     // Abort any in-flight detail fetch from a previous preview
     abortChubDetailFetch();
@@ -3562,7 +3562,7 @@ async function openChubCharPreview(char) {
     modal.classList.remove('hidden');
     const charBody = modal.querySelector('.browse-char-body');
     if (charBody) charBody.scrollTop = 0;
-    
+
     const renderAltGreetings = (greetings) => {
         if (!altGreetingsSection || !altGreetingsEl) return;
         if (!Array.isArray(greetings) || greetings.length === 0) {
@@ -3627,35 +3627,43 @@ async function openChubCharPreview(char) {
             renderCreatorNotesSecure(node.description, char.name, creatorNotesEl);
         }
 
-        // Character Definition (def.personality in ChubAI API = character description/definition for prompt)
-        // This is confusingly named in ChubAI's API - "personality" is actually the main character definition
-        if (def.personality) {
-            descSection.style.display = 'block';
-            descEl.innerHTML = safePurify(formatRichText(def.personality, char.name, true), BROWSE_PURIFY_CONFIG);
-            descEl.dataset.fullContent = def.personality;
-        }
-
-        // Scenario
-        if (def.scenario) {
-            scenarioSection.style.display = 'block';
-            scenarioEl.innerHTML = safePurify(formatRichText(def.scenario, char.name, true), BROWSE_PURIFY_CONFIG);
-            scenarioEl.dataset.fullContent = def.scenario;
-        }
-
-        // Example Dialogs
-        if (def.mes_example) {
-            examplesSection.style.display = 'block';
-            examplesEl.innerHTML = safePurify(formatRichText(def.mes_example, char.name, true), BROWSE_PURIFY_CONFIG);
-            examplesEl.dataset.fullContent = def.mes_example;
-        }
-
-        // First message - ChubAI uses first_message, not first_mes
+        // ChubAI quirk: def.personality is the main character definition, not a personality field.
         const firstMsg = def.first_message || def.first_mes;
-        if (firstMsg) {
-            firstMsgSection.style.display = 'block';
-            firstMsgEl.innerHTML = safePurify(formatRichText(firstMsg, char.name, true), BROWSE_PURIFY_CONFIG);
-            firstMsgEl.dataset.fullContent = firstMsg;
-        }
+
+        // RAF defer so safePurify doesnt block the modal-open paint frame.
+        requestAnimationFrame(() => {
+            if (def.personality) {
+                descSection.style.display = 'block';
+                descEl.innerHTML = safePurify(formatRichText(def.personality, char.name, true), BROWSE_PURIFY_CONFIG);
+                descEl.dataset.fullContent = def.personality;
+            } else if (descSection) {
+                descSection.style.display = 'none';
+            }
+
+            if (def.scenario) {
+                scenarioSection.style.display = 'block';
+                scenarioEl.innerHTML = safePurify(formatRichText(def.scenario, char.name, true), BROWSE_PURIFY_CONFIG);
+                scenarioEl.dataset.fullContent = def.scenario;
+            } else if (scenarioSection) {
+                scenarioSection.style.display = 'none';
+            }
+
+            if (def.mes_example) {
+                examplesSection.style.display = 'block';
+                examplesEl.innerHTML = safePurify(formatRichText(def.mes_example, char.name, true), BROWSE_PURIFY_CONFIG);
+                examplesEl.dataset.fullContent = def.mes_example;
+            } else if (examplesSection) {
+                examplesSection.style.display = 'none';
+            }
+
+            if (firstMsg) {
+                firstMsgSection.style.display = 'block';
+                firstMsgEl.innerHTML = safePurify(formatRichText(firstMsg, char.name, true), BROWSE_PURIFY_CONFIG);
+                firstMsgEl.dataset.fullContent = firstMsg;
+            } else if (firstMsgSection) {
+                firstMsgSection.style.display = 'none';
+            }
+        });
 
         // Update greetings count if we have better data
         if (def.alternate_greetings?.length > 0) {
@@ -3679,7 +3687,7 @@ async function openChubCharPreview(char) {
                 gallerySection.style.display = 'block';
                 if (galleryLabel) galleryLabel.textContent = `(${count})`;
                 galleryGrid.innerHTML = node.galleryImages.map(img =>
-                    `<div class="browse-gallery-cell"><img class="browse-gallery-thumb" src="${escapeHtml(img.url)}" alt="Gallery image" title="Gallery image" loading="lazy" onload="this.parentElement.classList.add('loaded')" onerror="this.parentElement.classList.add('load-failed')ist.add('load-failed')"></div>`
+                    `<div class="browse-gallery-cell"><img class="browse-gallery-thumb" src="${escapeHtml(img.url)}" alt="Gallery image" title="Gallery image" loading="lazy" onload="this.parentElement.classList.add('loaded')" onerror="this.parentElement.classList.add('load-failed')"></div>`
                 ).join('');
             }
         } else if (node.hasGallery && gallerySection && galleryGrid) {
@@ -3708,27 +3716,35 @@ async function openChubCharPreview(char) {
         try {
             const detailUrl = `https://api.chub.ai/api/characters/${fullPath}?full=true`;
 
-            // Fetch definition and gallery in parallel
+            // Gateway only allow-origins https://chub.ai so direct CORS-rejects; inline /proxy/ fallback keeps the Response for the 401/403 auth-required hint.
             const galleryHeaders = { 'Accept': 'application/json' };
             if (chubToken) {
                 galleryHeaders['samwise'] = chubToken;
                 galleryHeaders['CH-API-KEY'] = chubToken;
             }
             const charProjectId = char.id || char.project_id;
-            const galleryPromise = char.hasGallery && charProjectId
-                ? fetch(`${CHUB_GATEWAY_BASE}/api/gallery/project/${charProjectId}?limit=100&count=false`, {
-                    headers: galleryHeaders, signal: fetchSignal
-                }).then(r => {
-                    if (r.ok) return r.json();
-                    if (r.status === 401 || r.status === 403) return { nodes: [], _authRequired: true };
-                    return { nodes: [] };
-                })
-                  .then(data => {
-                      const images = (data.nodes || []).map(n => ({ url: n.primary_image_path, id: n.uuid, nsfw: n.nsfw_image || false }));
-                      if (data._authRequired) images._authRequired = true;
-                      return images;
-                  })
-                  .catch(err => { debugLog('[ChubAI] Gallery fetch failed:', err.message); return []; })
+            const fetchGallery = async (url) => {
+                try { return await fetch(url, { headers: galleryHeaders, signal: fetchSignal }); }
+                catch (e) {
+                    if (e.name === 'AbortError') throw e;
+                    return await fetch(`/proxy/${encodeURIComponent(url)}`, { headers: galleryHeaders, signal: fetchSignal });
+                }
+            };
+            // Search-result hasGallery is unreliable (returns false for chars whose detail says true),
+            // so always probe by project id. Empty response is fine; render already handles no-gallery.
+            const galleryPromise = charProjectId
+                ? fetchGallery(`${CHUB_GATEWAY_BASE}/api/gallery/project/${charProjectId}?limit=100&count=false`)
+                    .then(r => {
+                        if (r.ok) return r.json();
+                        if (r.status === 401 || r.status === 403) return { nodes: [], _authRequired: true };
+                        return { nodes: [] };
+                    })
+                    .then(data => {
+                        const images = (data.nodes || []).map(n => ({ url: n.primary_image_path, id: n.uuid, nsfw: n.nsfw_image || false }));
+                        if (data._authRequired) images._authRequired = true;
+                        return images;
+                    })
+                    .catch(err => { debugLog('[ChubAI] Gallery fetch failed:', err.message); return []; })
                 : Promise.resolve([]);
 
             const [response, galleryImages] = await Promise.all([
@@ -4067,43 +4083,55 @@ async function downloadChubCharacter() {
         const result = await provider.importCharacter(fullPath, chubSelectedChar, { inheritedGalleryId });
         if (!result.success) throw new Error(result.error || 'Import failed');
 
-        // Close the character modal and free preview data
-        cleanupChubCharModal();
-        document.getElementById('chubCharModal').classList.add('hidden');
-
-        await new Promise(r => requestAnimationFrame(r));
-        
-        showToast(`Downloaded "${result.characterName}" successfully!`, 'success');
-        
-        // Show import summary if character has gallery or embedded media
         const localAvatarFileName = result.fileName;
         const hasGallery = result.hasGallery;
         const mediaUrls = result.embeddedMediaUrls || [];
         const galleryPageUrls = result.galleryPageUrls || [];
-        
-        if ((hasGallery || mediaUrls.length > 0 || galleryPageUrls.length > 0) && getSetting('notifyAdditionalContent') !== false) {
-            showImportSummaryModal({
-                galleryCharacters: hasGallery ? [{
-                    name: result.characterName,
-                    fullPath: result.fullPath,
-                    provider: provider,
-                    linkInfo: { id: result.providerCharId, fullPath: result.fullPath },
-                    url: `https://chub.ai/characters/${result.fullPath}`,
-                    avatar: localAvatarFileName,
-                    galleryId: result.galleryId
-                }] : [],
-                mediaCharacters: (mediaUrls.length > 0 || galleryPageUrls.length > 0) ? [{
-                    name: result.characterName,
-                    avatar: localAvatarFileName,
-                    avatarUrl: result.avatarUrl,
-                    mediaUrls: mediaUrls,
-                    galleryPageUrls: galleryPageUrls,
-                    galleryId: result.galleryId,
-                    cardData: result.cardData
-                }] : []
-            });
+        const showSummary = (hasGallery || mediaUrls.length > 0 || galleryPageUrls.length > 0)
+            && getSetting('notifyAdditionalContent') !== false;
+
+        const summaryArgs = {
+            galleryCharacters: hasGallery ? [{
+                name: result.characterName,
+                fullPath: result.fullPath,
+                provider: provider,
+                linkInfo: { id: result.providerCharId, fullPath: result.fullPath },
+                url: `https://chub.ai/characters/${result.fullPath}`,
+                avatar: localAvatarFileName,
+                galleryId: result.galleryId
+            }] : [],
+            mediaCharacters: (mediaUrls.length > 0 || galleryPageUrls.length > 0) ? [{
+                name: result.characterName,
+                avatar: localAvatarFileName,
+                avatarUrl: result.avatarUrl,
+                mediaUrls: mediaUrls,
+                galleryPageUrls: galleryPageUrls,
+                galleryId: result.galleryId,
+                cardData: result.cardData
+            }] : []
+        };
+
+        // Mobile holds the preview behind the summary while it fades in (small-viewport
+        // fade is too visible). Desktop snaps the preview off first then opens summary,
+        // matching the pre-mobile-pass behaviour.
+        if (showSummary) {
+            if (window.matchMedia?.('(max-width: 768px)').matches) {
+                showImportSummaryModal(summaryArgs);
+                await new Promise(r => setTimeout(r, 220));
+                closeChubCharPreview();
+            } else {
+                closeChubCharPreview();
+                await new Promise(r => requestAnimationFrame(r));
+                showImportSummaryModal(summaryArgs);
+            }
+        } else {
+            downloadBtn.innerHTML = '<i class="fa-solid fa-check"></i> Imported';
+            await new Promise(r => setTimeout(r, 350));
+            closeChubCharPreview();
         }
-        
+
+        showToast(`Downloaded "${result.characterName}" successfully!`, 'success');
+
         // === REFRESH + SYNC ===
         await new Promise(r => setTimeout(r, 200));
         const added = await fetchAndAddCharacter(localAvatarFileName);

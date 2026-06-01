@@ -368,6 +368,24 @@ function setupPostMessageBridge() {
                 }
                 break;
             }
+            case 'cl-open-chat': {
+                if (!msg.avatar || !msg.chatName) break;
+                hideEmbedded();
+                try {
+                    const context = SillyTavern?.getContext?.();
+                    if (!context) break;
+                    const idx = (context.characters || []).findIndex(c => c.avatar === msg.avatar);
+                    if (idx !== -1 && typeof context.selectCharacterById === 'function') {
+                        await context.selectCharacterById(idx);
+                        if (typeof context.openCharacterChat === 'function') {
+                            await context.openCharacterChat(msg.chatName);
+                        }
+                    }
+                } catch (err) {
+                    console.error(`${EXTENSION_NAME}: Failed to open chat:`, err);
+                }
+                break;
+            }
         }
     });
 }
@@ -504,12 +522,6 @@ function injectLauncherStyles() {
             pointer-events: none;
             color: var(--SmartThemeBodyColor, #dcdfe4);
         }
-        /* Standalone CL top-bar button: fa-layer-group's glyph fills nearly the
-           whole em-box while siblings (address-card, sliders, cog) only fill ~75%,
-           so vertical-align: middle renders it ~1px above the others' optical center. */
-        #st-gallery-btn .drawer-icon {
-            transform: translateY(1px);
-        }
         /* Scrim overlay */
         .charlib-launcher-scrim {
             position: fixed;
@@ -545,12 +557,12 @@ function setupLauncherDropdown() {
     dropdown.className = 'charlib-launcher-dropdown';
     dropdown.innerHTML = `
         <div class="charlib-launcher-item" data-action="native">
-            <i class="fa-solid fa-address-card"></i>
+            <i id="charlib-launcher-native-icon" class="fa-solid fa-address-card"></i>
             <span>Character Management</span>
         </div>
         <div class="charlib-launcher-divider"></div>
         <div class="charlib-launcher-item" data-action="library">
-            <i class="fa-solid fa-photo-film"></i>
+            <i id="charlib-launcher-library-icon" class="fa-solid fa-photo-film"></i>
             <span>Character Library</span>
         </div>
     `;
@@ -685,7 +697,7 @@ function ensureStandaloneGalleryButton(shouldExist) {
     const galleryBtn = $(`
     <div id="st-gallery-btn" class="drawer">
         <div class="drawer-toggle drawer-header">
-            <div class="drawer-icon fa-solid fa-layer-group fa-fw closedIcon" title="Open Character Library"></div>
+            <div id="charlib-launcher-icon" class="drawer-icon fa-solid fa-layer-group fa-fw closedIcon" title="Open Character Library" data-i18n="[title]Open Character Library"></div>
         </div>
     </div>
     `);

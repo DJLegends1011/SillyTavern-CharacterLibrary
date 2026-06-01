@@ -700,6 +700,8 @@ function injectModal() {
             if (editorDirty && activeSnippetId === id) {
                 if (!window.confirm('You have unsaved edits to this snippet. The AI assistant may overwrite them if you accept an Update. Continue anyway?')) return;
             }
+            // Close the mobile snippets drawer if open so the assistant modal isn't buried under it
+            closeDrawer({ immediate: true });
             if (typeof window.openCssAssistant === 'function') {
                 window.openCssAssistant({ snippetId: id });
             } else {

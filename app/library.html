@@ -2,12 +2,12 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, interactive-widget=overlays-content">
     <meta name="color-scheme" content="dark">
     <meta name="referrer" content="no-referrer">
     <title>SillyTavern Character Library</title>
-    <link rel="stylesheet" href="library.css?v=80">
-    <link rel="stylesheet" href="library-mobile.css?v=10" media="screen and (max-width: 768px)">
+    <link rel="stylesheet" href="library.css?v=91">
+    <link rel="stylesheet" href="library-mobile.css?v=27" media="screen and (max-width: 768px)">
     <!-- Noto Sans from SillyTavern's bundled webfonts -->
     <link rel="stylesheet" href="/webfonts/NotoSans/stylesheet.css">
     <!-- Font Awesome for Icons -->
@@ -223,7 +223,7 @@
                             <i class="fa-solid fa-circle-info"></i> Help & Tips
                         </button>
                         <button id="gallerySettingsBtn" class="dropdown-item">
-                            <i class="fa-solid fa-gear"></i> Gallery Settings
+                            <i class="fa-solid fa-gear"></i> Settings
                         </button>
                     </div>
                 </div>
@@ -334,6 +334,8 @@
 
     <!-- Edit/Detail Modal -->
     <div id="charModal" class="modal-overlay hidden">
+        <button id="charModalNavPrev" class="char-modal-nav char-modal-nav-prev" title="Previous character (←)" aria-label="Previous character" style="display: none;"></button>
+        <button id="charModalNavNext" class="char-modal-nav char-modal-nav-next" title="Next character (→)" aria-label="Next character" style="display: none;"></button>
         <div class="modal-glass">
             <div class="modal-header">
                 <h2 id="modalTitle">Character Name</h2>
@@ -491,16 +493,16 @@
                             </h4>
                             <div class="form-group">
                                 <label>Character Name</label>
-                                <input type="text" id="editName" class="glass-input" autocomplete="one-time-code">
+                                <input type="search" id="editName" class="glass-input" autocomplete="one-time-code">
                             </div>
                             <div class="form-row">
                                 <div class="form-group half">
                                     <label>Creator / Author</label>
-                                    <input type="text" id="editCreator" class="glass-input" placeholder="Who made this character" autocomplete="one-time-code">
+                                    <input type="search" id="editCreator" class="glass-input" placeholder="Who made this character" autocomplete="one-time-code">
                                 </div>
                                 <div class="form-group half">
                                     <label>Character Version</label>
-                                    <input type="text" id="editVersion" class="glass-input" placeholder="e.g., 1.0" autocomplete="one-time-code">
+                                    <input type="search" id="editVersion" class="glass-input" placeholder="e.g., 1.0" autocomplete="one-time-code">
                                 </div>
                             </div>
                         </div>
@@ -714,13 +716,13 @@
     </div>
 
     <!-- Provider Link Modal -->
-    <div id="providerLinkModal" class="confirm-modal hidden">
-        <div class="confirm-modal-content provider-link-modal-content">
-            <div class="confirm-modal-header">
+    <div id="providerLinkModal" class="cl-modal">
+        <div class="cl-modal-content provider-link-modal-content">
+            <div class="cl-modal-header">
                 <h3><i class="fa-solid fa-link"></i> <span id="providerLinkModalTitle">Provider Link</span></h3>
-                <button class="close-confirm-btn" id="closeProviderLinkModal">&times;</button>
+                <button class="cl-modal-close" id="closeProviderLinkModal"><i class="fa-solid fa-xmark"></i></button>
             </div>
-            <div class="confirm-modal-body provider-link-modal-body">
+            <div class="cl-modal-body provider-link-modal-body">
                 <!-- Character sidebar with avatar -->
                 <div class="provider-link-sidebar">
                     <div class="provider-link-avatar-wrapper">
@@ -800,14 +802,13 @@
     </div>
 
     <!-- Import Summary Modal -->
-    <div id="importSummaryModal" class="confirm-modal hidden">
-        <div class="confirm-modal-content chub-gallery-modal-content">
-            <div class="confirm-modal-header">
+    <div id="importSummaryModal" class="cl-modal">
+        <div class="cl-modal-content chub-gallery-modal-content">
+            <div class="cl-modal-header">
                 <h3><i class="fa-solid fa-circle-info"></i> Additional Content Available</h3>
-                <button class="close-confirm-btn" id="closeImportSummaryModal">&times;</button>
+                <button class="cl-modal-close" id="closeImportSummaryModal"><i class="fa-solid fa-xmark"></i></button>
             </div>
-            <div class="confirm-modal-body">
-                <p>The imported character(s) have additional content:</p>
+            <div class="cl-modal-body">
                 <div id="importSummaryList" class="import-summary-list">
                     <!-- Row for Embedded Media -->
                     <div id="importSummaryMediaRow" class="import-summary-row hidden">
@@ -854,20 +855,20 @@
                     </div>
                 </div>
             </div>
-            <div class="confirm-modal-footer">
+            <div class="cl-modal-footer">
                 <button id="importSummaryDownloadAllBtn" class="action-btn download-all-btn"><i class="fa-solid fa-cloud-arrow-down"></i> Download All</button>
             </div>
         </div>
     </div>
 
     <!-- Import Characters Modal -->
-    <div id="importModal" class="confirm-modal hidden">
-        <div class="confirm-modal-content import-modal-content">
-            <div class="confirm-modal-header">
+    <div id="importModal" class="cl-modal">
+        <div class="cl-modal-content import-modal-content">
+            <div class="cl-modal-header">
                 <h3><i class="fa-solid fa-download"></i> Import Characters</h3>
-                <button class="close-confirm-btn" id="closeImportModal">&times;</button>
+                <button class="cl-modal-close" id="closeImportModal"><i class="fa-solid fa-xmark"></i></button>
             </div>
-            <div class="confirm-modal-body">
+            <div class="cl-modal-body">
                 <!-- Import source toggle -->
                 <div class="import-source-toggle">
                     <button class="import-source-btn active" data-source="url">
@@ -951,20 +952,20 @@ https://www.masqueradeproductions.org/character/uuid
                     <div id="importLog" class="import-log"></div>
                 </div>
             </div>
-            <div class="confirm-modal-footer">
+            <div class="cl-modal-footer">
                 <button id="startImportBtn" class="action-btn primary"><i class="fa-solid fa-download"></i> Import</button>
             </div>
         </div>
     </div>
 
     <!-- Localize Media Modal -->
-    <div id="localizeModal" class="confirm-modal hidden">
-        <div class="confirm-modal-content import-modal-content">
-            <div class="confirm-modal-header">
+    <div id="localizeModal" class="cl-modal">
+        <div class="cl-modal-content import-modal-content">
+            <div class="cl-modal-header">
                 <h3><i class="fa-solid fa-download"></i> Download Remote Media</h3>
-                <button class="close-confirm-btn" id="closeLocalizeModal">&times;</button>
+                <button class="cl-modal-close" id="closeLocalizeModal"><i class="fa-solid fa-xmark"></i></button>
             </div>
-            <div class="confirm-modal-body">
+            <div class="cl-modal-body">
                 <p id="localizeStatus">Scanning character for remote media...</p>
                 <div id="localizeProgress" class="import-progress">
                     <div class="import-progress-header">
@@ -977,20 +978,20 @@ https://www.masqueradeproductions.org/character/uuid
                     <div id="localizeLog" class="import-log"></div>
                 </div>
             </div>
-            <div class="confirm-modal-footer">
+            <div class="cl-modal-footer">
                 <button id="closeLocalizeBtn" class="action-btn secondary"><i class="fa-solid fa-times"></i> Close</button>
             </div>
         </div>
     </div>
 
     <!-- Bulk Localize Media Modal -->
-    <div id="bulkLocalizeModal" class="confirm-modal hidden">
-        <div class="confirm-modal-content import-modal-content bulk-localize-modal-content">
-            <div class="confirm-modal-header">
+    <div id="bulkLocalizeModal" class="cl-modal">
+        <div class="cl-modal-content import-modal-content bulk-localize-modal-content">
+            <div class="cl-modal-header">
                 <h3><i class="fa-solid fa-download"></i> Bulk Media Localization</h3>
-                <button class="close-confirm-btn" id="closeBulkLocalizeModal">&times;</button>
+                <button class="cl-modal-close" id="closeBulkLocalizeModal"><i class="fa-solid fa-xmark"></i></button>
             </div>
-            <div class="confirm-modal-body">
+            <div class="cl-modal-body">
                 <div id="bulkLocalizeCharInfo" class="bulk-localize-char-info">
                     <img id="bulkLocalizeCharAvatar" src="" alt="">
                     <span id="bulkLocalizeCharName">Preparing...</span>
@@ -1018,20 +1019,20 @@ https://www.masqueradeproductions.org/character/uuid
                     <div class="stat-item" title="Downloads that failed"><i class="fa-solid fa-xmark"></i> <span id="bulkStatErrors">0</span> errors</div>
                 </div>
             </div>
-            <div class="confirm-modal-footer">
+            <div class="cl-modal-footer">
                 <button id="cancelBulkLocalizeBtn" class="action-btn secondary"><i class="fa-solid fa-stop"></i> Stop</button>
             </div>
         </div>
     </div>
 
     <!-- Bulk Localize Summary Modal -->
-    <div id="bulkLocalizeSummaryModal" class="confirm-modal hidden">
-        <div class="confirm-modal-content bulk-summary-modal-content">
-            <div class="confirm-modal-header">
+    <div id="bulkLocalizeSummaryModal" class="cl-modal">
+        <div class="cl-modal-content bulk-summary-modal-content">
+            <div class="cl-modal-header">
                 <h3><i class="fa-solid fa-chart-bar"></i> Bulk Localization Complete</h3>
-                <button class="close-confirm-btn" id="closeBulkSummaryModal">&times;</button>
+                <button class="cl-modal-close" id="closeBulkSummaryModal"><i class="fa-solid fa-xmark"></i></button>
             </div>
-            <div class="confirm-modal-body">
+            <div class="cl-modal-body">
                 <div id="bulkSummaryOverview" class="bulk-summary-overview">
                     <!-- Overview stats go here -->
                 </div>
@@ -1057,20 +1058,20 @@ https://www.masqueradeproductions.org/character/uuid
                     <button id="bulkSummaryNextBtn" class="glass-btn icon-only"><i class="fa-solid fa-chevron-right"></i></button>
                 </div>
             </div>
-            <div class="confirm-modal-footer">
+            <div class="cl-modal-footer">
                 <button id="closeBulkSummaryBtn" class="action-btn primary"><i class="fa-solid fa-check"></i> Done</button>
             </div>
         </div>
     </div>
 
     <!-- Bulk Auto-Link Modal -->
-    <div id="bulkAutoLinkModal" class="confirm-modal hidden">
-        <div class="confirm-modal-content bulk-auto-link-modal-content">
-            <div class="confirm-modal-header">
+    <div id="bulkAutoLinkModal" class="cl-modal">
+        <div class="cl-modal-content bulk-auto-link-modal-content">
+            <div class="cl-modal-header">
                 <h3><i class="fa-solid fa-link"></i> Auto-Link Characters</h3>
-                <button class="close-confirm-btn" id="closeBulkAutoLinkModal">&times;</button>
+                <button class="cl-modal-close" id="closeBulkAutoLinkModal"><i class="fa-solid fa-xmark"></i></button>
             </div>
-            <div class="confirm-modal-body">
+            <div class="cl-modal-body">
                 <!-- Scanning Phase -->
                 <div id="bulkAutoLinkScanning" class="bulk-auto-link-phase">
                     <div class="bulk-auto-link-scan-info">
@@ -1118,7 +1119,7 @@ https://www.masqueradeproductions.org/character/uuid
                     </div>
                 </div>
             </div>
-            <div class="confirm-modal-footer">
+            <div class="cl-modal-footer">
                 <button id="bulkAutoLinkCancelBtn" class="action-btn secondary"><i class="fa-solid fa-stop"></i> Stop</button>
                 <button id="bulkAutoLinkApplyBtn" class="action-btn primary hidden"><i class="fa-solid fa-link"></i> Link Selected (<span id="bulkAutoLinkSelectedCount">0</span>)</button>
             </div>
@@ -1126,15 +1127,15 @@ https://www.masqueradeproductions.org/character/uuid
     </div>
 
     <!-- Help & Tips Modal -->
-    <div id="galleryInfoModal" class="confirm-modal hidden">
-        <div class="confirm-modal-content gallery-info-modal-content">
-            <div class="confirm-modal-header">
+    <div id="galleryInfoModal" class="cl-modal">
+        <div class="cl-modal-content gallery-info-modal-content">
+            <div class="cl-modal-header">
                 <h3><i class="fa-solid fa-circle-info"></i> Help & Tips</h3>
                 <div class="help-search-bar">
                     <i class="fa-solid fa-magnifying-glass"></i>
                     <input type="search" id="helpSearchInput" class="glass-input" placeholder="Search..." autocomplete="one-time-code" spellcheck="false">
                 </div>
-                <button class="close-confirm-btn" id="closeGalleryInfoModal">&times;</button>
+                <button class="cl-modal-close" id="closeGalleryInfoModal"><i class="fa-solid fa-xmark"></i></button>
             </div>
             <div class="help-layout">
                 <nav class="help-sidebar">
@@ -1224,6 +1225,17 @@ https://www.masqueradeproductions.org/character/uuid
                             </ul>
                         </div>
                         <div class="info-section">
+                            <h4><i class="fa-solid fa-arrows-left-right"></i> Prev/Next Navigation</h4>
+                            <p>Cycle through your characters without returning to the grid:</p>
+                            <ul>
+                                <li><strong>Desktop:</strong> chevron buttons appear on the left and right sides of the open detail modal. Click to step to the previous or next character</li>
+                                <li><strong>Mobile:</strong> swipe left/right on the detail modal header (the avatar / name area). The tab-swipe inside the modal body is left untouched</li>
+                                <li>Order follows your <strong>current sort and filter view</strong>: if you're sorted by Newest with a tag filter active, prev/next walks that filtered, sorted list</li>
+                                <li>If you have unsaved edits in the Edit tab, you'll get a confirm prompt before swapping to a different character</li>
+                                <li>Toggle the whole feature in <strong>Settings &rarr; Character Library &rarr; Card Grid &amp; Browse &rarr; Prev/Next navigation in character details</strong> (on by default)</li>
+                            </ul>
+                        </div>
+                        <div class="info-section">
                             <h4><i class="fa-solid fa-mouse"></i> Context Menu</h4>
                             <p><strong>Right-click</strong> any character card (or <strong>long-press</strong> on mobile) for quick actions:</p>
                             <ul>
@@ -1237,10 +1249,15 @@ https://www.masqueradeproductions.org/character/uuid
                             <h4><i class="fa-solid fa-mobile-screen"></i> Mobile Tips</h4>
                             <ul>
                                 <li><strong>Tap the avatar</strong> in the detail modal header for a full-size quick-view</li>
-                                <li><strong>Swipe left/right</strong> on character details to switch between tabs</li>
+                                <li><strong>Swipe left/right on the detail modal header</strong> to step to the previous or next character in the current sort + filter view (toggleable in Settings, Card Grid &amp; Browse)</li>
+                                <li><strong>Swipe left/right on character details</strong> to switch between tabs</li>
                                 <li><strong>Swipe left/right</strong> to cycle through alternate greetings</li>
                                 <li><strong>Long-press</strong> a character card to open the context menu (bottom sheet)</li>
-                                <li><strong>Swipe left/right</strong> on the main screen to switch views (Characters ↔ Chats ↔ Online)</li>
+                                <li><strong>Swipe right on a card</strong> to toggle favorite, <strong>swipe left</strong> to open the context menu. The outer 12% per side and bottom 25% of each card are dead zones, so view-swipe and tab-swipe gestures starting near card edges aren't hijacked</li>
+                                <li><strong>Swipe left/right on the main screen</strong> to switch views (Characters ↔ Chats ↔ Online)</li>
+                                <li><strong>Tap-to-scroll long titles</strong>: tap a long character name in the detail modal header, or a long chat title in the chat preview header, to scroll through the full text. Tap again to reset</li>
+                                <li><strong>Mobile search overlay</strong>: opens at the bottom of the screen above the bottom nav when the keyboard is closed, and lifts above the keyboard when it opens, so the whole flow stays in the thumb zone</li>
+                                <li><strong>Android back button</strong>: closes the topmost open overlay (gallery viewer, confirm dialog, detail modal, etc.) before exiting the app</li>
                             </ul>
                         </div>
                     </div>
@@ -1377,6 +1394,14 @@ https://www.masqueradeproductions.org/character/uuid
                                 <li>Results are categorized: <strong>Confident</strong> (strong match, auto-selected), <strong>Uncertain</strong> (multiple matches, you pick), and <strong>No Match</strong></li>
                                 <li>Review all matches before applying. Nothing is saved until you confirm</li>
                                 <li>The scan is resumable: stop and resume later, or close and reopen without losing progress</li>
+                            </ul>
+                            <p><strong>Live status display</strong> while the scan runs:</p>
+                            <ul>
+                                <li>The avatar and name of the character currently being scanned</li>
+                                <li>A status line describing the current step (querying providers, comparing matches, etc.)</li>
+                                <li><strong>Progress counter</strong> (e.g. <code>147/892</code>) and a progress fill bar showing scan completion</li>
+                                <li>Running totals updated in real time: <strong>confident</strong>, <strong>need review</strong>, and <strong>no match</strong> counts</li>
+                                <li>Once the scan finishes, the same counts double as tabs to filter the results list</li>
                             </ul>
                         </div>
                         <div class="info-section">
@@ -1515,6 +1540,28 @@ https://www.masqueradeproductions.org/character/uuid
                     <!-- Media & Gallery -->
                     <div class="help-panel" data-section="media">
                         <div class="info-section">
+                            <h4><i class="fa-solid fa-image"></i> Grid Card Thumbnails</h4>
+                            <p>Cut decode cost and bandwidth on the characters grid by serving smaller, pre-resized images for the grid cards. Detail modal, gallery, and full-screen viewer always keep full resolution.</p>
+                            <ul>
+                                <li>Enable in <strong>Settings &rarr; Character Library &rarr; Grid Card Thumbnails &rarr; Use thumbnails in characters view</strong></li>
+                                <li>Applies to <strong>mobile-sized viewports only</strong> by default. Toggle <strong>"Also use on desktop"</strong> to extend coverage</li>
+                                <li>Two backends:
+                                    <ul>
+                                        <li><strong>cl-helper</strong> (recommended): resizes via jimp and caches each thumbnail on disk at the size you pick (384 / 512 / 640 / 768px wide). 512 is a good baseline. Requires the cl-helper plugin installed</li>
+                                        <li><strong>ST's built-in /thumbnail</strong>: fixed at 96x144, which looks blurry on high-DPR phones. Used automatically if cl-helper isn't available or you turn the cl-helper option off</li>
+                                    </ul>
+                                </li>
+                                <li><strong>Cache management</strong> (cl-helper backend, in the same settings group):
+                                    <ul>
+                                        <li><strong>Populate at current size</strong>: pre-generates a thumbnail for every character at the size selected above. Already-cached entries are skipped. Useful after a bulk import or after changing the size</li>
+                                        <li><strong>Purge cache</strong>: deletes every cached thumbnail (any size). Next scroll regenerates on demand</li>
+                                        <li>Live cache stats (count + on-disk size) update under the buttons</li>
+                                    </ul>
+                                </li>
+                            </ul>
+                            <p class="info-tip"><i class="fa-solid fa-lightbulb"></i> Biggest win: mobile decode cost drops sharply on fast-scroll, and large libraries on slow connections feel snappier. On desktop with plenty of decode budget, the win is mostly bandwidth.</p>
+                        </div>
+                        <div class="info-section">
                             <h4><i class="fa-solid fa-expand"></i> Gallery Viewer</h4>
                             <p>Full-screen media viewer for character gallery images, GIFs, and videos:</p>
                             <ul>
@@ -1556,6 +1603,7 @@ https://www.masqueradeproductions.org/character/uuid
                                 <li><strong>Mega.nz</strong>: public folder shares with multi-pass folder traversal</li>
                                 <li><strong>Imgur, PostImg, ImgBB, Imgbox</strong>: albums and individual images</li>
                                 <li><strong>Catbox</strong>: direct file URLs</li>
+                                <li><strong>Dropbox</strong>: shared folders and individual file links</li>
                                 <li><strong>Google Drive</strong>: shared folders and individual files</li>
                             </ul>
                             <p>Extractors run automatically when you trigger <strong>Download Embedded Media</strong> from the Gallery tab or use Bulk Localization. No configuration is required for public content.</p>
@@ -1731,27 +1779,27 @@ https://www.masqueradeproductions.org/character/uuid
                                 <li><strong>Card Recommender</strong>: AI-powered character recommendations</li>
                                 <li><strong>Gallery Sync Status</strong>: Audit gallery folder mappings</li>
                                 <li><strong>Help & Tips</strong>: This modal</li>
-                                <li><strong>Gallery Settings</strong>: Configure gallery folders, media localization, and provider settings</li>
+                                <li><strong>Settings</strong>: Configure gallery folders, media localization, and provider settings</li>
                             </ul>
                         </div>
                     </div>
 
                 </div>
             </div>
-            <div class="confirm-modal-footer">
+            <div class="cl-modal-footer">
                 <button id="closeGalleryInfoModalBtn" class="action-btn secondary"><i class="fa-solid fa-check"></i> Got it</button>
             </div>
         </div>
     </div>
 
     <!-- Character Duplicates Scan Modal -->
-    <div id="charDuplicatesModal" class="confirm-modal hidden">
-        <div class="confirm-modal-content char-duplicates-modal-content">
-            <div class="confirm-modal-header">
+    <div id="charDuplicatesModal" class="cl-modal">
+        <div class="cl-modal-content char-duplicates-modal-content">
+            <div class="cl-modal-header">
                 <h3><i class="fa-solid fa-clone"></i> Character Duplicates</h3>
-                <button class="close-confirm-btn" id="closeCharDuplicatesModal">&times;</button>
+                <button class="cl-modal-close" id="closeCharDuplicatesModal"><i class="fa-solid fa-xmark"></i></button>
             </div>
-            <div class="confirm-modal-body">
+            <div class="cl-modal-body">
                 <div id="charDuplicatesScanStatus" class="char-duplicates-status">
                     <i class="fa-solid fa-spinner fa-spin"></i> Scanning library for duplicates...
                 </div>
@@ -1759,20 +1807,20 @@ https://www.masqueradeproductions.org/character/uuid
                     <!-- Duplicate groups will be populated here -->
                 </div>
             </div>
-            <div class="confirm-modal-footer">
+            <div class="cl-modal-footer">
                 <button id="closeCharDuplicatesModalBtn" class="action-btn secondary"><i class="fa-solid fa-check"></i> Done</button>
             </div>
         </div>
     </div>
 
     <!-- Pre-Import Duplicate Warning Modal -->
-    <div id="preImportDuplicateModal" class="confirm-modal hidden">
-        <div class="confirm-modal-content pre-import-duplicate-content">
-            <div class="confirm-modal-header">
+    <div id="preImportDuplicateModal" class="cl-modal">
+        <div class="cl-modal-content pre-import-duplicate-content">
+            <div class="cl-modal-header">
                 <h3><i class="fa-solid fa-exclamation-triangle"></i> Potential Duplicate Found</h3>
-                <button class="close-confirm-btn" id="closePreImportDuplicateModal">&times;</button>
+                <button class="cl-modal-close" id="closePreImportDuplicateModal"><i class="fa-solid fa-xmark"></i></button>
             </div>
-            <div class="confirm-modal-body">
+            <div class="cl-modal-body">
                 <div id="preImportDuplicateInfo" class="pre-import-info">
                     <!-- Import character info -->
                 </div>
@@ -1780,7 +1828,7 @@ https://www.masqueradeproductions.org/character/uuid
                     <!-- Existing matches will be populated here -->
                 </div>
             </div>
-            <div class="confirm-modal-footer">
+            <div class="cl-modal-footer">
                 <button id="preImportSkipBtn" class="action-btn secondary"><i class="fa-solid fa-ban"></i> Skip Import</button>
                 <button id="preImportAnyway" class="action-btn secondary"><i class="fa-solid fa-plus"></i> Import Anyway</button>
                 <button id="preImportReplaceBtn" class="action-btn primary"><i class="fa-solid fa-rotate"></i> Replace Existing</button>
@@ -1809,15 +1857,15 @@ https://www.masqueradeproductions.org/character/uuid
     </div>
 
     <!-- Gallery Settings Modal -->
-    <div id="gallerySettingsModal" class="confirm-modal hidden">
-        <div class="confirm-modal-content settings-modal-content settings-with-sidebar">
-            <div class="confirm-modal-header">
-                <h3><i class="fa-solid fa-gear"></i> Gallery Settings</h3>
+    <div id="gallerySettingsModal" class="cl-modal">
+        <div class="cl-modal-content settings-modal-content settings-with-sidebar">
+            <div class="cl-modal-header">
+                <h3><i class="fa-solid fa-gear"></i> Settings</h3>
                 <div class="settings-search-bar">
                     <i class="fa-solid fa-search"></i>
                     <input type="search" id="settingsSearchInput" class="glass-input" placeholder="Search..." autocomplete="one-time-code">
                 </div>
-                <button class="close-confirm-btn" id="closeSettingsModal">&times;</button>
+                <button class="cl-modal-close" id="closeSettingsModal"><i class="fa-solid fa-xmark"></i></button>
             </div>
             <div class="settings-layout">
                 <!-- Settings Sidebar Navigation -->
@@ -1935,8 +1983,9 @@ https://www.masqueradeproductions.org/character/uuid
                                     <option value="1" data-icon="fa-solid fa-compress">Small</option>
                                     <option value="2" data-icon="fa-solid fa-expand" selected>Medium (Default)</option>
                                     <option value="3" data-icon="fa-solid fa-up-right-and-down-left-from-center">Large</option>
+                                    <option value="4" data-icon="fa-solid fa-window-maximize">Extra Large</option>
                                 </select>
-                                <span class="settings-hint">Adjust the size of modal dialogs</span>
+                                <span class="settings-hint">Adjust the size of modal dialogs. Extra Large is available only at the smallest UI Scale (80%).</span>
                             </div>
                             <div class="settings-row">
                                 <label for="settingsHighlightColor">Accent Color:</label>
@@ -2057,11 +2106,82 @@ https://www.masqueradeproductions.org/character/uuid
                                 </label>
                                 <span class="settings-hint">Hide the playlist indicator icon on character cards</span>
                             </div>
+                            <div class="settings-row">
+                                <label>
+                                    <input type="checkbox" id="settingsEnableCharDetailNav" checked> Prev/Next navigation in character details
+                                </label>
+                                <span class="settings-hint">Desktop: arrow buttons on the sides of the modal. Mobile: swipe left/right on the modal header. Order follows current sort and filters.</span>
+                            </div>
                             <div class="settings-row" data-platform="mobile">
                                 <label>
                                     <input type="checkbox" id="settingsMobileProviderQuickSwitch" checked> Provider quick switch <i class="fa-solid fa-mobile-screen settings-platform-badge" title="Mobile only"></i>
                                 </label>
                                 <span class="settings-hint">Show a provider icon button next to the view tabs for quick provider switching in the Online view</span>
+                            </div>
+                            <div class="settings-row" data-platform="mobile">
+                                <label>
+                                    <input type="checkbox" id="settingsMobileHideBackArrows"> Hide modal back-arrows <i class="fa-solid fa-mobile-screen settings-platform-badge" title="Mobile only"></i>
+                                </label>
+                                <span class="settings-hint">Removes the back-arrow buttons in modal headers. Frees up header space so titles can breathe. Use the Android back button to close modals.</span>
+                            </div>
+                            <div class="settings-row" data-platform="mobile">
+                                <label>
+                                    <input type="checkbox" id="settingsMobileBrowseQuickImport" checked> Quick-import button on browse previews <i class="fa-solid fa-mobile-screen settings-platform-badge" title="Mobile only"></i>
+                                </label>
+                                <span class="settings-hint">Shows a single icon-only Download / Import / Extract button mirroring the primary action's state (accent / warning / in-library). When disabled, all actions live behind a kebab popover instead.</span>
+                            </div>
+                            <div class="settings-row" data-platform="mobile">
+                                <label>
+                                    <input type="checkbox" id="settingsMobileSwipeGestures" checked> Swipe gestures on character cards <i class="fa-solid fa-mobile-screen settings-platform-badge" title="Mobile only"></i>
+                                </label>
+                                <span class="settings-hint">Swipe right on a card to toggle favorite, swipe left to open the context menu. Disable to suppress accidental triggers.</span>
+                            </div>
+                            <div class="settings-row" data-platform="mobile">
+                                <label>
+                                    <input type="checkbox" id="settingsMobileHaptics" checked> Haptic feedback <i class="fa-solid fa-mobile-screen settings-platform-badge" title="Mobile only"></i>
+                                </label>
+                                <span class="settings-hint">Short vibrations on swipe actions, toggles, and destructive confirms. Requires device support.</span>
+                            </div>
+                        </div>
+
+                        <div class="settings-group">
+                            <div class="settings-group-title"><i class="fa-solid fa-image"></i> Grid Card Thumbnails</div>
+                            <div class="settings-row">
+                                <label>
+                                    <input type="checkbox" id="settingsUseGridThumbnails"> Use thumbnails in characters view
+                                </label>
+                                <span class="settings-hint">Serve smaller images for grid cards. Helps mobile (decode cost drops sharply, fewer empty frames on fast scroll). Detail modal + gallery keep full resolution. Applies to mobile only by default; see desktop option below.</span>
+                            </div>
+                            <div class="settings-row" id="settingsGridThumbDesktopRow" style="padding-left: 24px;">
+                                <label>
+                                    <input type="checkbox" id="settingsGridThumbDesktop"> Also use on desktop
+                                </label>
+                                <span class="settings-hint">Off (default): thumbnails only on mobile-sized viewports. On: thumbnails on every viewport. Desktop has plenty of decode budget, so the win is mostly bandwidth on large libraries.</span>
+                            </div>
+                            <div class="settings-row" id="settingsGridThumbClHelperRow" style="padding-left: 24px;">
+                                <label>
+                                    <input type="checkbox" id="settingsGridThumbClHelper" checked> Use cl-helper to generate thumbnails (recommended)
+                                </label>
+                                <span class="settings-hint">On: cl-helper resizes via jimp + caches on disk at the size you pick below. Requires the cl-helper plugin installed. Off: ST's built-in /thumbnail endpoint, fixed at 96x144 which looks blurry on retina-DPR phones.</span>
+                            </div>
+                            <div class="settings-row" id="settingsGridThumbSizeRow" style="padding-left: 24px;">
+                                <label for="settingsGridThumbSize">Thumbnail size:</label>
+                                <select id="settingsGridThumbSize" class="glass-select">
+                                    <option value="384" data-icon="fa-solid fa-image">Small (384px wide)</option>
+                                    <option value="512" data-icon="fa-solid fa-image" selected>Medium (512px wide)</option>
+                                    <option value="640" data-icon="fa-solid fa-image">Large (640px wide)</option>
+                                    <option value="768" data-icon="fa-solid fa-image">Extra Large (768px wide)</option>
+                                </select>
+                                <span class="settings-hint">Larger = sharper on high-DPR screens, more decode cost. 512 is a good baseline.</span>
+                            </div>
+                            <div class="settings-row" id="settingsGridThumbCacheRow" style="padding-left: 24px;">
+                                <label>Cache:</label>
+                                <div class="settings-input-group">
+                                    <button id="settingsGridThumbPopulate" class="settings-action-btn primary"><i class="fa-solid fa-download"></i> Populate at current size</button>
+                                    <button id="settingsGridThumbPurge" class="settings-action-btn danger"><i class="fa-solid fa-trash"></i> Purge cache</button>
+                                </div>
+                                <span id="settingsGridThumbCacheStats" class="settings-hint">Loading...</span>
+                                <span class="settings-hint">Populate pre-generates a thumbnail for every character at the size selected above (skips already-cached). Purge deletes all cached thumbnails (any size); next scroll regenerates on demand.</span>
                             </div>
                         </div>
 
@@ -2719,7 +2839,7 @@ https://www.masqueradeproductions.org/character/uuid
                         <div class="settings-group">
                             <div class="settings-group-title"><i class="fa-solid fa-info-circle"></i> Version Info</div>
                             <div class="settings-row">
-                                <span class="settings-hint" style="font-family: monospace;">Character Library v5.3.0</span>
+                                <span class="settings-hint" style="font-family: monospace;">Character Library v6.0.0</span>
                             </div>
                         </div>
 
@@ -2778,10 +2898,71 @@ https://www.masqueradeproductions.org/character/uuid
                     </div>
                 </div>
             </div>
-            <div class="confirm-modal-footer">
+            <div class="cl-modal-footer">
                 <button id="resetSettingsBtn" class="action-btn secondary"><i class="fa-solid fa-undo"></i> Restore Defaults</button>
                 <button id="saveSettingsBtn" class="action-btn primary"><i class="fa-solid fa-check"></i> Save Settings</button>
             </div>
+        </div>
+    </div>
+
+    <!-- Mobile bottom navigation: primary nav within thumb zone. Hidden on desktop via CSS. -->
+    <nav id="mobileBottomNav" class="mobile-bottom-nav" aria-label="Primary navigation">
+        <button class="mobile-bottom-nav-tab active" data-view="characters" type="button" aria-label="Characters">
+            <i class="fa-solid fa-users mobile-bottom-nav-icon"></i>
+            <span class="mobile-bottom-nav-label">Characters</span>
+        </button>
+        <button class="mobile-bottom-nav-tab" data-view="chats" type="button" aria-label="Chats">
+            <i class="fa-solid fa-comments mobile-bottom-nav-icon"></i>
+            <span class="mobile-bottom-nav-label">Chats</span>
+        </button>
+        <button class="mobile-bottom-nav-tab" data-view="online" type="button" aria-label="Online">
+            <i class="fa-solid fa-globe mobile-bottom-nav-icon"></i>
+            <span class="mobile-bottom-nav-label">Online</span>
+        </button>
+        <div class="mobile-bottom-nav-actions" aria-hidden="false">
+        <button class="mobile-bottom-nav-action" id="mobileNavFiltersBtn" type="button" aria-label="Filters and sort">
+            <i class="fa-solid fa-sliders mobile-bottom-nav-icon"></i>
+            <span class="mobile-bottom-nav-label">Filters</span>
+        </button>
+        <button class="mobile-bottom-nav-action" id="mobileNavMoreBtn" type="button" aria-label="More options">
+            <i class="fa-solid fa-ellipsis-vertical mobile-bottom-nav-icon"></i>
+            <span class="mobile-bottom-nav-label">More</span>
+        </button>
+        </div>
+    </nav>
+
+    <!-- Mobile floating action button: per-view primary action. JS configures icon+behavior per view. -->
+    <button id="mobileFab" class="mobile-fab hidden" type="button" aria-label="Primary action">
+        <i class="fa-solid fa-plus"></i>
+    </button>
+
+    <!-- Mobile Online search overlay, spawned by the FAB on Online view. -->
+    <div id="mobileOnlineSearchOverlay" class="mobile-online-search-overlay hidden" aria-hidden="true">
+        <div class="mobile-online-search-panel" role="dialog" aria-label="Search online characters">
+            <header class="mobile-online-search-header">
+                <button type="button" class="mobile-online-search-close" aria-label="Close search">
+                    <i class="fa-solid fa-arrow-left"></i>
+                </button>
+                <h3 class="mobile-online-search-title">Search</h3>
+            </header>
+            <div class="mobile-online-search-modes" role="tablist" hidden>
+                <button type="button" class="mobile-online-search-mode active" data-mode="character" role="tab">
+                    <i class="fa-solid fa-user"></i> Character
+                </button>
+                <button type="button" class="mobile-online-search-mode" data-mode="creator" role="tab">
+                    <i class="fa-solid fa-pen-nib"></i> Creator
+                </button>
+            </div>
+            <form class="mobile-online-search-form">
+                <div class="mobile-online-search-input-wrap">
+                    <i class="fa-solid fa-magnifying-glass mobile-online-search-icon"></i>
+                    <input type="search" class="mobile-online-search-input" placeholder="Search..." autocomplete="off" enterkeyhint="search">
+                    <button type="button" class="mobile-online-search-clear hidden" aria-label="Clear">
+                        <i class="fa-solid fa-xmark"></i>
+                    </button>
+                </div>
+                <button type="submit" class="mobile-online-search-submit">Search</button>
+            </form>
         </div>
     </div>
 
@@ -2789,8 +2970,8 @@ https://www.masqueradeproductions.org/character/uuid
     <div id="toastContainer" class="toast-container"></div>
 
     <!-- Scripts -->
-    <script src="library.js?v=99"></script>
-    <script type="module" src="../modules/module-loader.js?v=30"></script>
-    <script src="library-mobile.js?v=4"></script>
+    <script src="library.js?v=148"></script>
+    <script type="module" src="../modules/module-loader.js?v=35"></script>
+    <script src="library-mobile.js?v=17"></script>
 </body>
 </html>

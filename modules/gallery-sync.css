@@ -423,9 +423,9 @@
         min-width: 0 !important;
         max-height: 70vh !important;
         overflow-y: auto !important;
-        border-radius: var(--radius-3xl) var(--radius-3xl) 0 0 !important;
+        border-radius: var(--radius-2xl) var(--radius-2xl) 0 0 !important;
         border-bottom: none !important;
         z-index: 1100 !important;
-        padding-bottom: env(safe-area-inset-bottom, 0px) !important;
+        padding-bottom: var(--safe-bottom) !important;
     }
 }

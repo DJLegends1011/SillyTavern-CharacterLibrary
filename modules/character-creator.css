@@ -11,7 +11,6 @@
 
 .creator-header h2 i {
     color: var(--accent);
-    font-size: var(--font-md);
 }
 
 #creatorFieldsToggle.active {
@@ -524,21 +523,12 @@
     font-size: var(--font-xs);
 }
 
-/* Save-As diff overlay */
+/* Save-As diff overlay: layers heavier scrim + studio fade-in over .cl-modal */
 .creator-saveas-diff-overlay {
-    position: fixed;
-    inset: 0;
     z-index: 10003;
     background: var(--cl-modal-scrim-heavy);
-    display: flex;
-    align-items: center;
-    justify-content: center;
     backdrop-filter: blur(5px);
     animation: studioFadeIn 0.15s ease;
-}
-
-.creator-saveas-diff-overlay.hidden {
-    display: none;
 }
 
 .creator-saveas-diff-content {
@@ -1286,9 +1276,33 @@
 
 .ai-studio-msg-body {
     flex: 1;
+    min-width: 0;
     color: var(--text-secondary);
     word-break: break-word;
 }
+
+.ai-studio-retry-btn {
+    flex-shrink: 0;
+    align-self: center;
+    background: rgba(var(--accent-rgb), 0.12);
+    color: var(--accent);
+    border: 1px solid rgba(var(--accent-rgb), 0.25);
+    border-radius: var(--radius-pill);
+    padding: 3px 10px;
+    font-size: var(--font-2xs);
+    font-family: inherit;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    touch-action: manipulation;
+}
+.ai-studio-retry-btn:hover {
+    background: rgba(var(--accent-rgb), 0.2);
+}
+.ai-studio-retry-btn.hidden { display: none; }
+.ai-studio-msg.failed { opacity: 0.65; }
+.ai-studio-msg.failed .ai-studio-msg-body { text-decoration: line-through; text-decoration-color: rgba(229, 115, 115, 0.5); }
 
 /* --- Input area --- */
 
@@ -1353,11 +1367,11 @@
 .ai-studio-input-row {
     display: flex;
     align-items: flex-end;
-    gap: 0;
+    gap: var(--space-xs);
     background: rgba(0, 0, 0, 0.2);
     border: 1px solid var(--glass-border);
-    border-radius: var(--radius-pill);
-    padding: 4px 4px 4px 16px;
+    border-radius: var(--radius-2xl);
+    padding: 6px 6px 6px 14px;
     transition: border-color 0.2s ease;
 }
 
@@ -1367,6 +1381,7 @@
 
 .ai-studio-input {
     flex: 1;
+    min-width: 0;
     background: transparent;
     border: none;
     color: var(--text-primary);
@@ -1376,9 +1391,9 @@
     resize: none;
     outline: none;
     min-height: 24px;
-    max-height: 120px;
-    padding: 6px 8px 6px 0;
-    align-self: center;
+    max-height: 90px;
+    padding: 6px 4px 6px 0;
+    align-self: stretch;
 }
 
 .ai-studio-input::placeholder {
@@ -1528,7 +1543,8 @@
 
 .ai-studio-modal.brainstorm-mode .ai-studio-input-meta,
 .ai-studio-modal.brainstorm-mode .ai-studio-selection-badge,
-.ai-studio-modal.brainstorm-mode #studioSettingsToggle {
+.ai-studio-modal.brainstorm-mode #studioSettingsToggle,
+.ai-studio-modal.brainstorm-mode .ai-studio-history-nav {
     display: none;
 }
 
@@ -1541,12 +1557,9 @@
 @media (max-width: 768px) {
     /* --- Character Creator --- */
 
+    /* Rounded top to frame as a bottom-sheet (creator reads as a feature) */
     .creator-modal-glass {
-        width: 100% !important;
-        max-width: 100% !important;
-        height: 100% !important;
-        max-height: 100% !important;
-        border-radius: 0 !important;
+        border-radius: var(--radius-2xl) var(--radius-2xl) 0 0 !important;
     }
 
     .creator-body {
@@ -1591,7 +1604,7 @@
         gap: var(--space-xs-sm);
         flex: 1;
         min-width: 0;
-        min-height: 44px;
+        min-height: var(--touch-target-min);
     }
 
     .creator-mobile-profile-select {
@@ -1626,7 +1639,7 @@
 
     .creator-footer {
         padding: 8px 12px !important;
-        padding-bottom: max(8px, env(safe-area-inset-bottom)) !important;
+        padding-bottom: max(8px, var(--safe-bottom)) !important;
     }
 
     .creator-footer-left,
@@ -1652,7 +1665,7 @@
     #creatorImportBtn {
         font-size: 0 !important;
         padding: 8px 14px !important;
-        min-width: 44px;
+        min-width: var(--touch-target-min);
     }
 
     #creatorImportBtn i {
@@ -1664,36 +1677,32 @@
     }
 
     .creator-ai-btn {
-        min-height: 44px;
-        min-width: 44px;
+        min-height: var(--touch-target-min);
+        min-width: var(--touch-target-min);
         touch-action: manipulation;
         padding: 0 !important;
         justify-content: center;
     }
 
     .creator-alt-remove {
-        min-height: 44px;
-        min-width: 44px;
+        min-height: var(--touch-target-min);
+        min-width: var(--touch-target-min);
         touch-action: manipulation;
     }
 
     .creator-split-caret {
-        min-height: 44px;
-        min-width: 44px;
+        min-height: var(--touch-target-min);
+        min-width: var(--touch-target-min);
         touch-action: manipulation;
     }
 
     .creator-split-menu .dropdown-item {
-        min-height: 44px;
+        min-height: var(--touch-target-min);
         touch-action: manipulation;
     }
 
     .creator-saveas-diff-content {
-        width: 100% !important;
-        max-width: 100% !important;
         height: 100% !important;
-        max-height: 100% !important;
-        border-radius: 0 !important;
     }
 
     .diff-avatar-row {
@@ -1716,7 +1725,7 @@
         max-width: 100% !important;
         height: 100% !important;
         max-height: 100% !important;
-        border-radius: 0 !important;
+        border-radius: var(--radius-2xl) var(--radius-2xl) 0 0 !important;
     }
 
     .creator-import-search .glass-input {
@@ -1724,7 +1733,7 @@
     }
 
     .creator-import-item {
-        min-height: 44px;
+        min-height: var(--touch-target-min);
         touch-action: manipulation;
     }
 
@@ -1737,7 +1746,7 @@
         height: 100% !important;
         max-width: 100% !important;
         max-height: 100% !important;
-        border-radius: 0 !important;
+        border-radius: var(--radius-2xl) var(--radius-2xl) 0 0 !important;
         border: none !important;
     }
 
@@ -1755,7 +1764,7 @@
         font-size: var(--font-sm);
     }
 
-    .ai-studio-title h3 { font-size: var(--font-md); }
+    .ai-studio-title h3 { font-size: var(--font-md-lg); }
 
     .ai-studio-history-nav {
         gap: var(--space-2xs);
@@ -1765,15 +1774,15 @@
     .ai-studio-nav-btn {
         width: 38px;
         height: 38px;
-        min-height: 44px;
+        min-height: var(--touch-target-min);
         touch-action: manipulation;
     }
 
     /* Brainstorm toggle: square touch target + extra breathing room so
        the hint glow doesn't clip against the adjacent history-nav pill. */
     #studioBrainstormToggle {
-        width: 44px;
-        height: 44px;
+        width: var(--touch-target-min);
+        height: var(--touch-target-min);
         margin-right: var(--space-2xs);
     }
 
@@ -1799,11 +1808,41 @@
         }
     }
 
+    .ai-studio-header,
+    .creator-import-header {
+        position: relative;
+        padding-left: var(--back-arrow-zone);
+    }
     .ai-studio-close-btn {
-        width: 38px;
-        height: 38px;
-        min-height: 44px;
+        position: absolute;
+        top: 50%;
+        left: var(--space-sm);
+        transform: translateY(-50%);
+        min-width: var(--touch-target-min);
+        min-height: var(--touch-target-min);
+        padding: 0;
+        font-size: 0;
+        z-index: 5;
         touch-action: manipulation;
+    }
+    .ai-studio-close-btn i { display: none; }
+    .ai-studio-close-btn::before {
+        content: '\f060';
+        font-family: 'Font Awesome 6 Free';
+        font-weight: 900;
+        font-size: var(--font-xl);
+        line-height: 1;
+        color: var(--text-secondary);
+    }
+    .ai-studio-close-btn:active::before { color: var(--text-primary); }
+
+    html.cl-hide-back-arrows .ai-studio-close-btn {
+        display: none !important;
+        visibility: hidden !important;
+    }
+    html.cl-hide-back-arrows .ai-studio-header,
+    html.cl-hide-back-arrows .creator-import-header {
+        padding-left: var(--space-md) !important;
     }
 
     .ai-studio-content-area {
@@ -1832,32 +1871,13 @@
         overflow-y: visible;
     }
 
-    .ai-studio-suggestions {
-        flex-wrap: nowrap;
-        overflow-x: auto;
-        justify-content: flex-start;
-        -webkit-overflow-scrolling: touch;
-        padding-bottom: 4px;
-        scrollbar-width: none;
-    }
+    .ai-studio-suggestions { display: none; }
 
-    .ai-studio-suggestions::-webkit-scrollbar {
-        display: none;
-    }
-
-    .ai-studio-suggestion-chip {
-        flex-shrink: 0;
-        padding: 5px 10px;
-        font-size: var(--font-2xs);
-        min-height: 32px;
-        display: flex;
-        align-items: center;
-        touch-action: manipulation;
-    }
+    html.cl-keyboard-open .ai-studio-conversation { display: none; }
 
     .ai-studio-input-area {
         padding: 6px 12px 10px;
-        padding-bottom: max(10px, env(safe-area-inset-bottom));
+        padding-bottom: max(10px, var(--safe-bottom));
     }
 
     .ai-studio-selection-badge {
@@ -1889,7 +1909,7 @@
 
     .ai-studio-footer {
         padding: 10px 12px;
-        padding-bottom: max(10px, env(safe-area-inset-bottom));
+        padding-bottom: max(10px, var(--safe-bottom));
     }
 
     .ai-studio-send-btn:hover {
@@ -1910,7 +1930,7 @@
     }
 
     .studio-settings-check {
-        min-height: 44px;
+        min-height: var(--touch-target-min);
         touch-action: manipulation;
     }
 

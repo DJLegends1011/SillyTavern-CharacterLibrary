@@ -573,26 +573,8 @@ function valuesEqual(a, b) {
 let singleModalAvatar = null;
 let singleModalClosedAt = 0;
 
-/**
- * Open the character details modal above the update checker modals.
- * Adds body class that boosts z-index for the overlay and any child modals
- * (confirm-modals, gallery viewer) so they all stack above the update checker.
- * Restores when the overlay is hidden.
- */
 function openCharModalAbove(char) {
-    const overlay = document.getElementById('charModal')?.closest('.modal-overlay')
-                 || document.querySelector('.modal-overlay');
-    if (!overlay) return;
-    document.body.classList.add('char-modal-above');
-    const restore = () => {
-        document.body.classList.remove('char-modal-above');
-        observer.disconnect();
-    };
-    const observer = new MutationObserver(() => {
-        if (overlay.classList.contains('hidden')) restore();
-    });
-    observer.observe(overlay, { attributes: true, attributeFilter: ['class'] });
-    CoreAPI.openCharacterModal(char);
+    CoreAPI.openCharModalElevated(char);
 }
 
 /**

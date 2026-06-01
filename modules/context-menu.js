@@ -40,6 +40,9 @@ export function init(deps) {
         visible: (el) => el.classList.contains('visible'),
     });
 
+    // Bulk delete confirm (dynamic). Tier 7 so it closes before charModal on back/Escape.
+    window.registerOverlay?.({ id: 'bulkDeleteConfirmModal', tier: 7, static: false, close: (el) => el?.remove() });
+
     // Bridge for legacy card creation paths
     window.attachCardContextMenu = function(cardElement, char) {
         if (!cardElement || !char) return;
@@ -629,7 +632,7 @@ async function bulkDelete() {
     const andMore = selected.length > 5 ? ` and ${selected.length - 5} more` : '';
     
     const modal = document.createElement('div');
-    modal.className = 'confirm-modal';
+    modal.className = 'confirm-modal cl-modal-drawer';
     modal.id = 'bulkDeleteConfirmModal';
     modal.innerHTML = `
         <div class="confirm-modal-content" style="max-width: calc(480px * var(--modal-scale, 1));">
