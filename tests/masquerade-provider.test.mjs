@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 
 const SAMPLE_UUID = '477ec869-957d-40ad-a32a-d992623f5b66';
 const OTHER_UUID = 'c5f25770-af64-452d-9983-16676d1f47fe';
@@ -93,10 +94,34 @@ test('Masquerade preview modal shows website-visible stats only', async () => {
     assert.match(html, /id="masqueradeCharMessages"[^>]*>0<\/span> messages/);
     assert.match(html, /id="masqueradeCharUsers"[^>]*>0<\/span> users/);
     assert.match(html, /id="masqueradeCharFans"[^>]*>0<\/span> fans/);
+    assert.match(html, /id="masqueradeCharDate"[^>]*>Unknown<\/span>/);
     assert.doesNotMatch(html, /masqueradeCharSaved/);
     assert.doesNotMatch(html, /masqueradeCharQuality/);
     assert.doesNotMatch(html, />\s*saved\s*</);
     assert.doesNotMatch(html, />\s*quality\s*</);
+});
+
+test('Masquerade preview modal carries Wyvern-style optional detail sections', async () => {
+    const provider = await loadProvider();
+    const html = provider.renderModals();
+
+    assert.match(html, /id="masqueradeCharDescriptionSection"[^>]*style="display: none;"/);
+    assert.match(html, /id="masqueradeCharPersonalitySection"[^>]*style="display: none;"/);
+    assert.match(html, /id="masqueradeCharScenarioSection"[^>]*style="display: none;"/);
+    assert.match(html, /id="masqueradeCharFirstMsgSection"[^>]*style="display: none;"/);
+    assert.match(html, /id="masqueradeCharAltGreetingsSection"[^>]*style="display: none;"/);
+    assert.match(html, /id="masqueradeCharGallerySection"[^>]*style="display: none;"/);
+    assert.match(html, /id="masqueradeCharGalleryGrid" class="browse-gallery-grid"/);
+});
+
+test('Masquerade browse uses shared empty states and modal shell niceties', async () => {
+    const browseSource = await readFile(new URL('../modules/providers/masquerade/masquerade-browse.js', import.meta.url), 'utf8');
+    const browseCss = await readFile(new URL('../modules/providers/masquerade/masquerade-browse.css', import.meta.url), 'utf8');
+
+    assert.doesNotMatch(browseSource, /class="masquerade-empty"/);
+    assert.doesNotMatch(browseCss, /\.masquerade-empty/);
+    assert.match(browseSource, /BrowseView\.wireTitleScroll/);
+    assert.match(browseSource, /BrowseView\.openAvatarViewer/);
 });
 
 test('Masquerade link stats match the website-visible message user and fan counts', async () => {

@@ -191,3 +191,34 @@ test('visibility helpers reject force-private Masquerade rows', async () => {
     assert.equal(api.isMasqueradeCharacterImportable({ ...sampleRow, force_private: true }), false);
     assert.equal(api.isMasqueradeCharacterBrowsable({ ...sampleRow, force_private: true }), false);
 });
+
+test('searchMasqueradeCharacters paginates fuzzy search results', async () => {
+    const api = await loadApi();
+    const oldFetch = globalThis.fetch;
+    const rows = Array.from({ length: 75 }, (_, index) => ({
+        ...sampleRow,
+        id: `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`,
+        name: `Search result ${index}`,
+        is_nsfw: false,
+    }));
+
+    globalThis.fetch = async () => ({
+        ok: true,
+        json: async () => rows,
+    });
+
+    try {
+        const pageTwo = await api.searchMasqueradeCharacters({
+            query: 'kindred',
+            page: 2,
+            limit: 10,
+            nsfw: false,
+        });
+
+        assert.equal(pageTwo.length, 10);
+        assert.equal(pageTwo[0].name, 'Search result 10');
+        assert.equal(pageTwo[9].name, 'Search result 19');
+    } finally {
+        globalThis.fetch = oldFetch;
+    }
+});

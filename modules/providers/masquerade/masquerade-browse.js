@@ -28,6 +28,7 @@ const {
     getCharacterGalleryId,
     showImportSummaryModal,
     formatRichText,
+    safePurify,
     debounce,
     getProviderExcludeTags,
     renderLoadingState,
@@ -35,6 +36,19 @@ const {
 } = CoreAPI;
 
 const PAGE_SIZE = 60;
+const BROWSE_PURIFY_CONFIG = {
+    ALLOWED_TAGS: [
+        'p', 'br', 'hr', 'div', 'span', 'strong', 'b', 'em', 'i', 'u', 's', 'del',
+        'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote', 'code', 'pre',
+        'ul', 'ol', 'li', 'a', 'img', 'center', 'font', 'style',
+        'table', 'thead', 'tbody', 'tr', 'th', 'td', 'details', 'summary'
+    ],
+    ALLOWED_ATTR: [
+        'href', 'src', 'alt', 'title', 'class', 'style', 'target', 'rel',
+        'width', 'height', 'loading', 'color', 'size', 'align'
+    ],
+    ALLOW_DATA_ATTR: false
+};
 
 let masqueradeCharacters = [];
 let masqueradeCurrentPage = 1;
@@ -71,8 +85,10 @@ function esc(value) {
 
 function richText(value, name = '') {
     if (!value) return '';
-    if (formatRichText) return formatRichText(String(value), name, false);
-    return esc(value).replace(/\n/g, '<br>');
+    const formatted = formatRichText
+        ? formatRichText(String(value), name, true)
+        : esc(value).replace(/\n/g, '<br>');
+    return safePurify ? (safePurify(formatted, BROWSE_PURIFY_CONFIG) || formatted) : formatted;
 }
 
 function bind(id, event, handler) {
@@ -286,12 +302,18 @@ function renderGrid(_characters = masqueradeCharacters, append = false) {
 function renderEmpty(message, icon = 'fa-search') {
     const grid = document.getElementById('masqueradeGrid');
     if (!grid) return;
+    const isError = icon.includes('triangle') || /^Load failed/i.test(message || '');
     grid.innerHTML = `
-        <div class="masquerade-empty" style="grid-column: 1 / -1;">
+        <div class="${isError ? 'browse-error' : 'browse-empty'}" style="grid-column: 1 / -1;">
             <i class="fa-solid ${icon}"></i>
+            <h3>${isError ? 'Failed to load MasqueradeAI' : 'No characters found'}</h3>
             <p>${esc(message)}</p>
         </div>
     `;
+}
+
+function getVisibleMasqueradeCount() {
+    return getFilteredMasqueradeCharacters().length;
 }
 
 async function loadMasqueradeCharacters(append = false) {
@@ -312,31 +334,61 @@ async function loadMasqueradeCharacters(append = false) {
     }
 
     try {
-        const opts = {
-            query: masqueradeCurrentSearch,
-            page: masqueradeCurrentPage,
-            limit: PAGE_SIZE,
-            sort: masqueradeCurrentSort,
-            nsfw: masqueradeNsfwEnabled,
-            excludeTags: getProviderExcludeTags?.('masquerade') || [],
+        const { excludeTags } = getMasqueradeFilterTags();
+        const fetchPage = page => {
+            const opts = {
+                query: masqueradeCurrentSearch,
+                page,
+                limit: PAGE_SIZE,
+                sort: masqueradeCurrentSort,
+                nsfw: masqueradeNsfwEnabled,
+                excludeTags,
+            };
+            return masqueradeCurrentSearch
+                ? searchMasqueradeCharacters(opts)
+                : browseMasqueradeCharacters(opts);
         };
-        const results = masqueradeCurrentSearch
-            ? await searchMasqueradeCharacters(opts)
-            : await browseMasqueradeCharacters(opts);
+        const pageHasMore = results => results.length >= PAGE_SIZE
+            && (masqueradeCurrentSearch || isMasqueradePagedSort(masqueradeCurrentSort));
+        const mergeResults = results => {
+            const seen = new Set(masqueradeCharacters.map(c => c.id));
+            for (const char of results) {
+                if (char.id && !seen.has(char.id)) {
+                    seen.add(char.id);
+                    masqueradeCharacters.push(char);
+                }
+            }
+        };
+
+        const results = await fetchPage(masqueradeCurrentPage);
 
         if (token !== masqueradeLoadToken) return;
 
         if (append) {
-            const seen = new Set(masqueradeCharacters.map(c => c.id));
-            masqueradeCharacters = masqueradeCharacters.concat(results.filter(c => !seen.has(c.id)));
+            mergeResults(results);
         } else {
             masqueradeCharacters = results;
         }
 
         extractMasqueradeTagsFromResults(results);
-        masqueradeHasMore = !masqueradeCurrentSearch
-            && isMasqueradePagedSort(masqueradeCurrentSort)
-            && results.length >= PAGE_SIZE;
+        masqueradeHasMore = pageHasMore(results);
+
+        if (hasActiveMasqueradeClientFilters() && masqueradeHasMore) {
+            let autoFetches = 0;
+            while (getVisibleMasqueradeCount() < PAGE_SIZE
+                && masqueradeHasMore
+                && autoFetches < 3
+                && token === masqueradeLoadToken) {
+                autoFetches++;
+                masqueradeCurrentPage++;
+                const moreResults = await fetchPage(masqueradeCurrentPage);
+                if (token !== masqueradeLoadToken) return;
+                mergeResults(moreResults);
+                extractMasqueradeTagsFromResults(moreResults);
+                masqueradeHasMore = pageHasMore(moreResults);
+            }
+        }
+
         renderGrid(masqueradeCharacters, append);
         if (!append && masqueradeCharacters.length === 0) renderEmpty('No characters found');
         debugLog?.('[MasqueradeBrowse] Loaded', results.length, 'characters');
@@ -363,6 +415,128 @@ function resetAndLoad() {
     return loadMasqueradeCharacters(false);
 }
 
+function setSectionHtml(sectionId, contentId, value, name) {
+    const section = document.getElementById(sectionId);
+    const el = document.getElementById(contentId);
+    const text = String(value || '').trim();
+    if (section) section.style.display = text ? 'block' : 'none';
+    if (!el) return;
+    if (text) {
+        el.innerHTML = richText(text, name);
+        el.dataset.fullContent = text;
+    } else {
+        el.innerHTML = '';
+        delete el.dataset.fullContent;
+    }
+}
+
+function renderMasqueradeAltGreetings(greetings, name) {
+    const section = document.getElementById('masqueradeCharAltGreetingsSection');
+    const list = document.getElementById('masqueradeCharAltGreetings');
+    const count = document.getElementById('masqueradeCharAltGreetingsCount');
+    const stat = document.getElementById('masqueradeCharGreetingsStat');
+    const statCount = document.getElementById('masqueradeCharGreetingsCount');
+    const validGreetings = (Array.isArray(greetings) ? greetings : [])
+        .map(greeting => String(greeting || '').trim())
+        .filter(Boolean);
+
+    if (stat) stat.style.display = validGreetings.length ? 'flex' : 'none';
+    if (statCount) statCount.textContent = validGreetings.length + 1;
+    if (count) count.textContent = validGreetings.length ? `(${validGreetings.length})` : '';
+    window.currentBrowseAltGreetings = validGreetings;
+
+    if (!section || !list) return;
+    if (!validGreetings.length) {
+        section.style.display = 'none';
+        list.innerHTML = '';
+        return;
+    }
+
+    const buildPreview = text => {
+        const cleaned = String(text || '').replace(/\s+/g, ' ').trim();
+        if (!cleaned) return 'No content';
+        return cleaned.length > 90 ? `${cleaned.slice(0, 87)}...` : cleaned;
+    };
+
+    section.style.display = 'block';
+    list.innerHTML = validGreetings.map((greeting, idx) => `
+        <details class="browse-alt-greeting" data-greeting-idx="${idx}">
+            <summary>
+                <span class="browse-alt-greeting-index">#${idx + 1}</span>
+                <span class="browse-alt-greeting-preview">${esc(buildPreview(greeting))}</span>
+                <span class="browse-alt-greeting-chevron"><i class="fa-solid fa-chevron-down"></i></span>
+            </summary>
+            <div class="browse-alt-greeting-body"></div>
+        </details>
+    `).join('');
+
+    list.querySelectorAll?.('details.browse-alt-greeting').forEach(details => {
+        details.addEventListener('toggle', function onToggle() {
+            if (!details.open) return;
+            const body = details.querySelector('.browse-alt-greeting-body');
+            if (body && !body.dataset.rendered) {
+                const idx = parseInt(details.dataset.greetingIdx, 10);
+                body.innerHTML = richText(validGreetings[idx] || '', name);
+                body.dataset.rendered = '1';
+            }
+        }, { once: true });
+    });
+}
+
+function renderMasqueradeGallery(char) {
+    const urls = getGalleryUrls(char);
+    const section = document.getElementById('masqueradeCharGallerySection');
+    const grid = document.getElementById('masqueradeCharGalleryGrid');
+    const stat = document.getElementById('masqueradeCharGalleryStat');
+    const statCount = document.getElementById('masqueradeCharGalleryCount');
+    const label = document.getElementById('masqueradeCharGalleryLabel');
+
+    if (stat) stat.style.display = urls.length ? 'flex' : 'none';
+    if (statCount) statCount.textContent = urls.length;
+    if (label) label.textContent = urls.length ? `(${urls.length})` : '';
+    if (!section || !grid) return;
+
+    if (!urls.length) {
+        section.style.display = 'none';
+        grid.innerHTML = '';
+        return;
+    }
+
+    section.style.display = 'block';
+    grid.innerHTML = urls.map((url, idx) => `
+        <div class="browse-gallery-cell">
+            <img class="browse-gallery-thumb" src="${esc(url)}" alt="${esc(char.name || `Gallery image ${idx + 1}`)}" title="${esc(char.name || 'Gallery image')}" loading="lazy" onload="this.parentElement.classList.add('loaded')" onerror="this.parentElement.classList.add('load-failed')">
+        </div>
+    `).join('');
+}
+
+function cleanupMasqueradeCharModal() {
+    const avatarViewer = document.getElementById('browseAvatarViewer');
+    if (avatarViewer?.remove) BrowseView.closeAvatarViewer?.();
+    window.currentBrowseAltGreetings = null;
+
+    const modal = document.getElementById('masqueradeCharModal');
+    modal?.querySelectorAll?.('[data-full-content]').forEach(el => {
+        delete el.dataset.fullContent;
+    });
+
+    const contentIds = [
+        'masqueradeCharTagline',
+        'masqueradeCharDescription',
+        'masqueradeCharPersonality',
+        'masqueradeCharScenario',
+        'masqueradeCharFirstMsg',
+        'masqueradeCharAltGreetings',
+        'masqueradeCharGalleryGrid',
+    ];
+    for (const id of contentIds) {
+        const el = document.getElementById(id);
+        if (el) el.innerHTML = '';
+    }
+
+    masqueradeSelectedChar = null;
+}
+
 function openPreviewModal(char) {
     masqueradeSelectedChar = char;
     const modal = document.getElementById('masqueradeCharModal');
@@ -382,10 +556,6 @@ function openPreviewModal(char) {
         const el = document.getElementById(id);
         if (el) el.textContent = value || '';
     };
-    const setHtml = (id, value) => {
-        const el = document.getElementById(id);
-        if (el) el.innerHTML = value || '';
-    };
 
     setText('masqueradeCharName', name);
     setText('masqueradeCharCreator', creatorName);
@@ -396,9 +566,18 @@ function openPreviewModal(char) {
     setText('masqueradeCharMessages', formatNumber(char.total_messages || 0));
     setText('masqueradeCharUsers', formatNumber(char.unique_chatters || 0));
     setText('masqueradeCharFans', formatNumber(char.subscriber_count || 0));
-    setHtml('masqueradeCharDescription', richText(char.description || char.scenario || '', name));
-    setHtml('masqueradeCharGreeting', richText(char.greeting || '', name));
-    setHtml('masqueradeCharScenario', char.scenario && char.scenario !== char.description ? richText(char.scenario, name) : '');
+    setText('masqueradeCharDate', char.created_at ? new Date(char.created_at).toLocaleDateString() : 'Unknown');
+    setSectionHtml('masqueradeCharDescriptionSection', 'masqueradeCharDescription', char.description || '', name);
+    setSectionHtml('masqueradeCharPersonalitySection', 'masqueradeCharPersonality', char.personality || '', name);
+    setSectionHtml(
+        'masqueradeCharScenarioSection',
+        'masqueradeCharScenario',
+        char.scenario && char.scenario !== char.description ? char.scenario : '',
+        name,
+    );
+    setSectionHtml('masqueradeCharFirstMsgSection', 'masqueradeCharFirstMsg', char.greeting || char.first_mes || '', name);
+    renderMasqueradeAltGreetings(char.alternate_greetings || [], name);
+    renderMasqueradeGallery(char);
 
     const tagsEl = document.getElementById('masqueradeCharTags');
     if (tagsEl) tagsEl.innerHTML = (char.tags || []).map(tag => `<span class="browse-tag">${esc(tag)}</span>`).join('');
@@ -427,7 +606,7 @@ function openPreviewModal(char) {
 }
 
 function closePreviewModal() {
-    masqueradeSelectedChar = null;
+    cleanupMasqueradeCharModal();
     hideModal?.('masqueradeCharModal');
 }
 
@@ -467,6 +646,7 @@ async function importSelectedCharacter() {
     if (!charData?.id) return;
 
     const importBtn = document.getElementById('masqueradeImportBtn');
+    const originalImportHtml = importBtn?.innerHTML || '<i class="fa-solid fa-download"></i> Import';
     if (importBtn) {
         importBtn.disabled = true;
         importBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Checking...';
@@ -499,10 +679,6 @@ async function importSelectedCharacter() {
 
             if (result?.choice === 'skip') {
                 showToast?.('Import cancelled', 'info');
-                if (importBtn) {
-                    importBtn.disabled = false;
-                    importBtn.innerHTML = '<i class="fa-solid fa-download"></i> Import';
-                }
                 return;
             }
 
@@ -537,9 +713,10 @@ async function importSelectedCharacter() {
     } catch (error) {
         console.error('[MasqueradeBrowse] Import failed:', error);
         showToast?.(`Import failed: ${error.message}`, 'error');
+    } finally {
         if (importBtn) {
             importBtn.disabled = false;
-            importBtn.innerHTML = '<i class="fa-solid fa-download"></i> Import';
+            importBtn.innerHTML = originalImportHtml;
         }
     }
 }
@@ -565,6 +742,33 @@ function bindPersistentModalListeners() {
 
     const modal = document.getElementById('masqueradeCharModal');
     if (!modal) return;
+
+    const isDesktop = !window.matchMedia?.('(max-width: 768px)').matches;
+    if (isDesktop && typeof MutationObserver !== 'undefined') {
+        BrowseView.wireTitleScroll?.(
+            document.getElementById('masqueradeCharName'),
+            modal,
+            modal.querySelector?.('.browse-char-modal'),
+        );
+    }
+
+    const avatar = document.getElementById('masqueradeCharAvatar');
+    if (avatar && isDesktop) {
+        avatar.addEventListener('click', event => {
+            event.stopPropagation();
+            if (!avatar.src || avatar.src.endsWith('/img/ai4.png')) return;
+            BrowseView.openAvatarViewer?.(avatar.src);
+        });
+    }
+
+    const galleryGrid = document.getElementById('masqueradeCharGalleryGrid');
+    galleryGrid?.addEventListener('click', event => {
+        if (!event.target.classList?.contains('browse-gallery-thumb')) return;
+        const thumbs = [...galleryGrid.querySelectorAll('.browse-gallery-thumb')];
+        const urls = thumbs.map(thumb => thumb.src);
+        const idx = thumbs.indexOf(event.target);
+        BrowseView.openAvatarViewer?.(event.target.src, null, urls, idx);
+    });
 
     bind('masqueradeCharClose', 'click', closePreviewModal);
     bind('masqueradeImportBtn', 'click', importSelectedCharacter);
@@ -609,12 +813,12 @@ function updateMasqueradeFiltersButtonState() {
         : '<i class="fa-solid fa-sliders"></i> Features';
 }
 
-function triggerMasqueradeFilterRenderDebounced() {
+function triggerMasqueradeReloadDebounced() {
     if (masqueradeTagFilterDebounceTimeout) clearTimeout(masqueradeTagFilterDebounceTimeout);
     masqueradeTagFilterDebounceTimeout = setTimeout(() => {
         masqueradeTagFilterDebounceTimeout = null;
-        renderGrid(masqueradeCharacters, false);
-    }, 250);
+        resetAndLoad();
+    }, 500);
 }
 
 function renderMasqueradeTagsList(filter = '') {
@@ -678,7 +882,7 @@ function renderMasqueradeTagsList(filter = '') {
             if (searchInput) searchInput.value = '';
             updateMasqueradeTagsButtonState();
             renderMasqueradeTagsList('');
-            triggerMasqueradeFilterRenderDebounced();
+            triggerMasqueradeReloadDebounced();
         }
     });
 
@@ -695,7 +899,7 @@ function renderMasqueradeTagsList(filter = '') {
             }
             updateMasqueradeTagsButtonState();
             renderMasqueradeTagsList(document.getElementById('masqueradeTagsSearchInput')?.value || '');
-            triggerMasqueradeFilterRenderDebounced();
+            triggerMasqueradeReloadDebounced();
         };
 
         item.querySelector?.('.browse-tag-state-btn')?.addEventListener('click', event => {
@@ -741,7 +945,7 @@ function initMasqueradeTagsDropdown() {
         searchInput.value = '';
         updateMasqueradeTagsButtonState();
         renderMasqueradeTagsList('');
-        triggerMasqueradeFilterRenderDebounced();
+        triggerMasqueradeReloadDebounced();
     });
 
     clearBtn?.addEventListener('click', () => {
@@ -749,7 +953,7 @@ function initMasqueradeTagsDropdown() {
         if (searchInput) searchInput.value = '';
         updateMasqueradeTagsButtonState();
         renderMasqueradeTagsList('');
-        renderGrid(masqueradeCharacters, false);
+        resetAndLoad();
     });
 }
 
@@ -794,7 +998,7 @@ class MasqueradeBrowseView extends BrowseView {
     }
 
     canLoadMore() {
-        return masqueradeHasMore && !masqueradeIsLoading && !masqueradeCurrentSearch;
+        return masqueradeHasMore && !masqueradeIsLoading;
     }
 
     loadMore() {
@@ -930,26 +1134,56 @@ class MasqueradeBrowseView extends BrowseView {
                                     <i class="fa-solid fa-heart"></i>
                                     <span id="masqueradeCharFans">0</span> fans
                                 </div>
+                                <div class="browse-stat">
+                                    <i class="fa-solid fa-calendar"></i>
+                                    <span id="masqueradeCharDate">Unknown</span>
+                                </div>
+                                <div class="browse-stat" id="masqueradeCharGreetingsStat" style="display: none;">
+                                    <i class="fa-solid fa-comment-dots"></i>
+                                    <span id="masqueradeCharGreetingsCount">0</span> greetings
+                                </div>
+                                <div class="browse-stat" id="masqueradeCharGalleryStat" style="display: none;">
+                                    <i class="fa-solid fa-images"></i>
+                                    <span id="masqueradeCharGalleryCount">0</span> gallery
+                                </div>
                             </div>
                             <div id="masqueradeCharTags" class="browse-char-tags"></div>
                         </div>
-                        <div class="browse-char-section" id="masqueradeCharDescriptionSection">
+                        <div class="browse-char-section" id="masqueradeCharDescriptionSection" style="display: none;">
                             <h3 class="browse-section-title" data-section="masqueradeCharDescription" data-label="Description" data-icon="fa-solid fa-scroll" title="Click to expand">
                                 <i class="fa-solid fa-scroll"></i> Description
                             </h3>
                             <div id="masqueradeCharDescription" class="scrolling-text"></div>
                         </div>
-                        <div class="browse-char-section" id="masqueradeCharGreetingSection">
-                            <h3 class="browse-section-title" data-section="masqueradeCharGreeting" data-label="First Message" data-icon="fa-solid fa-message" title="Click to expand">
-                                <i class="fa-solid fa-message"></i> First Message
+                        <div class="browse-char-section" id="masqueradeCharPersonalitySection" style="display: none;">
+                            <h3 class="browse-section-title" data-section="masqueradeCharPersonality" data-label="Personality" data-icon="fa-solid fa-brain" title="Click to expand">
+                                <i class="fa-solid fa-brain"></i> Personality
                             </h3>
-                            <div id="masqueradeCharGreeting" class="scrolling-text first-message-preview"></div>
+                            <div id="masqueradeCharPersonality" class="scrolling-text"></div>
                         </div>
-                        <div class="browse-char-section" id="masqueradeCharScenarioSection">
+                        <div class="browse-char-section" id="masqueradeCharScenarioSection" style="display: none;">
                             <h3 class="browse-section-title" data-section="masqueradeCharScenario" data-label="Scenario" data-icon="fa-solid fa-theater-masks" title="Click to expand">
                                 <i class="fa-solid fa-theater-masks"></i> Scenario
                             </h3>
                             <div id="masqueradeCharScenario" class="scrolling-text"></div>
+                        </div>
+                        <div class="browse-char-section" id="masqueradeCharFirstMsgSection" style="display: none;">
+                            <h3 class="browse-section-title" data-section="masqueradeCharFirstMsg" data-label="First Message" data-icon="fa-solid fa-message" title="Click to expand">
+                                <i class="fa-solid fa-message"></i> First Message
+                            </h3>
+                            <div id="masqueradeCharFirstMsg" class="scrolling-text first-message-preview"></div>
+                        </div>
+                        <div class="browse-char-section" id="masqueradeCharAltGreetingsSection" style="display: none;">
+                            <h3 class="browse-section-title" data-section="masqueradeCharAltGreetings" data-label="Alternate Greetings" data-icon="fa-solid fa-comments" title="Click to expand">
+                                <i class="fa-solid fa-comments"></i> Alternate Greetings <span class="browse-section-count" id="masqueradeCharAltGreetingsCount"></span>
+                            </h3>
+                            <div id="masqueradeCharAltGreetings" class="browse-alt-greetings-list"></div>
+                        </div>
+                        <div class="browse-char-section" id="masqueradeCharGallerySection" style="display: none;">
+                            <h3 class="browse-section-title" data-section="masqueradeCharGalleryGrid" data-label="Gallery" data-icon="fa-solid fa-images" title="Click to expand">
+                                <i class="fa-solid fa-images"></i> Gallery <span class="browse-section-count" id="masqueradeCharGalleryLabel"></span>
+                            </h3>
+                            <div id="masqueradeCharGalleryGrid" class="browse-gallery-grid"></div>
                         </div>
                     </div>
                 </div>
@@ -1007,15 +1241,6 @@ class MasqueradeBrowseView extends BrowseView {
             }
         });
         bind('masqueradeSearchInput', 'input', updateSearchClearButton);
-        if (debounce) {
-            const debouncedSearch = debounce(() => {
-                const value = document.getElementById('masqueradeSearchInput')?.value?.trim() || '';
-                if (value === masqueradeCurrentSearch) return;
-                masqueradeCurrentSearch = value;
-                resetAndLoad();
-            }, 450);
-            bind('masqueradeSearchInput', 'input', debouncedSearch);
-        }
         bind('masqueradeSortSelect', 'change', event => {
             masqueradeCurrentSort = event.currentTarget.value || 'popular';
             resetAndLoad();
@@ -1030,27 +1255,27 @@ class MasqueradeBrowseView extends BrowseView {
         bind('masqueradeFilterGallery', 'change', event => {
             masqueradeFilterHasGallery = event.currentTarget.checked;
             updateMasqueradeFiltersButtonState();
-            renderGrid(masqueradeCharacters, false);
+            resetAndLoad();
         });
         bind('masqueradeFilterGreetings', 'change', event => {
             masqueradeFilterHasAltGreetings = event.currentTarget.checked;
             updateMasqueradeFiltersButtonState();
-            renderGrid(masqueradeCharacters, false);
+            resetAndLoad();
         });
         bind('masqueradeFilterAmplified', 'change', event => {
             masqueradeFilterAmplified = event.currentTarget.checked;
             updateMasqueradeFiltersButtonState();
-            renderGrid(masqueradeCharacters, false);
+            resetAndLoad();
         });
         bind('masqueradeFilterHideOwned', 'change', event => {
             masqueradeFilterHideOwned = event.currentTarget.checked;
             updateMasqueradeFiltersButtonState();
-            renderGrid(masqueradeCharacters, false);
+            resetAndLoad();
         });
         bind('masqueradeFilterHidePossible', 'change', event => {
             masqueradeFilterHidePossible = event.currentTarget.checked;
             updateMasqueradeFiltersButtonState();
-            renderGrid(masqueradeCharacters, false);
+            resetAndLoad();
         });
         initMasqueradeTagsDropdown();
         bind('masqueradeNsfwToggle', 'click', () => {

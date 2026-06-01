@@ -198,12 +198,15 @@ export async function browseMasqueradeCharacters(opts = {}) {
 export async function searchMasqueradeCharacters(opts = {}) {
     const {
         query = '',
+        page = 1,
         limit = 60,
         nsfw = false,
         excludeTags = [],
     } = opts;
     const trimmed = String(query || '').trim();
     if (!trimmed) return browseMasqueradeCharacters(opts);
+    const pageSize = Number(limit) || 60;
+    const offset = Math.max(0, (Number(page) - 1) * pageSize);
 
     try {
         const data = await fetchJson(`${MASQUERADE_SUPABASE_REST_BASE}/rpc/search_characters_fuzzy`, {
@@ -211,7 +214,7 @@ export async function searchMasqueradeCharacters(opts = {}) {
             headers: getMasqueradeHeaders(false, true),
             body: JSON.stringify({ search_term: trimmed }),
         });
-        return filterAndNormalizeRows(data, { nsfw, excludeTags }).slice(0, limit);
+        return filterAndNormalizeRows(data, { nsfw, excludeTags }).slice(offset, offset + pageSize);
     } catch (error) {
         debugLog('[Masquerade] RPC search failed, using ilike fallback:', error.message);
         const term = trimmed.replace(/[%(),]/g, ' ');
@@ -223,7 +226,8 @@ export async function searchMasqueradeCharacters(opts = {}) {
             is_obliterated: 'neq.true',
             or: `(name.ilike.%${term}%,tagline.ilike.%${term}%,origin_tag.ilike.%${term}%)`,
             order: MASQUERADE_SORT_OPTIONS.popular.order,
-            limit,
+            limit: pageSize,
+            offset,
         });
         const rows = await fetchJson(url, { headers: getMasqueradeHeaders(false) });
         return filterAndNormalizeRows(rows, { nsfw, excludeTags });
