@@ -2540,6 +2540,50 @@ https://jannyai.com/characters/uuid_slug
                                     </div>
                                 </div>
                                 <div class="settings-group">
+                                    <div class="settings-group-title"><i class="fa-solid fa-user-lock"></i> Account Sync</div>
+                                    <div class="settings-row">
+                                        <label>Status:</label>
+                                        <div class="settings-input-group">
+                                            <span id="datacatAccountStatus" class="settings-status-badge inactive"><i class="fa-solid fa-circle"></i> Signed out</span>
+                                        </div>
+                                    </div>
+                                    <div class="settings-row">
+                                        <label>Email:</label>
+                                        <div class="settings-input-group">
+                                            <input type="email" id="settingsDatacatAccountEmail" class="glass-input" placeholder="you@example.com" autocomplete="username">
+                                        </div>
+                                    </div>
+                                    <div class="settings-row">
+                                        <label>Password:</label>
+                                        <div class="settings-input-group">
+                                            <input type="password" id="settingsDatacatAccountPassword" class="glass-input" placeholder="DataCat password" autocomplete="current-password" data-sensitive="true">
+                                        </div>
+                                    </div>
+                                    <div class="settings-row" style="gap: 8px;">
+                                        <button id="datacatAccountLoginBtn" class="settings-action-btn primary">
+                                            <i class="fa-solid fa-right-to-bracket"></i> Login
+                                        </button>
+                                        <button id="datacatAccountLogoutBtn" class="settings-action-btn danger" style="display: none;">
+                                            <i class="fa-solid fa-right-from-bracket"></i> Logout
+                                        </button>
+                                    </div>
+                                    <div class="settings-row">
+                                        <label class="settings-checkbox-label">
+                                            <input type="checkbox" id="datacatUseAccountExtractionCheckbox">
+                                            <span>Use account session for extraction</span>
+                                        </label>
+                                    </div>
+                                    <div class="settings-row">
+                                        <label class="settings-checkbox-label">
+                                            <input type="checkbox" id="datacatSyncYoursCheckbox">
+                                            <span>Sync save buttons to DataCat Yours</span>
+                                        </label>
+                                    </div>
+                                    <div class="settings-row">
+                                        <span class="settings-hint">Passwords are sent once through cl-helper to DataCat. Character Library stores the returned account session token, not your password. Vault and Cart are not part of this branch.</span>
+                                    </div>
+                                </div>
+                                <div class="settings-group">
                                     <div class="settings-group-title"><i class="fa-solid fa-cloud-arrow-down"></i> Extraction</div>
                                     <div class="settings-row">
                                         <label class="settings-checkbox-label">
