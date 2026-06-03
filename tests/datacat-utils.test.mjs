@@ -12,6 +12,7 @@ import {
     sanitizeDataCatUser,
 } from '../extras/cl-helper/datacat-utils.js';
 import {
+    isDatacatYoursCollectableHit,
     getDatacatGoogleAuthOriginIssue,
     resolveDatacatGoogleAuthLocalhostUrl,
 } from '../modules/providers/datacat/datacat-api.js';
@@ -189,5 +190,32 @@ describe('isDataCatCharacterId', () => {
         assert.equal(isDataCatCharacterId('not a uuid'), false);
         assert.equal(isDataCatCharacterId('--------'), false);
         assert.equal(isDataCatCharacterId('abc--123'), false);
+    });
+});
+
+describe('isDatacatYoursCollectableHit', () => {
+    it('hides Yours controls for unextracted or external-only rows', () => {
+        assert.equal(isDatacatYoursCollectableHit({
+            characterId: '913bce55-0975-4f1c-a8a2-74771c5e51ea',
+            primaryContentSourceKind: 'janitor_core',
+            isFullyExtractedInDb: false,
+            hasPartialExtraction: true,
+            isPublicFeedInDb: false,
+        }), false);
+        assert.equal(isDatacatYoursCollectableHit({
+            character_id: '913bce55-0975-4f1c-a8a2-74771c5e51ea',
+            _source: 'meilisearch',
+        }), false);
+    });
+
+    it('shows Yours controls for extracted creator rows and normal public rows', () => {
+        assert.equal(isDatacatYoursCollectableHit({
+            characterId: '913bce55-0975-4f1c-a8a2-74771c5e51ea',
+            isFullyExtractedInDb: true,
+        }), true);
+        assert.equal(isDatacatYoursCollectableHit({
+            character_id: '190fafd9-b5f0-4c24-b532-7fdac0c5a357',
+            name: 'Public DataCat row',
+        }), true);
     });
 });

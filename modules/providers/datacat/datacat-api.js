@@ -365,6 +365,81 @@ export async function setDatacatYoursSaved(characterId, saved) {
     return dcHelperJson(`${CL_HELPER_PLUGIN_BASE}/dc-yours/${encodeURIComponent(characterId)}`, method);
 }
 
+const DATACAT_EXTERNAL_PREINDEX_SOURCES = new Set(['hampter', 'meilisearch', 'saucepan']);
+
+const DATACAT_YOURS_COLLECTABLE_FLAGS = [
+    'isCollected',
+    'viewer_is_collected',
+    'is_collected',
+    'collected',
+    'isOwnedByViewer',
+    'is_owned_by_viewer',
+    'isPublicFeedInDb',
+    'is_public_feed_in_db',
+    'isSystemPublicInDb',
+    'is_system_public_in_db',
+    'isPublicInDb',
+    'is_public_in_db',
+    'isFullyExtractedInDb',
+    'is_fully_extracted_in_db',
+    'hasJannyRecovery',
+    'has_janny_recovery',
+    'isRecoveryPlaceholder',
+    'is_recovery_placeholder',
+];
+
+const DATACAT_YOURS_EXPLICIT_DB_SIGNAL_FLAGS = [
+    'isOwnedByViewer',
+    'is_owned_by_viewer',
+    'isPublicFeedInDb',
+    'is_public_feed_in_db',
+    'isSystemPublicInDb',
+    'is_system_public_in_db',
+    'isPublicInDb',
+    'is_public_in_db',
+    'isFullyExtractedInDb',
+    'is_fully_extracted_in_db',
+    'hasPartialExtraction',
+    'has_partial_extraction',
+    'hasJannyRecovery',
+    'has_janny_recovery',
+    'isRecoveryPlaceholder',
+    'is_recovery_placeholder',
+];
+
+function hasOwnFlag(obj, key) {
+    return Object.prototype.hasOwnProperty.call(obj, key);
+}
+
+/**
+ * DataCat can only collect/save records that exist in its character table.
+ * Creator-profile and external-search rows may have a source UUID before the
+ * DataCat character record has been extracted, so UUID alone is not enough.
+ *
+ * Unknown DataCat-native public rows are treated as collectable to preserve the
+ * existing public feed behavior. Rows with explicit extraction DB flags, or
+ * external pre-index sources, must prove collectability first.
+ *
+ * @param {Object|null} hit
+ * @returns {boolean}
+ */
+export function isDatacatYoursCollectableHit(hit) {
+    if (!hit || typeof hit !== 'object') return false;
+    if (hit._fullCharacter && typeof hit._fullCharacter === 'object') return true;
+    if (hit.character && typeof hit.character === 'object') return true;
+
+    if (DATACAT_YOURS_COLLECTABLE_FLAGS.some(key => hit[key] === true)) return true;
+    if (hit.hasPartialExtraction === true || hit.has_partial_extraction === true) return false;
+
+    const source = String(hit._source || '').trim().toLowerCase();
+    if (DATACAT_EXTERNAL_PREINDEX_SOURCES.has(source)) return false;
+
+    const hasExplicitDbSignal = DATACAT_YOURS_EXPLICIT_DB_SIGNAL_FLAGS.some(key => hasOwnFlag(hit, key));
+    if (hasExplicitDbSignal) return false;
+
+    return true;
+}
+
 // ========================================
 // METADATA FETCH
 // ========================================

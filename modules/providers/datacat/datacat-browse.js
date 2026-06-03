@@ -31,6 +31,7 @@ import {
     fetchSaucepanCompanionsOfUser,
     fetchDatacatYoursStatus,
     setDatacatYoursSaved,
+    isDatacatYoursCollectableHit,
     JANNY_TAG_MAP,
     pickRecoveryVariant,
     createFlareSolverrSession,
@@ -328,6 +329,15 @@ function getDatacatYoursState(characterId, hit = null) {
     return normalizeDatacatCollected(hit);
 }
 
+function canShowDatacatYoursControl(characterId, hit = null) {
+    const id = String(characterId || '').trim();
+    return !!(id && isDatacatYoursSyncEnabled() && isDatacatYoursCollectableHit(hit));
+}
+
+function renderDatacatYoursCardButton(characterId, saved) {
+    return `<button type="button" class="datacat-yours-btn${saved ? ' saved' : ''}" data-datacat-yours-id="${escapeHtml(String(characterId))}" title="${saved ? 'Saved to DataCat Yours' : 'Save to DataCat Yours'}">${saved ? '<i class="fa-solid fa-star"></i>' : '<i class="fa-regular fa-star"></i>'}</button>`;
+}
+
 function setDatacatYoursState(characterId, saved) {
     const id = String(characterId || '').trim();
     if (!id) return;
@@ -349,11 +359,85 @@ function setDatacatYoursState(characterId, saved) {
     }
 }
 
+function updateDatacatCardYoursControl(characterId, hit = null) {
+    const id = String(characterId || '').trim();
+    if (!id) return;
+
+    for (const gridId of ['datacatGrid', 'datacatFollowingGrid']) {
+        const grid = document.getElementById(gridId);
+        const card = grid?.querySelector(`[data-datacat-id="${id}"]`);
+        const image = card?.querySelector('.browse-card-image');
+        if (!image) continue;
+
+        const existing = image.querySelector('.datacat-yours-btn');
+        if (!canShowDatacatYoursControl(id, hit)) {
+            existing?.remove();
+            continue;
+        }
+
+        const saved = getDatacatYoursState(id, hit);
+        const html = renderDatacatYoursCardButton(id, saved);
+        if (existing) {
+            existing.outerHTML = html;
+        } else {
+            image.insertAdjacentHTML('beforeend', html);
+        }
+    }
+}
+
+function syncDatacatCollectableCharacter(characterId, character) {
+    const id = String(characterId || '').trim();
+    if (!id || !character || typeof character !== 'object') return;
+
+    const apply = (entry) => {
+        if (!entry || String(getCharId(entry)) !== id) return;
+        entry._fullCharacter = character;
+        entry.isFullyExtractedInDb = true;
+        entry.is_fully_extracted_in_db = true;
+        entry.hasPartialExtraction = false;
+        entry.has_partial_extraction = false;
+        if (character.isCollected === true || character.viewer_is_collected === true || character.is_collected === true) {
+            entry.isCollected = true;
+            entry.viewer_is_collected = true;
+            entry.is_collected = true;
+        }
+    };
+
+    datacatCharacters.forEach(apply);
+    datacatFollowingCharacters.forEach(apply);
+    updateDatacatCardYoursControl(id, character);
+}
+
+function updateDatacatModalYoursControl(characterId, hit = null, { refresh = false } = {}) {
+    const id = String(characterId || '').trim();
+    const btn = document.getElementById('datacatYoursBtn');
+    if (!btn) return;
+
+    btn.dataset.datacatId = id;
+    btn.disabled = false;
+    if (!canShowDatacatYoursControl(id, hit)) {
+        btn.style.display = 'none';
+        return;
+    }
+
+    btn.style.display = '';
+    setDatacatYoursState(id, getDatacatYoursState(id, hit));
+    if (refresh) {
+        fetchDatacatYoursStatus(id).then(result => {
+            if (result?.ok) setDatacatYoursState(id, result.collected === true);
+        }).catch(() => {});
+    }
+}
+
 async function toggleDatacatYours(characterId, hit = null) {
     const id = String(characterId || '').trim();
     if (!id) return;
     if (!isDatacatYoursSyncEnabled()) {
         showToast('Sign in to DataCat in Settings to sync Yours', 'warning');
+        return;
+    }
+    if (!canShowDatacatYoursControl(id, hit)) {
+        showToast('Extract this character first; DataCat saves extracted account characters to Yours automatically.', 'info');
         return;
     }
     if (datacatYoursPendingIds.has(id)) return;
@@ -445,10 +529,10 @@ function createDatacatCard(hit) {
     }
 
     const cardClass = inLibrary ? 'browse-card in-library' : possibleMatch ? 'browse-card possible-library' : 'browse-card';
-    const canSyncYours = isDatacatYoursSyncEnabled() && charId;
+    const canSyncYours = canShowDatacatYoursControl(charId, hit);
     const savedToYours = getDatacatYoursState(charId, hit);
     const yoursBtn = canSyncYours
-        ? `<button type="button" class="datacat-yours-btn${savedToYours ? ' saved' : ''}" data-datacat-yours-id="${escapeHtml(String(charId))}" title="${savedToYours ? 'Saved to DataCat Yours' : 'Save to DataCat Yours'}">${savedToYours ? '<i class="fa-solid fa-star"></i>' : '<i class="fa-regular fa-star"></i>'}</button>`
+        ? renderDatacatYoursCardButton(charId, savedToYours)
         : '';
 
     return `
@@ -2585,16 +2669,7 @@ function openPreviewModal(hit) {
     }
     const yoursBtn = document.getElementById('datacatYoursBtn');
     if (yoursBtn) {
-        const canSyncYours = isDatacatYoursSyncEnabled() && charId;
-        yoursBtn.style.display = canSyncYours ? '' : 'none';
-        yoursBtn.dataset.datacatId = String(charId || '');
-        yoursBtn.disabled = false;
-        setDatacatYoursState(charId, getDatacatYoursState(charId, hit));
-        if (canSyncYours) {
-            fetchDatacatYoursStatus(charId).then(result => {
-                if (result?.ok) setDatacatYoursState(charId, result.collected === true);
-            }).catch(() => {});
-        }
+        updateDatacatModalYoursControl(charId, hit, { refresh: canShowDatacatYoursControl(charId, hit) });
     }
 
     // Stats (adapt to available data)
@@ -2779,6 +2854,16 @@ async function fetchAndPopulateDetails(hit, token) {
         if (!character) {
             const saucepanDetail = await saucepanDetailPromise;
             const lockedDef = isSaucepanHit && saucepanDetail && saucepanDetail.open_definition === false;
+            updateDatacatModalYoursControl(charId, {
+                ...hit,
+                isFullyExtractedInDb: false,
+                hasPartialExtraction: true,
+            });
+            updateDatacatCardYoursControl(charId, {
+                ...hit,
+                isFullyExtractedInDb: false,
+                hasPartialExtraction: true,
+            });
             showExtractionCTA(isSaucepanHit
                 ? 'This Saucepan character has not been extracted to DataCat yet.'
                 : 'Character definition is hidden or unavailable.',
@@ -2790,6 +2875,8 @@ async function fetchAndPopulateDetails(hit, token) {
         if (datacatSelectedChar && getCharId(datacatSelectedChar) === charId) {
             datacatSelectedChar._fullCharacter = character;
         }
+        syncDatacatCollectableCharacter(charId, character);
+        updateDatacatModalYoursControl(charId, character, { refresh: true });
 
         // Update creator name if available (MeiliSearch hits lack it)
         const charCreatorName = character.creator_name || character.creatorName || '';
@@ -3019,6 +3106,16 @@ async function fetchAndPopulateDetails(hit, token) {
         if (token === datacatDetailFetchToken) {
             const defLoading = document.getElementById('datacatCharDefinitionLoading');
             if (defLoading) defLoading.style.display = 'none';
+            updateDatacatModalYoursControl(charId, {
+                ...hit,
+                isFullyExtractedInDb: false,
+                hasPartialExtraction: true,
+            });
+            updateDatacatCardYoursControl(charId, {
+                ...hit,
+                isFullyExtractedInDb: false,
+                hasPartialExtraction: true,
+            });
             showExtractionCTA('Could not load character definition.');
         }
     }
