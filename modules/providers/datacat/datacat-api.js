@@ -762,7 +762,7 @@ export function buildV2FromDownload(downloadData, character) {
 export async function submitExtraction(janitorUrl, { publicFeed = true, alwaysReextract = false } = {}) {
     if (!_apiRequest) throw new Error('DataCat: apiRequest not bound');
     try {
-        const resp = await _apiRequest(`${CL_HELPER_PLUGIN_BASE}/dc-extract`, 'POST', { url: janitorUrl, publicFeed, alwaysReextract });
+        const resp = await dcHelperRequest(`${CL_HELPER_PLUGIN_BASE}/dc-extract`, 'POST', { url: janitorUrl, publicFeed, alwaysReextract });
         if (!resp.ok) {
             const errText = await resp.text();
             console.error('[DataCat] dc-extract error:', resp.status, errText.substring(0, 200));

@@ -571,6 +571,8 @@ window.datacatValidateAccount = async () => {
 };
 
 window.datacatLogoutAccount = async () => {
+    const pluginOk = await checkDcPluginAvailable();
+    if (!pluginOk) return { ok: false, error: 'cl-helper plugin not available' };
     return logoutDatacatAccount();
 };
 
