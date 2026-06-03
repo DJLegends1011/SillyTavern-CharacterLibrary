@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 
 import {
     buildDataCatHeaders,
+    buildDataCatAccountIdentifyHeaders,
     buildDataCatGoogleSigninBody,
     chooseDataCatToken,
     isDataCatCharacterId,
@@ -77,6 +78,25 @@ describe('buildDataCatHeaders', () => {
             'X-Device-Token': 'device',
             'Content-Type': 'application/json',
         });
+    });
+});
+
+describe('buildDataCatAccountIdentifyHeaders', () => {
+    it('builds authenticated identify headers without requiring a device token', () => {
+        assert.deepEqual(buildDataCatAccountIdentifyHeaders('  account-token  ', null), {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            Accept: 'application/json',
+            Origin: 'https://datacat.run',
+            Referer: 'https://datacat.run/',
+            'X-Session-Token': 'account-token',
+            'Content-Type': 'application/json',
+        });
+    });
+
+    it('includes a device token when one is available', () => {
+        assert.equal(buildDataCatAccountIdentifyHeaders('', 'device'), null);
+        assert.equal(buildDataCatAccountIdentifyHeaders('bad\ntoken', 'device'), null);
+        assert.deepEqual(buildDataCatAccountIdentifyHeaders('account-token', 'device-token')['X-Device-Token'], 'device-token');
     });
 });
 

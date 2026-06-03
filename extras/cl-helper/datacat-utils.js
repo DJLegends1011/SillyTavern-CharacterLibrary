@@ -64,6 +64,12 @@ export function buildDataCatHeaders({
     return headers;
 }
 
+export function buildDataCatAccountIdentifyHeaders(accountToken, deviceToken = null) {
+    const sessionToken = normalizeDcCredential(accountToken);
+    if (!sessionToken) return null;
+    return buildDataCatHeaders({ sessionToken, deviceToken, json: true });
+}
+
 export function buildDataCatGoogleSigninBody(firebaseIdToken, anonymousToken = null) {
     const token = normalizeDcCredential(firebaseIdToken);
     if (!token) return null;

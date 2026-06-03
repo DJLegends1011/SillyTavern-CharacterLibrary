@@ -13,6 +13,7 @@ import * as zlib from 'node:zlib';
 import { promisify } from 'node:util';
 import {
     DATACAT_BROWSER_UA,
+    buildDataCatAccountIdentifyHeaders,
     buildDataCatHeaders,
     buildDataCatGoogleSigninBody,
     chooseDataCatToken,
@@ -898,6 +899,33 @@ async function verifyDcAccountToken(token) {
     }
 }
 
+async function activateDcAccountSession(token) {
+    const headers = buildDataCatAccountIdentifyHeaders(token, dcDeviceToken);
+    if (!headers) {
+        return { ok: false, reason: 'missing account token' };
+    }
+
+    try {
+        const response = await fetch(`${DATACAT_BASE}/api/liberator/identify`, {
+            method: 'POST',
+            headers,
+        });
+        const data = await readDcJson(response);
+        if (response.ok) {
+            if (data?.deviceToken || data?.newDeviceToken) {
+                dcDeviceToken = data.deviceToken || data.newDeviceToken;
+            }
+            return { ok: true };
+        }
+        return {
+            ok: false,
+            reason: data?.reason || data?.error || `HTTP ${response.status}`,
+        };
+    } catch (err) {
+        return { ok: false, reason: err.message };
+    }
+}
+
 function buildDcRedirectHeaders(url, token) {
     if (url.protocol === 'https:' && url.hostname === 'datacat.run') {
         return buildDataCatHeaders({ sessionToken: token, deviceToken: dcDeviceToken });
@@ -1071,6 +1099,10 @@ function registerDataCatRoutes(router) {
                 if (data.newDeviceToken) dcDeviceToken = data.newDeviceToken;
                 const accountUser = sanitizeDataCatUser(data.user || data.session?.user || null);
                 setDcAccountSession(clientId, accountToken, accountUser);
+                const activation = await activateDcAccountSession(accountToken);
+                if (!activation.ok) {
+                    console.warn('[cl-helper] DC auth login account activation failed:', activation.reason);
+                }
                 return res.json({ ok: true, accountToken, deviceToken: dcDeviceToken, user: accountUser });
             }
 
@@ -1109,6 +1141,10 @@ function registerDataCatRoutes(router) {
                 if (data.newDeviceToken) dcDeviceToken = data.newDeviceToken;
                 const accountUser = sanitizeDataCatUser(data.user || data.session?.user || null);
                 setDcAccountSession(clientId, accountToken, accountUser);
+                const activation = await activateDcAccountSession(accountToken);
+                if (!activation.ok) {
+                    console.warn('[cl-helper] DC auth google account activation failed:', activation.reason);
+                }
                 return res.json({ ok: true, accountToken, deviceToken: dcDeviceToken, user: accountUser });
             }
 
@@ -1141,6 +1177,10 @@ function registerDataCatRoutes(router) {
         }
 
         setDcAccountSession(clientId, value, verification.user);
+        const activation = await activateDcAccountSession(value);
+        if (!activation.ok) {
+            console.warn('[cl-helper] DC auth set account activation failed:', activation.reason);
+        }
         return res.json({ ok: true, valid: true, user: verification.user, deviceToken: dcDeviceToken });
     });
 
@@ -1156,6 +1196,10 @@ function registerDataCatRoutes(router) {
         const verification = await verifyDcAccountToken(session.token);
         if (verification.valid) {
             setDcAccountSession(clientId, session.token, verification.user);
+            const activation = await activateDcAccountSession(session.token);
+            if (!activation.ok) {
+                console.warn('[cl-helper] DC auth status account activation failed:', activation.reason);
+            }
             return res.json({ valid: true, user: verification.user, deviceToken: dcDeviceToken });
         }
 
@@ -1226,6 +1270,16 @@ function registerDataCatRoutes(router) {
         const wantPublicFeed = req.body.publicFeed !== false;
         const alwaysReextract = req.body.alwaysReextract === true;
 
+        if (active.source === 'account') {
+            const activation = await activateDcAccountSession(active.token);
+            if (!activation.ok) {
+                return res.status(401).json({
+                    error: 'Failed to activate DataCat account session',
+                    reason: activation.reason,
+                });
+            }
+        }
+
         // Resolve a public session ID when public feed is requested
         let sessionId = null;
         if (wantPublicFeed) {
@@ -1252,6 +1306,7 @@ function registerDataCatRoutes(router) {
                     openLoginIfNoSession: true,
                     sessionId,
                     appearOnPublicFeed: wantPublicFeed && !!sessionId,
+                    publicFeedVisibilityIntent: wantPublicFeed && !!sessionId,
                     useSeparateWorkerServer: true,
                     inlinePostExtractCreatorProfile: true,
                     idempotencyKey: requestId,
