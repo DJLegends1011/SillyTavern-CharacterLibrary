@@ -2927,6 +2927,11 @@ function setupSettingsModal() {
         if (wyvernEmailInput) wyvernEmailInput.value = '';
         if (wyvernPasswordInput) wyvernPasswordInput.value = '';
         if (wyvernRememberCredsCheckbox) wyvernRememberCredsCheckbox.checked = false;
+        if (datacatAccountEmailInput) datacatAccountEmailInput.value = '';
+        if (datacatAccountPasswordInput) datacatAccountPasswordInput.value = '';
+        if (datacatUseAccountExtractionCheckbox) datacatUseAccountExtractionCheckbox.checked = DEFAULT_SETTINGS.datacatUseAccountForExtraction;
+        if (datacatSyncYoursCheckbox) datacatSyncYoursCheckbox.checked = DEFAULT_SETTINGS.datacatSyncYours;
+        renderDatacatAccountStatus({ valid: false });
         minScoreSlider.value = DEFAULT_SETTINGS.duplicateMinScore;
         minScoreValue.textContent = String(DEFAULT_SETTINGS.duplicateMinScore);
         searchNameCheckbox.checked = DEFAULT_SETTINGS.searchInName;
@@ -3217,8 +3222,9 @@ function setupSettingsModal() {
     // DataCat session management
     function renderDatacatAccountStatus(result = null) {
         if (!datacatAccountStatus) return;
-        const user = result?.user || getSetting('datacatAccountUser') || null;
-        const valid = result?.valid === true || result?.ok === true || !!getSetting('datacatAccountToken');
+        const explicitInvalid = result && (result.valid === false || result.ok === false);
+        const user = explicitInvalid ? null : result?.user || getSetting('datacatAccountUser') || null;
+        const valid = !explicitInvalid && (result?.valid === true || result?.ok === true || !!getSetting('datacatAccountToken'));
         if (valid && user) {
             const label = user.username || user.email || 'Signed in';
             datacatAccountStatus.className = 'settings-status-badge active';
@@ -3237,7 +3243,7 @@ function setupSettingsModal() {
         }
 
         datacatAccountStatus.className = 'settings-status-badge inactive';
-        datacatAccountStatus.innerHTML = '<i class="fa-solid fa-circle"></i> Signed out';
+        datacatAccountStatus.innerHTML = `<i class="fa-solid fa-circle"></i> ${result?.error ? 'Error' : 'Signed out'}`;
         if (datacatAccountLoginBtn) datacatAccountLoginBtn.style.display = '';
         if (datacatAccountLogoutBtn) datacatAccountLogoutBtn.style.display = 'none';
     }
@@ -3252,13 +3258,22 @@ function setupSettingsModal() {
 
         datacatAccountStatus.className = 'settings-status-badge inactive';
         datacatAccountStatus.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Checking...';
-        const result = restore ? await window.datacatRestoreAccount() : await window.datacatValidateAccount?.();
-        if (result?.valid || result?.ok) {
-            if (result.user) setSetting('datacatAccountUser', result.user);
-            if (result.deviceToken) setSetting('datacatDeviceToken', result.deviceToken);
-            renderDatacatAccountStatus({ valid: true, user: result.user || getSetting('datacatAccountUser') });
-        } else {
-            renderDatacatAccountStatus({ valid: false });
+        try {
+            const result = restore ? await window.datacatRestoreAccount() : await window.datacatValidateAccount?.();
+            if (result?.valid || result?.ok) {
+                if (result.user) setSetting('datacatAccountUser', result.user);
+                if (result.deviceToken) setSetting('datacatDeviceToken', result.deviceToken);
+                renderDatacatAccountStatus({ valid: true, user: result.user || getSetting('datacatAccountUser') });
+            } else {
+                if (restore) {
+                    setSetting('datacatAccountToken', null);
+                    setSetting('datacatAccountUser', null);
+                }
+                renderDatacatAccountStatus({ valid: false });
+            }
+        } catch (err) {
+            console.warn('[DataCat] account status check failed:', err);
+            renderDatacatAccountStatus({ valid: false, error: err?.message || 'status check failed' });
         }
     }
 
