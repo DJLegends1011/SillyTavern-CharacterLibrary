@@ -98,6 +98,13 @@ describe('resolveDatacatGoogleAuthLocalhostUrl', () => {
         assert.equal(resolveDatacatGoogleAuthLocalhostUrl('https://127.0.0.1:8001/characters'), null);
         assert.equal(resolveDatacatGoogleAuthLocalhostUrl('not a url'), null);
     });
+
+    it('does not rewrite embedded Character Library pages because SillyTavern CSRF is tied to the parent origin', () => {
+        assert.equal(
+            resolveDatacatGoogleAuthLocalhostUrl('http://127.0.0.1:8001/scripts/extensions/third-party/SillyTavern-CharacterLibrary/app/library.html?csrf=abc&embedded=1'),
+            null,
+        );
+    });
 });
 
 describe('sanitizeDataCatUser', () => {

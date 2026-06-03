@@ -107,6 +107,7 @@ export function resolveDatacatGoogleAuthLocalhostUrl(currentHref) {
     try {
         const url = new URL(currentHref);
         if (url.protocol !== 'http:') return null;
+        if (url.searchParams.get('embedded') === '1') return null;
         if (!['127.0.0.1', '0.0.0.0', '[::1]', '::1'].includes(url.hostname)) return null;
         url.hostname = 'localhost';
         return url.href;
