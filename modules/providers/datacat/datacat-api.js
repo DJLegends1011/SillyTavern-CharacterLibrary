@@ -757,12 +757,13 @@ export function buildV2FromDownload(downloadData, character) {
  * @param {Object} [opts]
  * @param {boolean} [opts.publicFeed=true]
  * @param {boolean} [opts.alwaysReextract=false] - force re-extraction even if DataCat already has the character
+ * @param {boolean} [opts.useAccount=true] - use the restored DataCat account session when available
  * @returns {Promise<{success: boolean, queued?: boolean, started?: boolean, queuePosition?: number, requestId?: string, error?: string, errorCode?: string}>}
  */
-export async function submitExtraction(janitorUrl, { publicFeed = true, alwaysReextract = false } = {}) {
+export async function submitExtraction(janitorUrl, { publicFeed = true, alwaysReextract = false, useAccount = true } = {}) {
     if (!_apiRequest) throw new Error('DataCat: apiRequest not bound');
     try {
-        const resp = await dcHelperRequest(`${CL_HELPER_PLUGIN_BASE}/dc-extract`, 'POST', { url: janitorUrl, publicFeed, alwaysReextract });
+        const resp = await dcHelperRequest(`${CL_HELPER_PLUGIN_BASE}/dc-extract`, 'POST', { url: janitorUrl, publicFeed, alwaysReextract, useAccount });
         if (!resp.ok) {
             const errText = await resp.text();
             console.error('[DataCat] dc-extract error:', resp.status, errText.substring(0, 200));

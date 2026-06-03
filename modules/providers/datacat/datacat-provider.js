@@ -260,7 +260,11 @@ class DatacatProvider extends ProviderBase {
             const publicFeed = CoreAPI.getSetting('datacatPublicFeed') === true;
 
             report?.('Submitting re-extraction request...');
-            const result = await submitExtraction(upstreamUrl, { publicFeed, alwaysReextract: true });
+            const result = await submitExtraction(upstreamUrl, {
+                publicFeed,
+                alwaysReextract: true,
+                useAccount: CoreAPI.getSetting('datacatUseAccountForExtraction') !== false,
+            });
             if (!result?.success && !result?.queued && !result?.started) {
                 api?.debugLog?.('[DatacatProvider] refreshRemoteData: extraction submit failed:', result?.error);
                 return;

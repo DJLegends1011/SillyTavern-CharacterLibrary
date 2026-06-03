@@ -29,6 +29,8 @@ import {
     searchSaucepan,
     fetchSaucepanCompanion,
     fetchSaucepanCompanionsOfUser,
+    fetchDatacatYoursStatus,
+    setDatacatYoursSaved,
     JANNY_TAG_MAP,
     pickRecoveryVariant,
     createFlareSolverrSession,
@@ -93,6 +95,8 @@ let datacatFilterHideOwned = false;
 let datacatFilterHidePossible = false;
 let datacatFilterHideJanitor = false;
 let datacatFilterHideSaucepan = false;
+const datacatYoursStateById = new Map();
+const datacatYoursPendingIds = new Set();
 
 // Fresh endpoint pagination
 let datacatFreshLimit24 = 80;
@@ -309,6 +313,68 @@ function getSourceKind(hit) {
     return hit?.primary_content_source_kind === 'saucepan' ? 'saucepan' : 'janitor';
 }
 
+function isDatacatYoursSyncEnabled() {
+    return !!(getSetting('datacatAccountToken') && getSetting('datacatSyncYours') !== false);
+}
+
+function normalizeDatacatCollected(hit) {
+    return hit?.isCollected === true || hit?.viewer_is_collected === true || hit?.is_collected === true || hit?.collected === true;
+}
+
+function getDatacatYoursState(characterId, hit = null) {
+    const id = String(characterId || '').trim();
+    if (!id) return false;
+    if (datacatYoursStateById.has(id)) return datacatYoursStateById.get(id) === true;
+    return normalizeDatacatCollected(hit);
+}
+
+function setDatacatYoursState(characterId, saved) {
+    const id = String(characterId || '').trim();
+    if (!id) return;
+    datacatYoursStateById.set(id, saved === true);
+    for (const gridId of ['datacatGrid', 'datacatFollowingGrid']) {
+        const grid = document.getElementById(gridId);
+        const card = grid?.querySelector(`[data-datacat-id="${id}"]`);
+        const btn = card?.querySelector('.datacat-yours-btn');
+        if (!btn) continue;
+        btn.classList.toggle('saved', saved === true);
+        btn.title = saved ? 'Saved to DataCat Yours' : 'Save to DataCat Yours';
+        btn.innerHTML = saved ? '<i class="fa-solid fa-star"></i>' : '<i class="fa-regular fa-star"></i>';
+    }
+    const modalBtn = document.getElementById('datacatYoursBtn');
+    if (modalBtn?.dataset?.datacatId === id) {
+        modalBtn.classList.toggle('saved', saved === true);
+        modalBtn.innerHTML = saved ? '<i class="fa-solid fa-star"></i> Saved' : '<i class="fa-regular fa-star"></i> Save';
+        modalBtn.title = saved ? 'Saved to DataCat Yours' : 'Save to DataCat Yours';
+    }
+}
+
+async function toggleDatacatYours(characterId, hit = null) {
+    const id = String(characterId || '').trim();
+    if (!id) return;
+    if (!isDatacatYoursSyncEnabled()) {
+        showToast('Sign in to DataCat in Settings to sync Yours', 'warning');
+        return;
+    }
+    if (datacatYoursPendingIds.has(id)) return;
+
+    const wasSaved = getDatacatYoursState(id, hit);
+    const nextSaved = !wasSaved;
+    datacatYoursPendingIds.add(id);
+    setDatacatYoursState(id, nextSaved);
+    try {
+        const result = await setDatacatYoursSaved(id, nextSaved);
+        if (!result?.ok) throw new Error(result?.error || result?.reason || 'DataCat save failed');
+        setDatacatYoursState(id, result.collected === true);
+        showToast(result.collected ? 'Saved to DataCat Yours' : 'Removed from DataCat Yours', 'success');
+    } catch (err) {
+        setDatacatYoursState(id, wasSaved);
+        showToast(`DataCat Yours sync failed: ${err.message}`, 'error');
+    } finally {
+        datacatYoursPendingIds.delete(id);
+    }
+}
+
 // ========================================
 // CARD RENDERING
 // ========================================
@@ -379,12 +445,18 @@ function createDatacatCard(hit) {
     }
 
     const cardClass = inLibrary ? 'browse-card in-library' : possibleMatch ? 'browse-card possible-library' : 'browse-card';
+    const canSyncYours = isDatacatYoursSyncEnabled() && charId;
+    const savedToYours = getDatacatYoursState(charId, hit);
+    const yoursBtn = canSyncYours
+        ? `<button type="button" class="datacat-yours-btn${savedToYours ? ' saved' : ''}" data-datacat-yours-id="${escapeHtml(String(charId))}" title="${savedToYours ? 'Saved to DataCat Yours' : 'Save to DataCat Yours'}">${savedToYours ? '<i class="fa-solid fa-star"></i>' : '<i class="fa-regular fa-star"></i>'}</button>`
+        : '';
 
     return `
         <div class="${cardClass}" data-datacat-id="${escapeHtml(String(charId))}" ${desc ? `title="${escapeHtml(desc)}"` : ''}>
             <div class="browse-card-image">
                 <img data-src="${escapeHtml(avatarUrl)}" src="${IMG_PLACEHOLDER}" alt="${escapeHtml(name)}" decoding="async" fetchpriority="low" onerror="this.dataset.failed='1';this.src='/img/ai4.png'">
                 ${nsfwBadge}
+                ${yoursBtn}
                 ${sourceBadges.length > 0 ? `<div class="browse-feature-badges browse-feature-badges-tl">${sourceBadges.join('')}</div>` : ''}
                 ${badges.length > 0 ? `<div class="browse-feature-badges">${badges.join('')}</div>` : ''}
             </div>
@@ -1744,7 +1816,10 @@ async function startExtraction(janitorUrl, janitorId, source = 'janitor') {
     extractionStartTime = Date.now();
 
     try {
-        const result = await submitExtraction(janitorUrl, { publicFeed: getSetting('datacatPublicFeed') === true });
+        const result = await submitExtraction(janitorUrl, {
+            publicFeed: getSetting('datacatPublicFeed') === true,
+            useAccount: getSetting('datacatUseAccountForExtraction') !== false,
+        });
 
         if (result.queued || result.started) {
             extractBtn.innerHTML = '<i class="fa-solid fa-hourglass-half"></i> Extracting...';
@@ -1972,7 +2047,10 @@ async function startModalExtraction(charId, source = 'janitor') {
     extractionStartTime = Date.now();
 
     try {
-        const result = await submitExtraction(sourceUrl, { publicFeed: getSetting('datacatPublicFeed') === true });
+        const result = await submitExtraction(sourceUrl, {
+            publicFeed: getSetting('datacatPublicFeed') === true,
+            useAccount: getSetting('datacatUseAccountForExtraction') !== false,
+        });
 
         if (result.queued || result.started) {
             importBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Extracting...';
@@ -2355,6 +2433,16 @@ function sortFollowingCharacters(characters) {
 }
 
 function _handleFollowingCardClick(e) {
+    const yoursBtn = e.target.closest('.datacat-yours-btn');
+    if (yoursBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        const charId = yoursBtn.dataset.datacatYoursId;
+        const hit = charId ? datacatFollowingCharacters.find(c => String(getCharId(c)) === charId) : null;
+        toggleDatacatYours(charId, hit);
+        return;
+    }
+
     const authorLink = e.target.closest('.browse-card-creator-link');
     if (authorLink) {
         e.stopPropagation();
@@ -2493,6 +2581,19 @@ function openPreviewModal(hit) {
         } else {
             openBtn.href = `${DATACAT_API_BASE}/characters/${charId}`;
             openBtn.title = 'Open on DataCat';
+        }
+    }
+    const yoursBtn = document.getElementById('datacatYoursBtn');
+    if (yoursBtn) {
+        const canSyncYours = isDatacatYoursSyncEnabled() && charId;
+        yoursBtn.style.display = canSyncYours ? '' : 'none';
+        yoursBtn.dataset.datacatId = String(charId || '');
+        yoursBtn.disabled = false;
+        setDatacatYoursState(charId, getDatacatYoursState(charId, hit));
+        if (canSyncYours) {
+            fetchDatacatYoursStatus(charId).then(result => {
+                if (result?.ok) setDatacatYoursState(charId, result.collected === true);
+            }).catch(() => {});
         }
     }
 
@@ -3313,6 +3414,16 @@ function initDatacatView() {
     const grid = document.getElementById('datacatGrid');
     if (grid) {
         grid.addEventListener('click', (e) => {
+            const yoursBtn = e.target.closest('.datacat-yours-btn');
+            if (yoursBtn) {
+                e.preventDefault();
+                e.stopPropagation();
+                const charId = yoursBtn.dataset.datacatYoursId;
+                const hit = charId ? datacatCharacters.find(c => String(getCharId(c)) === charId) : null;
+                toggleDatacatYours(charId, hit);
+                return;
+            }
+
             const authorLink = e.target.closest('.browse-card-creator-link');
             if (authorLink) {
                 e.stopPropagation();
@@ -3694,6 +3805,17 @@ function ensureModalEventsAttached() {
         } else if (datacatSelectedChar) {
             importCharacter(datacatSelectedChar);
         }
+    });
+
+    on('datacatYoursBtn', 'click', () => {
+        const btn = document.getElementById('datacatYoursBtn');
+        const charId = btn?.dataset?.datacatId;
+        const hit = charId ? (
+            datacatCharacters.find(c => String(getCharId(c)) === charId)
+            || datacatFollowingCharacters.find(c => String(getCharId(c)) === charId)
+            || datacatSelectedChar
+        ) : null;
+        toggleDatacatYours(charId, hit);
     });
 
     const modalOverlay = document.getElementById('datacatCharModal');
@@ -4101,6 +4223,9 @@ const datacatBrowseView = new (class DatacatBrowseView extends BrowseView {
                     </div>
                 </div>
                 <div class="modal-controls">
+                    <button id="datacatYoursBtn" class="action-btn secondary datacat-yours-modal-btn" title="Save to DataCat Yours" style="display: none;">
+                        <i class="fa-regular fa-star"></i> Save
+                    </button>
                     <a id="datacatOpenInBrowserBtn" href="#" target="_blank" class="action-btn secondary" title="Open on DataCat">
                         <i class="fa-solid fa-external-link"></i> Open
                     </a>
