@@ -1,18 +1,22 @@
 export const DATACAT_ORIGIN = 'https://datacat.run';
 export const DATACAT_TOKEN_MAX_LENGTH = 4096;
+export const DATACAT_BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36';
 
 export function normalizeDcCredential(value, { maxLength = DATACAT_TOKEN_MAX_LENGTH } = {}) {
     if (typeof value !== 'string') return null;
 
     const normalized = value.trim();
     if (!normalized || normalized.length > maxLength) return null;
+    if (/[\u0000-\u001F\u007F]/.test(normalized)) return null;
 
     return normalized;
 }
 
 export function isDataCatCharacterId(value) {
     const normalized = normalizeDcCredential(value, { maxLength: 80 });
-    return Boolean(normalized && /^[a-f0-9-]{8,64}$/i.test(normalized));
+    return Boolean(normalized
+        && /^[a-f0-9][a-f0-9-]{6,62}[a-f0-9]$/i.test(normalized)
+        && !normalized.includes('--'));
 }
 
 export function chooseDataCatToken({
@@ -29,9 +33,6 @@ export function chooseDataCatToken({
     if (anonymous) {
         return { token: anonymous, source: 'anonymous' };
     }
-    if (account) {
-        return { token: account, source: 'account' };
-    }
 
     return { token: null, source: null };
 }
@@ -42,7 +43,7 @@ export function buildDataCatHeaders({
     json = false,
 } = {}) {
     const headers = {
-        'User-Agent': 'SillyTavern-CharacterLibrary',
+        'User-Agent': DATACAT_BROWSER_UA,
         Accept: 'application/json',
         Origin: DATACAT_ORIGIN,
         Referer: `${DATACAT_ORIGIN}/`,
@@ -62,9 +63,9 @@ export function sanitizeDataCatUser(user = null) {
     if (!user || typeof user !== 'object' || Array.isArray(user)) return null;
 
     return {
-        uuid: normalizeDcCredential(user.uuid ?? user.id),
-        email: normalizeDcCredential(user.email),
-        username: normalizeDcCredential(user.username),
-        role: normalizeDcCredential(user.role),
+        uuid: normalizeDcCredential(user.uuid ?? user.id, { maxLength: 128 }),
+        email: normalizeDcCredential(user.email, { maxLength: 320 }),
+        username: normalizeDcCredential(user.username, { maxLength: 80 }),
+        role: normalizeDcCredential(user.role, { maxLength: 40 }),
     };
 }

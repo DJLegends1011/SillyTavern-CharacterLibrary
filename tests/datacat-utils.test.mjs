@@ -14,6 +14,7 @@ describe('normalizeDcCredential', () => {
         assert.equal(normalizeDcCredential('  abc123  '), 'abc123');
         assert.equal(normalizeDcCredential(''), null);
         assert.equal(normalizeDcCredential('   \t\n  '), null);
+        assert.equal(normalizeDcCredential('abc\r\n123'), null);
         assert.equal(normalizeDcCredential(null), null);
         assert.equal(normalizeDcCredential('a'.repeat(4097)), null);
     });
@@ -32,6 +33,10 @@ describe('chooseDataCatToken', () => {
             chooseDataCatToken({ accountToken: 'acct', anonymousToken: 'anon', preferAccount: false }),
             { token: 'anon', source: 'anonymous' },
         );
+        assert.deepEqual(
+            chooseDataCatToken({ accountToken: 'acct', anonymousToken: null, preferAccount: false }),
+            { token: null, source: null },
+        );
     });
 
     it('falls back to anonymous token when preferred account token is empty', () => {
@@ -49,7 +54,7 @@ describe('buildDataCatHeaders', () => {
             deviceToken: 'device',
             json: true,
         }), {
-            'User-Agent': 'SillyTavern-CharacterLibrary',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
             Accept: 'application/json',
             Origin: 'https://datacat.run',
             Referer: 'https://datacat.run/',
@@ -88,5 +93,7 @@ describe('isDataCatCharacterId', () => {
         assert.equal(isDataCatCharacterId('abc12345'), true);
         assert.equal(isDataCatCharacterId('../bad'), false);
         assert.equal(isDataCatCharacterId('not a uuid'), false);
+        assert.equal(isDataCatCharacterId('--------'), false);
+        assert.equal(isDataCatCharacterId('abc--123'), false);
     });
 });
