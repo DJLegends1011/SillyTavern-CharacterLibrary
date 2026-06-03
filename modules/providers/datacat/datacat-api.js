@@ -388,6 +388,13 @@ const DATACAT_YOURS_COLLECTABLE_FLAGS = [
     'is_recovery_placeholder',
 ];
 
+const DATACAT_YOURS_SAVED_FLAGS = [
+    'isCollected',
+    'viewer_is_collected',
+    'is_collected',
+    'collected',
+];
+
 const DATACAT_YOURS_EXPLICIT_DB_SIGNAL_FLAGS = [
     'isOwnedByViewer',
     'is_owned_by_viewer',
@@ -438,6 +445,22 @@ export function isDatacatYoursCollectableHit(hit) {
     if (hasExplicitDbSignal) return false;
 
     return true;
+}
+
+/**
+ * Resolve whether a row is currently saved in DataCat Yours.
+ *
+ * `savedOverride` lets the CL-side live toggle cache supersede stale listing
+ * data after the user saves or unsaves without a full DataCat reload.
+ *
+ * @param {Object|null} hit
+ * @param {boolean|null} [savedOverride=null]
+ * @returns {boolean}
+ */
+export function isDatacatYoursSavedHit(hit, savedOverride = null) {
+    if (typeof savedOverride === 'boolean') return savedOverride;
+    if (!hit || typeof hit !== 'object') return false;
+    return DATACAT_YOURS_SAVED_FLAGS.some(key => hit[key] === true);
 }
 
 // ========================================

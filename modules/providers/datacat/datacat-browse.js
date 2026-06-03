@@ -32,6 +32,7 @@ import {
     fetchDatacatYoursStatus,
     setDatacatYoursSaved,
     isDatacatYoursCollectableHit,
+    isDatacatYoursSavedHit,
     JANNY_TAG_MAP,
     pickRecoveryVariant,
     createFlareSolverrSession,
@@ -94,6 +95,7 @@ let datacatCreatorSortMode = 'chat_count';
 
 let datacatFilterHideOwned = false;
 let datacatFilterHidePossible = false;
+let datacatFilterOnlyYours = false;
 let datacatFilterHideJanitor = false;
 let datacatFilterHideSaucepan = false;
 const datacatYoursStateById = new Map();
@@ -329,6 +331,14 @@ function getDatacatYoursState(characterId, hit = null) {
     return normalizeDatacatCollected(hit);
 }
 
+function isDatacatYoursFilteredHit(hit) {
+    const id = getCharId(hit);
+    const state = String(id || '').trim() && datacatYoursStateById.has(String(id).trim())
+        ? getDatacatYoursState(id, hit)
+        : null;
+    return isDatacatYoursSavedHit(hit, state);
+}
+
 function canShowDatacatYoursControl(characterId, hit = null) {
     const id = String(characterId || '').trim();
     return !!(id && isDatacatYoursSyncEnabled() && isDatacatYoursCollectableHit(hit));
@@ -356,6 +366,15 @@ function setDatacatYoursState(characterId, saved) {
         modalBtn.classList.toggle('saved', saved === true);
         modalBtn.innerHTML = saved ? '<i class="fa-solid fa-star"></i> Saved' : '<i class="fa-regular fa-star"></i> Save';
         modalBtn.title = saved ? 'Saved to DataCat Yours' : 'Save to DataCat Yours';
+    }
+}
+
+function refreshDatacatOnlyYoursFilterIfActive() {
+    if (!datacatFilterOnlyYours) return;
+    if (datacatViewMode === 'following') {
+        renderFollowing();
+    } else {
+        renderGrid(datacatCharacters, false);
     }
 }
 
@@ -450,6 +469,7 @@ async function toggleDatacatYours(characterId, hit = null) {
         const result = await setDatacatYoursSaved(id, nextSaved);
         if (!result?.ok) throw new Error(result?.error || result?.reason || 'DataCat save failed');
         setDatacatYoursState(id, result.collected === true);
+        refreshDatacatOnlyYoursFilterIfActive();
         showToast(result.collected ? 'Saved to DataCat Yours' : 'Removed from DataCat Yours', 'success');
     } catch (err) {
         setDatacatYoursState(id, wasSaved);
@@ -590,6 +610,9 @@ function renderGrid(characters, append = false) {
     }
     if (datacatFilterHidePossible) {
         filtered = filtered.filter(c => !isCharPossibleMatchObj(c));
+    }
+    if (datacatFilterOnlyYours) {
+        filtered = filtered.filter(c => isDatacatYoursFilteredHit(c));
     }
     if (datacatFilterHideJanitor) {
         filtered = filtered.filter(c => getSourceKind(c) !== 'janitor');
@@ -2568,6 +2591,9 @@ function renderFollowing(append = false) {
     if (datacatFilterHidePossible) {
         filtered = filtered.filter(c => !isCharPossibleMatchObj(c));
     }
+    if (datacatFilterOnlyYours) {
+        filtered = filtered.filter(c => isDatacatYoursFilteredHit(c));
+    }
     if (datacatFilterHideJanitor) {
         filtered = filtered.filter(c => getSourceKind(c) !== 'janitor');
     }
@@ -2592,7 +2618,7 @@ function renderFollowing(append = false) {
             <div class="chub-timeline-empty">
                 <i class="fa-solid fa-filter"></i>
                 <h3>No Matching Characters</h3>
-                <p>No characters match your current NSFW filter setting.</p>
+                <p>No characters match your current DataCat filters.</p>
             </div>
         `;
         datacatBrowseView.updateLoadMoreVisibility('datacatFollowingLoadMore', false, false);
@@ -3477,7 +3503,7 @@ function updateNsfwToggle() {
 function updateDatacatFiltersButtonState() {
     const btn = document.getElementById('datacatFiltersBtn');
     if (!btn) return;
-    const count = [datacatFilterHideOwned, datacatFilterHidePossible, datacatFilterHideJanitor, datacatFilterHideSaucepan].filter(Boolean).length;
+    const count = [datacatFilterHideOwned, datacatFilterHidePossible, datacatFilterOnlyYours, datacatFilterHideJanitor, datacatFilterHideSaucepan].filter(Boolean).length;
     btn.classList.toggle('has-filters', count > 0);
     btn.innerHTML = count > 0
         ? `<i class="fa-solid fa-sliders"></i> Features (${count})`
@@ -3658,6 +3684,7 @@ function initDatacatView() {
     const dcFilterCheckboxes = [
         { id: 'datacatFilterHideOwned', setter: (v) => datacatFilterHideOwned = v, getter: () => datacatFilterHideOwned },
         { id: 'datacatFilterHidePossible', setter: (v) => datacatFilterHidePossible = v, getter: () => datacatFilterHidePossible },
+        { id: 'datacatFilterOnlyYours', setter: (v) => datacatFilterOnlyYours = v, getter: () => datacatFilterOnlyYours },
         { id: 'datacatFilterHideJanitor', setter: (v) => datacatFilterHideJanitor = v, getter: () => datacatFilterHideJanitor },
         { id: 'datacatFilterHideSaucepan', setter: (v) => datacatFilterHideSaucepan = v, getter: () => datacatFilterHideSaucepan },
     ];
@@ -4195,6 +4222,7 @@ const datacatBrowseView = new (class DatacatBrowseView extends BrowseView {
                     <div class="dropdown-section-title">Library:</div>
                     <label class="filter-checkbox"><input type="checkbox" id="datacatFilterHideOwned"> <i class="fa-solid fa-check"></i> Hide Owned Characters</label>
                     <label class="filter-checkbox"><input type="checkbox" id="datacatFilterHidePossible"> <i class="fa-solid fa-check" style="color: #f0a500;"></i> Hide Possible Matches</label>
+                    <label class="filter-checkbox"><input type="checkbox" id="datacatFilterOnlyYours"> <i class="fa-solid fa-star" style="color: var(--accent, #ec4899);"></i> Only DataCat Yours</label>
                     <div id="datacatFilterSourceSection">
                         <div class="dropdown-section-title">Source:</div>
                         <label class="filter-checkbox"><input type="checkbox" id="datacatFilterHideJanitor"> <i class="fa-solid fa-cat"></i> Hide JanitorAI</label>

@@ -13,6 +13,7 @@ import {
 } from '../extras/cl-helper/datacat-utils.js';
 import {
     isDatacatYoursCollectableHit,
+    isDatacatYoursSavedHit,
     getDatacatGoogleAuthOriginIssue,
     resolveDatacatGoogleAuthLocalhostUrl,
 } from '../modules/providers/datacat/datacat-api.js';
@@ -217,5 +218,19 @@ describe('isDatacatYoursCollectableHit', () => {
             character_id: '190fafd9-b5f0-4c24-b532-7fdac0c5a357',
             name: 'Public DataCat row',
         }), true);
+    });
+});
+
+describe('isDatacatYoursSavedHit', () => {
+    it('detects DataCat Yours saved state from row flags', () => {
+        assert.equal(isDatacatYoursSavedHit({ isCollected: true }), true);
+        assert.equal(isDatacatYoursSavedHit({ viewer_is_collected: true }), true);
+        assert.equal(isDatacatYoursSavedHit({ collected: true }), true);
+        assert.equal(isDatacatYoursSavedHit({ name: 'Not saved' }), false);
+    });
+
+    it('lets live CL state override stale row flags', () => {
+        assert.equal(isDatacatYoursSavedHit({ isCollected: true }, false), false);
+        assert.equal(isDatacatYoursSavedHit({ name: 'Saved after click' }, true), true);
     });
 });
