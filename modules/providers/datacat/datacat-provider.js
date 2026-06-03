@@ -32,6 +32,7 @@ import {
     fetchExtractionStatus,
     restoreDatacatAccount,
     loginDatacatAccount,
+    loginDatacatAccountWithGoogle,
     validateDatacatAccount,
     logoutDatacatAccount,
 } from './datacat-api.js';
@@ -566,6 +567,12 @@ window.datacatLoginAccount = async (email, password) => {
     const pluginOk = await checkDcPluginAvailable();
     if (!pluginOk) return { ok: false, error: 'cl-helper plugin not available' };
     return loginDatacatAccount(email, password);
+};
+
+window.datacatLoginAccountWithGoogle = async (firebaseIdToken) => {
+    const pluginOk = await checkDcPluginAvailable();
+    if (!pluginOk) return { ok: false, error: 'cl-helper plugin not available' };
+    return loginDatacatAccountWithGoogle(firebaseIdToken);
 };
 
 window.datacatValidateAccount = async () => {

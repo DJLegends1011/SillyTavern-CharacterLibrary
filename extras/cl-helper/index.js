@@ -14,6 +14,7 @@ import { promisify } from 'node:util';
 import {
     DATACAT_BROWSER_UA,
     buildDataCatHeaders,
+    buildDataCatGoogleSigninBody,
     chooseDataCatToken,
     isDataCatCharacterId,
     normalizeDcCredential,
@@ -1081,6 +1082,44 @@ function registerDataCatRoutes(router) {
             });
         } catch (err) {
             console.error('[cl-helper] DC auth login error:', err.message);
+            return res.status(502).json({ error: 'Failed to reach DataCat' });
+        }
+    });
+
+    router.post('/dc-auth-google', async (req, res) => {
+        const clientId = requireDcClientId(req, res);
+        if (!clientId) return;
+
+        const signinBody = buildDataCatGoogleSigninBody(
+            req.body?.firebaseIdToken || req.body?.idToken || req.body?.token,
+            dcDeviceToken,
+        );
+        if (!signinBody) {
+            return res.status(400).json({ error: 'firebase id token is required' });
+        }
+
+        try {
+            const response = await fetch(`${DATACAT_BASE}/api/auth/google-signin`, {
+                method: 'POST',
+                headers: buildDataCatHeaders({ sessionToken: dcSessionToken, deviceToken: dcDeviceToken, json: true }),
+                body: JSON.stringify(signinBody),
+            });
+            const data = await readDcJson(response);
+
+            if (data?.success && data?.session?.token) {
+                const accountToken = data.session.token;
+                if (data.newDeviceToken) dcDeviceToken = data.newDeviceToken;
+                const accountUser = sanitizeDataCatUser(data.user || data.session?.user || null);
+                setDcAccountSession(clientId, accountToken, accountUser);
+                return res.json({ ok: true, accountToken, deviceToken: dcDeviceToken, user: accountUser });
+            }
+
+            const status = response.ok ? 401 : response.status || 401;
+            return res.status(status).json({
+                error: data?.reason || data?.error || `DataCat Google login failed with HTTP ${response.status}`,
+            });
+        } catch (err) {
+            console.error('[cl-helper] DC auth google error:', err.message);
             return res.status(502).json({ error: 'Failed to reach DataCat' });
         }
     });

@@ -312,6 +312,10 @@ export async function loginDatacatAccount(email, password) {
     return dcHelperJson(`${CL_HELPER_PLUGIN_BASE}/dc-auth-login`, 'POST', { email, password });
 }
 
+export async function loginDatacatAccountWithGoogle(firebaseIdToken) {
+    return dcHelperJson(`${CL_HELPER_PLUGIN_BASE}/dc-auth-google`, 'POST', { firebaseIdToken });
+}
+
 export async function validateDatacatAccount() {
     return dcHelperJson(`${CL_HELPER_PLUGIN_BASE}/dc-auth-status`);
 }
