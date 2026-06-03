@@ -9,6 +9,7 @@ import {
     normalizeDcCredential,
     sanitizeDataCatUser,
 } from '../extras/cl-helper/datacat-utils.js';
+import { resolveDatacatGoogleAuthLocalhostUrl } from '../modules/providers/datacat/datacat-api.js';
 
 describe('normalizeDcCredential', () => {
     it('trims strings and rejects invalid values', () => {
@@ -80,6 +81,22 @@ describe('buildDataCatGoogleSigninBody', () => {
     it('rejects invalid Firebase ID tokens', () => {
         assert.equal(buildDataCatGoogleSigninBody('', 'anon-token'), null);
         assert.equal(buildDataCatGoogleSigninBody('bad\ntoken', 'anon-token'), null);
+    });
+});
+
+describe('resolveDatacatGoogleAuthLocalhostUrl', () => {
+    it('rewrites loopback IP URLs to localhost for Firebase auth', () => {
+        assert.equal(
+            resolveDatacatGoogleAuthLocalhostUrl('http://127.0.0.1:8001/characters?x=1#settings'),
+            'http://localhost:8001/characters?x=1#settings',
+        );
+    });
+
+    it('does not rewrite localhost, LAN, or HTTPS URLs', () => {
+        assert.equal(resolveDatacatGoogleAuthLocalhostUrl('http://localhost:8001/characters'), null);
+        assert.equal(resolveDatacatGoogleAuthLocalhostUrl('http://192.168.1.50:8001/characters'), null);
+        assert.equal(resolveDatacatGoogleAuthLocalhostUrl('https://127.0.0.1:8001/characters'), null);
+        assert.equal(resolveDatacatGoogleAuthLocalhostUrl('not a url'), null);
     });
 });
 

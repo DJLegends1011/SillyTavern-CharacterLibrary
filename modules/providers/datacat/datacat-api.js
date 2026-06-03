@@ -103,6 +103,18 @@ export function getDatacatClientHeaders() {
     return id ? { 'X-CL-Datacat-Client': id } : {};
 }
 
+export function resolveDatacatGoogleAuthLocalhostUrl(currentHref) {
+    try {
+        const url = new URL(currentHref);
+        if (url.protocol !== 'http:') return null;
+        if (!['127.0.0.1', '0.0.0.0', '[::1]', '::1'].includes(url.hostname)) return null;
+        url.hostname = 'localhost';
+        return url.href;
+    } catch {
+        return null;
+    }
+}
+
 export async function dcHelperRequest(path, method = 'GET', data = null) {
     const headers = getDatacatClientHeaders();
     if (_apiRequest) {

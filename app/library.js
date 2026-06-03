@@ -1601,8 +1601,11 @@ function setupSettingsModal() {
     const datacatAccountStatus = document.getElementById('datacatAccountStatus');
     const datacatAccountEmailInput = document.getElementById('settingsDatacatAccountEmail');
     const datacatAccountPasswordInput = document.getElementById('settingsDatacatAccountPassword');
+    const datacatAccountTokenInput = document.getElementById('settingsDatacatAccountToken');
     const datacatAccountLoginBtn = document.getElementById('datacatAccountLoginBtn');
     const datacatAccountGoogleLoginBtn = document.getElementById('datacatAccountGoogleLoginBtn');
+    const datacatAccountTokenConnectBtn = document.getElementById('datacatAccountTokenConnectBtn');
+    const datacatAccountOpenLoginBtn = document.getElementById('datacatAccountOpenLoginBtn');
     const datacatAccountLogoutBtn = document.getElementById('datacatAccountLogoutBtn');
     const datacatUseAccountExtractionCheckbox = document.getElementById('datacatUseAccountExtractionCheckbox');
     const datacatSyncYoursCheckbox = document.getElementById('datacatSyncYoursCheckbox');
@@ -3283,6 +3286,8 @@ function setupSettingsModal() {
             datacatAccountStatus.innerHTML = `<i class="fa-solid fa-circle"></i> ${escapeHtml(label)}`;
             if (datacatAccountLoginBtn) datacatAccountLoginBtn.style.display = 'none';
             if (datacatAccountGoogleLoginBtn) datacatAccountGoogleLoginBtn.style.display = 'none';
+            if (datacatAccountTokenConnectBtn) datacatAccountTokenConnectBtn.style.display = 'none';
+            if (datacatAccountOpenLoginBtn) datacatAccountOpenLoginBtn.style.display = 'none';
             if (datacatAccountLogoutBtn) datacatAccountLogoutBtn.style.display = '';
             return;
         }
@@ -3292,6 +3297,8 @@ function setupSettingsModal() {
             datacatAccountStatus.innerHTML = '<i class="fa-solid fa-circle"></i> Signed in';
             if (datacatAccountLoginBtn) datacatAccountLoginBtn.style.display = 'none';
             if (datacatAccountGoogleLoginBtn) datacatAccountGoogleLoginBtn.style.display = 'none';
+            if (datacatAccountTokenConnectBtn) datacatAccountTokenConnectBtn.style.display = 'none';
+            if (datacatAccountOpenLoginBtn) datacatAccountOpenLoginBtn.style.display = 'none';
             if (datacatAccountLogoutBtn) datacatAccountLogoutBtn.style.display = '';
             return;
         }
@@ -3300,6 +3307,8 @@ function setupSettingsModal() {
         datacatAccountStatus.innerHTML = `<i class="fa-solid fa-circle"></i> ${result?.error ? 'Error' : 'Signed out'}`;
         if (datacatAccountLoginBtn) datacatAccountLoginBtn.style.display = '';
         if (datacatAccountGoogleLoginBtn) datacatAccountGoogleLoginBtn.style.display = '';
+        if (datacatAccountTokenConnectBtn) datacatAccountTokenConnectBtn.style.display = '';
+        if (datacatAccountOpenLoginBtn) datacatAccountOpenLoginBtn.style.display = '';
         if (datacatAccountLogoutBtn) datacatAccountLogoutBtn.style.display = 'none';
     }
 
@@ -3444,6 +3453,13 @@ function setupSettingsModal() {
 
     if (datacatAccountGoogleLoginBtn) {
         datacatAccountGoogleLoginBtn.onclick = async () => {
+            const localhostUrl = window.datacatResolveGoogleAuthLocalhostUrl?.(window.location.href);
+            if (localhostUrl) {
+                showToast('Google login needs localhost instead of 127.0.0.1. Redirecting...', 'info', 6000);
+                window.location.href = localhostUrl;
+                return;
+            }
+
             if (!window.datacatLoginAccountWithGoogle) {
                 showToast('DataCat module not ready', 'error');
                 return;
@@ -3483,6 +3499,44 @@ function setupSettingsModal() {
         };
     }
 
+    if (datacatAccountTokenConnectBtn) {
+        datacatAccountTokenConnectBtn.onclick = async () => {
+            const token = (datacatAccountTokenInput?.value || '').trim();
+            if (!token) {
+                showToast('Paste a DataCat account session token first', 'warning');
+                return;
+            }
+
+            datacatAccountTokenConnectBtn.disabled = true;
+            datacatAccountTokenConnectBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Connecting...';
+            try {
+                setSetting('datacatAccountToken', token);
+                const result = await window.datacatRestoreAccount?.();
+                if (!result?.ok && !result?.valid) {
+                    setSetting('datacatAccountToken', null);
+                    throw new Error(result?.error || result?.reason || 'Token validation failed');
+                }
+                if (result.user) setSetting('datacatAccountUser', result.user);
+                if (result.deviceToken) setSetting('datacatDeviceToken', result.deviceToken);
+                if (datacatAccountTokenInput) datacatAccountTokenInput.value = '';
+                showToast('DataCat account token connected', 'success');
+                renderDatacatAccountStatus({ valid: true, user: result.user || getSetting('datacatAccountUser') });
+            } catch (err) {
+                showToast(`DataCat token connect failed: ${err.message}`, 'error');
+                renderDatacatAccountStatus({ valid: false, error: err.message });
+            } finally {
+                datacatAccountTokenConnectBtn.disabled = false;
+                datacatAccountTokenConnectBtn.innerHTML = '<i class="fa-solid fa-link"></i> Connect Token';
+            }
+        };
+    }
+
+    if (datacatAccountOpenLoginBtn) {
+        datacatAccountOpenLoginBtn.onclick = () => {
+            window.open('https://datacat.run/login', '_blank', 'noopener,noreferrer');
+        };
+    }
+
     if (datacatAccountLogoutBtn) {
         datacatAccountLogoutBtn.onclick = async () => {
             try {
@@ -3490,6 +3544,7 @@ function setupSettingsModal() {
             } catch {}
             setSetting('datacatAccountToken', null);
             setSetting('datacatAccountUser', null);
+            if (datacatAccountTokenInput) datacatAccountTokenInput.value = '';
             showToast('DataCat account disconnected', 'info');
             renderDatacatAccountStatus({ valid: false });
         };

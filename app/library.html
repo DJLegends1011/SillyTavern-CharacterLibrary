@@ -2571,6 +2571,20 @@ https://jannyai.com/characters/uuid_slug
                                         </button>
                                     </div>
                                     <div class="settings-row">
+                                        <label>Account Token:</label>
+                                        <div class="settings-input-group">
+                                            <input type="password" id="settingsDatacatAccountToken" class="glass-input" placeholder="Paste DataCat session token" autocomplete="off" data-sensitive="true">
+                                        </div>
+                                    </div>
+                                    <div class="settings-row" style="gap: 8px;">
+                                        <button id="datacatAccountTokenConnectBtn" class="settings-action-btn">
+                                            <i class="fa-solid fa-link"></i> Connect Token
+                                        </button>
+                                        <button id="datacatAccountOpenLoginBtn" class="settings-action-btn">
+                                            <i class="fa-solid fa-up-right-from-square"></i> Open DataCat Login
+                                        </button>
+                                    </div>
+                                    <div class="settings-row">
                                         <label class="settings-checkbox-label">
                                             <input type="checkbox" id="datacatUseAccountExtractionCheckbox">
                                             <span>Use account session for extraction</span>
@@ -2583,7 +2597,7 @@ https://jannyai.com/characters/uuid_slug
                                         </label>
                                     </div>
                                     <div class="settings-row">
-                                        <span class="settings-hint">Email/password and Google sign-in are sent once through cl-helper to DataCat. Character Library stores the returned account session token, not your password or Google credential. Vault and Cart are not part of this branch.</span>
+                                        <span class="settings-hint">Email/password and Google sign-in are sent once through cl-helper to DataCat. Google works best from <code>localhost</code>; LAN/mobile can paste the DataCat <code>liberator_session_token</code> here. Character Library stores the returned account session token, not your password or Google credential. Vault and Cart are not part of this branch.</span>
                                     </div>
                                 </div>
                                 <div class="settings-group">

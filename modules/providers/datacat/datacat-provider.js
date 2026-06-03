@@ -16,6 +16,7 @@ import {
     setSavedAccountTokenGetter,
     setSavedDeviceTokenGetter,
     setDatacatClientIdGetter,
+    resolveDatacatGoogleAuthLocalhostUrl,
     slugify,
     stripHtml,
     resolveTagNames,
@@ -574,6 +575,8 @@ window.datacatLoginAccountWithGoogle = async (firebaseIdToken) => {
     if (!pluginOk) return { ok: false, error: 'cl-helper plugin not available' };
     return loginDatacatAccountWithGoogle(firebaseIdToken);
 };
+
+window.datacatResolveGoogleAuthLocalhostUrl = resolveDatacatGoogleAuthLocalhostUrl;
 
 window.datacatValidateAccount = async () => {
     const pluginOk = await checkDcPluginAvailable();
