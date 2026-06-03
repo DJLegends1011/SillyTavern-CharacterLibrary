@@ -66,6 +66,9 @@ const DC_PROXY_BASE = `${CL_HELPER_PLUGIN_BASE}/dc-proxy`;
 
 let _apiRequest = null;
 let _getSavedToken = null;
+let _getSavedAccountToken = null;
+let _getSavedDeviceToken = null;
+let _getDatacatClientId = null;
 let _bootstrapInFlight = null;
 
 /**
@@ -81,6 +84,84 @@ export function setApiRequest(fn) { _apiRequest = fn; }
  * the api file to CoreAPI/settings directly. Called once from init().
  */
 export function setSavedTokenGetter(fn) { _getSavedToken = fn; }
+
+export function setSavedAccountTokenGetter(fn) { _getSavedAccountToken = fn; }
+
+export function setSavedDeviceTokenGetter(fn) { _getSavedDeviceToken = fn; }
+
+export function setDatacatClientIdGetter(fn) { _getDatacatClientId = fn; }
+
+export function getDatacatClientId() {
+    const id = _getDatacatClientId?.();
+    if (typeof id !== 'string') return null;
+    const trimmed = id.trim();
+    return trimmed || null;
+}
+
+export function getDatacatClientHeaders() {
+    const id = getDatacatClientId();
+    return id ? { 'X-CL-Datacat-Client': id } : {};
+}
+
+export async function dcHelperRequest(path, method = 'GET', data = null) {
+    const headers = getDatacatClientHeaders();
+    if (_apiRequest) {
+        if (Object.keys(headers).length === 0) {
+            return _apiRequest(path, method, data);
+        }
+        const apiHeaders = {
+            'Content-Type': 'application/json',
+            'X-CSRF-Token': window.getCSRFToken?.() || '',
+            ...headers,
+        };
+        return _apiRequest(path, method, data, { headers: apiHeaders });
+    }
+
+    const config = {
+        method,
+        headers: {
+            'X-CSRF-Token': window.getCSRFToken?.() || '',
+            ...headers,
+        },
+    };
+    if (data != null) {
+        config.headers['Content-Type'] = 'application/json';
+        config.body = JSON.stringify(data);
+    }
+    return fetch(`/api${path}`, config);
+}
+
+export async function dcHelperJson(path, method = 'GET', data = null) {
+    let resp;
+    try {
+        resp = await dcHelperRequest(path, method, data);
+    } catch (err) {
+        return { ok: false, valid: false, error: err?.message || 'network error', reason: 'network error' };
+    }
+
+    let payload = null;
+    let text = '';
+    try {
+        text = await resp.clone().text();
+        if (text) payload = JSON.parse(text);
+    } catch {
+        payload = null;
+    }
+
+    if (resp.ok) {
+        return payload || { ok: true };
+    }
+
+    const message = payload?.error || payload?.reason || payload?.message || text || `request failed (${resp.status})`;
+    return {
+        ...(payload && typeof payload === 'object' ? payload : {}),
+        ok: false,
+        valid: false,
+        status: resp.status,
+        error: message,
+        reason: payload?.reason || message,
+    };
+}
 
 /**
  * Push the saved token (or a fresh anonymous one) into cl-helper. Returns
@@ -111,10 +192,10 @@ async function tryBootstrapSession() {
  */
 async function dcFetch(apiPath) {
     if (!_apiRequest) throw new Error('DataCat: apiRequest not bound (cl-helper required)');
-    let resp = await _apiRequest(`${DC_PROXY_BASE}${apiPath}`);
+    let resp = await dcHelperRequest(`${DC_PROXY_BASE}${apiPath}`);
     if (resp.status === 401 || resp.status === 403) {
         if (await tryBootstrapSession()) {
-            resp = await _apiRequest(`${DC_PROXY_BASE}${apiPath}`);
+            resp = await dcHelperRequest(`${DC_PROXY_BASE}${apiPath}`);
         }
     }
     if (!resp.ok) {
@@ -151,18 +232,13 @@ export async function checkDcPluginAvailable() {
 async function restoreSavedToken(savedToken) {
     if (!savedToken || typeof savedToken !== 'string') return false;
     try {
-        const setResp = _apiRequest
-            ? await _apiRequest(`${CL_HELPER_PLUGIN_BASE}/dc-set-token`, 'POST', { token: savedToken })
-            : await fetch(`/api${CL_HELPER_PLUGIN_BASE}/dc-set-token`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ token: savedToken }),
-            });
+        const deviceToken = _getSavedDeviceToken?.() || null;
+        const body = { token: savedToken };
+        if (deviceToken) body.deviceToken = deviceToken;
+        const setResp = await dcHelperRequest(`${CL_HELPER_PLUGIN_BASE}/dc-set-token`, 'POST', body);
         if (!setResp.ok) return false;
 
-        const valResp = _apiRequest
-            ? await _apiRequest(`${CL_HELPER_PLUGIN_BASE}/dc-validate`)
-            : await fetch(`/api${CL_HELPER_PLUGIN_BASE}/dc-validate`);
+        const valResp = await dcHelperRequest(`${CL_HELPER_PLUGIN_BASE}/dc-validate`);
         if (!valResp.ok) return false;
         const data = await valResp.json();
         return data?.valid === true;
@@ -188,13 +264,7 @@ export async function initDcSession(savedToken, force = false) {
             if (restored) return savedToken;
         }
 
-        const body = force ? JSON.stringify({ force: true }) : undefined;
-        const resp = _apiRequest
-            ? await _apiRequest(`${CL_HELPER_PLUGIN_BASE}/dc-init`, 'POST', force ? { force: true } : undefined)
-            : await fetch(`/api${CL_HELPER_PLUGIN_BASE}/dc-init`, {
-                method: 'POST',
-                ...(force ? { headers: { 'Content-Type': 'application/json' }, body } : {}),
-            });
+        const resp = await dcHelperRequest(`${CL_HELPER_PLUGIN_BASE}/dc-init`, 'POST', force ? { force: true } : null);
         if (!resp.ok) return null;
         const data = await resp.json();
         if (data?.ok && data?.token) return data.token;
@@ -210,9 +280,7 @@ export async function initDcSession(savedToken, force = false) {
  */
 export async function validateDcSession() {
     try {
-        const resp = _apiRequest
-            ? await _apiRequest(`${CL_HELPER_PLUGIN_BASE}/dc-validate`)
-            : await fetch(`/api${CL_HELPER_PLUGIN_BASE}/dc-validate`);
+        const resp = await dcHelperRequest(`${CL_HELPER_PLUGIN_BASE}/dc-validate`);
         if (!resp.ok) return { valid: false, reason: 'request failed' };
         return await resp.json();
     } catch {
@@ -226,13 +294,39 @@ export async function validateDcSession() {
  */
 export async function clearDcSession() {
     try {
-        const resp = _apiRequest
-            ? await _apiRequest(`${CL_HELPER_PLUGIN_BASE}/dc-clear-token`, 'POST')
-            : await fetch(`/api${CL_HELPER_PLUGIN_BASE}/dc-clear-token`, { method: 'POST' });
+        const resp = await dcHelperRequest(`${CL_HELPER_PLUGIN_BASE}/dc-clear-token`, 'POST');
         return resp.ok;
     } catch {
         return false;
     }
+}
+
+export async function restoreDatacatAccount() {
+    const accountToken = _getSavedAccountToken?.() || null;
+    if (!accountToken) return { valid: false, reason: 'no saved account token', user: null };
+    const deviceToken = _getSavedDeviceToken?.() || null;
+    return dcHelperJson(`${CL_HELPER_PLUGIN_BASE}/dc-auth-set`, 'POST', { accountToken, deviceToken });
+}
+
+export async function loginDatacatAccount(email, password) {
+    return dcHelperJson(`${CL_HELPER_PLUGIN_BASE}/dc-auth-login`, 'POST', { email, password });
+}
+
+export async function validateDatacatAccount() {
+    return dcHelperJson(`${CL_HELPER_PLUGIN_BASE}/dc-auth-status`);
+}
+
+export async function logoutDatacatAccount() {
+    return dcHelperJson(`${CL_HELPER_PLUGIN_BASE}/dc-auth-logout`, 'POST');
+}
+
+export async function fetchDatacatYoursStatus(characterId) {
+    return dcHelperJson(`${CL_HELPER_PLUGIN_BASE}/dc-yours/${encodeURIComponent(characterId)}/status`);
+}
+
+export async function setDatacatYoursSaved(characterId, saved) {
+    const method = saved ? 'POST' : 'DELETE';
+    return dcHelperJson(`${CL_HELPER_PLUGIN_BASE}/dc-yours/${encodeURIComponent(characterId)}`, method);
 }
 
 // ========================================

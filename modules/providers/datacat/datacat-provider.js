@@ -13,6 +13,9 @@ import {
     resolveDatacatAvatarUrl,
     setApiRequest,
     setSavedTokenGetter,
+    setSavedAccountTokenGetter,
+    setSavedDeviceTokenGetter,
+    setDatacatClientIdGetter,
     slugify,
     stripHtml,
     resolveTagNames,
@@ -27,6 +30,10 @@ import {
     extractCharacterBookFromScripts,
     submitExtraction,
     fetchExtractionStatus,
+    restoreDatacatAccount,
+    loginDatacatAccount,
+    validateDatacatAccount,
+    logoutDatacatAccount,
 } from './datacat-api.js';
 
 let api = null;
@@ -79,6 +86,15 @@ class DatacatProvider extends ProviderBase {
         api = coreAPI;
         setApiRequest(coreAPI.apiRequest);
         setSavedTokenGetter(() => coreAPI.getSetting('datacatToken') || null);
+        let datacatClientSessionId = coreAPI.getSetting('datacatClientSessionId') || null;
+        if (!datacatClientSessionId) {
+            datacatClientSessionId = globalThis.crypto?.randomUUID?.()
+                || `dc_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+            coreAPI.setSetting('datacatClientSessionId', datacatClientSessionId);
+        }
+        setDatacatClientIdGetter(() => coreAPI.getSetting('datacatClientSessionId') || null);
+        setSavedAccountTokenGetter(() => coreAPI.getSetting('datacatAccountToken') || null);
+        setSavedDeviceTokenGetter(() => coreAPI.getSetting('datacatDeviceToken') || null);
     }
 
     // ── View ────────────────────────────────────────────────
@@ -534,6 +550,28 @@ window.datacatValidateSession = async () => {
     const pluginOk = await checkDcPluginAvailable();
     if (!pluginOk) return { valid: false, reason: 'cl-helper plugin not available' };
     return validateDcSession();
+};
+
+window.datacatRestoreAccount = async () => {
+    const pluginOk = await checkDcPluginAvailable();
+    if (!pluginOk) return { valid: false, reason: 'cl-helper plugin not available' };
+    return restoreDatacatAccount();
+};
+
+window.datacatLoginAccount = async (email, password) => {
+    const pluginOk = await checkDcPluginAvailable();
+    if (!pluginOk) return { ok: false, error: 'cl-helper plugin not available' };
+    return loginDatacatAccount(email, password);
+};
+
+window.datacatValidateAccount = async () => {
+    const pluginOk = await checkDcPluginAvailable();
+    if (!pluginOk) return { valid: false, reason: 'cl-helper plugin not available' };
+    return validateDatacatAccount();
+};
+
+window.datacatLogoutAccount = async () => {
+    return logoutDatacatAccount();
 };
 
 window.datacatRefreshToken = async () => {
