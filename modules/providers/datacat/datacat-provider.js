@@ -17,6 +17,7 @@ import {
     setSavedDeviceTokenGetter,
     setDatacatClientIdGetter,
     resolveDatacatGoogleAuthLocalhostUrl,
+    getDatacatGoogleAuthOriginIssue,
     slugify,
     stripHtml,
     resolveTagNames,
@@ -577,6 +578,7 @@ window.datacatLoginAccountWithGoogle = async (firebaseIdToken) => {
 };
 
 window.datacatResolveGoogleAuthLocalhostUrl = resolveDatacatGoogleAuthLocalhostUrl;
+window.datacatGetGoogleAuthOriginIssue = getDatacatGoogleAuthOriginIssue;
 
 window.datacatValidateAccount = async () => {
     const pluginOk = await checkDcPluginAvailable();

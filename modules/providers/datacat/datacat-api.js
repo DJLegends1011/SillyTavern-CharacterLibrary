@@ -103,14 +103,33 @@ export function getDatacatClientHeaders() {
     return id ? { 'X-CL-Datacat-Client': id } : {};
 }
 
+function isDatacatLoopbackHost(hostname) {
+    return ['127.0.0.1', '0.0.0.0', '[::1]', '::1'].includes(hostname);
+}
+
 export function resolveDatacatGoogleAuthLocalhostUrl(currentHref) {
     try {
         const url = new URL(currentHref);
         if (url.protocol !== 'http:') return null;
         if (url.searchParams.get('embedded') === '1') return null;
-        if (!['127.0.0.1', '0.0.0.0', '[::1]', '::1'].includes(url.hostname)) return null;
+        if (!isDatacatLoopbackHost(url.hostname)) return null;
         url.hostname = 'localhost';
         return url.href;
+    } catch {
+        return null;
+    }
+}
+
+export function getDatacatGoogleAuthOriginIssue(currentHref) {
+    try {
+        const url = new URL(currentHref);
+        const hostname = url.hostname;
+        if (hostname === 'localhost') return null;
+        if (isDatacatLoopbackHost(hostname)) {
+            return url.searchParams.get('embedded') === '1' ? 'embedded-loopback' : 'loopback';
+        }
+        if (url.protocol === 'http:' || url.protocol === 'https:') return 'unsupported-host';
+        return null;
     } catch {
         return null;
     }

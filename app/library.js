@@ -1566,6 +1566,19 @@ function formatDatacatGoogleAuthError(err) {
     return err?.message || 'Google sign-in failed';
 }
 
+function formatDatacatGoogleOriginIssue(issue) {
+    if (issue === 'embedded-loopback') {
+        return 'Google cannot authorize the embedded 127.0.0.1 page without breaking SillyTavern CSRF. Use Account Token instead.';
+    }
+    if (issue === 'loopback') {
+        return 'Google does not authorize 127.0.0.1 for this DataCat login. Open Character Library on localhost or use Account Token.';
+    }
+    if (issue === 'unsupported-host') {
+        return 'Google does not authorize this local host for DataCat login. Use Account Token instead.';
+    }
+    return 'Google cannot authorize this page. Use Account Token instead.';
+}
+
 /**
  * Setup the Gallery Settings Modal
  */
@@ -3457,6 +3470,12 @@ function setupSettingsModal() {
             if (localhostUrl) {
                 showToast('Google login needs localhost instead of 127.0.0.1. Redirecting...', 'info', 6000);
                 window.location.href = localhostUrl;
+                return;
+            }
+            const originIssue = window.datacatGetGoogleAuthOriginIssue?.(window.location.href);
+            if (originIssue) {
+                showToast(`DataCat Google login unavailable: ${formatDatacatGoogleOriginIssue(originIssue)}`, 'warning', 10000);
+                datacatAccountTokenInput?.focus();
                 return;
             }
 
