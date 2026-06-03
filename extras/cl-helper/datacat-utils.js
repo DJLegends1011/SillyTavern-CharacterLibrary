@@ -12,6 +12,11 @@ export function normalizeDcCredential(value, { maxLength = DATACAT_TOKEN_MAX_LEN
     return normalized;
 }
 
+export function normalizeOptionalDcCredential(value, options = {}) {
+    if (value === undefined || value === null) return null;
+    return normalizeDcCredential(value, options);
+}
+
 export function isDataCatCharacterId(value) {
     const normalized = normalizeDcCredential(value, { maxLength: 80 });
     return Boolean(normalized

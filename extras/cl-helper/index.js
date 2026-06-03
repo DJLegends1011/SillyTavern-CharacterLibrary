@@ -18,6 +18,7 @@ import {
     chooseDataCatToken,
     isDataCatCharacterId,
     normalizeDcCredential,
+    normalizeOptionalDcCredential,
     sanitizeDataCatUser,
 } from './datacat-utils.js';
 
@@ -984,10 +985,7 @@ function registerDataCatRoutes(router) {
         if (!value) {
             return res.status(400).json({ error: 'token string is required' });
         }
-        const normalizedDeviceToken = normalizeDcCredential(deviceToken);
-        if (deviceToken !== undefined && !normalizedDeviceToken) {
-            return res.status(400).json({ error: 'Invalid deviceToken' });
-        }
+        const normalizedDeviceToken = normalizeOptionalDcCredential(deviceToken);
 
         dcSessionToken = value;
         if (normalizedDeviceToken) dcDeviceToken = normalizedDeviceToken;
@@ -1134,10 +1132,7 @@ function registerDataCatRoutes(router) {
         }
 
         const suppliedDeviceToken = req.body?.deviceToken;
-        const normalizedDeviceToken = normalizeDcCredential(suppliedDeviceToken);
-        if (suppliedDeviceToken !== undefined && !normalizedDeviceToken) {
-            return res.status(400).json({ error: 'Invalid deviceToken' });
-        }
+        const normalizedDeviceToken = normalizeOptionalDcCredential(suppliedDeviceToken);
         if (normalizedDeviceToken) dcDeviceToken = normalizedDeviceToken;
 
         const verification = await verifyDcAccountToken(value);

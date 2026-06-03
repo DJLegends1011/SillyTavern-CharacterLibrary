@@ -7,6 +7,7 @@ import {
     chooseDataCatToken,
     isDataCatCharacterId,
     normalizeDcCredential,
+    normalizeOptionalDcCredential,
     sanitizeDataCatUser,
 } from '../extras/cl-helper/datacat-utils.js';
 import {
@@ -22,6 +23,15 @@ describe('normalizeDcCredential', () => {
         assert.equal(normalizeDcCredential('abc\r\n123'), null);
         assert.equal(normalizeDcCredential(null), null);
         assert.equal(normalizeDcCredential('a'.repeat(4097)), null);
+    });
+});
+
+describe('normalizeOptionalDcCredential', () => {
+    it('omits missing optional credentials and normalizes supplied strings', () => {
+        assert.equal(normalizeOptionalDcCredential(undefined), null);
+        assert.equal(normalizeOptionalDcCredential(null), null);
+        assert.equal(normalizeOptionalDcCredential(''), null);
+        assert.equal(normalizeOptionalDcCredential('  device-token  '), 'device-token');
     });
 });
 
