@@ -57,6 +57,24 @@ function camelToKebab(s) {
  *     Called after the filter checkbox changes. Provider updates its filters
  *     button, resets pagination, and triggers either renderBookmarksView() or
  *     its regular load.
+ * @param {string} [config.iconClass='fa-bookmark']
+ *     FontAwesome icon name for inactive local bookmark controls.
+ * @param {string} [config.activeIconClass=config.iconClass]
+ *     FontAwesome icon name for active local bookmark controls.
+ * @param {string} [config.modalLabel='Bookmark']
+ *     Button text for the modal bookmark action.
+ * @param {string} [config.filterLabel='My Bookmarks']
+ *     Checkbox label for the local bookmark filter.
+ * @param {string} [config.actionTitle='Bookmark this character']
+ *     Tooltip/title used when the item is not bookmarked.
+ * @param {string} [config.removeTitle='Remove bookmark']
+ *     Tooltip/title used when the item is already bookmarked.
+ * @param {string} [config.emptyMessage]
+ *     Empty-state message for the bookmark-only view.
+ * @param {string} [config.addToast='Bookmarked']
+ *     Toast shown after adding a local bookmark.
+ * @param {string} [config.removeToast='Removed from bookmarks']
+ *     Toast shown after removing a local bookmark.
  */
 export function createBookmarkModule(config) {
     const {
@@ -76,6 +94,15 @@ export function createBookmarkModule(config) {
         renderGrid,
         onEmpty,
         onFilterToggle,
+        iconClass = 'fa-bookmark',
+        activeIconClass = iconClass,
+        modalLabel = 'Bookmark',
+        filterLabel = 'My Bookmarks',
+        actionTitle = 'Bookmark this character',
+        removeTitle = 'Remove bookmark',
+        emptyMessage = 'No bookmarks yet. Click the bookmark icon on any character to save it here.',
+        addToast = 'Bookmarked',
+        removeToast = 'Removed from bookmarks',
     } = config;
 
     const dataAttrKebab = camelToKebab(dataAttrKey);
@@ -114,16 +141,22 @@ export function createBookmarkModule(config) {
         return { ...buildSnapshot(hit), bookmarkedAt: Date.now() };
     }
 
+    function renderIcon(favorited) {
+        return `<i class="${favorited ? 'fa-solid' : 'fa-regular'} ${favorited ? activeIconClass : iconClass}"></i>`;
+    }
+
+    function setIconState(icon, favorited) {
+        if (!icon) return;
+        icon.className = `${favorited ? 'fa-solid' : 'fa-regular'} ${favorited ? activeIconClass : iconClass}`;
+    }
+
     function syncUI(id, favorited) {
         const safeId = String(id);
         const selector = `.${legacyClass}[data-${dataAttrKebab}="${CSS.escape(safeId)}"]`;
         document.querySelectorAll(selector).forEach(btn => {
             btn.classList.toggle('favorited', favorited);
-            const icon = btn.querySelector('i');
-            if (icon) {
-                icon.classList.toggle('fa-solid', favorited);
-                icon.classList.toggle('fa-regular', !favorited);
-            }
+            btn.title = favorited ? removeTitle : actionTitle;
+            setIconState(btn.querySelector('i'), favorited);
         });
 
         const sel = getSelectedChar?.();
@@ -131,11 +164,8 @@ export function createBookmarkModule(config) {
             const modalBtn = document.getElementById(modalBtnId);
             if (modalBtn) {
                 modalBtn.classList.toggle('favorited', favorited);
-                const icon = modalBtn.querySelector('i');
-                if (icon) {
-                    icon.classList.toggle('fa-solid', favorited);
-                    icon.classList.toggle('fa-regular', !favorited);
-                }
+                modalBtn.title = favorited ? removeTitle : actionTitle;
+                setIconState(modalBtn.querySelector('i'), favorited);
             }
         }
     }
@@ -145,12 +175,8 @@ export function createBookmarkModule(config) {
         if (!modalBtn) return;
         const fav = isBookmarked(getId(hit));
         modalBtn.classList.toggle('favorited', fav);
-        modalBtn.title = fav ? 'Remove bookmark' : 'Bookmark this character';
-        const icon = modalBtn.querySelector('i');
-        if (icon) {
-            icon.classList.toggle('fa-solid', fav);
-            icon.classList.toggle('fa-regular', !fav);
-        }
+        modalBtn.title = fav ? removeTitle : actionTitle;
+        setIconState(modalBtn.querySelector('i'), fav);
     }
 
     function toggle(hitOrId) {
@@ -164,7 +190,7 @@ export function createBookmarkModule(config) {
         if (state.bookmarks.has(id)) {
             state.bookmarks.delete(id);
             persist();
-            showToast('Removed from bookmarks', 'info');
+            showToast(removeToast, 'info');
             syncUI(id, false);
             if (state.filterMyBookmarks) renderBookmarksView();
             return false;
@@ -178,7 +204,7 @@ export function createBookmarkModule(config) {
 
         state.bookmarks.set(id, snapshot(hit));
         persist();
-        showToast('Bookmarked', 'success');
+        showToast(addToast, 'success');
         syncUI(id, true);
         return true;
     }
@@ -204,8 +230,8 @@ export function createBookmarkModule(config) {
         if (sorted.length === 0) {
             grid.innerHTML = `
                 <div style="grid-column: 1 / -1; padding: 40px; text-align: center; color: var(--text-muted);">
-                    <i class="fa-regular fa-bookmark" style="font-size: 2rem; opacity: 0.5;"></i>
-                    <p style="margin-top: 12px;">No bookmarks yet. Click the bookmark icon on any character to save it here.</p>
+                    <i class="fa-regular ${iconClass}" style="font-size: 2rem; opacity: 0.5;"></i>
+                    <p style="margin-top: 12px;">${escapeHtml(emptyMessage)}</p>
                 </div>
             `;
             onEmpty?.();
@@ -219,15 +245,15 @@ export function createBookmarkModule(config) {
         const id = getId(hit);
         if (!id) return '';
         const fav = isBookmarked(id);
-        return `<span class="browse-card-stat ${BOOKMARK_CLASS} ${legacyClass}${fav ? ' favorited' : ''}" data-${dataAttrKebab}="${escapeHtml(String(id))}" title="${fav ? 'Remove bookmark' : 'Bookmark this character'}"><i class="${fav ? 'fa-solid' : 'fa-regular'} fa-bookmark"></i></span>`;
+        return `<span class="browse-card-stat ${BOOKMARK_CLASS} ${legacyClass}${fav ? ' favorited' : ''}" data-${dataAttrKebab}="${escapeHtml(String(id))}" title="${escapeHtml(fav ? removeTitle : actionTitle)}">${renderIcon(fav)}</span>`;
     }
 
     function renderModalBtn() {
-        return `<button id="${modalBtnId}" class="action-btn secondary ${BOOKMARK_CLASS} ${legacyClass}" title="Bookmark this character"><i class="fa-regular fa-bookmark"></i> Bookmark</button>`;
+        return `<button id="${modalBtnId}" class="action-btn secondary ${BOOKMARK_CLASS} ${legacyClass}" title="${escapeHtml(actionTitle)}">${renderIcon(false)} ${escapeHtml(modalLabel)}</button>`;
     }
 
     function renderFilterCheckbox() {
-        return `<label class="filter-checkbox"><input type="checkbox" id="${checkboxId}" ${state.filterMyBookmarks ? 'checked' : ''}> <i class="fa-solid fa-bookmark" style="color: #ff6b6b;"></i> My Bookmarks</label>`;
+        return `<label class="filter-checkbox"><input type="checkbox" id="${checkboxId}" ${state.filterMyBookmarks ? 'checked' : ''}> <i class="fa-solid ${activeIconClass}" style="color: #ff6b6b;"></i> ${escapeHtml(filterLabel)}</label>`;
     }
 
     /**
