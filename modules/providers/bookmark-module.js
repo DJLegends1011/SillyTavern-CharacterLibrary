@@ -141,6 +141,27 @@ export function createBookmarkModule(config) {
         return { ...buildSnapshot(hit), bookmarkedAt: Date.now() };
     }
 
+    // Provider account sync can learn state after a local backup was saved.
+    // Keep this small merge hook so provider-specific sync branches can persist
+    // learned account IDs, saved flags, or extraction state without replacing
+    // the local backup snapshot itself.
+    function updateSnapshot(id, patchOrUpdater) {
+        load();
+        const key = String(id || '');
+        if (!key || !state.bookmarks.has(key)) return null;
+
+        const current = state.bookmarks.get(key);
+        const patch = typeof patchOrUpdater === 'function'
+            ? patchOrUpdater(current)
+            : patchOrUpdater;
+        if (!patch || typeof patch !== 'object') return current;
+
+        const next = { ...current, ...patch };
+        state.bookmarks.set(key, next);
+        persist();
+        return next;
+    }
+
     function renderIcon(favorited) {
         return `<i class="${favorited ? 'fa-solid' : 'fa-regular'} ${favorited ? activeIconClass : iconClass}"></i>`;
     }
@@ -314,6 +335,7 @@ export function createBookmarkModule(config) {
         syncUI,
         syncModalState,
         sortSnapshots,
+        updateSnapshot,
         renderBookmarksView,
         renderCardBtn,
         renderModalBtn,

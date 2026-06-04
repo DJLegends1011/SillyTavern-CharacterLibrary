@@ -39,3 +39,9 @@ test('DataCat local bookmarks can render as provider-backup controls', () => {
     assert.match(datacatBrowseSource, /filterLabel:\s*'Local Backups'/);
     assert.match(datacatBrowseSource, /modalLabel:\s*'Local Backup'/);
 });
+
+test('bookmark snapshots expose a documented provider-sync update hook', () => {
+    assert.match(bookmarkModuleSource, /Provider account sync can learn state after a local backup was saved/);
+    assert.match(bookmarkModuleSource, /\bfunction\s+updateSnapshot\b/);
+    assert.match(bookmarkModuleSource, /\bupdateSnapshot,/);
+});
