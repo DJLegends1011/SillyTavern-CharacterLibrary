@@ -841,6 +841,7 @@ async function testDcToken(token) {
 
 // Read-only API paths forwarded by /dc-proxy.
 const DC_ALLOWED_PATHS = [
+    /^\/api\/characters$/,
     /^\/api\/characters\/fresh\b/,
     /^\/api\/characters\/recent-public\b/,
     /^\/api\/characters\/[a-f0-9-]+$/,

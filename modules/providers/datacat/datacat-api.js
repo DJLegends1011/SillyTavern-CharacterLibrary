@@ -463,6 +463,19 @@ export function isDatacatYoursSavedHit(hit, savedOverride = null) {
     return DATACAT_YOURS_SAVED_FLAGS.some(key => hit[key] === true);
 }
 
+export function buildDatacatYoursCharactersPath({ limit = 80, offset = 0, minTotalTokens = MIN_TOTAL_TOKENS, tagIds = [] } = {}) {
+    const params = new URLSearchParams();
+    params.set('limit', String(Math.max(1, Number(limit) || 80)));
+    params.set('offset', String(Math.max(0, Number(offset) || 0)));
+    if (Number.isFinite(Number(minTotalTokens))) params.set('minTotalTokens', String(Number(minTotalTokens)));
+    const cleanTagIds = Array.isArray(tagIds)
+        ? tagIds.map(id => parseInt(String(id), 10)).filter(id => Number.isFinite(id) && id > 0)
+        : [];
+    if (cleanTagIds.length > 0) params.set('tagIds', cleanTagIds.join(','));
+    params.set('sort', 'added');
+    return `/api/characters?${params.toString()}`;
+}
+
 // ========================================
 // METADATA FETCH
 // ========================================
@@ -544,6 +557,39 @@ export async function fetchDatacatCreatorCharacters(creatorId, opts = {}) {
         return { total: data.total || 0, list: data.list || [] };
     } catch (e) {
         console.error('[DataCat] fetchDatacatCreatorCharacters failed:', creatorId, e);
+        return null;
+    }
+}
+
+/**
+ * Fetch the signed-in account's DataCat Yours collection.
+ * DataCat's own Yours view uses /api/characters with the account session.
+ * @param {Object} [opts]
+ * @param {number} [opts.limit=80]
+ * @param {number} [opts.offset=0]
+ * @param {number[]} [opts.tagIds]
+ * @param {number} [opts.minTotalTokens=MIN_TOTAL_TOKENS]
+ * @returns {Promise<{totalCount: number, characters: Object[]}|null>}
+ */
+export async function fetchDatacatYoursCharacters(opts = {}) {
+    try {
+        const response = await dcFetch(buildDatacatYoursCharactersPath(opts));
+        if (!response.ok) return null;
+        const data = await response.json();
+        if (data?.success === false) return null;
+        const characters = Array.isArray(data?.characters) ? data.characters : [];
+        return {
+            totalCount: data?.count || data?.totalCount || characters.length,
+            characters: characters.map(character => ({
+                ...character,
+                isCollected: true,
+                viewer_is_collected: true,
+                is_collected: true,
+                collected: true,
+            })),
+        };
+    } catch (e) {
+        console.error('[DataCat] fetchDatacatYoursCharacters failed:', e);
         return null;
     }
 }

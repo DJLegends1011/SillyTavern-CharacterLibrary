@@ -19,6 +19,7 @@ import {
     fetchDatacatDownload,
     fetchDatacatCreator,
     fetchDatacatCreatorCharacters,
+    fetchDatacatYoursCharacters,
     fetchRecentPublic,
     fetchFreshCharacters,
     fetchFacetedTags,
@@ -818,6 +819,14 @@ async function loadCharacters(append = false) {
                     if (typeof t === 'string' && t) saucepanDiscoveredTags.add(t);
                 }
             }
+        } else if (datacatFilterOnlyYours) {
+            const data = await fetchDatacatYoursCharacters({
+                limit: PAGE_SIZE,
+                offset: datacatCurrentOffset,
+                tagIds: [...datacatActiveTagIds],
+            });
+            list = data?.characters || [];
+            total = data?.totalCount || 0;
         } else {
             const tagIds = [...datacatActiveTagIds];
             const parsed = parseSortMode(datacatSortMode);
@@ -848,7 +857,7 @@ async function loadCharacters(append = false) {
         if (!delegatesInitialized) return;
 
         const freshParsed = parseSortMode(datacatSortMode);
-        const isFreshMode = datacatBrowseMode !== 'creator' && freshParsed && datacatActiveTagIds.size === 0;
+        const isFreshMode = datacatBrowseMode !== 'creator' && !datacatFilterOnlyYours && freshParsed && datacatActiveTagIds.size === 0;
         const isMeili = isJannySortMode(datacatSortMode);
         const isHampter = isHampterSortMode(datacatSortMode);
         const isSaucepan = isSaucepanSortMode(datacatSortMode);
@@ -3630,6 +3639,8 @@ function initDatacatView() {
             meiliCurrentPage++;
         } else if (isSaucepanSortMode(datacatSortMode)) {
             saucepanCurrentPage++;
+        } else if (datacatFilterOnlyYours) {
+            datacatCurrentOffset += PAGE_SIZE;
         } else {
             const loadParsed = parseSortMode(datacatSortMode);
             if (loadParsed) {
@@ -3700,6 +3711,11 @@ function initDatacatView() {
             updateDatacatFiltersButtonState();
             if (datacatViewMode === 'following') {
                 renderFollowing();
+            } else if (id === 'datacatFilterOnlyYours') {
+                datacatCurrentOffset = 0;
+                datacatFreshLimit24 = 80;
+                datacatFreshLimitWeek = 20;
+                loadCharacters(false);
             } else {
                 renderGrid(datacatCharacters, false);
             }

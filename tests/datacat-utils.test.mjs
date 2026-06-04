@@ -12,6 +12,7 @@ import {
     sanitizeDataCatUser,
 } from '../extras/cl-helper/datacat-utils.js';
 import {
+    buildDatacatYoursCharactersPath,
     isDatacatYoursCollectableHit,
     isDatacatYoursSavedHit,
     getDatacatGoogleAuthOriginIssue,
@@ -232,5 +233,19 @@ describe('isDatacatYoursSavedHit', () => {
     it('lets live CL state override stale row flags', () => {
         assert.equal(isDatacatYoursSavedHit({ isCollected: true }, false), false);
         assert.equal(isDatacatYoursSavedHit({ name: 'Saved after click' }, true), true);
+    });
+});
+
+describe('buildDatacatYoursCharactersPath', () => {
+    it('builds the DataCat Yours list route with pagination, token filter, tags, and added sort', () => {
+        assert.equal(
+            buildDatacatYoursCharactersPath({
+                limit: 80,
+                offset: 160,
+                minTotalTokens: 889,
+                tagIds: [5, 9],
+            }),
+            '/api/characters?limit=80&offset=160&minTotalTokens=889&tagIds=5%2C9&sort=added',
+        );
     });
 });
