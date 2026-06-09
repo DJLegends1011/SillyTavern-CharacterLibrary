@@ -2851,7 +2851,10 @@
         margin-left: var(--space-md);
         padding-right: var(--space-xs);
         gap: var(--space-2xs);
-        flex-shrink: 0;
+        /* Fixed width for the two 40px icon buttons (80 + 2 gap + 4 padding = 86). Gecko/WebKit collapse
+           an auto/max-content basis here to ~one button and clip More off-screen; a hard basis forces the
+           min-width:0 view tabs to shrink and fill the rest instead (deterministic in every engine). */
+        flex: 0 0 90px;
     }
     .mobile-bottom-nav-actions .mobile-bottom-nav-action {
         flex: 0 0 40px;
