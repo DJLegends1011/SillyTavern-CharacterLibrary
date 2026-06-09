@@ -192,7 +192,7 @@ let manageChatList = [];         // chats mode + manage: the book's bound chats 
 let linkChatChar = null;         // chats mode: the character whose chats we're picking
 let linkChatList = [];           // chats mode: that character's chats (with chat_metadata)
 let linkChatsLoading = false;
-// Link-picker perf state. The character lists are unbounded (a library can be 10k+),
+// Link-picker perf state. The character lists are unbounded,
 // so they are virtualized: base list sorted once and cached, search filters the cache,
 // and only the rows in view are built into the DOM.
 let linkFiltered = [];           // current filtered+sorted candidate array (the "shown" set)
@@ -201,6 +201,7 @@ let linkRowStride = 0;           // measured row height + gap (px); 0 = remeasur
 let vlistActive = false;         // is the link list currently windowed
 let vlistData = null;            // { items, rowFn } for the active window
 let vlistRaf = 0;                // rAF handle coalescing scroll repaints
+let vlistListOffset = 0;         // px from the scroll container's top to the list's content (0 when the list scrolls itself)
 let linkSearchTimer = 0;         // debounce handle for the picker search box
 
 // Cache of entry counts by file_id. /worldinfo/list doesn't return counts, so we
@@ -284,20 +285,24 @@ function createModal() {
             <div class="cl-modal-body lb-link-body">
                 <div class="lb-link-mode-hint" id="lbLinkModeHint"></div>
 
-                <div class="lb-link-tools">
-                    <div class="lb-search-wrap">
-                        <i class="fa-solid fa-magnifying-glass"></i>
-                        <input type="search" id="lbLinkSearch" class="cl-input" placeholder="Search characters..." autocomplete="off">
-                    </div>
-                    <label class="lb-link-filter-toggle" id="lbLinkHideLinkedWrap">
-                        <input type="checkbox" id="lbLinkHideLinked">
-                        <span>Hide already-linked</span>
-                    </label>
-                </div>
+                <div class="lb-link-head" id="lbLinkHead">
+                    <div class="lb-link-head-inner">
+                        <div class="lb-link-tools">
+                            <div class="lb-search-wrap">
+                                <i class="fa-solid fa-magnifying-glass"></i>
+                                <input type="search" id="lbLinkSearch" class="cl-input" placeholder="Search characters..." autocomplete="off">
+                            </div>
+                        </div>
 
-                <div class="lb-link-selectbar">
-                    <button class="lb-icon-btn" id="lbLinkSelectToggle" data-action="link-toggle-select" title="Select all shown"><i class="fa-solid fa-square-check"></i></button>
-                    <span class="lb-link-count" id="lbLinkCount">0 selected</span>
+                        <div class="lb-link-selectbar">
+                            <button class="lb-icon-btn" id="lbLinkSelectToggle" data-action="link-toggle-select" title="Select all shown"><i class="fa-solid fa-square-check"></i></button>
+                            <label class="lb-link-filter-toggle" id="lbLinkHideLinkedWrap">
+                                <input type="checkbox" id="lbLinkHideLinked">
+                                <span>Hide already-linked</span>
+                            </label>
+                            <span class="lb-link-count" id="lbLinkCount">0 selected</span>
+                        </div>
+                    </div>
                 </div>
 
                 <div class="lb-link-list" id="lbLinkList"></div>
@@ -506,7 +511,8 @@ function matchedNamesFor(fileId, q) {
 
 function worldMatchesQuery(w, q) {
     if (!q) return true;
-    if ((w.name || w.file_id).toLowerCase().includes(q)) return true;
+    // Match on file_id only: ST identifies + displays world files by filename, not the (often stale)
+    // internal JSON "name" field, so we mirror that everywhere.
     if (w.file_id.toLowerCase().includes(q)) return true;
     return matchedNamesFor(w.file_id, q).length > 0;
 }
@@ -517,13 +523,13 @@ function filteredSortedWorlds() {
     const usedCount = (w) => usedByCount(w.file_id) ?? 0;
     switch (worldSort) {
         case 'name_desc':
-            list.sort((a, b) => (b.name || b.file_id).localeCompare(a.name || a.file_id)); break;
+            list.sort((a, b) => b.file_id.localeCompare(a.file_id)); break;
         case 'entries':
             list.sort((a, b) => (entryCountOf(b) ?? -1) - (entryCountOf(a) ?? -1)); break;
         case 'linked':
-            list.sort((a, b) => usedCount(b) - usedCount(a) || (a.name || a.file_id).localeCompare(b.name || b.file_id)); break;
+            list.sort((a, b) => usedCount(b) - usedCount(a) || a.file_id.localeCompare(b.file_id)); break;
         default:
-            list.sort((a, b) => (a.name || a.file_id).localeCompare(b.name || b.file_id));
+            list.sort((a, b) => a.file_id.localeCompare(b.file_id));
     }
     return list;
 }
@@ -555,8 +561,8 @@ function renderWorldList() {
         const used = usedByCount(w.file_id); // null while chat index loads
         const count = entryCountOf(w);
         const active = w.file_id === currentWorld ? ' active' : '';
-        // Only flag a name match when the query didn't already hit the book name itself.
-        const nameHit = q && ((w.name || w.file_id).toLowerCase().includes(q) || w.file_id.toLowerCase().includes(q));
+        // Only flag a linked-character match when the query didn't already hit the book name (file_id).
+        const nameHit = q && w.file_id.toLowerCase().includes(q);
         const nameHits = nameHit ? [] : matchedNamesFor(w.file_id, q);
         const meta = [];
         if (count === null) meta.push('...');
@@ -570,10 +576,10 @@ function renderWorldList() {
             ? `<span class="lb-world-linked-badge" title="${used} ${usingChats ? `bound chat${used === 1 ? '' : 's'}` : `linked character${used === 1 ? '' : 's'}`}"><i class="fa-solid fa-${usingChats ? 'comments' : 'link'}"></i>${used}</span>`
             : '';
         html += `
-            <button class="lb-world-row${active}${nameHits.length ? ' char-match' : ''}" data-action="select-world" data-world="${esc(w.file_id)}" title="${esc(w.name || w.file_id)}">
+            <button class="lb-world-row${active}${nameHits.length ? ' char-match' : ''}" data-action="select-world" data-world="${esc(w.file_id)}" title="${esc(w.file_id)}">
                 <i class="fa-solid fa-book lb-world-icon"></i>
                 <span class="lb-world-info">
-                    <span class="lb-world-name">${esc(w.name || w.file_id)}</span>
+                    <span class="lb-world-name">${esc(w.file_id)}</span>
                     <span class="lb-world-meta">${esc(meta.join('  ·  '))}</span>
                     ${viaLine}
                 </span>
@@ -724,7 +730,7 @@ function renderEditor() {
 
     const entries = sortedEntries();
     const total = Object.keys(workingWorld.entries).length;
-    const displayName = worldsList.find(w => w.file_id === currentWorld)?.name || currentWorld;
+    const displayName = currentWorld; // the filename (file_id) is the canonical name, matching ST
     const usingChats = usedByMode === 'chats';
 
     el.innerHTML = `
@@ -1564,6 +1570,7 @@ function openLinkPicker(initialMode = 'characters', { manage = false } = {}) {
     if (searchEl) searchEl.value = '';
     const hideEl = document.getElementById('lbLinkHideLinked');
     if (hideEl) hideEl.checked = false;
+    document.getElementById('lbLinkHead')?.classList.remove('lb-link-head-hidden', 'lb-pinned'); // start expanded + unpinned; a prior session may have left either
     syncLinkModeUI();
     setLinkApplyButton();
     renderLinkList();
@@ -1616,7 +1623,7 @@ function syncLinkModeUI() {
 }
 
 // The world/mode-filtered, name-sorted set, sorted once and cached. The sort (localeCompare,
-// matching the main grid) is the costly part at 10k+, so it never re-runs on a keystroke or a
+// matching the main grid) is the costly part, so it never re-runs on a keystroke or a
 // row toggle; only a mode/hide-linked/open change invalidates it.
 function linkBaseList() {
     if (linkBaseSorted) return linkBaseSorted;
@@ -1639,7 +1646,7 @@ function charCandidates() {
     return base.filter(c => (c._lowerName || '').includes(q) || (c._lowerCreator || '').includes(q));
 }
 
-// ---- List virtualization (the character lists can be 10k+; only render what's in view) ----
+// ---- List virtualization (unbounded character lists; only render what's in view) ----
 
 // Measure a real row's height once per open so the window math is exact on desktop and mobile
 // (mobile bumps the row min-height) without hardcoding token-derived pixels.
@@ -1663,13 +1670,24 @@ function clearVList() {
     vlistData = null;
 }
 
+// On mobile the modal body scrolls (sticky overlay header) and the list flows inside it; on desktop the
+// list scrolls itself. The windowing reads whichever actually scrolls.
+function vlistScroller(listEl) {
+    return matchMedia('(max-width: 768px)').matches ? (listEl.closest('.lb-link-body') || listEl) : listEl;
+}
+
 // Render a sizer the full height of the list, then fill only the in-view rows (absolute-positioned).
 function renderVList(listEl, items, rowFn) {
     if (!linkRowStride) linkRowStride = measureLinkRowStride(listEl);
     vlistData = { items, rowFn };
     vlistActive = true;
     listEl.innerHTML = `<div class="lb-vsizer" style="height:${items.length * linkRowStride}px;"></div>`;
-    listEl.scrollTop = 0;
+    const scroller = vlistScroller(listEl);
+    scroller.scrollTop = 0;
+    // Distance from the scroll origin to the list's content (the hint + sticky header above it when the
+    // body scrolls; 0 when the list is its own scroller). Stable until the next render, so cache it.
+    vlistListOffset = scroller === listEl ? 0
+        : Math.max(0, listEl.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop);
     paintVList();
     // clientHeight can be 0 during the modal open animation; correct the window once laid out.
     requestAnimationFrame(paintVList);
@@ -1682,10 +1700,12 @@ function paintVList() {
     if (!sizer || !sizer.classList.contains('lb-vsizer')) return;
     const { items, rowFn } = vlistData;
     const stride = linkRowStride;
-    const viewH = listEl.clientHeight || 400;
+    const scroller = vlistScroller(listEl);
+    const viewH = scroller.clientHeight || 400;
+    const viewTop = scroller.scrollTop - vlistListOffset; // how far we've scrolled into the list's own content
     const OVERSCAN = 6;
-    const start = Math.max(0, Math.floor(listEl.scrollTop / stride) - OVERSCAN);
-    const end = Math.min(items.length, Math.ceil((listEl.scrollTop + viewH) / stride) + OVERSCAN);
+    const start = Math.max(0, Math.floor(viewTop / stride) - OVERSCAN);
+    const end = Math.min(items.length, Math.ceil((viewTop + viewH) / stride) + OVERSCAN);
     let html = '';
     for (let i = start; i < end; i++) {
         html += `<div class="lb-vrow" style="top:${i * stride}px;">${rowFn(items[i])}</div>`;
@@ -2101,6 +2121,26 @@ async function applyUnlinks() {
 // EVENTS
 // ========================================
 
+// Hide a sticky toolbar on scroll-down, reveal on scroll-up, but only once it's pinned (its head has
+// scrolled past) so it never leaves a gap. 6px deadband for jitter; toolbar re-queried each scroll.
+function attachAutoHideToolbar(scrollEl, toolbarSel, headSel) {
+    if (!scrollEl) return;
+    let lastY = 0;
+    scrollEl.addEventListener('scroll', () => {
+        const y = scrollEl.scrollTop;
+        const toolbar = scrollEl.querySelector(toolbarSel);
+        if (toolbar) {
+            const head = scrollEl.querySelector(headSel);
+            const pinned = y > (head ? head.offsetHeight : 48);
+            // lb-pinned gates stuck-to-top styling so it never stacks onto the normal in-flow spacing.
+            toolbar.classList.toggle('lb-pinned', pinned);
+            if (!pinned || y < lastY - 6) toolbar.classList.remove('lb-toolbar-hidden');
+            else if (y > lastY + 6) toolbar.classList.add('lb-toolbar-hidden');
+        }
+        lastY = y;
+    }, { passive: true });
+}
+
 function attachEvents() {
     const modal = document.getElementById('lorebookModal');
     if (!modal) return;
@@ -2108,25 +2148,9 @@ function attachEvents() {
     document.getElementById('lbCloseBtn')?.addEventListener('click', handleModalBack);
     modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
 
-    // Mobile: auto-hide the entries toolbar on scroll-down, reveal on scroll-up. #lbContent is the
-    // stable scroll container; the toolbar is re-created on each editor render, so query it fresh.
-    const lbContentEl = document.getElementById('lbContent');
-    if (lbContentEl) {
-        let lastY = 0;
-        lbContentEl.addEventListener('scroll', () => {
-            const y = lbContentEl.scrollTop;
-            const toolbar = lbContentEl.querySelector('.lb-entries-toolbar');
-            if (toolbar) {
-                // Only hide once the toolbar is actually pinned (the head has scrolled past). Hiding
-                // it while it's still scrolling with the head leaves an empty gap where it was.
-                const head = lbContentEl.querySelector('.lb-editor-head');
-                const pinned = y > (head ? head.offsetHeight : 48);
-                if (!pinned || y < lastY - 6) toolbar.classList.remove('lb-toolbar-hidden');
-                else if (y > lastY + 6) toolbar.classList.add('lb-toolbar-hidden');
-            }
-            lastY = y;
-        }, { passive: true });
-    }
+    // Mobile: both the entries toolbar and the world-list tools bar auto-hide on scroll (sticky bars).
+    attachAutoHideToolbar(document.getElementById('lbContent'), '.lb-entries-toolbar', '.lb-editor-head');
+    attachAutoHideToolbar(modal.querySelector('.lb-sidebar'), '.lb-sidebar-tools', '.lb-sidebar-actions');
 
     // Up/down navigate the sidebar lorebook list (loading each). Bails while typing in a field or
     // when a sub-modal owns the keyboard. One-time document listener (attachEvents runs once).
@@ -2223,11 +2247,25 @@ function attachEvents() {
         linkBaseSorted = null; // membership changed; rebuild the sorted base
         renderLinkList();
     });
-    // Windowed lists repaint only the in-view rows on scroll (coalesced to one rAF).
-    document.getElementById('lbLinkList')?.addEventListener('scroll', () => {
-        if (!vlistActive || vlistRaf) return;
-        vlistRaf = requestAnimationFrame(() => { vlistRaf = 0; paintVList(); });
-    }, { passive: true });
+    // The link list repaints its in-view rows on scroll (coalesced to one rAF). On mobile the modal body
+    // is the scroller and the search/controls header is a sticky overlay that auto-hides on scroll-down /
+    // reveals on scroll-up (translateY, no list reflow). Attach to both; only the active scroller fires.
+    let linkLastY = 0;
+    const onLinkScroll = (e) => {
+        const scroller = e.currentTarget;
+        const head = document.getElementById('lbLinkHead');
+        if (head && scroller.classList.contains('lb-link-body')) {
+            const y = scroller.scrollTop;
+            const hint = scroller.querySelector('.lb-link-mode-hint');
+            head.classList.toggle('lb-pinned', y > (hint ? hint.offsetHeight : 0)); // stuck once the hint scrolls past
+            if (y < 8 || y < linkLastY - 6) head.classList.remove('lb-link-head-hidden');
+            else if (y > linkLastY + 6) head.classList.add('lb-link-head-hidden');
+            linkLastY = y;
+        }
+        if (vlistActive && !vlistRaf) vlistRaf = requestAnimationFrame(() => { vlistRaf = 0; paintVList(); });
+    };
+    document.getElementById('lbLinkList')?.addEventListener('scroll', onLinkScroll, { passive: true });
+    document.querySelector('#lbLinkModal .lb-link-body')?.addEventListener('scroll', onLinkScroll, { passive: true });
     document.getElementById('lbLinkList')?.addEventListener('click', (e) => {
         const back = e.target.closest('[data-action="link-chat-back"]');
         if (back) { backToCharPick(); return; }

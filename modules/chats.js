@@ -2280,7 +2280,8 @@ function renderChatLoreList() {
     if (!listEl) return;
     const current = getChatBoundWorld(_chatLorePickerChat?.chat);
     const q = (document.getElementById('chatLoreSearch')?.value || '').trim().toLowerCase();
-    const worlds = (_chatLoreWorlds || []).filter(w => !q || w.file_id.toLowerCase().includes(q) || (w.name || '').toLowerCase().includes(q));
+    // Match + display by file_id (filename): ST identifies world files by filename, not the internal JSON "name".
+    const worlds = (_chatLoreWorlds || []).filter(w => !q || w.file_id.toLowerCase().includes(q));
     if (!worlds.length) {
         listEl.innerHTML = `<div class="chat-lore-empty">${(_chatLoreWorlds || []).length ? 'No matches.' : 'No lorebooks found.'}</div>`;
         return;
@@ -2290,7 +2291,7 @@ function renderChatLoreList() {
         return `
             <button class="chat-lore-row${isCurrent ? ' current' : ''}" data-world="${CoreAPI.escapeHtml(w.file_id)}">
                 <i class="fa-solid fa-book"></i>
-                <span class="chat-lore-row-name">${CoreAPI.escapeHtml(w.name || w.file_id)}</span>
+                <span class="chat-lore-row-name">${CoreAPI.escapeHtml(w.file_id)}</span>
                 ${isCurrent ? '<i class="fa-solid fa-check chat-lore-row-check"></i>' : ''}
             </button>`;
     }).join('');

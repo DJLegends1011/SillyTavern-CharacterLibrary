@@ -72,7 +72,7 @@ let creatorTagsArray = [];
 let tagAutocompleteList = [];
 let saveAsTarget = null;
 // Import/Save-As picker: name-sorted library cached once per open (the localeCompare sort is the
-// costly part at 10k+), plus a search debounce. Invalidated when the picker is reopened.
+// costly part), plus a search debounce. Invalidated when the picker is reopened.
 let importBaseSorted = null;
 let importSearchTimer = 0;
 let fieldsAutoGrowHandler = null;
@@ -1353,7 +1353,7 @@ function closeImportPicker() {
     document.getElementById('creatorImportPicker')?.classList.add('hidden');
 }
 
-// Name-sorted full library, sorted once and cached (the localeCompare sort dominates at 10k+).
+// Name-sorted full library, sorted once and cached (the localeCompare sort dominates).
 function importBaseList() {
     if (importBaseSorted) return importBaseSorted;
     const chars = CoreAPI.getAllCharacters() || [];

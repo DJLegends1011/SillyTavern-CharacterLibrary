@@ -385,7 +385,8 @@
 /* Editor overflow (kebab) menu: secondary actions collapse here on mobile. */
 .lb-action-mobile { display: none; }
 .lb-editor-overflow { position: relative; }
-.lb-editor-overflow-menu { left: auto; right: 0; min-width: 184px; }
+/* Right-anchor (compound selector so left:auto wins over the later base .lb-split-menu left:0). */
+.lb-split-menu.lb-editor-overflow-menu { left: auto; right: 0; min-width: 184px; }
 .lb-split-menu .dropdown-item.lb-overflow-danger i { color: var(--cl-error-bright); }
 .lb-split-menu .dropdown-item.lb-overflow-danger:hover { background: rgba(var(--cl-error-rgb), 0.14); }
 
@@ -1174,6 +1175,13 @@
     overflow: hidden;
 }
 
+/* Inner holds the search+controls gap; the outer .lb-link-head is the mobile sticky overlay. */
+.lb-link-head-inner {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+}
+
 /* Mode hint reads as a callout, not fine print, because the active mode changes
    whether we write to the card or to the chat. */
 .lb-link-mode-hint {
@@ -1244,6 +1252,7 @@
     display: flex;
     align-items: center;
     gap: var(--space-sm);
+    flex-wrap: wrap;
 }
 
 .lb-link-count {
@@ -1407,14 +1416,31 @@
         position: relative;
     }
 
-    /* Two-screen flow: the world list fills the screen until a world is opened,
-       then the editor takes over full-height. No 40vh top-sheet + empty pane. */
+    /* Two-screen flow: the world list fills the screen until a world is opened, then the editor takes
+       over full-height. The sidebar itself scrolls (vertical padding zeroed) so the tools bar pins +
+       auto-hides; the world list flows instead of nesting a second scroller. */
     .lb-sidebar {
         width: 100%;
         min-width: 0;
         flex: 1;
         border-right: none;
+        overflow-y: auto;
+        padding-top: 0;
+        padding-bottom: 0;
     }
+    /* Restores the sidebar's removed top padding; scrolls away with the actions. */
+    .lb-sidebar-actions { padding-top: var(--space-lg); }
+    .lb-sidebar-tools {
+        position: sticky;
+        top: 0;
+        z-index: 5;
+        background: var(--bg-primary);
+        transition: transform 0.25s ease;
+    }
+    /* Breathing room above the search only when pinned, so it doesn't stack on the normal gap. */
+    .lb-sidebar-tools.lb-pinned { padding-top: var(--space-xs); }
+    .lb-sidebar-tools.lb-toolbar-hidden { transform: translateY(-100%); }
+    .lb-world-list { overflow: visible; flex: 0 0 auto; }
 
     .lb-content {
         display: none;
@@ -1586,6 +1612,26 @@
         padding-bottom: max(var(--space-lg), env(safe-area-inset-bottom));
     }
 
+    /* The modal body scrolls (vertical padding zeroed so the sticky header pins flush) and the list
+       flows inside it. The header is a sticky overlay that auto-hides on scroll-down / reveals on
+       scroll-up via translateY, so showing/hiding it never reflows the list: rows scroll under it. */
+    .lb-link-body {
+        overflow-y: auto;
+        padding-top: 0;
+        padding-bottom: 0;
+    }
+    .lb-link-mode-hint { margin-top: var(--space-md); }
+    .lb-link-head {
+        position: sticky;
+        top: 0;
+        z-index: 5;
+        background: var(--bg-secondary); /* match the mobile cl-modal body so the pinned bar blends in */
+        transition: transform 0.25s ease;
+    }
+    .lb-link-head.lb-link-head-hidden { transform: translateY(-100%); }
+    /* Breathing room above the search only when pinned (bg fills it), matching the world list. */
+    .lb-link-head.lb-pinned { padding-top: var(--space-xs); }
+
     /* Link picker: let the tools row wrap so search + filter don't crowd. */
     .lb-link-tools {
         flex-wrap: wrap;
@@ -1596,6 +1642,8 @@
     }
 
     .lb-link-list {
+        overflow: visible;
+        flex: 0 0 auto;
         padding-bottom: max(var(--space-md), env(safe-area-inset-bottom));
     }
 
