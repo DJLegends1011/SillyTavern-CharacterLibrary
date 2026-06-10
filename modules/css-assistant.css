@@ -330,7 +330,7 @@ body.modal-size-large .css-assistant-modal .cl-modal-content { max-width: 1125px
     }
     .css-assistant-input {
         flex: 1;
-        font-size: 16px;
+        font-size: var(--mobile-input-size);
         min-height: var(--touch-target-min);
         max-height: 120px;
         resize: none;

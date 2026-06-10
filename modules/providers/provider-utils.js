@@ -40,6 +40,31 @@ export function skeletonLines(n = 3) {
     return out.join('');
 }
 
+// A browse preview fills several heavy fields (each a safePurify(formatRichText(...)) on big
+// third-party content); doing them in one frame is a long task that janks the open. deferRender runs
+// one queued job per frame, so N fields cost N short frames instead of one freeze.
+let _deferQueue = [];
+let _deferRaf = 0;
+function _pumpDefer() {
+    _deferRaf = 0;
+    const job = _deferQueue.shift();
+    if (job && job.el && job.el.isConnected) {
+        try { job.el.innerHTML = job.build(); } catch { /* skip a field that fails to build */ }
+    }
+    if (_deferQueue.length) _deferRaf = requestAnimationFrame(_pumpDefer);
+}
+
+// Queue `el.innerHTML = build()` onto its own frame; build() (the sanitize pipeline) runs in the pump.
+// Reusing the same element replaces its pending job, so re-opening the (shared) preview modal with a
+// new card supersedes the prior card's queued fields instead of briefly painting them.
+export function deferRender(el, build) {
+    if (!el || typeof build !== 'function') return;
+    const i = _deferQueue.findIndex(j => j.el === el);
+    if (i !== -1) _deferQueue.splice(i, 1);
+    _deferQueue.push({ el, build });
+    if (!_deferRaf) _deferRaf = requestAnimationFrame(_pumpDefer);
+}
+
 // ========================================
 // NETWORK
 // ========================================

@@ -1,4 +1,7 @@
 import * as CoreAPI from './core-api.js';
+// Chat messages are third-party content (a card's first_mes / AI output can carry crafted HTML), so
+// preview rendering goes through the same safePurify gate + config as the browse views, never raw.
+import { BROWSE_PURIFY_CONFIG } from './providers/provider-utils.js';
 
 // ========================================
 // API ENDPOINTS
@@ -27,7 +30,11 @@ let currentChatSort = 'recent';
 let currentPreviewChat = null;
 let currentPreviewChar = null;
 let currentChatMessages = [];
+let chatPreviewRenderGen = 0;
+let currentChatLocalizationMap = null;
 let _modalChatsChar = null;
+// Last per-character chat list (with chat_metadata) so row actions can resolve the entry.
+let _modalChatsList = [];
 
 // Pagination / lazy-load state
 const PAGE_SIZE = 50;
@@ -72,6 +79,7 @@ function saveChatCache(chats) {
                 models: c.models || null,
                 isGroup: c.isGroup || false,
                 groupId: c.groupId || null,
+                chat_metadata: c.chat_metadata || null,
             }))
         };
         localStorage.setItem(CHATS_CACHE_KEY, JSON.stringify(cacheData));
@@ -126,6 +134,9 @@ async function fetchCharacterChats(char) {
             return dateB - dateA;
         });
 
+        // Keep the list (with chat_metadata) so row actions can resolve the entry by file name.
+        _modalChatsList = chats;
+
         const currentChat = char.chat;
 
         chatsList.innerHTML = chats.map(chat => {
@@ -133,6 +144,10 @@ async function fetchCharacterChats(char) {
             const lastDate = chat.last_mes ? new Date(chat.last_mes).toLocaleDateString() : 'Unknown';
             const messageCount = chat.chat_items || chat.mes_count || chat.message_count || '?';
             const chatName = chat.file_name.replace('.jsonl', '');
+            const boundWorld = getChatBoundWorld(chat);
+            const lorePill = boundWorld
+                ? `<span class="chat-lore-pill" title="Lorebook bound to this chat: ${CoreAPI.escapeHtml(boundWorld)}"><i class="fa-solid fa-book-atlas"></i> ${CoreAPI.escapeHtml(boundWorld)}</span>`
+                : '';
 
             return `
                 <div class="chat-item ${isActive ? 'active' : ''}" data-chat="${CoreAPI.escapeHtml(chat.file_name)}">
@@ -145,9 +160,12 @@ async function fetchCharacterChats(char) {
                             <span><i class="fa-solid fa-calendar"></i> ${lastDate}</span>
                             <span><i class="fa-solid fa-comment"></i> ${messageCount} messages</span>
                             ${isActive ? '<span style="color: var(--accent);"><i class="fa-solid fa-check-circle"></i> Current</span>' : ''}
+                            ${lorePill}
                         </div>
                     </div>
+                    <button class="chat-item-kebab" aria-label="Chat actions" title="Actions"><i class="fa-solid fa-ellipsis-vertical"></i></button>
                     <div class="chat-item-actions">
+                        <button class="chat-action-btn" title="${boundWorld ? 'Change bound lorebook' : 'Bind a lorebook to this chat'}" data-action="lore"><i class="fa-solid fa-book-atlas"></i></button>
                         <button class="chat-action-btn" title="Open chat" data-action="open"><i class="fa-solid fa-arrow-right"></i></button>
                         <button class="chat-action-btn danger" title="Delete chat" data-action="delete"><i class="fa-solid fa-trash"></i></button>
                     </div>
@@ -355,12 +373,27 @@ function initChatsView() {
             if (!item || !_modalChatsChar) return;
             const chatFile = item.dataset.chat;
 
+            // Mobile kebab: toggle the collapsed action row (one open at a time).
+            const kebab = e.target.closest('.chat-item-kebab');
+            if (kebab) {
+                e.stopPropagation();
+                const willOpen = !item.classList.contains('menu-open');
+                chatsList.querySelectorAll('.chat-item.menu-open').forEach(i => { if (i !== item) i.classList.remove('menu-open'); });
+                item.classList.toggle('menu-open', willOpen);
+                return;
+            }
+
             const actionBtn = e.target.closest('.chat-action-btn');
             if (actionBtn) {
                 e.stopPropagation();
+                item.classList.remove('menu-open');
                 const action = actionBtn.dataset.action;
                 if (action === 'open') openChat(_modalChatsChar, chatFile);
                 else if (action === 'delete') deleteChat(_modalChatsChar, chatFile);
+                else if (action === 'lore') {
+                    const entry = _modalChatsList.find(c => c.file_name === chatFile);
+                    if (entry) openChatLorePicker(_modalChatsChar, entry);
+                }
                 return;
             }
 
@@ -384,11 +417,12 @@ function initChatsView() {
                 return;
             }
 
-            const actionBtn = e.target.closest('.chat-card-action');
+            const actionBtn = e.target.closest('.chat-card-action, .chat-lore-btn');
             if (actionBtn) {
                 e.stopPropagation();
                 if (actionBtn.dataset.action === 'open') openChatInST(chat);
                 else if (actionBtn.dataset.action === 'delete') deleteChatFromView(chat);
+                else if (actionBtn.dataset.action === 'lore' && !chat.isGroup) openChatLorePicker(chat.character, chat);
                 return;
             }
 
@@ -426,11 +460,12 @@ function initChatsView() {
             const chat = findChatByElement(item);
             if (!chat) return;
 
-            const actionBtn = e.target.closest('.chat-card-action');
+            const actionBtn = e.target.closest('.chat-card-action, .chat-lore-btn');
             if (actionBtn) {
                 e.stopPropagation();
                 if (actionBtn.dataset.action === 'open') openChatInST(chat);
                 else if (actionBtn.dataset.action === 'delete') deleteChatFromView(chat);
+                else if (actionBtn.dataset.action === 'lore' && !chat.isGroup) openChatLorePicker(chat.character, chat);
                 return;
             }
 
@@ -556,7 +591,7 @@ async function fetchFreshChats(isBackground = false) {
         await fetchGroups();
         if (signal.aborted) return;
 
-        const response = await CoreAPI.apiRequest(ENDPOINTS.CHATS_RECENT, 'POST', {});
+        const response = await CoreAPI.apiRequest(ENDPOINTS.CHATS_RECENT, 'POST', { metadata: true });
         if (signal.aborted) return;
 
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -604,6 +639,7 @@ async function fetchFreshChats(isBackground = false) {
                     charAvatar: null,
                     preview: preview,
                     models: canReuseCache ? (cachedChat.models || null) : null,
+                    chat_metadata: chat.chat_metadata || null,
                 });
             } else if (chat.avatar) {
                 // Individual character chat entry
@@ -636,6 +672,7 @@ async function fetchFreshChats(isBackground = false) {
                     charAvatar: chat.avatar,
                     preview: preview,
                     models: canReuseCache ? (cachedChat.models || null) : null,
+                    chat_metadata: chat.chat_metadata || null,
                 });
             }
         }
@@ -686,6 +723,9 @@ async function fetchFreshChats(isBackground = false) {
 function closePreviewMarkers(text) {
     if (!text) return text;
     let out = text;
+    // Strip images from previews: rendered <img> blow out the fixed card layout. Drop markdown
+    // images (keep nothing, the alt text is rarely meaningful here) and any raw <img> tags.
+    out = out.replace(/!\[[^\]]*\]\([^)]*\)/g, '').replace(/<img\b[^>]*>/gi, '');
     for (const m of ['```', '~~', '**', '__', '`', '*', '_']) {
         if ((out.split(m).length - 1) % 2 === 1) out += m;
     }
@@ -1114,7 +1154,7 @@ function buildModelBadgeHtml(models) {
     });
 
     return `<span class="chat-model-badge" title="${CoreAPI.escapeHtml(tooltipLines.join('\n'))}">
-        <i class="fa-solid fa-microchip"></i> ${CoreAPI.escapeHtml(shortModelName(dominant.name))}
+        <i class="fa-solid fa-microchip"></i><span class="chat-model-badge-text">${CoreAPI.escapeHtml(shortModelName(dominant.name))}</span>
     </span>`;
 }
 
@@ -1237,6 +1277,7 @@ function createChatCard(chat) {
                     <span><i class="fa-solid fa-calendar"></i> ${lastDate}</span>
                     <span><i class="fa-solid fa-comment"></i> ${messageCount}</span>
                     ${buildModelBadgeHtml(chat.models)}
+                    ${buildChatLoreButtonHtml(chat)}
                 </div>
                 <div class="chat-card-actions">
                     <button class="chat-card-action" data-action="open" title="Open in SillyTavern">
@@ -1276,6 +1317,7 @@ function createGroupedChatItem(chat) {
                     <span><i class="fa-solid fa-calendar"></i> ${lastDate}</span>
                     <span><i class="fa-solid fa-comment"></i> ${messageCount}</span>
                     ${buildModelBadgeHtml(chat.models)}
+                    ${buildChatLoreButtonHtml(chat)}
                 </div>
             </div>
             <div class="chat-group-item-actions">
@@ -1427,6 +1469,8 @@ function renderChatMessages(messages, character, isGroupChat = false) {
     }
 
     currentChatMessages = messages;
+    const renderGen = ++chatPreviewRenderGen;
+    currentChatLocalizationMap = null;
 
     const charAvatarUrl = character ? (CoreAPI.getCharacterAvatarStThumbUrl(character.avatar) || '/img/ai4.png') : '/img/ai4.png';
     const charName = character?.name || 'Character';
@@ -1439,7 +1483,7 @@ function renderChatMessages(messages, character, isGroupChat = false) {
         const name = msg.name || (isUser ? 'User' : charName);
         const rawSwipeId = msg.swipe_id ?? 0;
         const swipeId = msg.swipes?.length > 1 ? Math.min(rawSwipeId, msg.swipes.length - 1) : 0;
-        const text = msg.swipes?.length > 1 ? (msg.swipes[swipeId] || '') : (msg.mes || '');
+        const text = getMessageDisplayText(msg);
         const time = getSwipeTimestamp(msg, swipeId);
 
         if (index === 0 && msg.chat_metadata && !msg.mes) {
@@ -1447,7 +1491,7 @@ function renderChatMessages(messages, character, isGroupChat = false) {
             return '';
         }
 
-        formattedTexts.push(CoreAPI.formatRichText(text, charName, true));
+        formattedTexts.push(CoreAPI.safePurify(CoreAPI.formatRichText(text, charName, true), BROWSE_PURIFY_CONFIG));
 
         const isMetadata = msg.chat_metadata !== undefined;
         const actionButtons = isMetadata ? '' : `
@@ -1539,6 +1583,46 @@ function renderChatMessages(messages, character, isGroupChat = false) {
 
     // Scroll to bottom
     container.scrollTop = container.scrollHeight;
+
+    // Swap remote media URLs for local gallery copies (single-char chats only), same as the
+    // character detail modal. Async + gen-guarded so a newer render cant be clobbered by a stale pass.
+    if (character && !isGroupChat && character.avatar) {
+        localizeChatPreviewMessages(character, renderGen);
+    }
+}
+
+function getMessageDisplayText(msg) {
+    const rawSwipeId = msg.swipe_id ?? 0;
+    const swipeId = msg.swipes?.length > 1 ? Math.min(rawSwipeId, msg.swipes.length - 1) : 0;
+    return msg.swipes?.length > 1 ? (msg.swipes[swipeId] || '') : (msg.mes || '');
+}
+
+async function localizeChatPreviewMessages(character, gen) {
+    try {
+        if (!character?.avatar || !CoreAPI.isMediaLocalizationEnabled(character.avatar)) return;
+        const folderName = CoreAPI.getGalleryFolderName(character);
+        const map = await CoreAPI.buildMediaLocalizationMap(folderName, character.avatar);
+        if (gen !== chatPreviewRenderGen) return; // a newer render superseded this pass
+        if (!map || Object.keys(map).length === 0) return;
+        currentChatLocalizationMap = map;
+        const container = document.getElementById('chatPreviewMessages');
+        if (!container) return;
+        const charName = character.name || '';
+        container.querySelectorAll('.chat-message-text').forEach(el => {
+            const msgEl = el.closest('.chat-message');
+            if (!msgEl) return;
+            const idx = parseInt(msgEl.dataset.msgIndex, 10);
+            const msg = currentChatMessages[idx];
+            if (!msg) return;
+            const raw = getMessageDisplayText(msg);
+            const localized = CoreAPI.replaceMediaUrlsInText(raw, map);
+            if (localized !== raw) {
+                el.innerHTML = CoreAPI.safePurify(CoreAPI.formatRichText(localized, charName, true), BROWSE_PURIFY_CONFIG);
+            }
+        });
+    } catch (e) {
+        console.error('[Chats] media localization pass failed:', e);
+    }
 }
 
 function getSwipeTimestamp(msg, swipeId) {
@@ -1581,7 +1665,9 @@ function navigateSwipe(msgIndex, dir, character) {
 
     const textEl = msgEl.querySelector('.chat-message-text');
     if (textEl) {
-        textEl.innerHTML = CoreAPI.formatRichText(msg.swipes[newId] || '', character?.name || '', true);
+        const raw = msg.swipes[newId] || '';
+        const localized = currentChatLocalizationMap ? CoreAPI.replaceMediaUrlsInText(raw, currentChatLocalizationMap) : raw;
+        textEl.innerHTML = CoreAPI.safePurify(CoreAPI.formatRichText(localized, character?.name || '', true), BROWSE_PURIFY_CONFIG);
     }
 
     const navEl = msgEl.querySelector('.chat-swipe-nav');
@@ -1894,6 +1980,362 @@ async function saveChatToServer(chat, messages) {
 
 
 // ========================================
+// CHAT LORE (chat_metadata.world_info)
+// ========================================
+// A chat-bound lorebook is a single world-file NAME stored in the chat's metadata
+// header (first JSONL line) under `world_info`. It lives entirely in the chat, never
+// on the card. We only ever MUTATE that one key and preserve the rest of the header
+// (integrity slug + other extensions' data), then save the chat back unchanged otherwise.
+
+const CHAT_LORE_KEY = 'world_info';
+
+// Cached world list for the picker, refreshed when the picker opens.
+let _chatLoreWorlds = null;
+// The chat (from the per-character list) the picker is acting on.
+let _chatLorePickerChat = null;
+
+/**
+ * Read the bound world from a chat-list entry (already carries chat_metadata
+ * because the list requests metadata:true). No network call.
+ * @param {Object} chat - a chat entry from the /characters/chats or /chats/recent response
+ * @returns {string} world name or ''
+ */
+function getChatBoundWorld(chat) {
+    return chat?.chat_metadata?.[CHAT_LORE_KEY] || '';
+}
+
+/**
+ * Single lorebook button for chats-view cards. Lives in the always-visible meta row so the
+ * bound state reads at a glance: lit when a lorebook is bound (tooltip names it), default
+ * state to bind one. Replaces the old name-pill + separate action button (saves card width).
+ * Group chats are read-only here (different save path): lit indicator when bound, nothing
+ * when not, since CL cant change a group binding.
+ */
+function buildChatLoreButtonHtml(chat) {
+    const world = getChatBoundWorld(chat);
+    const icon = '<i class="fa-solid fa-book-atlas"></i>';
+    if (chat.isGroup) {
+        if (!world) return '';
+        const safe = CoreAPI.escapeHtml(world);
+        return `<span class="chat-lore-btn chat-lore-bound chat-lore-readonly" title="Lorebook: ${safe} (group chat, manage in SillyTavern)" aria-label="Lorebook: ${safe}">${icon}</span>`;
+    }
+    if (world) {
+        const safe = CoreAPI.escapeHtml(world);
+        return `<button class="chat-lore-btn chat-lore-bound" data-action="lore" title="Lorebook: ${safe} (click to change)" aria-label="Lorebook: ${safe} (click to change)">${icon}</button>`;
+    }
+    return `<button class="chat-lore-btn" data-action="lore" title="Bind a lorebook to this chat" aria-label="Bind a lorebook to this chat">${icon}</button>`;
+}
+
+// Cheap content signature of a loaded chat (message count + last message's timestamp/text),
+// used to detect that ST appended/edited the file between our read and our write.
+function chatSignature(messages) {
+    if (!Array.isArray(messages) || !messages.length) return '0';
+    const last = messages[messages.length - 1] || {};
+    return `${messages.length}:${last.send_date || ''}:${(last.mes || '').length}`;
+}
+
+/**
+ * Is this chat the one ST is actively appending to RIGHT NOW (live), so a full-file
+ * read-modify-write could drop freshly appended messages? That is true only when ST's
+ * currently-selected character is THIS character AND ST's open chat is THIS file.
+ *
+ * NOTE: char.chat is just the card's most-recent chat filename, NOT "open in ST". Using it
+ * (the old bug) falsely blocked binding a character's latest chat even when ST wasn't on it.
+ * We read the live ST context instead; if ST isn't focused on this character/chat (the common
+ * case when managing another character's chats), there is no risk and we allow the write.
+ */
+function isActiveChat(char, fileName) {
+    const target = String(fileName || '').replace(/\.jsonl$/i, '');
+    if (!target) return false;
+    try {
+        const host = CoreAPI.getHostWindow();
+        const ctx = host?.SillyTavern?.getContext?.();
+        if (!ctx) return false; // can't confirm ST state -> don't block (backstop re-read still guards)
+        if (ctx.groupId) return false; // group chat active; single-char binds aren't that file
+        const activeChar = ctx.characters?.[ctx.characterId];
+        if (!activeChar || activeChar.avatar !== char?.avatar) return false; // ST is on a different (or no) char
+        const activeChat = String(ctx.chatId || ctx.getCurrentChatId?.() || '').replace(/\.jsonl$/i, '');
+        return !!activeChat && activeChat === target;
+    } catch (_) {
+        return false; // never let a context read error block a legitimate bind
+    }
+}
+
+/**
+ * Set or clear a single-character chat's bound lorebook by mutating only
+ * chat_metadata.world_info in the loaded message array's header line, then saving.
+ * Preserves the integrity slug and every other header key. Group chats are not
+ * supported here (different save path) and are rejected by the caller.
+ *
+ * ST exposes no metadata-only chat save, so this is a full-file read-modify-write.
+ * Two guards keep a live chat safe: (1) the active chat is refused outright, and
+ * (2) the file is re-read immediately before the write and the save is aborted if
+ * its content signature changed since the first read (never clobbers appended messages).
+ * @param {Object} char - { avatar, name, chat }
+ * @param {string} chatFile - file name (with or without .jsonl)
+ * @param {string|null} worldName - world to bind, or null/'' to clear
+ * @returns {Promise<boolean>} success
+ */
+async function setChatBoundWorld(char, chatFile, worldName) {
+    const fileName = String(chatFile || '').replace(/\.jsonl$/i, '');
+    if (!char?.avatar || !fileName) return false;
+
+    // Guard 1: never rewrite the chat ST is actively appending to.
+    if (isActiveChat(char, fileName)) {
+        CoreAPI.showToast('This chat is currently open in SillyTavern. Close or switch away from it before changing its lorebook.', 'warning', 6000);
+        return false;
+    }
+
+    try {
+        const getChat = async () => {
+            const resp = await CoreAPI.apiRequest(ENDPOINTS.CHATS_GET, 'POST', {
+                ch_name: char.name,
+                file_name: fileName,
+                avatar_url: char.avatar,
+            });
+            if (!resp.ok) { console.error('[ChatLore] GET failed:', resp.status); return null; }
+            const m = await resp.json();
+            return Array.isArray(m) ? m : null;
+        };
+
+        const messages = await getChat();
+        if (!messages || messages.length === 0) return false;
+
+        // The header is line 0: the object carrying chat_metadata (and no `mes`).
+        const header = messages[0];
+        if (!header || typeof header !== 'object' || !header.chat_metadata) {
+            // v1 does not synthesize a header for headerless chats.
+            CoreAPI.showToast('This chat has no metadata header; cannot bind a lorebook to it.', 'warning');
+            return false;
+        }
+
+        if (worldName) header.chat_metadata[CHAT_LORE_KEY] = worldName;
+        else delete header.chat_metadata[CHAT_LORE_KEY];
+
+        // Guard 2: re-read right before writing; abort if the file changed under us
+        // (ST appended a message / swiped) so we never overwrite newer content.
+        const sigBefore = chatSignature(messages);
+        const fresh = await getChat();
+        if (!fresh || chatSignature(fresh) !== sigBefore) {
+            CoreAPI.showToast('This chat changed while updating its lorebook; nothing was written. Try again.', 'warning', 6000);
+            return false;
+        }
+
+        const ok = await saveChatToServer({ character: char, file_name: fileName, isGroup: false }, messages);
+        return ok;
+    } catch (e) {
+        console.error('[ChatLore] setChatBoundWorld error:', e);
+        return false;
+    }
+}
+
+/**
+ * Fetch a character's chats WITH chat_metadata (so callers can read each chat's bound
+ * lorebook). Returns the raw array (no DOM side effects). Used by the Lorebook Manager's
+ * "link to chats" mode. Single-character only (group chats use a different listing).
+ * @param {Object} char - { avatar, name }
+ * @returns {Promise<Array>} chat entries, each with chat_metadata
+ */
+async function listCharacterChatsWithMeta(char) {
+    if (!char?.avatar) return [];
+    try {
+        const resp = await CoreAPI.apiRequest(ENDPOINTS.CHARACTERS_CHATS, 'POST', {
+            avatar_url: char.avatar,
+            metadata: true,
+        });
+        if (!resp.ok) return [];
+        const chats = await resp.json();
+        if (!Array.isArray(chats)) return [];
+        chats.sort((a, b) => {
+            const da = a.last_mes ? new Date(a.last_mes) : new Date(0);
+            const db = b.last_mes ? new Date(b.last_mes) : new Date(0);
+            return db - da;
+        });
+        return chats;
+    } catch (e) {
+        console.error('[ChatLore] listCharacterChatsWithMeta error:', e);
+        return [];
+    }
+}
+
+/**
+ * List ALL single-character chats that have a bound lorebook, across every character.
+ * Data-only (no DOM). Used by the Lorebook Manager to build a world -> chats reverse index
+ * for its "Used by: Chats" lens. One /chats/recent call (no max = all chats) with metadata.
+ * Group chats are excluded (different save path; manager shows them read-only if at all).
+ * @returns {Promise<Array<{avatar, charName, char, file_name, world}>>}
+ */
+async function listAllChatsWithMeta() {
+    try {
+        const resp = await CoreAPI.apiRequest(ENDPOINTS.CHATS_RECENT, 'POST', { metadata: true });
+        if (!resp.ok) return [];
+        const recent = await resp.json();
+        if (!Array.isArray(recent)) return [];
+        const chars = CoreAPI.getAllCharacters() || [];
+        const charByAvatar = new Map(chars.map(c => [c.avatar, c]));
+        const out = [];
+        for (const chat of recent) {
+            if (chat.group || !chat.avatar) continue; // single-char only
+            const world = chat.chat_metadata?.[CHAT_LORE_KEY];
+            if (!world) continue; // only chats that actually bind a book
+            const char = charByAvatar.get(chat.avatar);
+            out.push({
+                avatar: chat.avatar,
+                charName: char?.name || chat.avatar,
+                char: char || null,
+                file_name: chat.file_name,
+                last_mes: chat.last_mes,
+                chat_items: chat.chat_items || 0,
+                world,
+            });
+        }
+        return out;
+    } catch (e) {
+        console.error('[ChatLore] listAllChatsWithMeta error:', e);
+        return [];
+    }
+}
+
+/**
+ * Open the small picker to set/change/clear the bound lorebook for a single chat.
+ * @param {Object} char - { avatar, name }
+ * @param {Object} chat - the chat-list entry (for current binding + file name)
+ */
+async function openChatLorePicker(char, chat) {
+    _chatLorePickerChat = { char, chat };
+    const modal = document.getElementById('chatLoreModal');
+    if (!modal) { buildChatLoreModal(); }
+    _chatLoreWorlds = await CoreAPI.listWorldInfoFiles();
+    renderChatLorePicker();
+    document.getElementById('chatLoreModal')?.classList.add('visible');
+}
+
+function closeChatLorePicker() {
+    document.getElementById('chatLoreModal')?.classList.remove('visible');
+    _chatLorePickerChat = null;
+}
+
+function buildChatLoreModal() {
+    const html = `
+    <div id="chatLoreModal" class="cl-modal cl-modal-drawer">
+        <div class="cl-modal-content chat-lore-modal-content">
+            <div class="cl-modal-header">
+                <h3><i class="fa-solid fa-book-atlas cl-modal-header-icon"></i> Chat Lorebook</h3>
+                <button class="cl-modal-close" id="chatLoreCloseBtn" title="Close"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="cl-modal-body chat-lore-body">
+                <div class="chat-lore-subhead" id="chatLoreSubhead"></div>
+                <div class="chat-lore-search-wrap">
+                    <i class="fa-solid fa-magnifying-glass"></i>
+                    <input type="search" id="chatLoreSearch" class="cl-input chat-lore-search" placeholder="Search lorebooks..." autocomplete="off">
+                </div>
+                <div class="chat-lore-list" id="chatLoreList"></div>
+            </div>
+            <div class="cl-modal-footer chat-lore-footer">
+                <button class="cl-btn cl-btn-danger" id="chatLoreClearBtn"><i class="fa-solid fa-link-slash"></i> Clear binding</button>
+            </div>
+        </div>
+    </div>`;
+    const wrap = document.createElement('div');
+    wrap.innerHTML = html;
+    document.body.appendChild(wrap.firstElementChild);
+
+    document.getElementById('chatLoreCloseBtn')?.addEventListener('click', closeChatLorePicker);
+    const modal = document.getElementById('chatLoreModal');
+    modal?.addEventListener('click', (e) => { if (e.target === modal) closeChatLorePicker(); });
+    document.getElementById('chatLoreSearch')?.addEventListener('input', renderChatLoreList);
+    document.getElementById('chatLoreClearBtn')?.addEventListener('click', () => applyChatLore(''));
+    document.getElementById('chatLoreList')?.addEventListener('click', (e) => {
+        const row = e.target.closest('[data-world]');
+        if (row) applyChatLore(row.dataset.world);
+    });
+
+    window.registerOverlay?.({
+        id: 'chatLoreModal',
+        tier: 3,
+        close: () => closeChatLorePicker(),
+        visible: (el) => el.classList.contains('visible'),
+    });
+}
+
+function renderChatLorePicker() {
+    const { chat } = _chatLorePickerChat || {};
+    const current = getChatBoundWorld(chat);
+    const sub = document.getElementById('chatLoreSubhead');
+    if (sub) {
+        const chatName = (chat?.file_name || '').replace(/\.jsonl$/i, '');
+        sub.innerHTML = current
+            ? `Bound to <strong>${CoreAPI.escapeHtml(current)}</strong> for chat "${CoreAPI.escapeHtml(chatName)}".`
+            : `Pick a lorebook to bind to chat "${CoreAPI.escapeHtml(chatName)}".`;
+    }
+    const searchEl = document.getElementById('chatLoreSearch');
+    if (searchEl) searchEl.value = '';
+    const clearBtn = document.getElementById('chatLoreClearBtn');
+    if (clearBtn) clearBtn.disabled = !current;
+    renderChatLoreList();
+}
+
+function renderChatLoreList() {
+    const listEl = document.getElementById('chatLoreList');
+    if (!listEl) return;
+    const current = getChatBoundWorld(_chatLorePickerChat?.chat);
+    const q = (document.getElementById('chatLoreSearch')?.value || '').trim().toLowerCase();
+    // Match + display by file_id (filename): ST identifies world files by filename, not the internal JSON "name".
+    const worlds = (_chatLoreWorlds || []).filter(w => !q || w.file_id.toLowerCase().includes(q));
+    if (!worlds.length) {
+        listEl.innerHTML = `<div class="chat-lore-empty">${(_chatLoreWorlds || []).length ? 'No matches.' : 'No lorebooks found.'}</div>`;
+        return;
+    }
+    listEl.innerHTML = worlds.map(w => {
+        const isCurrent = w.file_id === current;
+        return `
+            <button class="chat-lore-row${isCurrent ? ' current' : ''}" data-world="${CoreAPI.escapeHtml(w.file_id)}">
+                <i class="fa-solid fa-book"></i>
+                <span class="chat-lore-row-name">${CoreAPI.escapeHtml(w.file_id)}</span>
+                ${isCurrent ? '<i class="fa-solid fa-check chat-lore-row-check"></i>' : ''}
+            </button>`;
+    }).join('');
+}
+
+async function applyChatLore(worldName) {
+    const ctx = _chatLorePickerChat;
+    if (!ctx) return;
+    const { char, chat } = ctx;
+    const target = worldName || null;
+    if ((getChatBoundWorld(chat) || '') === (target || '')) { closeChatLorePicker(); return; }
+
+    const ok = await setChatBoundWorld(char, chat.file_name, target);
+    if (!ok) { CoreAPI.showToast('Failed to update chat lorebook', 'error'); return; }
+
+    // Keep the in-memory list entry in sync so the row + future opens reflect it without a refetch.
+    if (chat.chat_metadata) {
+        if (target) chat.chat_metadata[CHAT_LORE_KEY] = target;
+        else delete chat.chat_metadata[CHAT_LORE_KEY];
+    } else if (target) {
+        chat.chat_metadata = { [CHAT_LORE_KEY]: target };
+    }
+    // Mirror onto the chats-view copy if this same chat lives in allChats (distinct object).
+    const viewCopy = allChats.find(c => c.file_name === chat.file_name && c.charAvatar === (char.avatar || chat.charAvatar) && !c.isGroup);
+    if (viewCopy && viewCopy !== chat) {
+        viewCopy.chat_metadata = viewCopy.chat_metadata || {};
+        if (target) viewCopy.chat_metadata[CHAT_LORE_KEY] = target;
+        else delete viewCopy.chat_metadata[CHAT_LORE_KEY];
+    }
+
+    closeChatLorePicker();
+    // Refresh whichever surface is showing: per-character tab and/or the chats-view grid.
+    if (_modalChatsChar) fetchCharacterChats(_modalChatsChar);
+    if (document.getElementById('chatsGrid') || document.getElementById('chatsGroupedView')) {
+        renderChats();
+        saveChatCacheDebounced();
+    }
+    CoreAPI.showToast(
+        target ? `Bound "${target}" to this chat. Reopen the chat in ST to apply.` : 'Lorebook unbound from this chat. Reopen the chat in ST to apply.',
+        'success', 5000,
+    );
+}
+
+// ========================================
 // PUBLIC API
 // ========================================
 
@@ -1926,4 +2368,9 @@ export default {
 
     // Preview modal
     openChatPreview,
+
+    // Chat lore (chat-bound lorebook) - consumed by the Lorebook Manager too
+    setChatBoundWorld,
+    listCharacterChatsWithMeta,
+    listAllChatsWithMeta,
 };

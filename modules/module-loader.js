@@ -14,7 +14,7 @@ import CoreAPI from './core-api.js';
 // CSS LOADER
 // ========================================
 
-const MODULE_CSS_VERSION = 72;
+const MODULE_CSS_VERSION = 73;
 
 function loadModuleCSS(path) {
     return new Promise((resolve) => {
@@ -289,6 +289,17 @@ async function initModuleSystem() {
     }
 
     try {
+        loadModuleCSS('./lorebook-manager.css');
+        const lorebookModule = await import('./lorebook-manager.js');
+        ModuleLoader.register('lorebook-manager', lorebookModule.default);
+
+        window.openLorebookManager = lorebookModule.openModal;
+        window.closeLorebookManager = lorebookModule.closeModal;
+    } catch (err) {
+        console.warn('[ModuleLoader] Could not load lorebook-manager module:', err);
+    }
+
+    try {
         loadModuleCSS('./playlists.css');
         const playlistsModule = await import('./playlists.js');
         ModuleLoader.register('playlists', playlistsModule.default);
@@ -438,6 +449,9 @@ function setupLazyChats() {
                 renderChats: chats.renderChats,
                 clearChatCache: chats.clearChatCache,
                 openChatPreview: chats.openChatPreview,
+                setChatBoundWorld: chats.setChatBoundWorld,
+                listCharacterChatsWithMeta: chats.listCharacterChatsWithMeta,
+                listAllChatsWithMeta: chats.listAllChatsWithMeta,
             };
 
             window.fetchCharacterChats = chats.fetchCharacterChats;
@@ -460,6 +474,9 @@ function setupLazyChats() {
         renderChats: chatStub('renderChats'),
         clearChatCache: chatStub('clearChatCache'),
         openChatPreview: chatStub('openChatPreview'),
+        setChatBoundWorld: chatStub('setChatBoundWorld'),
+        listCharacterChatsWithMeta: chatStub('listCharacterChatsWithMeta'),
+        listAllChatsWithMeta: chatStub('listAllChatsWithMeta'),
     };
 
     window.fetchCharacterChats = chatStub('fetchCharacterChats');

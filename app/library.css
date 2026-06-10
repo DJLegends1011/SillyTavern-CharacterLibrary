@@ -92,7 +92,16 @@
     --chrome-h-mobile: 56px;          /* mobile modal headers + bottom nav */
     --back-arrow-zone: 56px;          /* header padding-left reserved for the back-arrow */
     --safe-bottom: env(safe-area-inset-bottom, 0px);
+
+    /* Font size for mobile text fields. Compact everywhere except iOS, which auto-zooms the page
+       on focus below 16px. The html.cl-ios override (set at boot) bumps it to 16px there. Consumed
+       only inside @media(max-width:768px) input guards, so it has no desktop effect. */
+    --mobile-input-size: var(--font-md);
 }
+
+/* iOS (incl. iPadOS) is the only platform that needs the 16px focus-zoom guard; see the boot
+   detector in library.html that adds .cl-ios. Every other platform keeps the compact field size. */
+html.cl-ios { --mobile-input-size: 16px; }
 
 /* ========================================
    Modal Size Overrides (body class approach)
@@ -1993,6 +2002,44 @@ body.char-modal-above .cl-modal.visible {
 }
 
 /* Lorebook Editor Section */
+/* Linked Lorebook row (Edit tab): the external world file linked via extensions.world,
+   shown as its own section distinct from the embedded book. */
+.linked-lorebook-section .section-header {
+    margin-bottom: 10px;
+}
+
+.linked-lorebook-section .section-header i {
+    color: var(--accent);
+}
+
+.linked-lorebook-bar {
+    display: flex;
+    align-items: center;
+    gap: var(--space-md);
+    flex-wrap: wrap;
+    padding: var(--space-sm) var(--space-md);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-lg);
+    background: rgba(var(--accent-rgb), 0.06);
+}
+
+.linked-lorebook-name {
+    flex: 1;
+    min-width: 0;
+    font-weight: 600;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.linked-lorebook-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    flex-shrink: 0;
+}
+
 .lorebook-edit-section .section-header {
     margin-bottom: 10px;
 }
@@ -7479,7 +7526,7 @@ input[type="search"]::-webkit-search-results-decoration {
 .cl-confirm-overlay .cl-confirm-text {
     display: flex;
     flex-direction: column;
-    gap: var(--space-2xs);
+    gap: var(--space-sm);
     min-width: 0;
 }
 
@@ -10327,6 +10374,16 @@ html.cl-initial-loading .mobile-bottom-nav-tab {
     cursor: wait;
     transition: opacity 0.2s ease;
 }
+/* Same lockout for the topbar controls; desktop only, mobile chrome is left alone. */
+@media (min-width: 769px) {
+    html.cl-initial-loading .search-area,
+    html.cl-initial-loading .filter-area {
+        pointer-events: none;
+        opacity: 0.45;
+        cursor: wait;
+        transition: opacity 0.2s ease;
+    }
+}
 html.cl-initial-loading .view-toggle-btn,
 html.cl-initial-loading .mobile-bottom-nav-tab {
     cursor: wait !important;
@@ -11558,7 +11615,7 @@ html.cl-initial-loading .mobile-fab {
     border-radius: var(--radius-lg);
     border: none;
     cursor: pointer;
-    font-size: 0.95em;
+    font-size: var(--font-pre-base);
     display: inline-flex;
     align-items: center;
     gap: var(--space-sm);
@@ -11613,7 +11670,8 @@ html.cl-initial-loading .mobile-fab {
     border: 1px solid var(--cl-border);
     background: rgba(0, 0, 0, 0.3);
     color: var(--cl-text-primary);
-    font-size: 0.95em;
+    font-size: var(--font-pre-base);
+    font-family: inherit; /* textareas default to monospace without this */
 }
 
 .cl-input:focus {

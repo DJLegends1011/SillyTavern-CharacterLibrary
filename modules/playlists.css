@@ -543,7 +543,7 @@
     }
 
     .pl-picker-search {
-        font-size: 16px;
+        font-size: var(--mobile-input-size);
     }
 
     .pl-picker-row {
@@ -589,7 +589,7 @@
         background: var(--cl-glass-bg);
         z-index: 1;
     }
-    #playlistFilterPopup .pl-filter-search { font-size: 16px; padding: 10px 12px; border-radius: var(--radius-lg); }
+    #playlistFilterPopup .pl-filter-search { font-size: var(--mobile-input-size); padding: 10px 12px; border-radius: var(--radius-lg); }
     #playlistFilterPopup .pl-filter-item { padding: 10px 14px; min-height: var(--touch-target-min); margin: 0 6px; }
     #playlistFilterPopup .pl-filter-manage-btn { padding: 12px 14px; min-height: var(--touch-target-min); font-size: var(--font-md); }
     #playlistFilterPopup .pl-filter-footer { padding: 8px 10px; padding-bottom: max(8px, var(--safe-bottom)); }

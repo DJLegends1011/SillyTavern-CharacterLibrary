@@ -2,7 +2,7 @@
 
 import { BrowseView } from '../browse-view.js';
 import CoreAPI from '../../core-api.js';
-import { IMG_PLACEHOLDER, formatNumber, BROWSE_PURIFY_CONFIG, skeletonLines } from '../provider-utils.js';
+import { IMG_PLACEHOLDER, formatNumber, BROWSE_PURIFY_CONFIG, skeletonLines, deferRender } from '../provider-utils.js';
 import {
     JANNY_SEARCH_URL,
     JANNY_IMAGE_BASE,
@@ -600,7 +600,7 @@ async function fetchAndPopulateDetails(hit, token) {
         if (descSection) {
             if (personality) {
                 descSection.style.display = 'block';
-                if (descEl) descEl.innerHTML = safePurify(formatRichText(personality, name, true), BROWSE_PURIFY_CONFIG);
+                if (descEl) deferRender(descEl, () => safePurify(formatRichText(personality, name, true), BROWSE_PURIFY_CONFIG));
             } else {
                 descSection.style.display = 'none';
             }
@@ -610,7 +610,7 @@ async function fetchAndPopulateDetails(hit, token) {
         const scenarioEl = document.getElementById('jannyCharScenario');
         if (scenarioSection && scenario) {
             scenarioSection.style.display = 'block';
-            if (scenarioEl) scenarioEl.innerHTML = safePurify(formatRichText(scenario, name, true), BROWSE_PURIFY_CONFIG);
+            if (scenarioEl) deferRender(scenarioEl, () => safePurify(formatRichText(scenario, name, true), BROWSE_PURIFY_CONFIG));
         } else if (scenarioSection) {
             scenarioSection.style.display = 'none';
         }
@@ -620,7 +620,7 @@ async function fetchAndPopulateDetails(hit, token) {
         if (firstMsgSection && firstMessage) {
             firstMsgSection.style.display = 'block';
             if (firstMsgEl) {
-                firstMsgEl.innerHTML = safePurify(formatRichText(firstMessage, name, true), BROWSE_PURIFY_CONFIG);
+                deferRender(firstMsgEl, () => safePurify(formatRichText(firstMessage, name, true), BROWSE_PURIFY_CONFIG));
                 firstMsgEl.dataset.fullContent = firstMessage;
             }
         } else if (firstMsgSection) {
@@ -631,7 +631,7 @@ async function fetchAndPopulateDetails(hit, token) {
         const examplesEl = document.getElementById('jannyCharExamples');
         if (examplesSection && exampleDialogs) {
             examplesSection.style.display = 'block';
-            if (examplesEl) examplesEl.innerHTML = safePurify(formatRichText(exampleDialogs, name, true), BROWSE_PURIFY_CONFIG);
+            if (examplesEl) deferRender(examplesEl, () => safePurify(formatRichText(exampleDialogs, name, true), BROWSE_PURIFY_CONFIG));
         } else if (examplesSection) {
             examplesSection.style.display = 'none';
         }

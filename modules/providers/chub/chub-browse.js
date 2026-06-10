@@ -2,7 +2,7 @@
 
 import { BrowseView } from '../browse-view.js';
 import CoreAPI from '../../core-api.js';
-import { IMG_PLACEHOLDER, formatNumber, BROWSE_PURIFY_CONFIG, skeletonLines } from '../provider-utils.js';
+import { IMG_PLACEHOLDER, formatNumber, BROWSE_PURIFY_CONFIG, skeletonLines, deferRender } from '../provider-utils.js';
 import {
     CHUB_API_BASE,
     CHUB_GATEWAY_BASE,
@@ -3620,7 +3620,7 @@ async function openChubCharPreview(char) {
                 if (body && !body.dataset.rendered) {
                     const idx = parseInt(details.dataset.greetingIdx, 10);
                     if (greetings[idx] != null) {
-                        body.innerHTML = safePurify(formatRichText(greetings[idx], char.name, true), BROWSE_PURIFY_CONFIG);
+                        deferRender(body, () => safePurify(formatRichText(greetings[idx], char.name, true), BROWSE_PURIFY_CONFIG));
                     }
                     body.dataset.rendered = '1';
                 }
@@ -3648,7 +3648,7 @@ async function openChubCharPreview(char) {
         requestAnimationFrame(() => {
             if (def.personality) {
                 descSection.style.display = 'block';
-                descEl.innerHTML = safePurify(formatRichText(def.personality, char.name, true), BROWSE_PURIFY_CONFIG);
+                deferRender(descEl, () => safePurify(formatRichText(def.personality, char.name, true), BROWSE_PURIFY_CONFIG));
                 descEl.dataset.fullContent = def.personality;
             } else if (descSection) {
                 descSection.style.display = 'none';
@@ -3656,7 +3656,7 @@ async function openChubCharPreview(char) {
 
             if (def.scenario) {
                 scenarioSection.style.display = 'block';
-                scenarioEl.innerHTML = safePurify(formatRichText(def.scenario, char.name, true), BROWSE_PURIFY_CONFIG);
+                deferRender(scenarioEl, () => safePurify(formatRichText(def.scenario, char.name, true), BROWSE_PURIFY_CONFIG));
                 scenarioEl.dataset.fullContent = def.scenario;
             } else if (scenarioSection) {
                 scenarioSection.style.display = 'none';
@@ -3664,7 +3664,7 @@ async function openChubCharPreview(char) {
 
             if (def.mes_example) {
                 examplesSection.style.display = 'block';
-                examplesEl.innerHTML = safePurify(formatRichText(def.mes_example, char.name, true), BROWSE_PURIFY_CONFIG);
+                deferRender(examplesEl, () => safePurify(formatRichText(def.mes_example, char.name, true), BROWSE_PURIFY_CONFIG));
                 examplesEl.dataset.fullContent = def.mes_example;
             } else if (examplesSection) {
                 examplesSection.style.display = 'none';
@@ -3672,7 +3672,7 @@ async function openChubCharPreview(char) {
 
             if (firstMsg) {
                 firstMsgSection.style.display = 'block';
-                firstMsgEl.innerHTML = safePurify(formatRichText(firstMsg, char.name, true), BROWSE_PURIFY_CONFIG);
+                deferRender(firstMsgEl, () => safePurify(formatRichText(firstMsg, char.name, true), BROWSE_PURIFY_CONFIG));
                 firstMsgEl.dataset.fullContent = firstMsg;
             } else if (firstMsgSection) {
                 firstMsgSection.style.display = 'none';

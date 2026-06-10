@@ -5,7 +5,7 @@
 
 import { BrowseView } from '../browse-view.js';
 import CoreAPI from '../../core-api.js';
-import { IMG_PLACEHOLDER, formatNumber, BROWSE_PURIFY_CONFIG, skeletonLines } from '../provider-utils.js';
+import { IMG_PLACEHOLDER, formatNumber, BROWSE_PURIFY_CONFIG, skeletonLines, deferRender } from '../provider-utils.js';
 import {
     searchCharacters,
     fetchCharacterDetail,
@@ -759,7 +759,7 @@ function populateDefinitionSections(name, p, altGreetings) {
         if (creatorNotesEl) {
             if (p.characterNotes && p.characterNotes.trim()) {
                 if (creatorNotesSection) creatorNotesSection.style.display = 'block';
-                creatorNotesEl.innerHTML = safePurify(formatRichText(p.characterNotes, name, true), BROWSE_PURIFY_CONFIG);
+                deferRender(creatorNotesEl, () => safePurify(formatRichText(p.characterNotes, name, true), BROWSE_PURIFY_CONFIG));
             } else {
                 if (creatorNotesSection) creatorNotesSection.style.display = 'none';
                 creatorNotesEl.innerHTML = '';
@@ -772,7 +772,7 @@ function populateDefinitionSections(name, p, altGreetings) {
         if (descSection) {
             if (p.persona) {
                 descSection.style.display = 'block';
-                if (descEl) descEl.innerHTML = safePurify(formatRichText(p.persona, name, true), BROWSE_PURIFY_CONFIG);
+                if (descEl) deferRender(descEl, () => safePurify(formatRichText(p.persona, name, true), BROWSE_PURIFY_CONFIG));
             } else {
                 descSection.style.display = 'none';
             }
@@ -784,7 +784,7 @@ function populateDefinitionSections(name, p, altGreetings) {
         if (firstMsgSection) {
             if (p.greeting) {
                 firstMsgSection.style.display = 'block';
-                if (firstMsgEl) firstMsgEl.innerHTML = safePurify(formatRichText(p.greeting, name, true), BROWSE_PURIFY_CONFIG);
+                if (firstMsgEl) deferRender(firstMsgEl, () => safePurify(formatRichText(p.greeting, name, true), BROWSE_PURIFY_CONFIG));
             } else {
                 firstMsgSection.style.display = 'none';
             }
@@ -827,7 +827,7 @@ function populateDefinitionSections(name, p, altGreetings) {
                         if (body && !body.dataset.rendered) {
                             const idx = parseInt(details.dataset.greetingIdx, 10);
                             if (altGreetings[idx] != null) {
-                                body.innerHTML = safePurify(formatRichText(altGreetings[idx], name, true), BROWSE_PURIFY_CONFIG);
+                                deferRender(body, () => safePurify(formatRichText(altGreetings[idx], name, true), BROWSE_PURIFY_CONFIG));
                             }
                             body.dataset.rendered = '1';
                         }
@@ -847,7 +847,7 @@ function populateDefinitionSections(name, p, altGreetings) {
         if (examplesSection) {
             if (p.mesExample) {
                 examplesSection.style.display = 'block';
-                if (examplesEl) examplesEl.innerHTML = safePurify(formatRichText(p.mesExample, name, true), BROWSE_PURIFY_CONFIG);
+                if (examplesEl) deferRender(examplesEl, () => safePurify(formatRichText(p.mesExample, name, true), BROWSE_PURIFY_CONFIG));
             } else {
                 examplesSection.style.display = 'none';
             }

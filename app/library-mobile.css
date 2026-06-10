@@ -28,6 +28,16 @@
         -ms-overflow-style: none !important;
     }
 
+    /* --- Mobile text fields: compact by default, 16px only on iOS --- */
+    /* --mobile-input-size resolves to --font-md everywhere and to 16px under html.cl-ios (iOS
+       auto-zooms on focus below 16px). This baseline catches plain fields; the per-element guards
+       across the project reference the same variable, so non-iOS finally gets the compact scale. */
+    input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=color]):not([type=file]):not([type=submit]):not([type=button]):not([type=image]),
+    textarea,
+    select {
+        font-size: var(--mobile-input-size);
+    }
+
     /* --- Global touch optimizations --- */
     * {
         -webkit-tap-highlight-color: transparent;
@@ -235,7 +245,7 @@
         min-height: 32px;
         touch-action: manipulation;
     }
-    #tagFilterPopup .tag-search-row input { font-size: 16px; padding: 10px 12px; border-radius: var(--radius-lg); }
+    #tagFilterPopup .tag-search-row input { font-size: var(--mobile-input-size); padding: 10px 12px; border-radius: var(--radius-lg); }
     #tagFilterPopup .tag-item,
     #tagFilterPopup .tag-filter-item { padding: 10px 14px; min-height: var(--touch-target-min); margin: 0 6px; }
     #tagFilterPopup .tag-state-btn { width: 24px; height: 24px; min-width: 24px; touch-action: manipulation; }
@@ -292,7 +302,7 @@
         border-radius: var(--radius-2xl);
         backdrop-filter: blur(10px);
     }
-    .mobile-search-overlay .search-box input { font-size: 16px; }
+    .mobile-search-overlay .search-box input { font-size: var(--mobile-input-size); }
     .mobile-search-container {
         display: flex;
         gap: var(--space-sm-md);
@@ -399,7 +409,7 @@
     }
 
     .adv-filter-row input {
-        font-size: 16px !important;
+        font-size: var(--mobile-input-size) !important;
         min-height: 38px;
         padding: 6px 10px !important;
         border-radius: var(--radius-lg) !important;
@@ -478,7 +488,7 @@
     }
 
     .adv-filter-presets-name-input {
-        font-size: 16px !important;
+        font-size: var(--mobile-input-size) !important;
         min-height: 40px;
         padding: var(--space-xs-sm) var(--space-sm-md);
         border-radius: var(--radius-lg);
@@ -1311,7 +1321,7 @@
         font-size: var(--font-3xs);
         border-radius: var(--radius-sm-alt);
     }
-    .glass-input { font-size: 16px; padding: 10px 12px; } /* 16px prevents iOS zoom */
+    .glass-input { font-size: var(--mobile-input-size); padding: 10px 12px; }
     textarea.glass-input { min-height: 60px; }
     .edit-lock-header { flex-wrap: wrap; gap: var(--space-sm); padding: 10px 12px; }
     .edit-lock-header .lock-status { width: 100%; font-size: var(--font-sm); }
@@ -1346,7 +1356,7 @@
     .gallery-page-btn { min-width: var(--touch-target-min); min-height: var(--touch-target-min); touch-action: manipulation; }
     .gallery-page-btn:hover:not(:disabled) { background: none; color: var(--text-muted); }
     .gallery-page-btn:active:not(:disabled) { background: rgba(var(--accent-rgb), 0.15); color: var(--accent); }
-    .gallery-page-input { font-size: 16px !important; min-width: 36px; min-height: var(--touch-target-min); touch-action: manipulation; }
+    .gallery-page-input { font-size: var(--mobile-input-size) !important; min-width: 36px; min-height: var(--touch-target-min); touch-action: manipulation; }
     .gallery-page-info { font-size: var(--font-xs); }
     .upload-zone { font-size: var(--font-sm); padding: 16px 12px; border-width: 1px; }
 
@@ -1559,7 +1569,7 @@
         border-bottom: none !important;
         padding-bottom: max(8px, var(--safe-bottom));
     }
-    .preset-picker-search { font-size: 16px; }
+    .preset-picker-search { font-size: var(--mobile-input-size); }
     .preset-picker-list { max-height: none; }
     .preset-picker-row,
     .preset-picker-create-row {
@@ -1597,7 +1607,7 @@
         border-top: 1px solid var(--cl-border);
         z-index: 2;
     }
-    .cl-input { font-size: 16px; } /* prevent iOS zoom */
+    .cl-input { font-size: var(--mobile-input-size); }
     .cl-btn { min-height: var(--touch-target-min); }
     .cl-modal-footer .cl-btn { padding: var(--btn-pad-v-sm) var(--btn-pad-h-md); }
 
@@ -1693,7 +1703,7 @@
         gap: var(--space-sm);
     }
     .provider-link-search-row input {
-        font-size: 16px;
+        font-size: var(--mobile-input-size);
         min-height: var(--touch-target-min);
     }
     .provider-link-search-row input:first-child {
@@ -1758,7 +1768,7 @@
         gap: var(--space-sm);
     }
     .provider-link-url-row input {
-        font-size: 16px;
+        font-size: var(--mobile-input-size);
         min-height: var(--touch-target-min);
     }
 
@@ -1767,15 +1777,15 @@
     .help-search-bar {
         margin-left: var(--space-md);
     }
-    .settings-search-bar .glass-input { font-size: 16px !important; width: 120px !important; }
-    .help-search-bar .glass-input { font-size: 16px !important; width: 120px !important; }
+    .settings-search-bar .glass-input { font-size: var(--mobile-input-size) !important; width: 120px !important; }
+    .help-search-bar .glass-input { font-size: var(--mobile-input-size) !important; width: 120px !important; }
     .settings-input-group {
         flex-wrap: wrap;
     }
     .settings-input-group input,
     .settings-input-group textarea {
         flex-basis: 100% !important;
-        font-size: 16px !important;
+        font-size: var(--mobile-input-size) !important;
     }
     .settings-verify-btn {
         min-width: var(--touch-target-min) !important;
@@ -1784,7 +1794,7 @@
 
     /* Provider exclude tags */
     .provider-exclude-tags-input {
-        font-size: 16px !important;
+        font-size: var(--mobile-input-size) !important;
     }
     .provider-exclude-tag-remove {
         min-width: 28px;
@@ -1902,7 +1912,7 @@
         flex-direction: column;
     }
     .import-urls-textarea {
-        font-size: 16px; /* prevent iOS zoom */
+        font-size: var(--mobile-input-size);
         height: 200px;
         min-height: 200px;
         resize: vertical;
@@ -2082,7 +2092,7 @@
     .bulk-summary-filter .glass-input,
     .bulk-summary-filter .glass-select,
     .bulk-summary-filter .custom-select-container {
-        font-size: 16px;
+        font-size: var(--mobile-input-size);
         min-height: 40px;
         width: 100%;
         min-width: 0;
@@ -2841,7 +2851,10 @@
         margin-left: var(--space-md);
         padding-right: var(--space-xs);
         gap: var(--space-2xs);
-        flex-shrink: 0;
+        /* Fixed width for the two 40px icon buttons (80 + 2 gap + 4 padding = 86). Gecko/WebKit collapse
+           an auto/max-content basis here to ~one button and clip More off-screen; a hard basis forces the
+           min-width:0 view tabs to shrink and fill the rest instead (deterministic in every engine). */
+        flex: 0 0 90px;
     }
     .mobile-bottom-nav-actions .mobile-bottom-nav-action {
         flex: 0 0 40px;
@@ -3088,7 +3101,7 @@
         color: var(--text-primary);
         padding: 12px 40px;
         border-radius: var(--radius-lg);
-        font-size: 16px; /* prevent iOS zoom */
+        font-size: var(--mobile-input-size);
         font-family: inherit;
     }
     .mobile-online-search-input:focus {
@@ -3319,7 +3332,7 @@
         gap: var(--space-xs);
     }
     .provider-order-item .provider-order-defaults select {
-        font-size: 16px !important;
+        font-size: var(--mobile-input-size) !important;
         padding: 6px 8px;
         min-height: 36px;
     }

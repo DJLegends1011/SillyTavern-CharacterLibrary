@@ -7,7 +7,7 @@
 
 import { BrowseView } from '../browse-view.js';
 import CoreAPI from '../../core-api.js';
-import { IMG_PLACEHOLDER, formatNumber, BROWSE_PURIFY_CONFIG, skeletonLines } from '../provider-utils.js';
+import { IMG_PLACEHOLDER, formatNumber, BROWSE_PURIFY_CONFIG, skeletonLines, deferRender } from '../provider-utils.js';
 import {
     DATACAT_API_BASE,
     resolveDatacatAvatarUrl,
@@ -2746,7 +2746,7 @@ async function fetchAndPopulateDetails(hit, token) {
         const scenarioEl = document.getElementById('datacatCharScenario');
         if (scenarioSection && scenario && canPaintBody) {
             scenarioSection.style.display = 'block';
-            if (scenarioEl) scenarioEl.innerHTML = safePurify(formatRichText(scenario, name, true), BROWSE_PURIFY_CONFIG);
+            if (scenarioEl) deferRender(scenarioEl, () => safePurify(formatRichText(scenario, name, true), BROWSE_PURIFY_CONFIG));
         } else if (scenarioSection) {
             scenarioSection.style.display = 'none';
         }
@@ -2756,7 +2756,7 @@ async function fetchAndPopulateDetails(hit, token) {
         if (firstMsgSection && firstMessage && canPaintBody) {
             firstMsgSection.style.display = 'block';
             if (firstMsgEl) {
-                firstMsgEl.innerHTML = safePurify(formatRichText(firstMessage, name, true), BROWSE_PURIFY_CONFIG);
+                deferRender(firstMsgEl, () => safePurify(formatRichText(firstMessage, name, true), BROWSE_PURIFY_CONFIG));
                 firstMsgEl.dataset.fullContent = firstMessage;
             }
         } else if (firstMsgSection) {
@@ -2886,14 +2886,14 @@ async function fetchAndPopulateDetails(hit, token) {
                     const ss = document.getElementById('datacatCharScenarioSection');
                     const se = document.getElementById('datacatCharScenario');
                     if (ss) ss.style.display = 'block';
-                    if (se) se.innerHTML = safePurify(formatRichText(d.scenario, name, true), BROWSE_PURIFY_CONFIG);
+                    if (se) deferRender(se, () => safePurify(formatRichText(d.scenario, name, true), BROWSE_PURIFY_CONFIG));
                 }
                 if (d.first_mes && !useRecoveryAsAuthority && (needSaucepanFallback || !firstMessage || d.first_mes !== firstMessage)) {
                     const fs = document.getElementById('datacatCharFirstMsgSection');
                     const fe = document.getElementById('datacatCharFirstMsg');
                     if (fs) fs.style.display = 'block';
                     if (fe) {
-                        fe.innerHTML = safePurify(formatRichText(d.first_mes, name, true), BROWSE_PURIFY_CONFIG);
+                        deferRender(fe, () => safePurify(formatRichText(d.first_mes, name, true), BROWSE_PURIFY_CONFIG));
                         fe.dataset.fullContent = d.first_mes;
                     }
                 }
@@ -2905,7 +2905,7 @@ async function fetchAndPopulateDetails(hit, token) {
             const mesEl = document.getElementById('datacatCharMesExample');
             if (mesExample && mesSection && mesEl) {
                 mesSection.style.display = 'block';
-                mesEl.innerHTML = safePurify(formatRichText(mesExample, name, true), BROWSE_PURIFY_CONFIG);
+                deferRender(mesEl, () => safePurify(formatRichText(mesExample, name, true), BROWSE_PURIFY_CONFIG));
                 mesEl.dataset.fullContent = mesExample;
             } else if (mesSection) {
                 mesSection.style.display = 'none';
@@ -3047,7 +3047,7 @@ function renderAltGreetings(greetings, charName) {
             if (body && !body.dataset.rendered) {
                 const idx = parseInt(details.dataset.greetingIdx, 10);
                 if (greetings[idx] != null) {
-                    body.innerHTML = safePurify(formatRichText(greetings[idx], charName, true), BROWSE_PURIFY_CONFIG);
+                    deferRender(body, () => safePurify(formatRichText(greetings[idx], charName, true), BROWSE_PURIFY_CONFIG));
                 }
                 body.dataset.rendered = '1';
             }

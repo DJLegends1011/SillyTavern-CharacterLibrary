@@ -956,7 +956,7 @@ async function resolveWorldFileStatus(containerEl, avatar) {
             const charObj = currentUpdateChecks.get(avatar)?.char;
             const charName = (charObj?.name || '').trim();
             if (charName) {
-                const allWorlds = await CoreAPI.listWorldInfoFiles();
+                const allWorlds = (await CoreAPI.listWorldInfoFiles()).map(w => w.file_id);
                 const lower = charName.toLowerCase();
                 worldName = allWorlds.find(w => w.toLowerCase() === lower)
                          || allWorlds.find(w => w.toLowerCase().includes(lower) || lower.includes(w.toLowerCase()))

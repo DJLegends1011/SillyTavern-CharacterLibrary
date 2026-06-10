@@ -2,7 +2,7 @@
 
 import { BrowseView } from '../browse-view.js';
 import CoreAPI from '../../core-api.js';
-import { IMG_PLACEHOLDER, formatNumber, fetchWithProxy, BROWSE_PURIFY_CONFIG, skeletonLines } from '../provider-utils.js';
+import { IMG_PLACEHOLDER, formatNumber, fetchWithProxy, BROWSE_PURIFY_CONFIG, skeletonLines, deferRender } from '../provider-utils.js';
 import {
     WYVERN_API_BASE,
     WYVERN_SITE_BASE,
@@ -2603,7 +2603,7 @@ async function openWyvernCharPreview(char) {
                 if (body && !body.dataset.rendered) {
                     const idx = parseInt(details.dataset.greetingIdx, 10);
                     if (greetings[idx] != null) {
-                        body.innerHTML = safePurify(formatRichText(greetings[idx], char.name, true), BROWSE_PURIFY_CONFIG);
+                        deferRender(body, () => safePurify(formatRichText(greetings[idx], char.name, true), BROWSE_PURIFY_CONFIG));
                     }
                     body.dataset.rendered = '1';
                 }
@@ -2629,7 +2629,7 @@ async function openWyvernCharPreview(char) {
         requestAnimationFrame(() => {
             if (node.description) {
                 descSection.style.display = 'block';
-                descEl.innerHTML = safePurify(formatRichText(node.description, char.name, true), BROWSE_PURIFY_CONFIG);
+                deferRender(descEl, () => safePurify(formatRichText(node.description, char.name, true), BROWSE_PURIFY_CONFIG));
                 descEl.dataset.fullContent = node.description;
             } else if (descSection) {
                 descSection.style.display = 'none';
@@ -2637,7 +2637,7 @@ async function openWyvernCharPreview(char) {
 
             if (node.personality) {
                 personalitySection.style.display = 'block';
-                personalityEl.innerHTML = safePurify(formatRichText(node.personality, char.name, true), BROWSE_PURIFY_CONFIG);
+                deferRender(personalityEl, () => safePurify(formatRichText(node.personality, char.name, true), BROWSE_PURIFY_CONFIG));
                 personalityEl.dataset.fullContent = node.personality;
             } else if (personalitySection) {
                 personalitySection.style.display = 'none';
@@ -2645,7 +2645,7 @@ async function openWyvernCharPreview(char) {
 
             if (node.scenario) {
                 scenarioSection.style.display = 'block';
-                scenarioEl.innerHTML = safePurify(formatRichText(node.scenario, char.name, true), BROWSE_PURIFY_CONFIG);
+                deferRender(scenarioEl, () => safePurify(formatRichText(node.scenario, char.name, true), BROWSE_PURIFY_CONFIG));
                 scenarioEl.dataset.fullContent = node.scenario;
             } else if (scenarioSection) {
                 scenarioSection.style.display = 'none';
@@ -2653,7 +2653,7 @@ async function openWyvernCharPreview(char) {
 
             if (node.mes_example) {
                 examplesSection.style.display = 'block';
-                examplesEl.innerHTML = safePurify(formatRichText(node.mes_example, char.name, true), BROWSE_PURIFY_CONFIG);
+                deferRender(examplesEl, () => safePurify(formatRichText(node.mes_example, char.name, true), BROWSE_PURIFY_CONFIG));
                 examplesEl.dataset.fullContent = node.mes_example;
             } else if (examplesSection) {
                 examplesSection.style.display = 'none';
@@ -2661,7 +2661,7 @@ async function openWyvernCharPreview(char) {
 
             if (node.first_mes) {
                 firstMsgSection.style.display = 'block';
-                firstMsgEl.innerHTML = safePurify(formatRichText(node.first_mes, char.name, true), BROWSE_PURIFY_CONFIG);
+                deferRender(firstMsgEl, () => safePurify(formatRichText(node.first_mes, char.name, true), BROWSE_PURIFY_CONFIG));
                 firstMsgEl.dataset.fullContent = node.first_mes;
             } else if (firstMsgSection) {
                 firstMsgSection.style.display = 'none';

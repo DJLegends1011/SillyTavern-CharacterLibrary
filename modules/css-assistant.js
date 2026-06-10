@@ -212,6 +212,26 @@ Gallery viewer (defined in modules/gallery-viewer.css; NEEDS !important):
   .gv-modal              Gallery viewer modal overlay.
   .gv-modal.visible      Visible state.
 
+Lorebooks (defined in modules/lorebook-manager.css; NEEDS !important for theme overrides). A self-contained World-Info editor plus AI-generation suite. It reuses the canonical shells (.modal-glass, .cl-modal-content) and the token system, but carries its own cohesive entry/button chrome (the way character-creator does). Accent-active states follow var(--accent-rgb) and retheme automatically EXCEPT where flagged:
+  .lb-modal-glass        The manager's full-screen panel (reuses the .modal-glass shell at largest size).
+  .lb-header             The manager's top bar (title + close).
+  .lb-world-row          One lorebook row in the left sidebar list. ".lb-world-row.active" tints bg/border/text via var(--accent-rgb) (themes automatically).
+  .lb-meta-pill          Small neutral metadata pill (entry count, etc.). Neutral white-alpha bg; intentionally does NOT follow accent.
+  .lb-entry              One collapsible World-Info entry card in the editor. ".lb-entry.expanded" adds an accent border. Neutral rgba(255,255,255,*) surface by design.
+  .lb-entry-head         An entry's clickable header (switch + title + badges + actions + chevron). .lb-entry-title is the title text.
+  .lb-badge              Status badge on an entry header. Variants: .lb-badge.constant (accent tier, follows accent), .lb-badge.vector (warning tier, var(--cl-warning-rgb) bg + var(--cl-warning-pale) text, follows a warning retheme), .lb-badge.selective (neutral white-alpha, intentionally does not follow accent).
+  .lb-switch             The enable/include toggle (also reused by the AI review tray as the per-entry include switch). Checked state uses var(--cl-success-rgb) green; follows the SUCCESS status token, not accent.
+  .lb-save-btn           Editor Save button. ".lb-save-btn.dirty" (unsaved) uses var(--cl-success-rgb) green; follows the success token, not accent.
+  .lb-link-btn           Link/Bind button in the editor header. Accent-tinted (follows accent).
+  .lb-icon-btn           Bespoke 34px square icon-action button (rename, duplicate, export, delete, overflow kebab). Modifiers: .small (28px), .danger (red hover via var(--cl-error-rgb)). Neutral translucent bg; this is NOT the topbar .glass-btn.
+  .lb-ai-entry-btn       The accent-tinted "AI" button in the entries toolbar (.lb-add-entry-btn is the "Add Entry" button beside it).
+  .lb-ai-modal-content   The "Generate with AI" modal panel (reuses .cl-modal-content chrome).
+  .lb-ai-section         A numbered step card (Source / Instructions / Output) inside the AI modal. Neutral card surface.
+  .lb-ai-step            The round step-number badge (1/2/3). accent -> accent-secondary gradient (themes automatically).
+  .lb-ai-src-opt         A source-type tab (Paste text / Web-Wiki / From SillyTavern). ".lb-ai-src-opt.active" is an accent tint.
+  .lb-stage-card         One generated-entry card in the AI review tray (reuses .lb-entry chrome). .lb-stage-keypill is the compact neutral key pill on it.
+  .lb-ai-st-mode         The Characters | Chats sub-toggle in the From-SillyTavern picker (active segment = accent tint). .lb-ai-st-chip is an accent-tinted selected-character chip; .lb-ai-st-scope-opt is a per-chat All/Last/Range segment (active = accent).
+
 Buttons (the buttonStyle setting toggles glass vs solid chrome; theming applies to both):
   .glass-btn             Topbar/filter chrome buttons. Defined as a combined selector with .glass-select.
   .action-btn            Solid modal buttons. Variants: .primary, .secondary, .danger.
@@ -445,27 +465,11 @@ let activeModel = '';
 let activePreset = null;
 let abortController = null;
 
-const SOURCE_MODEL_KEY = {
-    openai: 'openai_model', claude: 'claude_model', openrouter: 'openrouter_model',
-    ai21: 'ai21_model', makersuite: 'google_model', vertexai: 'vertexai_model',
-    mistralai: 'mistralai_model', custom: 'custom_model', cohere: 'cohere_model',
-    perplexity: 'perplexity_model', groq: 'groq_model', siliconflow: 'siliconflow_model',
-    electronhub: 'electronhub_model', chutes: 'chutes_model', nanogpt: 'nanogpt_model',
-    deepseek: 'deepseek_model', aimlapi: 'aimlapi_model', xai: 'xai_model',
-    pollinations: 'pollinations_model', cometapi: 'cometapi_model', moonshot: 'moonshot_model',
-    fireworks: 'fireworks_model', azure_openai: 'azure_openai_model', zai: 'zai_model',
-};
-
 const SETTING_PROFILE_ID = 'cssAssistantProfileId';
 
 // ========================================
 // LLM CALL
 // ========================================
-
-const GENERATE_ENDPOINTS = [
-    '/backends/chat-completions/generate',
-    '/openai/generate',
-];
 
 function getSavedProfileId() {
     return CoreAPI.getSetting(SETTING_PROFILE_ID) || '';
@@ -506,8 +510,7 @@ async function loadProfiles() {
                         : data.openai_settings[idx];
                     activePreset = preset;
                     activeSource = preset?.chat_completion_source || '';
-                    const modelKey = SOURCE_MODEL_KEY[activeSource];
-                    activeModel = (modelKey ? (preset?.[modelKey] || '') : '') || preset?.model || '';
+                    activeModel = CoreAPI.resolvePresetModel(preset) || preset?.model || '';
                 } catch { /* corrupt preset, leave defaults */ }
             }
         }
@@ -563,148 +566,15 @@ function updateConnectionStatus() {
     statusEl.textContent = `${profile.name || profile.api || 'Profile'} (${label})`;
 }
 
-function isAuthError(message) {
-    const m = String(message || '').toLowerCase();
-    return m.includes('unauthorized') || m.includes('401')
-        || m.includes('invalid api key') || m.includes('authentication');
-}
-
-async function callSillyTavernAPI(messages, signal) {
-    const profile = getSelectedProfile();
-    const source = profile?.api || activeSource;
-    const model = profile?.model || activeModel;
-
-    if (!source) {
-        throw new Error(
-            'No Chat Completion source detected. Make sure SillyTavern has a Chat Completion API ' +
-            '(OpenAI, Claude, OpenRouter, etc.) selected and connected, then reopen this modal.'
-        );
-    }
-
-    const body = {
-        messages,
-        temperature: 0.7,
-        // Generous cap for reasoning models that spend tokens before emitting.
-        max_tokens: 6000,
-        stream: false,
-        chat_completion_source: source,
-    };
-    if (model) body.model = model;
-    if (profile) {
-        if (profile['secret-id']) body.secret_id = profile['secret-id'];
-        if (profile['api-url']) {
-            body.custom_url = profile['api-url'];
-            body.vertexai_region = profile['api-url'];
-            body.zai_endpoint = profile['api-url'];
-            body.siliconflow_endpoint = profile['api-url'];
-            body.minimax_endpoint = profile['api-url'];
-        }
-        if (profile['prompt-post-processing']) body.custom_prompt_post_processing = profile['prompt-post-processing'];
-    } else if (activePreset && activePreset.custom_url) {
-        body.custom_url = activePreset.custom_url;
-    }
-
-    const proxy = await CoreAPI.resolveProxyForProfile(profile);
-    if (proxy?.url) body.reverse_proxy = proxy.url;
-    if (proxy?.password) body.proxy_password = proxy.password;
-
-    CoreAPI.debugLog?.('[CSSAssistant] Sending request:', {
-        source: body.chat_completion_source, model: body.model,
-        customUrl: body.custom_url || null,
-        reverseProxy: body.reverse_proxy || null,
-        hasProxyPassword: !!body.proxy_password,
-        hasSecretId: !!body.secret_id, profileName: profile?.name,
-        messageCount: messages.length,
+// Delegates the request/proxy/parse to the shared client. checkFinishReason preserves the
+// explicit token-truncation error; non-JSON throws (returnRawOnNonJson stays false).
+function callSillyTavernAPI(messages, signal) {
+    return CoreAPI.callLLM(messages, {
+        profile: getSelectedProfile(),
+        activeSource, activeModel, activePreset,
+        temperature: 0.7, maxTokens: 6000, signal,
+        checkFinishReason: true, debugTag: 'CSSAssistant',
     });
-
-    for (const endpoint of GENERATE_ENDPOINTS) {
-        let response;
-        try {
-            response = await CoreAPI.apiRequest(endpoint, 'POST', body, { signal });
-        } catch (err) {
-            if (err.name === 'AbortError') {
-                const cancelErr = new Error('Generation cancelled.');
-                cancelErr.isCancelled = true;
-                throw cancelErr;
-            }
-            continue;
-        }
-        if (response.status === 404) continue;
-        if (!response.ok) {
-            const errText = await response.text().catch(() => '');
-            throw new Error(`API returned ${response.status}: ${errText.slice(0, 300)}`);
-        }
-
-        let responseText;
-        try {
-            responseText = await response.text();
-        } catch (err) {
-            if (err.name === 'AbortError') {
-                const cancelErr = new Error('Generation cancelled.');
-                cancelErr.isCancelled = true;
-                throw cancelErr;
-            }
-            throw err;
-        }
-        let data;
-        try {
-            data = JSON.parse(responseText);
-        } catch {
-            CoreAPI.debugLog?.('[CSSAssistant] Non-JSON response:', responseText.slice(0, 500));
-            throw new Error(`API returned non-JSON response: ${responseText.slice(0, 200)}`);
-        }
-        CoreAPI.debugLog?.('[CSSAssistant] Raw API data:', JSON.stringify(data).slice(0, 500));
-
-        if (isAuthError(data?.error?.message)) {
-            throw new Error(
-                'Authentication failed. Open SillyTavern → Connection Manager and click the "Update" ' +
-                'button on the selected connection profile to refresh its credentials, then retry.'
-            );
-        }
-        if (data?.error) {
-            console.warn('[CSSAssistant] ST returned error envelope:', data);
-        }
-        return extractContent(data);
-    }
-    throw new Error(
-        'Could not reach SillyTavern\'s Chat Completion API. ' +
-        'Make sure you have a Chat Completion API (OpenAI, Claude, etc.) configured and connected in SillyTavern.'
-    );
-}
-
-function extractContent(data) {
-    if (data?.error) {
-        const msg = typeof data.error === 'string' ? data.error : (data.error.message || JSON.stringify(data.error));
-        throw new Error(`API error: ${msg.slice(0, 300)}`);
-    }
-
-    // Surface truncation explicitly so users dont get silently cut-off output.
-    const finish = data?.choices?.[0]?.finish_reason;
-    if (finish === 'length') {
-        const partial = data?.choices?.[0]?.message?.content;
-        const len = typeof partial === 'string' ? partial.length : 0;
-        throw new Error(`Response truncated by token limit (got ${len} chars before cutoff). Try again with a shorter request, or split the work into multiple snippets.`);
-    }
-
-    const msg = data?.choices?.[0]?.message;
-    if (msg && typeof msg.content === 'string') return msg.content;
-    if (msg && 'content' in msg && msg.content == null) return '';
-    const msgBlocks = CoreAPI.flattenContentBlocks(msg?.content);
-    if (msgBlocks) return msgBlocks;
-    if (typeof data?.choices?.[0]?.text === 'string') return data.choices[0].text;
-    const delta = data?.choices?.[0]?.delta;
-    if (delta && typeof delta.content === 'string') return delta.content;
-    if (typeof data?.message?.content === 'string') return data.message.content;
-    if (typeof data?.content === 'string') return data.content;
-    const rootBlocks = CoreAPI.flattenContentBlocks(data?.content);
-    if (rootBlocks) return rootBlocks;
-    if (typeof data?.response === 'string') return data.response;
-    if (typeof data?.output?.text === 'string') return data.output.text;
-    if (typeof data?.result === 'string') return data.result;
-    if (typeof data === 'string') return data;
-
-    CoreAPI.debugLog?.('[CSSAssistant] Unrecognized response shape:', JSON.stringify(data).slice(0, 500));
-    throw new Error('Unexpected API response format: could not extract content');
 }
 
 // ========================================

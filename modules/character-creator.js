@@ -7,23 +7,7 @@ import * as CoreAPI from './core-api.js';
 // CONSTANTS
 // ========================================
 
-const GENERATE_ENDPOINTS = [
-    '/backends/chat-completions/generate',
-    '/openai/generate',
-];
-
 const GENERATE_TIMEOUT_MS = 90_000;
-
-const SOURCE_MODEL_KEY = {
-    openai: 'openai_model', claude: 'claude_model', openrouter: 'openrouter_model',
-    ai21: 'ai21_model', makersuite: 'google_model', vertexai: 'vertexai_model',
-    mistralai: 'mistralai_model', custom: 'custom_model', cohere: 'cohere_model',
-    perplexity: 'perplexity_model', groq: 'groq_model', siliconflow: 'siliconflow_model',
-    electronhub: 'electronhub_model', chutes: 'chutes_model', nanogpt: 'nanogpt_model',
-    deepseek: 'deepseek_model', aimlapi: 'aimlapi_model', xai: 'xai_model',
-    pollinations: 'pollinations_model', cometapi: 'cometapi_model', moonshot: 'moonshot_model',
-    fireworks: 'fireworks_model', azure_openai: 'azure_openai_model', zai: 'zai_model',
-};
 
 const FIELD_PROMPTS = {
     description: {
@@ -87,6 +71,10 @@ let avatarSourceAvatar = null;
 let creatorTagsArray = [];
 let tagAutocompleteList = [];
 let saveAsTarget = null;
+// Import/Save-As picker: name-sorted library cached once per open (the localeCompare sort is the
+// costly part), plus a search debounce. Invalidated when the picker is reopened.
+let importBaseSorted = null;
+let importSearchTimer = 0;
 let fieldsAutoGrowHandler = null;
 
 
@@ -931,8 +919,7 @@ async function loadProfiles() {
                         : data.openai_settings[idx];
                     activePreset = preset;
                     activeSource = preset?.chat_completion_source || '';
-                    const modelKey = SOURCE_MODEL_KEY[activeSource];
-                    activeModel = modelKey ? (preset?.[modelKey] || '') : '';
+                    activeModel = CoreAPI.resolvePresetModel(preset);
                 } catch { /* corrupt preset */ }
             }
         }
@@ -1024,96 +1011,15 @@ function updateProfileStatus() {
 // LLM API CALLS
 // ========================================
 
-function isAuthError(message) {
-    const m = String(message || '').toLowerCase();
-    return m.includes('unauthorized') || m.includes('401')
-        || m.includes('invalid api key') || m.includes('authentication');
-}
-
-async function callLLM(messages, signal) {
-    const profile = getSelectedProfile();
-    const source = profile?.api || activeSource;
-    const model = profile?.model || activeModel;
-
-    if (!source) {
-        throw new Error(
-            'No Chat Completion source detected. Make sure SillyTavern has a Chat Completion API ' +
-            '(OpenAI, Claude, OpenRouter, etc.) selected and connected, then reopen this modal.'
-        );
-    }
-
-    const body = {
-        messages,
-        temperature: 0.8,
-        max_tokens: 4000,
-        stream: false,
-        chat_completion_source: source,
-    };
-    if (model) body.model = model;
-
-    if (profile) {
-        if (profile['secret-id']) body.secret_id = profile['secret-id'];
-        if (profile['api-url']) {
-            body.custom_url = profile['api-url'];
-            body.vertexai_region = profile['api-url'];
-            body.zai_endpoint = profile['api-url'];
-            body.siliconflow_endpoint = profile['api-url'];
-            body.minimax_endpoint = profile['api-url'];
-        }
-        if (profile['prompt-post-processing']) body.custom_prompt_post_processing = profile['prompt-post-processing'];
-    } else if (activePreset && activePreset.custom_url) {
-        body.custom_url = activePreset.custom_url;
-    }
-
-    const proxy = await CoreAPI.resolveProxyForProfile(profile);
-    if (proxy?.url) body.reverse_proxy = proxy.url;
-    if (proxy?.password) body.proxy_password = proxy.password;
-
-    CoreAPI.debugLog('[CharCreator] Sending request:', {
-        source: body.chat_completion_source, model: body.model,
-        customUrl: body.custom_url || null,
-        reverseProxy: body.reverse_proxy || null,
-        hasProxyPassword: !!body.proxy_password,
-        hasSecretId: !!body.secret_id, profileName: profile?.name,
+// Delegates to the shared client. returnRawOnNonJson keeps the lenient behavior (a non-JSON
+// body is returned as-is for the caller to handle).
+function callLLM(messages, signal) {
+    return CoreAPI.callLLM(messages, {
+        profile: getSelectedProfile(),
+        activeSource, activeModel, activePreset,
+        temperature: 0.8, maxTokens: 4000, signal,
+        returnRawOnNonJson: true, debugTag: 'CharCreator',
     });
-
-    for (const endpoint of GENERATE_ENDPOINTS) {
-        let response;
-        try {
-            response = await CoreAPI.apiRequest(endpoint, 'POST', body, { signal });
-        } catch (err) {
-            if (err.name === 'AbortError') throw new Error('Generation cancelled.');
-            continue;
-        }
-        if (response.status === 404) continue;
-        if (!response.ok) {
-            const errText = await response.text().catch(() => '');
-            throw new Error(`API returned ${response.status}: ${errText.slice(0, 300)}`);
-        }
-
-        const responseText = await response.text();
-        let data;
-        try {
-            data = JSON.parse(responseText);
-        } catch {
-            return responseText;
-        }
-
-        if (isAuthError(data?.error?.message)) {
-            throw new Error(
-                'Authentication failed. Open SillyTavern → Connection Manager and click the "Update" ' +
-                'button on the selected connection profile to refresh its credentials, then retry.'
-            );
-        }
-        if (data?.error) {
-            console.warn('[CharCreator] ST returned error envelope:', data);
-        }
-        return extractContent(data);
-    }
-    throw new Error(
-        'Could not reach SillyTavern\'s Chat Completion API. ' +
-        'Make sure you have a Chat Completion API configured and connected in SillyTavern.'
-    );
 }
 
 
@@ -1412,7 +1318,10 @@ function createImportPicker() {
     });
     document.getElementById('importPickerSearch').addEventListener('input', (e) => {
         const mode = document.getElementById('creatorImportPicker')?.dataset.mode;
-        renderImportList(e.target.value.trim().toLowerCase(), mode === 'saveas');
+        const q = e.target.value.trim().toLowerCase();
+        // Debounce so a keystroke storm collapses to one filter+render pass.
+        clearTimeout(importSearchTimer);
+        importSearchTimer = setTimeout(() => renderImportList(q, mode === 'saveas'), 120);
     });
     document.getElementById('importPickerList').addEventListener('click', (e) => {
         const item = e.target.closest('.creator-import-item');
@@ -1430,6 +1339,7 @@ function createImportPicker() {
 
 function openImportPicker() {
     createImportPicker();
+    importBaseSorted = null; // rebuild the sorted base for the current library
     document.getElementById('importPickerSearch').value = '';
     renderImportList('');
     const picker = document.getElementById('creatorImportPicker');
@@ -1443,30 +1353,35 @@ function closeImportPicker() {
     document.getElementById('creatorImportPicker')?.classList.add('hidden');
 }
 
+// Name-sorted full library, sorted once and cached (the localeCompare sort dominates).
+function importBaseList() {
+    if (importBaseSorted) return importBaseSorted;
+    const chars = CoreAPI.getAllCharacters() || [];
+    importBaseSorted = [...chars].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    return importBaseSorted;
+}
+
 function renderImportList(query, isSaveAs = false) {
     const list = document.getElementById('importPickerList');
     if (!list) return;
 
-    const chars = CoreAPI.getAllCharacters() || [];
-    let filtered = chars;
-    if (query) {
-        filtered = chars.filter(c =>
-            (c.name || '').toLowerCase().includes(query) ||
-            String(c.data?.creator || '').toLowerCase().includes(query) ||
-            (c.data?.tags || []).some(t => t.toLowerCase().includes(query))
+    const base = importBaseList(); // already name-sorted
+    let sorted;
+    if (!query) {
+        sorted = base;
+    } else {
+        // Filter on the precomputed lowercase keys (no per-row toLowerCase). The base is name-sorted,
+        // so a stable name-startsWith partition reproduces the old "prefix matches first, then name"
+        // ordering without an O(n log n) re-sort per keystroke.
+        const matches = base.filter(c =>
+            (c._lowerName || '').includes(query) ||
+            (c._lowerCreator || '').includes(query) ||
+            (c._tagsLower || '').includes(query)
         );
+        const starts = [], rest = [];
+        for (const c of matches) ((c._lowerName || '').startsWith(query) ? starts : rest).push(c);
+        sorted = starts.concat(rest);
     }
-
-    const sorted = [...filtered].sort((a, b) => {
-        if (query) {
-            const aName = (a.name || '').toLowerCase();
-            const bName = (b.name || '').toLowerCase();
-            const aStarts = aName.startsWith(query);
-            const bStarts = bName.startsWith(query);
-            if (aStarts !== bStarts) return aStarts ? -1 : 1;
-        }
-        return (a.name || '').localeCompare(b.name || '');
-    });
     const display = sorted.slice(0, 100);
     list.dataset.mode = isSaveAs ? 'saveas' : 'import';
 
@@ -1476,7 +1391,7 @@ function renderImportList(query, isSaveAs = false) {
         const avatarPath = c.avatar ? CoreAPI.getCharacterAvatarStThumbUrl(c.avatar) : '';
         return `
             <div class="creator-import-item" data-avatar="${CoreAPI.escapeHtml(c.avatar || '')}">
-                <div class="creator-import-avatar" ${avatarPath ? `style="background-image: url('${avatarPath}')"` : ''}></div>
+                <div class="creator-import-avatar" ${avatarPath ? `style="background-image: url(&quot;${avatarPath}&quot;)"` : ''}></div>
                 <div class="creator-import-info">
                     <span class="creator-import-name">${name}</span>
                     ${creator ? `<span class="creator-import-creator">${creator}</span>` : ''}
@@ -2770,34 +2685,6 @@ function studioStopGeneration() {
     abortController = null;
 }
 
-function extractContent(data) {
-    if (data?.error) {
-        const msg = typeof data.error === 'string' ? data.error : (data.error.message || JSON.stringify(data.error));
-        throw new Error(`API error: ${msg.slice(0, 300)}`);
-    }
-
-    const msg = data?.choices?.[0]?.message;
-    if (msg && typeof msg.content === 'string') return msg.content;
-    if (msg && 'content' in msg && msg.content == null) return '';
-    const msgBlocks = CoreAPI.flattenContentBlocks(msg?.content);
-    if (msgBlocks) return msgBlocks;
-    if (typeof data?.choices?.[0]?.text === 'string') return data.choices[0].text;
-    const delta = data?.choices?.[0]?.delta;
-    if (delta && typeof delta.content === 'string') return delta.content;
-    if (typeof data?.message?.content === 'string') return data.message.content;
-    if (typeof data?.content === 'string') return data.content;
-    const rootBlocks = CoreAPI.flattenContentBlocks(data?.content);
-    if (rootBlocks) return rootBlocks;
-    if (typeof data?.response === 'string') return data.response;
-    if (typeof data?.output?.text === 'string') return data.output.text;
-    if (typeof data?.result === 'string') return data.result;
-    if (typeof data === 'string') return data;
-
-    CoreAPI.debugLog?.('[CharCreator] Unrecognized response shape:', JSON.stringify(data).slice(0, 500));
-    throw new Error('Unexpected API response format');
-}
-
-
 // ========================================
 // CHARACTER CREATION
 // ========================================
@@ -2927,6 +2814,7 @@ function openSaveAsPicker() {
         return;
     }
     createImportPicker();
+    importBaseSorted = null; // rebuild the sorted base for the current library
     document.getElementById('importPickerSearch').value = '';
     renderImportList('', true);
     document.getElementById('creatorImportPicker').classList.remove('hidden');

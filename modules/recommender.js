@@ -89,23 +89,7 @@ const DEFAULT_SETTINGS = {
     customModel: '',
 };
 
-const GENERATE_ENDPOINTS = [
-    '/backends/chat-completions/generate',
-    '/openai/generate',
-];
-
 const GENERATE_TIMEOUT_MS = 120_000;
-
-const SOURCE_MODEL_KEY = {
-    openai: 'openai_model', claude: 'claude_model', openrouter: 'openrouter_model',
-    ai21: 'ai21_model', makersuite: 'google_model', vertexai: 'vertexai_model',
-    mistralai: 'mistralai_model', custom: 'custom_model', cohere: 'cohere_model',
-    perplexity: 'perplexity_model', groq: 'groq_model', siliconflow: 'siliconflow_model',
-    electronhub: 'electronhub_model', chutes: 'chutes_model', nanogpt: 'nanogpt_model',
-    deepseek: 'deepseek_model', aimlapi: 'aimlapi_model', xai: 'xai_model',
-    pollinations: 'pollinations_model', cometapi: 'cometapi_model', moonshot: 'moonshot_model',
-    fireworks: 'fireworks_model', azure_openai: 'azure_openai_model', zai: 'zai_model',
-};
 
 let isInitialized = false;
 let isGenerating = false;
@@ -1189,8 +1173,7 @@ async function loadProfiles() {
                         : data.openai_settings[idx];
                     activePreset = preset;
                     activeSource = preset?.chat_completion_source || '';
-                    const modelKey = SOURCE_MODEL_KEY[activeSource];
-                    activeModel = modelKey ? (preset?.[modelKey] || '') : '';
+                    activeModel = CoreAPI.resolvePresetModel(preset);
                 } catch { /* corrupt preset */ }
             }
         }
@@ -1294,169 +1277,26 @@ function updateCustomConnectionStatus() {
     text.textContent = model || 'Custom API';
 }
 
-function isAuthError(message) {
-    const m = String(message || '').toLowerCase();
-    return m.includes('unauthorized') || m.includes('401')
-        || m.includes('invalid api key') || m.includes('authentication');
-}
-
-async function callSillyTavernAPI(messages, temperature, signal) {
-    const profile = getSelectedProfile();
-    const source = profile?.api || activeSource;
-    const model = profile?.model || activeModel;
-
-    if (!source) {
-        throw new Error(
-            'No Chat Completion source detected. Make sure SillyTavern has a Chat Completion API ' +
-            '(OpenAI, Claude, OpenRouter, etc.) selected and connected, then reopen this modal.'
-        );
-    }
-
-    const body = { messages, temperature, max_tokens: 4000, stream: false, chat_completion_source: source };
-    if (model) body.model = model;
-
-    if (profile) {
-        if (profile['secret-id']) body.secret_id = profile['secret-id'];
-        if (profile['api-url']) {
-            body.custom_url = profile['api-url'];
-            body.vertexai_region = profile['api-url'];
-            body.zai_endpoint = profile['api-url'];
-            body.siliconflow_endpoint = profile['api-url'];
-            body.minimax_endpoint = profile['api-url'];
-        }
-        if (profile['prompt-post-processing']) body.custom_prompt_post_processing = profile['prompt-post-processing'];
-    } else if (activePreset && activePreset.custom_url) {
-        body.custom_url = activePreset.custom_url;
-    }
-
-    const proxy = await CoreAPI.resolveProxyForProfile(profile);
-    if (proxy?.url) body.reverse_proxy = proxy.url;
-    if (proxy?.password) body.proxy_password = proxy.password;
-
-    CoreAPI.debugLog('[Recommender] ST request:', {
-        source, model, temperature,
-        profileName: profile?.name, hasSecretId: !!body.secret_id,
-        customUrl: body.custom_url || null,
-        reverseProxy: body.reverse_proxy || null,
-        hasProxyPassword: !!body.proxy_password,
-        messageCount: messages.length, userMsgLength: messages[1]?.content?.length,
+// Delegates to the shared client. onRaw feeds the debug panel's last-raw-response capture.
+function callSillyTavernAPI(messages, temperature, signal) {
+    return CoreAPI.callLLM(messages, {
+        profile: getSelectedProfile(),
+        activeSource, activeModel, activePreset,
+        temperature, maxTokens: 4000, signal,
+        onRaw: t => { _lastRawApiResponse = t; },
+        debugTag: 'Recommender',
+        extraUnreachableHint: 'Or switch to Custom API mode in the recommender settings.',
     });
-
-    for (const endpoint of GENERATE_ENDPOINTS) {
-        let response;
-        try {
-            response = await CoreAPI.apiRequest(endpoint, 'POST', body, { signal });
-        } catch (err) {
-            if (err.name === 'AbortError') throw new Error('Generation cancelled.');
-            continue;
-        }
-        if (response.status === 404) continue;
-        if (!response.ok) {
-            const errText = await response.text().catch(() => '');
-            throw new Error(`API returned ${response.status}: ${errText.slice(0, 300)}`);
-        }
-
-        const responseText = await response.text();
-        let data;
-        try {
-            data = JSON.parse(responseText);
-        } catch {
-            CoreAPI.debugLog('[Recommender] Non-JSON response:', responseText.slice(0, 500));
-            throw new Error(`API returned non-JSON response: ${responseText.slice(0, 200)}`);
-        }
-        CoreAPI.debugLog('[Recommender] Raw API data:', JSON.stringify(data).slice(0, 500));
-        _lastRawApiResponse = responseText;
-
-        if (isAuthError(data?.error?.message)) {
-            throw new Error(
-                'Authentication failed. Open SillyTavern → Connection Manager and click the "Update" ' +
-                'button on the selected connection profile to refresh its credentials, then retry.'
-            );
-        }
-        if (data?.error) {
-            console.warn('[Recommender] ST returned error envelope:', data);
-        }
-        return extractContent(data);
-    }
-    throw new Error(
-        'Could not reach SillyTavern\'s Chat Completion API. ' +
-        'Make sure you have a Chat Completion API (OpenAI, Claude, etc.) configured and connected in SillyTavern, ' +
-        'or switch to Custom API mode in Settings below.'
-    );
 }
 
-// Custom endpoints are OpenAI-compatible: append /chat/completions to the base (matches ST), but accept a full URL too.
-function resolveCustomEndpoint(base) {
-    const u = (base || '').trim().replace(/\/+$/, '');
-    return /\/chat\/completions$/i.test(u) ? u : `${u}/chat/completions`;
-}
-
-async function callCustomAPI(messages, temperature, signal) {
-    const url = getOpt('customApiUrl');
-    const apiKey = getOpt('customApiKey');
-    const model = getOpt('customModel');
-
-    if (!url) throw new Error('Custom API endpoint URL is required. Configure it in Settings below.');
-
-    const endpoint = resolveCustomEndpoint(url);
-    CoreAPI.debugLog('[Recommender] Custom API request:', { endpoint, model: model || '(default)', temperature, messageCount: messages.length, userMsgLength: messages[1]?.content?.length });
-
-    const headers = { 'Content-Type': 'application/json' };
-    if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
-
-    const body = { messages, temperature, max_tokens: 2000 };
-    if (model) body.model = model;
-
-    const response = await fetch(endpoint, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(body),
-        signal,
+// Custom API mode delegates to the shared client (which appends /chat/completions + parses).
+function callCustomAPI(messages, temperature, signal) {
+    return CoreAPI.callCustomLLM(messages, {
+        url: getOpt('customApiUrl'), apiKey: getOpt('customApiKey'), model: getOpt('customModel'),
+        temperature, maxTokens: 2000, signal,
+        onRaw: t => { _lastRawApiResponse = t; },
+        debugTag: 'Recommender',
     });
-
-    if (!response.ok) {
-        const errText = await response.text().catch(() => '');
-        throw new Error(`Custom API returned ${response.status}: ${errText.slice(0, 200)}`);
-    }
-
-    let data;
-    const responseText = await response.text();
-    try {
-        data = JSON.parse(responseText);
-    } catch {
-        CoreAPI.debugLog('[Recommender] Non-JSON custom response:', responseText.slice(0, 500));
-        throw new Error(`Custom API returned non-JSON response: ${responseText.slice(0, 200)}`);
-    }
-    CoreAPI.debugLog('[Recommender] Raw custom API data:', JSON.stringify(data).slice(0, 500));
-    _lastRawApiResponse = responseText;
-    return extractContent(data);
-}
-
-function extractContent(data) {
-    if (data?.error) {
-        const msg = typeof data.error === 'string' ? data.error : (data.error.message || JSON.stringify(data.error));
-        throw new Error(`API error: ${msg.slice(0, 300)}`);
-    }
-
-    const msg = data?.choices?.[0]?.message;
-    if (msg && typeof msg.content === 'string') return msg.content;
-    if (msg && 'content' in msg && msg.content == null) return '';
-    const msgBlocks = CoreAPI.flattenContentBlocks(msg?.content);
-    if (msgBlocks) return msgBlocks;
-    if (typeof data?.choices?.[0]?.text === 'string') return data.choices[0].text;
-    const delta = data?.choices?.[0]?.delta;
-    if (delta && typeof delta.content === 'string') return delta.content;
-    if (typeof data?.message?.content === 'string') return data.message.content;
-    if (typeof data?.content === 'string') return data.content;
-    const rootBlocks = CoreAPI.flattenContentBlocks(data?.content);
-    if (rootBlocks) return rootBlocks;
-    if (typeof data?.response === 'string') return data.response;
-    if (typeof data?.output?.text === 'string') return data.output.text;
-    if (typeof data?.result === 'string') return data.result;
-    if (typeof data === 'string') return data;
-
-    CoreAPI.debugLog('[Recommender] Unrecognized response shape:', JSON.stringify(data).slice(0, 500));
-    throw new Error('Unexpected API response format: could not extract content');
 }
 
 // Single dispatch for both API modes; reused by generate, the batch-reduce step, and the character chat.

@@ -2,7 +2,7 @@
 
 import { BrowseView } from '../browse-view.js';
 import CoreAPI from '../../core-api.js';
-import { IMG_PLACEHOLDER, formatNumber, BROWSE_PURIFY_CONFIG, skeletonLines } from '../provider-utils.js';
+import { IMG_PLACEHOLDER, formatNumber, BROWSE_PURIFY_CONFIG, skeletonLines, deferRender } from '../provider-utils.js';
 import {
     searchCards,
     fetchCharacterDetail,
@@ -520,24 +520,24 @@ function openPreviewModal(hit) {
         if (firstMsgSection && firstMsgEl) { firstMsgSection.style.display = 'block'; firstMsgEl.innerHTML = skeletonLines(4); }
         requestAnimationFrame(() => {
             if (creatorNotesEl && creatorNotes && creatorNotes.trim()) {
-                creatorNotesEl.innerHTML = safePurify(formatRichText(creatorNotes, name, true), BROWSE_PURIFY_CONFIG);
+                deferRender(creatorNotesEl, () => safePurify(formatRichText(creatorNotes, name, true), BROWSE_PURIFY_CONFIG));
             }
             if (descSection && descEl) {
                 if (charDef) {
-                    descEl.innerHTML = safePurify(formatRichText(charDef, name, true), BROWSE_PURIFY_CONFIG);
+                    deferRender(descEl, () => safePurify(formatRichText(charDef, name, true), BROWSE_PURIFY_CONFIG));
                 }
                 // No charDef: keep skeleton, fetchAndPopulateDetails fills it.
             }
             if (scenarioSection) {
                 if (scenario) {
-                    if (scenarioEl) scenarioEl.innerHTML = safePurify(formatRichText(scenario, name, true), BROWSE_PURIFY_CONFIG);
+                    if (scenarioEl) deferRender(scenarioEl, () => safePurify(formatRichText(scenario, name, true), BROWSE_PURIFY_CONFIG));
                 } else {
                     scenarioSection.style.display = 'none';
                 }
             }
             if (firstMsgSection) {
                 if (firstMsg) {
-                    if (firstMsgEl) firstMsgEl.innerHTML = safePurify(formatRichText(firstMsg, name, true), BROWSE_PURIFY_CONFIG);
+                    if (firstMsgEl) deferRender(firstMsgEl, () => safePurify(formatRichText(firstMsg, name, true), BROWSE_PURIFY_CONFIG));
                 } else {
                     firstMsgSection.style.display = 'none';
                 }
@@ -580,7 +580,7 @@ function openPreviewModal(hit) {
                             if (body && !body.dataset.rendered) {
                                 const idx = parseInt(details.dataset.greetingIdx, 10);
                                 if (altGreetings[idx] != null) {
-                                    body.innerHTML = safePurify(formatRichText(altGreetings[idx], name, true), BROWSE_PURIFY_CONFIG);
+                                    deferRender(body, () => safePurify(formatRichText(altGreetings[idx], name, true), BROWSE_PURIFY_CONFIG));
                                 }
                                 body.dataset.rendered = '1';
                             }
@@ -601,7 +601,7 @@ function openPreviewModal(hit) {
         requestAnimationFrame(() => {
             if (examplesSection) {
                 if (examples) {
-                    if (examplesEl) examplesEl.innerHTML = safePurify(formatRichText(examples, name, true), BROWSE_PURIFY_CONFIG);
+                    if (examplesEl) deferRender(examplesEl, () => safePurify(formatRichText(examples, name, true), BROWSE_PURIFY_CONFIG));
                 } else {
                     examplesSection.style.display = 'none';
                 }
@@ -683,12 +683,12 @@ async function fetchAndPopulateDetails(hit, token) {
         requestAnimationFrame(() => {
             if (detailNotes && detailNotes.trim() && creatorNotesEl) {
                 if (creatorNotesSection) creatorNotesSection.style.display = 'block';
-                creatorNotesEl.innerHTML = safePurify(formatRichText(detailNotes, name, true), BROWSE_PURIFY_CONFIG);
+                deferRender(creatorNotesEl, () => safePurify(formatRichText(detailNotes, name, true), BROWSE_PURIFY_CONFIG));
             }
             if (descSection) {
                 if (charDef) {
                     descSection.style.display = 'block';
-                    if (descEl) descEl.innerHTML = safePurify(formatRichText(charDef, name, true), BROWSE_PURIFY_CONFIG);
+                    if (descEl) deferRender(descEl, () => safePurify(formatRichText(charDef, name, true), BROWSE_PURIFY_CONFIG));
                 } else {
                     descSection.style.display = 'none';
                 }
@@ -696,7 +696,7 @@ async function fetchAndPopulateDetails(hit, token) {
             if (scenarioSection) {
                 if (scenario) {
                     scenarioSection.style.display = 'block';
-                    if (scenarioEl) scenarioEl.innerHTML = safePurify(formatRichText(scenario, name, true), BROWSE_PURIFY_CONFIG);
+                    if (scenarioEl) deferRender(scenarioEl, () => safePurify(formatRichText(scenario, name, true), BROWSE_PURIFY_CONFIG));
                 } else {
                     scenarioSection.style.display = 'none';
                 }
@@ -704,7 +704,7 @@ async function fetchAndPopulateDetails(hit, token) {
             if (firstMsgSection) {
                 if (firstMsg) {
                     firstMsgSection.style.display = 'block';
-                    if (firstMsgEl) firstMsgEl.innerHTML = safePurify(formatRichText(firstMsg, name, true), BROWSE_PURIFY_CONFIG);
+                    if (firstMsgEl) deferRender(firstMsgEl, () => safePurify(formatRichText(firstMsg, name, true), BROWSE_PURIFY_CONFIG));
                 } else {
                     firstMsgSection.style.display = 'none';
                 }
@@ -712,7 +712,7 @@ async function fetchAndPopulateDetails(hit, token) {
             if (examplesSection) {
                 if (examples) {
                     examplesSection.style.display = 'block';
-                    if (examplesEl) examplesEl.innerHTML = safePurify(formatRichText(examples, name, true), BROWSE_PURIFY_CONFIG);
+                    if (examplesEl) deferRender(examplesEl, () => safePurify(formatRichText(examples, name, true), BROWSE_PURIFY_CONFIG));
                 } else {
                     examplesSection.style.display = 'none';
                 }

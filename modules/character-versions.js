@@ -1713,7 +1713,7 @@ async function resolveVersionWorldFileStatus(containerEl, avatar) {
         if (!worldName) {
             const charName = (currentChar?.name || '').trim();
             if (charName) {
-                const allWorlds = await CoreAPI.listWorldInfoFiles();
+                const allWorlds = (await CoreAPI.listWorldInfoFiles()).map(w => w.file_id);
                 const lower = charName.toLowerCase();
                 worldName = allWorlds.find(w => w.toLowerCase() === lower)
                          || allWorlds.find(w => w.toLowerCase().includes(lower) || lower.includes(w.toLowerCase()))

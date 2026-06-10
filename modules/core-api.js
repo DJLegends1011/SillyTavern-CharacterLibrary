@@ -30,6 +30,28 @@ export function flattenContentBlocks(blocks) {
     return window.flattenContentBlocks?.(blocks) ?? '';
 }
 
+// Shared LLM client (see library.js "SHARED LLM CLIENT"). Each AI module passes its own
+// resolved profile + the per-feature options; the body/proxy/parse logic is centralized.
+export function getLlmSettings() {
+    return window.getLlmSettings?.() ?? Promise.resolve({ profiles: [], activeSource: '', activeModel: '', activePreset: null, selectedProfileId: '' });
+}
+
+export function callLLM(messages, opts) {
+    return window.callLLM?.(messages, opts);
+}
+
+export function callCustomLLM(messages, opts) {
+    return window.callCustomLLM?.(messages, opts);
+}
+
+export function extractLlmContent(data, opts) {
+    return window.extractLlmContent?.(data, opts);
+}
+
+export function resolvePresetModel(preset) {
+    return window.resolvePresetModel?.(preset) ?? '';
+}
+
 // ========================================
 // STATE ACCESS
 // ========================================
@@ -261,6 +283,18 @@ export function getGalleryFolderName(char) {
 
 export function getGalleryThumbUrl(folderName, fileName) {
     return window.getGalleryThumbUrl?.(folderName, fileName) ?? null;
+}
+
+export function isMediaLocalizationEnabled(avatar) {
+    return window.isMediaLocalizationEnabled?.(avatar) ?? false;
+}
+
+export function buildMediaLocalizationMap(folderName, avatar, forceRefresh = false) {
+    return window.buildMediaLocalizationMap?.(folderName, avatar, forceRefresh) ?? Promise.resolve({});
+}
+
+export function replaceMediaUrlsInText(text, urlMap) {
+    return window.replaceMediaUrlsInText?.(text, urlMap) ?? text;
 }
 
 /**
@@ -1022,11 +1056,49 @@ export function saveWorldInfoData(worldName, data) {
 }
 
 /**
- * List all world info file names available on the server.
- * @returns {Promise<string[]>} Array of world info names
+ * List all world info files available on the server.
+ * @returns {Promise<Array<{file_id: string, name: string, extensions: Object}>>}
  */
 export function listWorldInfoFiles() {
     return window.listWorldInfoFiles?.() || Promise.resolve([]);
+}
+
+/**
+ * Create a new (empty) world info file.
+ * @param {string} worldName
+ * @returns {Promise<boolean>} Success
+ */
+export function createWorldInfo(worldName) {
+    return window.createWorldInfo?.(worldName) || Promise.resolve(false);
+}
+
+/**
+ * Delete a world info file.
+ * @param {string} worldName
+ * @returns {Promise<boolean>} Success
+ */
+export function deleteWorldInfo(worldName) {
+    return window.deleteWorldInfo?.(worldName) || Promise.resolve(false);
+}
+
+/**
+ * Rename a world info file (copy-new + delete-old).
+ * @param {string} oldName
+ * @param {string} newName
+ * @returns {Promise<boolean>} Success
+ */
+export function renameWorldInfo(oldName, newName) {
+    return window.renameWorldInfo?.(oldName, newName) || Promise.resolve(false);
+}
+
+/**
+ * Import a native ST world JSON object under a destination name.
+ * @param {string} worldName
+ * @param {Object} worldData - must contain an `entries` object
+ * @returns {Promise<boolean>} Success
+ */
+export function importWorldInfoData(worldName, worldData) {
+    return window.importWorldInfoData?.(worldName, worldData) || Promise.resolve(false);
 }
 
 /**
@@ -1038,6 +1110,35 @@ export function listWorldInfoFiles() {
  */
 export function mergeRemoteLorebookIntoWorldFile(avatar, remoteBook) {
     return window.mergeRemoteLorebookIntoWorldFile?.(avatar, remoteBook) || Promise.resolve(false);
+}
+
+/**
+ * Set/clear a single-character chat's bound lorebook (chat_metadata.world_info).
+ * Owned by the chats module; proxied here for the Lorebook Manager.
+ * @param {Object} char - { avatar, name }
+ * @param {string} chatFile - chat file name
+ * @param {string|null} worldName - world to bind, or null/'' to clear
+ * @returns {Promise<boolean>} Success
+ */
+export function setChatBoundWorld(char, chatFile, worldName) {
+    return window.chatsModule?.setChatBoundWorld?.(char, chatFile, worldName) || Promise.resolve(false);
+}
+
+/**
+ * List a character's chats WITH chat_metadata (each entry exposes its bound lorebook).
+ * @param {Object} char - { avatar, name }
+ * @returns {Promise<Array>} chat entries
+ */
+export function listCharacterChatsWithMeta(char) {
+    return window.chatsModule?.listCharacterChatsWithMeta?.(char) || Promise.resolve([]);
+}
+
+/**
+ * List ALL single-character chats (across every character) that bind a lorebook.
+ * @returns {Promise<Array<{avatar, charName, char, file_name, world}>>}
+ */
+export function listAllChatsWithMeta() {
+    return window.chatsModule?.listAllChatsWithMeta?.() || Promise.resolve([]);
 }
 
 // ========================================
@@ -1183,6 +1284,9 @@ export default {
     
     // Gallery
     getGalleryFolderName,
+    isMediaLocalizationEnabled,
+    buildMediaLocalizationMap,
+    replaceMediaUrlsInText,
     getGalleryThumbUrl,
     sanitizeFolderName,
     getCharacterGalleryInfo,
@@ -1293,7 +1397,14 @@ export default {
     getWorldInfoData,
     saveWorldInfoData,
     listWorldInfoFiles,
+    createWorldInfo,
+    deleteWorldInfo,
+    renameWorldInfo,
+    importWorldInfoData,
     mergeRemoteLorebookIntoWorldFile,
+    setChatBoundWorld,
+    listCharacterChatsWithMeta,
+    listAllChatsWithMeta,
 
     // Provider Registry (generic)
     getProviderRegistry,
@@ -1339,4 +1450,9 @@ export default {
     closeEmbeddedPanel,
     resolveProxyForProfile,
     flattenContentBlocks,
+    getLlmSettings,
+    callLLM,
+    callCustomLLM,
+    extractLlmContent,
+    resolvePresetModel,
 };

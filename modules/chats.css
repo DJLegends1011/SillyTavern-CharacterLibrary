@@ -96,7 +96,10 @@
     font-size: var(--font-sm);
     color: var(--text-secondary);
     display: flex;
-    gap: var(--space-lg);
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-xs) var(--space-lg);
+    min-width: 0;
 }
 
 .chat-item-actions {
@@ -109,6 +112,9 @@
 .chat-item:hover .chat-item-actions {
     opacity: 1;
 }
+
+/* Kebab is a mobile-only affordance; desktop uses the hover-revealed action row. */
+.chat-item-kebab { display: none; }
 
 .chat-action-btn {
     width: 32px;
@@ -382,6 +388,7 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
+    gap: var(--space-sm); /* min gutter so the meta (lore button) never touches the action buttons */
     padding: 10px 12px;
     background: rgba(0, 0, 0, 0.15);
     border-top: 1px solid var(--glass-border);
@@ -391,13 +398,20 @@
 
 .chat-card-meta {
     display: flex;
-    gap: var(--space-md);
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: var(--space-xs) var(--space-md);
+    min-width: 0;
+    overflow: hidden; /* backstop: the badge truncates first, but never let meta break the frame */
 }
 
-.chat-card-meta span {
+/* Direct meta chips (date, count) keep their size; only the model badge gives way when tight.
+   Scoped to direct children so the badge's inner text span is not matched. */
+.chat-card-meta > span:not(.chat-model-badge) {
     display: flex;
     align-items: center;
     gap: var(--space-xs);
+    flex-shrink: 0;
 }
 
 .chat-card-meta i {
@@ -410,6 +424,7 @@
     gap: var(--space-xs-sm);
     opacity: 0;
     transition: opacity 0.2s ease;
+    flex-shrink: 0; /* the model badge yields, not the action buttons */
 }
 
 .chat-card:hover .chat-card-actions {
@@ -667,8 +682,11 @@
     font-size: var(--font-sm);
     color: var(--text-secondary);
     display: flex;
-    gap: var(--space-md);
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-xs) var(--space-md);
     margin-top: 2px;
+    min-width: 0;
 }
 
 .chat-group-item-actions {
@@ -896,15 +914,24 @@
     font-size: var(--font-2xs);
     color: var(--accent);
     cursor: default;
-    white-space: nowrap;
-    max-width: 160px;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    min-width: 0;       /* allow the badge to shrink in a tight footer */
+    flex-shrink: 1;
+    max-width: 110px;
+    overflow: hidden;   /* backstop clip; the text span does the actual ellipsis */
 }
 
 .chat-model-badge i {
     font-size: var(--font-3xs);
     flex-shrink: 0;
+}
+
+/* The model name lives in its own span so text-overflow:ellipsis actually applies
+   (it does nothing on the inline-flex badge with an icon sibling). */
+.chat-model-badge-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
 }
 
 /* Empty chats state */
@@ -1020,9 +1047,199 @@
 }
 
 /* ========================================
+   Chat Lore (chat-bound lorebook)
+   ======================================== */
+
+.chat-lore-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-xs);
+    color: var(--accent);
+    font-size: var(--font-2xs);
+    background: rgba(var(--accent-rgb), 0.12);
+    border-radius: var(--radius-sm);
+    padding: 1px var(--space-xs);
+    max-width: 100%;
+    min-width: 0;
+    flex-shrink: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* The book name truncates; the icon never shrinks away. */
+.chat-lore-pill i {
+    font-size: var(--font-3xs);
+    opacity: 0.85;
+    flex-shrink: 0;
+}
+
+/* Single lorebook toggle on chat cards (meta row). Default = unbound, .chat-lore-bound = lit. */
+.chat-lore-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    flex-shrink: 0;
+    background: rgba(0, 0, 0, 0.25);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-sm);
+    color: var(--text-faint);
+    cursor: pointer;
+    font-size: var(--font-3xs);
+    transition: all 0.2s ease;
+}
+
+.chat-lore-btn:hover {
+    color: var(--text-primary);
+    border-color: var(--accent);
+}
+
+.chat-lore-btn.chat-lore-bound {
+    color: var(--accent);
+    background: rgba(var(--accent-rgb), 0.14);
+    border-color: rgba(var(--accent-rgb), 0.4);
+}
+
+.chat-lore-btn.chat-lore-bound:hover {
+    background: rgba(var(--accent-rgb), 0.22);
+}
+
+/* Group bindings are display-only here; no pointer affordance. */
+.chat-lore-btn.chat-lore-readonly {
+    cursor: default;
+}
+
+.chat-lore-modal-content {
+    width: min(460px, 92vw);
+    max-height: 80vh;
+    display: flex;
+    flex-direction: column;
+}
+
+.chat-lore-body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+    min-height: 0;
+    overflow: hidden;
+}
+
+.chat-lore-subhead {
+    font-size: var(--font-md);
+    color: var(--text-secondary);
+}
+
+.chat-lore-subhead strong {
+    color: var(--text-primary);
+}
+
+.chat-lore-search-wrap {
+    position: relative;
+    display: flex;
+    align-items: center;
+    flex: 1;
+}
+
+.chat-lore-search-wrap > i {
+    position: absolute;
+    left: var(--space-sm);
+    color: var(--text-faint);
+    font-size: var(--font-sm);
+    pointer-events: none;
+}
+
+.chat-lore-search {
+    width: 100%;
+    padding-left: calc(var(--space-lg) + var(--space-sm));
+}
+
+.chat-lore-list {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2xs);
+    min-height: 120px;
+}
+
+.chat-lore-empty {
+    padding: var(--space-xl);
+    text-align: center;
+    color: var(--text-muted);
+    font-size: var(--font-sm);
+}
+
+.chat-lore-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    padding: var(--space-sm) var(--space-md);
+    border-radius: var(--radius-lg);
+    border: 1px solid transparent;
+    background: rgba(255, 255, 255, 0.03);
+    color: var(--text-primary);
+    cursor: pointer;
+    text-align: left;
+    width: 100%;
+    transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.chat-lore-row:hover {
+    background: rgba(255, 255, 255, 0.07);
+}
+
+.chat-lore-row.current {
+    background: rgba(var(--accent-rgb), 0.16);
+    border-color: rgba(var(--accent-rgb), 0.5);
+}
+
+.chat-lore-row > i:first-child {
+    color: var(--text-faint);
+    flex-shrink: 0;
+}
+
+.chat-lore-row.current > i:first-child {
+    color: var(--accent);
+}
+
+.chat-lore-row-name {
+    flex: 1;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-size: var(--font-md);
+}
+
+.chat-lore-row-check {
+    color: var(--accent);
+    flex-shrink: 0;
+}
+
+.chat-lore-footer {
+    display: flex;
+    justify-content: flex-end;
+}
+
+/* ========================================
    Mobile Overrides
    ======================================== */
 @media (max-width: 768px) {
+    .chat-lore-search { font-size: var(--mobile-input-size); }
+    .chat-lore-row { min-height: 48px; }
+    /* Partial-height tap-away drawer (small picker), honoring the cl-modal-drawer marker
+       instead of the generic full-viewport sheet. */
+    #chatLoreModal .cl-modal-content {
+        height: auto !important;
+        max-height: 75vh !important;
+        border: 1px solid var(--glass-border) !important;
+        border-bottom: none !important;
+        padding-bottom: max(var(--space-sm), env(safe-area-inset-bottom));
+    }
+
     /* Modal chat button */
     #modalChatBtn {
         padding: 6px 8px;
@@ -1045,13 +1262,34 @@
     /* Chats tab (inside character modal) */
     .chats-header { display: none !important; }
     .chats-list { max-height: none; gap: var(--space-xs-sm); }
-    .chat-item { padding: 10px; gap: var(--space-sm-md); }
+    .chat-item { padding: 10px; gap: var(--space-sm-md); flex-wrap: wrap; }
     .chat-item-icon { width: 32px; height: 32px; font-size: var(--font-sm); border-radius: var(--radius-lg); margin-right: 0; }
     .chat-item-info { min-width: 0; }
     .chat-item-name { font-size: var(--font-md); }
     .chat-item-meta { font-size: var(--font-2xs); gap: var(--space-sm); flex-wrap: wrap; }
-    .chat-item-actions { opacity: 1; gap: var(--space-xs); }
-    .chat-action-btn { width: 34px; height: 34px; border-radius: var(--radius-lg); }
+    /* The action row collapses behind the kebab; tapping it reveals the buttons as a full-width row. */
+    .chat-item-kebab {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 40px; height: 40px;
+        min-width: 40px; min-height: 40px;
+        flex-shrink: 0;
+        border-radius: var(--radius-lg);
+        border: 1px solid var(--glass-border);
+        background: rgba(0, 0, 0, 0.3);
+        color: var(--text-secondary);
+        cursor: pointer;
+    }
+    .chat-item-actions {
+        display: none;
+        opacity: 1;
+        flex-basis: 100%;
+        justify-content: flex-end;
+        gap: var(--space-xs);
+    }
+    .chat-item.menu-open .chat-item-actions { display: flex; }
+    .chat-action-btn { width: 40px; height: 40px; min-width: 40px; min-height: 40px; border-radius: var(--radius-lg); }
 
     /* Let gallery-content own the scroll; nested overflow left a 40px gap */
     .chats-view {
@@ -1118,6 +1356,8 @@
     }
     .chat-card-meta {
         gap: var(--space-sm);
+        /* inherits base flex-wrap:nowrap so the model badge truncates instead of wrapping the
+           footer to a second line (single-column cards have room for the truncated badge). */
     }
     .chat-card-actions {
         opacity: 1;
@@ -1130,6 +1370,11 @@
         display: flex;
         align-items: center;
         border-radius: var(--radius-md);
+    }
+    .chat-lore-btn {
+        width: 28px;
+        height: 28px;
+        font-size: var(--font-2xs);
     }
     .chat-card.active::before {
         font-size: var(--font-4xs);
@@ -1175,10 +1420,11 @@
     }
     .chat-group-item-meta {
         font-size: var(--font-2xs);
-        gap: var(--space-sm);
+        gap: var(--space-2xs) var(--space-sm);
         display: flex;
         align-items: center;
-        flex-wrap: nowrap;
+        flex-wrap: wrap;
+        min-width: 0;
     }
     .chat-group-item-meta > span {
         display: inline-flex;

@@ -602,7 +602,7 @@
 
     /* Textarea: prevent iOS zoom-on-focus */
     .custom-css-textarea {
-        font-size: 16px;
+        font-size: var(--mobile-input-size);
         min-height: 280px;
     }
     .ccss-raw-textarea { min-height: 360px; }

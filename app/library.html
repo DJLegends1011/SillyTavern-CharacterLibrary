@@ -6,8 +6,8 @@
     <meta name="color-scheme" content="dark">
     <meta name="referrer" content="no-referrer">
     <title>SillyTavern Character Library</title>
-    <link rel="stylesheet" href="library.css?v=100">
-    <link rel="stylesheet" href="library-mobile.css?v=29" media="screen and (max-width: 768px)">
+    <link rel="stylesheet" href="library.css?v=101">
+    <link rel="stylesheet" href="library-mobile.css?v=31" media="screen and (max-width: 768px)">
     <!-- Noto Sans from SillyTavern's bundled webfonts -->
     <link rel="stylesheet" href="/webfonts/NotoSans/stylesheet.css">
     <!-- Font Awesome for Icons -->
@@ -26,6 +26,14 @@
         // applyModalSize in library.js — keep maps in sync if those change.
         (function () {
             try {
+                // Only iOS (incl. iPadOS, which reports as a Mac with touch) auto-zooms on input
+                // focus below 16px font. Tag <html> so that 16px guard can be scoped to iOS alone
+                // and every other platform keeps the compact scale. All iOS browsers are WebKit, so
+                // we detect the OS, not the browser.
+                var ua = navigator.userAgent || '';
+                if (/iP(hone|ad|od)/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)) {
+                    document.documentElement.classList.add('cl-ios');
+                }
                 if (window.matchMedia('(max-width: 768px)').matches) return;
                 var raw = localStorage.getItem('SillyTavernCharacterGallery');
                 if (!raw) return;
@@ -187,17 +195,20 @@
                         <button id="importBtn" class="dropdown-item">
                             <i class="fa-solid fa-download"></i> Import Characters
                         </button>
-                        <button id="checkDuplicatesBtn" class="dropdown-item">
-                            <i class="fa-solid fa-clone"></i> Find Duplicates
-                        </button>
-                        <button id="bulkAutoLinkBtn" class="dropdown-item">
-                            <i class="fa-solid fa-link"></i> Auto-Link Characters
+                        <button id="lorebooksBtn" class="dropdown-item">
+                            <i class="fa-solid fa-book-atlas"></i> Lorebooks
                         </button>
                         <button id="recommenderBtn" class="dropdown-item">
                             <i class="fa-solid fa-wand-magic-sparkles"></i> Card Recommender
                         </button>
                         <button id="creatorBtn" class="dropdown-item">
                             <i class="fa-solid fa-plus-circle"></i> Create Character
+                        </button>
+                        <button id="checkDuplicatesBtn" class="dropdown-item">
+                            <i class="fa-solid fa-clone"></i> Find Duplicates
+                        </button>
+                        <button id="bulkAutoLinkBtn" class="dropdown-item">
+                            <i class="fa-solid fa-link"></i> Auto-Link Characters
                         </button>
                         <div class="dropdown-divider"></div>
                         <button id="menuRefreshBtn" class="dropdown-item">
@@ -466,6 +477,13 @@
                                 <div id="modalLorebookContent" class="scrolling-text" style="margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--glass-border);"></div>
                             </details>
                         </div>
+
+                        <div class="lorebook-box" id="modalLinkedLorebookBox" style="display:none; margin-top: 16px;">
+                            <details style="background: rgba(255, 255, 255, 0.05); border-radius: var(--radius-lg); padding: 8px; border: 1px solid var(--glass-border);">
+                                <summary style="cursor: pointer; font-weight: bold; color: var(--accent);"><i class="fa-solid fa-book-atlas"></i> Linked Lorebook: <span id="linkedLorebookName"></span> (<span id="linkedLorebookEntryCount">0</span> entries)</summary>
+                                <div id="modalLinkedLorebookContent" class="scrolling-text" style="margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--glass-border);"></div>
+                            </details>
+                        </div>
                     </div>
 
                     <div class="tab-pane" id="pane-edit">
@@ -587,6 +605,23 @@
                                     <i class="fa-solid fa-expand"></i>
                                 </button>
                                 <textarea id="editCreatorNotes" class="glass-input" rows="4" placeholder="Tips, warnings, or info for users..." autocomplete="one-time-code"></textarea>
+                            </div>
+                        </div>
+
+                        <div class="edit-section linked-lorebook-section hidden" id="linkedLorebookEditRow">
+                            <h4 class="section-header">
+                                <i class="fa-solid fa-book-atlas"></i> Linked Lorebook
+                            </h4>
+                            <div class="linked-lorebook-bar">
+                                <span class="linked-lorebook-name" id="linkedLorebookEditName" title=""></span>
+                                <div class="linked-lorebook-actions">
+                                    <button type="button" id="openLinkedLorebookBtn" class="action-btn secondary small" title="Open in the Lorebook Manager">
+                                        <i class="fa-solid fa-up-right-from-square"></i> Manage
+                                    </button>
+                                    <button type="button" id="unlinkLorebookBtn" class="action-btn danger small" title="Unlink this lorebook from the character">
+                                        <i class="fa-solid fa-link-slash"></i> Unlink
+                                    </button>
+                                </div>
                             </div>
                         </div>
 
@@ -2847,7 +2882,7 @@ https://www.masqueradeproductions.org/character/uuid
                         <div class="settings-group">
                             <div class="settings-group-title"><i class="fa-solid fa-info-circle"></i> Version Info</div>
                             <div class="settings-row">
-                                <span class="settings-hint" style="font-family: monospace;">Character Library v6.1.0</span>
+                                <span class="settings-hint" style="font-family: monospace;">Character Library v6.2.0</span>
                             </div>
                         </div>
 
@@ -3003,8 +3038,8 @@ https://www.masqueradeproductions.org/character/uuid
     <div id="toastContainer" class="toast-container"></div>
 
     <!-- Scripts -->
-    <script src="library.js?v=187"></script>
-    <script type="module" src="../modules/module-loader.js?v=40"></script>
+    <script src="library.js?v=189"></script>
+    <script type="module" src="../modules/module-loader.js?v=41"></script>
     <script src="library-mobile.js?v=18"></script>
 </body>
 </html>

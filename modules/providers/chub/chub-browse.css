@@ -425,7 +425,7 @@
     .chub-login-body { padding: 14px; overflow-y: auto; -webkit-overflow-scrolling: touch; }
     .chub-login-info { font-size: var(--font-md); padding: 12px; }
     .chub-login-actions { flex-wrap: wrap; }
-    .chub-login-form .glass-input { font-size: 16px; }
+    .chub-login-form .glass-input { font-size: var(--mobile-input-size); }
 
     .chub-author-banner { flex-direction: column; gap: var(--space-sm-md); padding: 10px 12px; }
     .chub-author-banner-content { font-size: var(--font-sm); min-width: 0; }

@@ -543,7 +543,7 @@
     .vt-dialog-msg { font-size: var(--font-md); }
     .vt-dialog-btns { gap: var(--space-sm); }
     .vt-dialog-btn { min-height: 40px; padding: 8px 14px; font-size: var(--font-md); }
-    .vt-input { font-size: 16px; padding: 10px 12px; }
+    .vt-input { font-size: var(--mobile-input-size); padding: 10px 12px; }
 
     .vt-loading, .vt-error { padding: 20px 12px; font-size: var(--font-sm); }
 }

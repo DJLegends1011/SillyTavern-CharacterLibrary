@@ -1536,7 +1536,6 @@ body.modal-size-large .recommender-chat-modal .cl-modal-content { max-width: 112
     .recommender-toolbar {
         margin-bottom: 10px;
         gap: var(--space-xs-sm);
-        overflow: hidden;
     }
 
     .recommender-profile-area {
@@ -1578,10 +1577,10 @@ body.modal-size-large .recommender-chat-modal .cl-modal-content { max-width: 112
 
     /* --- Settings panel --- */
 
+    /* Keep the panel a contained scrollbox on mobile (like desktop). A full-height inline panel
+       scrolls the only toggle (the sliders button above it) out of reach, so it gets stuck open. */
     .recommender-settings-panel {
-        overflow: visible !important;
-        max-height: none !important;
-        border-radius: var(--radius-xl);
+        max-height: 60vh;
         margin-bottom: 10px;
     }
 
@@ -1700,15 +1699,15 @@ body.modal-size-large .recommender-chat-modal .cl-modal-content { max-width: 112
         margin-bottom: 10px;
     }
 
-    /* --- All inputs 16px to prevent iOS zoom --- */
+    /* --- Mobile input fields: sized via --mobile-input-size (iOS zoom guard) --- */
 
     .recommender-field {
-        font-size: 16px;
+        font-size: var(--mobile-input-size);
         padding: 10px 12px;
     }
 
     .recommender-field-sm {
-        font-size: 16px;
+        font-size: var(--mobile-input-size);
         padding: 8px 10px;
     }
 
@@ -1872,7 +1871,7 @@ body.modal-size-large .recommender-chat-modal .cl-modal-content { max-width: 112
         min-width: 0;
     }
     .recommender-chat-prompt-editor {
-        font-size: 16px;
+        font-size: var(--mobile-input-size);
     }
     .recommender-chat-icon-btn {
         width: 38px;
@@ -1902,7 +1901,7 @@ body.modal-size-large .recommender-chat-modal .cl-modal-content { max-width: 112
 
     .recommender-chat-input {
         flex: 1;
-        font-size: 16px;
+        font-size: var(--mobile-input-size);
         min-height: var(--touch-target-min);
         max-height: 120px;
         resize: none;

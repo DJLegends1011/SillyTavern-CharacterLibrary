@@ -1610,7 +1610,7 @@
     .creator-mobile-profile-select {
         flex: 1;
         min-width: 0;
-        font-size: 16px;
+        font-size: var(--mobile-input-size);
         padding: 8px 10px;
         background: rgba(255,255,255,0.05);
         border: 1px solid var(--glass-border);
@@ -1630,7 +1630,7 @@
     }
 
     .creator-fields .glass-input {
-        font-size: 16px !important;
+        font-size: var(--mobile-input-size) !important;
     }
 
     .creator-fields textarea.glass-input {
@@ -1673,7 +1673,7 @@
     }
 
     .creator-tag-input-row .glass-input {
-        font-size: 16px !important;
+        font-size: var(--mobile-input-size) !important;
     }
 
     .creator-ai-btn {
@@ -1729,7 +1729,7 @@
     }
 
     .creator-import-search .glass-input {
-        font-size: 16px !important;
+        font-size: var(--mobile-input-size) !important;
     }
 
     .creator-import-item {
@@ -1935,7 +1935,7 @@
     .studio-settings-prompt::placeholder { font-size: var(--font-xs); }
 
     .studio-settings-preset-select {
-        font-size: 16px !important;
+        font-size: var(--mobile-input-size) !important;
     }
 
     .studio-settings-check {
