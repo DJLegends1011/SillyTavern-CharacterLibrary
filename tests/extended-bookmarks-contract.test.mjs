@@ -32,12 +32,18 @@ test('Wyvern browse composes upstream skeleton previews with extended bookmarks'
     );
 });
 
-test('DataCat local bookmarks can render as provider-backup controls', () => {
-    assert.match(bookmarkModuleSource, /iconClass\s*=\s*'fa-bookmark'/);
+test('local backups are the default treatment for every provider', () => {
+    assert.match(bookmarkModuleSource, /iconClass\s*=\s*'fa-floppy-disk'/);
+    assert.match(bookmarkModuleSource, /filterLabel\s*=\s*'Local Backups'/);
+    assert.match(bookmarkModuleSource, /modalLabel\s*=\s*'Local Backup'/);
     assert.match(bookmarkModuleSource, /\bfunction\s+renderIcon\b/);
-    assert.match(datacatBrowseSource, /iconClass:\s*'fa-floppy-disk'/);
-    assert.match(datacatBrowseSource, /filterLabel:\s*'Local Backups'/);
-    assert.match(datacatBrowseSource, /modalLabel:\s*'Local Backup'/);
+    // Providers must not override the shared treatment back to plain bookmarks
+    assert.doesNotMatch(datacatBrowseSource, /iconClass:/);
+    assert.match(librarySource, /fa-floppy-disk[^<]*<\/i> Import Local Backups/);
+});
+
+test('Wyvern backup snapshots keep an avatar source for the grid', () => {
+    assert.match(wyvernBrowseSource, /avatar_url:\s*hit\.avatar_url\s*\|\|\s*hit\.avatarUrl\s*\|\|\s*hit\.avatar\s*\|\|\s*''/);
 });
 
 test('bookmark snapshots expose a documented provider-sync update hook', () => {

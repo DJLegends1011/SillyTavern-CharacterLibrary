@@ -3454,7 +3454,7 @@ function setupSettingsModal() {
                 }
             }
             if (total === 0) {
-                showToast('No bookmarks to export', 'info');
+                showToast('No local backups to export', 'info');
                 return;
             }
             const envelope = {
@@ -3472,7 +3472,7 @@ function setupSettingsModal() {
             a.click();
             a.remove();
             URL.revokeObjectURL(url);
-            showToast(`Exported ${total} bookmarks`, 'success');
+            showToast(`Exported ${total} local backups`, 'success');
         };
     }
 
@@ -3490,21 +3490,21 @@ function setupSettingsModal() {
                 try {
                     envelope = JSON.parse(reader.result);
                 } catch (err) {
-                    showToast('Invalid bookmarks file: not valid JSON', 'error');
+                    showToast('Invalid local backups file: not valid JSON', 'error');
                     return;
                 }
                 if (!envelope || envelope.type !== 'CharacterLibraryBookmarks') {
-                    showToast('Invalid bookmarks file: wrong type', 'error');
+                    showToast('Invalid local backups file: wrong type', 'error');
                     return;
                 }
                 if (envelope.version !== 1) {
-                    showToast(`Unsupported bookmarks file version: ${envelope.version}`, 'error');
+                    showToast(`Unsupported local backups file version: ${envelope.version}`, 'error');
                     return;
                 }
                 const imported = envelope.bookmarks || {};
                 const validKeys = Object.keys(imported).filter(k => BOOKMARK_KEYS.includes(k) && Array.isArray(imported[k]));
                 if (validKeys.length === 0) {
-                    showToast('Bookmarks file contains no recognized providers', 'error');
+                    showToast('Local backups file contains no recognized providers', 'error');
                     return;
                 }
                 let totalIncoming = 0;
@@ -3513,7 +3513,7 @@ function setupSettingsModal() {
                 const applyImport = (mode) => {
                     if (mode === 'replace') {
                         for (const k of validKeys) setSetting(k, imported[k]);
-                        showToast(`Replaced bookmarks for ${validKeys.length} provider${validKeys.length === 1 ? '' : 's'}`, 'success');
+                        showToast(`Replaced local backups for ${validKeys.length} provider${validKeys.length === 1 ? '' : 's'}`, 'success');
                     } else {
                         let added = 0;
                         for (const k of validKeys) {
@@ -3537,7 +3537,7 @@ function setupSettingsModal() {
                             }
                             setSetting(k, merged);
                         }
-                        showToast(`Imported ${added} new bookmark${added === 1 ? '' : 's'}`, 'success');
+                        showToast(`Imported ${added} new local backup${added === 1 ? '' : 's'}`, 'success');
                     }
                     window.dispatchEvent(new CustomEvent('charlib:bookmarks-imported'));
                 };
@@ -3547,12 +3547,12 @@ function setupSettingsModal() {
                 modal.innerHTML = `
                     <div class="confirm-modal-content" style="max-width: calc(450px * var(--modal-scale, 1));">
                         <div class="confirm-modal-header">
-                            <h3><i class="fa-regular fa-bookmark"></i> Import Bookmarks</h3>
+                            <h3><i class="fa-regular fa-floppy-disk"></i> Import Local Backups</h3>
                             <button class="close-confirm-btn" data-action="cancel">&times;</button>
                         </div>
                         <div class="confirm-modal-body">
-                            <p>Import <strong>${totalIncoming}</strong> bookmark${totalIncoming === 1 ? '' : 's'} across <strong>${validKeys.length}</strong> provider${validKeys.length === 1 ? '' : 's'}.</p>
-                            <p><strong>Merge</strong> keeps existing bookmarks and adds new ones. <strong>Replace</strong> overwrites existing per-provider lists.</p>
+                            <p>Import <strong>${totalIncoming}</strong> local backup${totalIncoming === 1 ? '' : 's'} across <strong>${validKeys.length}</strong> provider${validKeys.length === 1 ? '' : 's'}.</p>
+                            <p><strong>Merge</strong> keeps existing local backups and adds new ones. <strong>Replace</strong> overwrites existing per-provider lists.</p>
                         </div>
                         <div class="confirm-modal-footer">
                             <button class="action-btn secondary" data-action="cancel">Cancel</button>

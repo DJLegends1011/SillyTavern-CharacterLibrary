@@ -112,7 +112,7 @@ const wyvernBookmarks = createBookmarkModule({
             id: String(hit.id || ''),
             name: hit.name || '',
             tagline: hit.tagline || '',
-            avatar_url: hit.avatar_url || hit.avatarUrl || '',
+            avatar_url: hit.avatar_url || hit.avatarUrl || hit.avatar || '',
             creator: hit.creator ? {
                 uid: hit.creator.uid || '',
                 username: hit.creator.username || '',

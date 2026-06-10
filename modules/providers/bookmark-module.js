@@ -57,24 +57,24 @@ function camelToKebab(s) {
  *     Called after the filter checkbox changes. Provider updates its filters
  *     button, resets pagination, and triggers either renderBookmarksView() or
  *     its regular load.
- * @param {string} [config.iconClass='fa-bookmark']
- *     FontAwesome icon name for inactive local bookmark controls.
+ * @param {string} [config.iconClass='fa-floppy-disk']
+ *     FontAwesome icon name for inactive local backup controls.
  * @param {string} [config.activeIconClass=config.iconClass]
- *     FontAwesome icon name for active local bookmark controls.
- * @param {string} [config.modalLabel='Bookmark']
- *     Button text for the modal bookmark action.
- * @param {string} [config.filterLabel='My Bookmarks']
- *     Checkbox label for the local bookmark filter.
- * @param {string} [config.actionTitle='Bookmark this character']
- *     Tooltip/title used when the item is not bookmarked.
- * @param {string} [config.removeTitle='Remove bookmark']
- *     Tooltip/title used when the item is already bookmarked.
+ *     FontAwesome icon name for active local backup controls.
+ * @param {string} [config.modalLabel='Local Backup']
+ *     Button text for the modal local backup action.
+ * @param {string} [config.filterLabel='Local Backups']
+ *     Checkbox label for the local backup filter.
+ * @param {string} [config.actionTitle='Save local backup bookmark']
+ *     Tooltip/title used when the item is not backed up.
+ * @param {string} [config.removeTitle='Remove local backup bookmark']
+ *     Tooltip/title used when the item is already backed up.
  * @param {string} [config.emptyMessage]
- *     Empty-state message for the bookmark-only view.
- * @param {string} [config.addToast='Bookmarked']
- *     Toast shown after adding a local bookmark.
- * @param {string} [config.removeToast='Removed from bookmarks']
- *     Toast shown after removing a local bookmark.
+ *     Empty-state message for the backup-only view.
+ * @param {string} [config.addToast='Saved local backup bookmark']
+ *     Toast shown after adding a local backup.
+ * @param {string} [config.removeToast='Removed local backup bookmark']
+ *     Toast shown after removing a local backup.
  */
 export function createBookmarkModule(config) {
     const {
@@ -94,15 +94,15 @@ export function createBookmarkModule(config) {
         renderGrid,
         onEmpty,
         onFilterToggle,
-        iconClass = 'fa-bookmark',
+        iconClass = 'fa-floppy-disk',
         activeIconClass = iconClass,
-        modalLabel = 'Bookmark',
-        filterLabel = 'My Bookmarks',
-        actionTitle = 'Bookmark this character',
-        removeTitle = 'Remove bookmark',
-        emptyMessage = 'No bookmarks yet. Click the bookmark icon on any character to save it here.',
-        addToast = 'Bookmarked',
-        removeToast = 'Removed from bookmarks',
+        modalLabel = 'Local Backup',
+        filterLabel = 'Local Backups',
+        actionTitle = 'Save local backup bookmark',
+        removeTitle = 'Remove local backup bookmark',
+        emptyMessage = 'No local backup bookmarks yet. Click the disk icon on any character to save one here.',
+        addToast = 'Saved local backup bookmark',
+        removeToast = 'Removed local backup bookmark',
     } = config;
 
     const dataAttrKebab = camelToKebab(dataAttrKey);
