@@ -60,6 +60,14 @@ let wyvernCurrentPage = 1;
 let wyvernHasMore = true;
 let wyvernIsLoading = false;
 let wyvernLoadGeneration = 0;
+
+// Invalidate any in-flight loadWyvernCharacters() so its late response can't
+// overwrite the grid (e.g. the Local Backups view), and clear the loading
+// flag so a fresh load can start immediately instead of being dropped.
+function cancelWyvernLoad() {
+    wyvernLoadGeneration++;
+    wyvernIsLoading = false;
+}
 let wyvernCurrentSort = 'popular';
 let wyvernCurrentSearch = '';
 let wyvernSelectedChar = null;
@@ -160,6 +168,7 @@ const wyvernBookmarks = createBookmarkModule({
     onFilterToggle: (on) => {
         updateWyvernFiltersButtonState();
         wyvernCurrentPage = 1;
+        cancelWyvernLoad();
         if (on) wyvernBookmarks.renderBookmarksView();
         else {
             wyvernCharacters = [];
@@ -952,6 +961,7 @@ function initWyvernView() {
     on('wyvernSortSelect', 'change', (e) => {
         wyvernCurrentSort = e.target.value;
         wyvernCurrentPage = 1;
+        cancelWyvernLoad();
         if (wyvernBookmarks.filterMyBookmarks) {
             wyvernBookmarks.renderBookmarksView();
         } else {
@@ -1016,6 +1026,7 @@ function initWyvernView() {
 
     // Refresh
     on('refreshWyvernBtn', 'click', () => {
+        cancelWyvernLoad();
         wyvernCharacters = [];
         wyvernCurrentPage = 1;
         loadWyvernCharacters(true);
@@ -1868,7 +1879,9 @@ async function loadWyvernCharacters(forceRefresh = false) {
 
     } catch (e) {
         console.error('[Wyvern] Load error:', e);
-        if (wyvernCurrentPage === 1) {
+        if (!wyvernDelegatesInitialized || gen !== wyvernLoadGeneration) {
+            // Stale/cancelled load: leave whatever view replaced it alone.
+        } else if (wyvernCurrentPage === 1) {
             grid.innerHTML = `
                 <div class="browse-error">
                     <i class="fa-solid fa-exclamation-triangle"></i>
@@ -1883,7 +1896,7 @@ async function loadWyvernCharacters(forceRefresh = false) {
             showToast('Failed to load more: ' + e.message, 'error');
         }
     } finally {
-        wyvernIsLoading = false;
+        if (gen === wyvernLoadGeneration) wyvernIsLoading = false;
         if (loadMoreBtn) {
             loadMoreBtn.disabled = false;
             loadMoreBtn.innerHTML = '<i class="fa-solid fa-plus"></i> Load More';
