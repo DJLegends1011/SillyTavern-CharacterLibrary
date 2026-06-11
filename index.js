@@ -143,6 +143,29 @@ function setShowDropdownInEmbedded(enabled) {
     }
 }
 
+function getShowWandMenuButton() {
+    try {
+        const context = SillyTavern?.getContext?.();
+        // Default: On. The wand menu is the only reachable entry point in mobile-first
+        // UI overhauls (e.g. AstraProjecta) that replace ST's top bar.
+        return context?.extensionSettings?.[CL_SETTINGS_KEY]?.showWandMenuButton !== false;
+    } catch { return true; }
+}
+
+function setShowWandMenuButton(enabled) {
+    try {
+        const context = SillyTavern?.getContext?.();
+        if (!context?.extensionSettings) return;
+        if (!context.extensionSettings[CL_SETTINGS_KEY]) {
+            context.extensionSettings[CL_SETTINGS_KEY] = {};
+        }
+        context.extensionSettings[CL_SETTINGS_KEY].showWandMenuButton = enabled;
+        if (typeof context.saveSettingsDebounced === 'function') context.saveSettingsDebounced();
+    } catch (e) {
+        console.warn(`${EXTENSION_NAME}: Failed to save showWandMenuButton:`, e);
+    }
+}
+
 function getExclusivePanes() {
     try {
         const context = SillyTavern?.getContext?.();
@@ -754,6 +777,65 @@ function ensureStandaloneGalleryButton(shouldExist) {
     if (isEmbeddedActive()) setActivePaneHighlight(true);
 }
 
+/**
+ * Create/remove a Character Library entry in ST's native wand menu (#extensionsMenu,
+ * next to the chat input). Follows ST's native item conventions (.extension_container
+ * wrapper with a *_wand_container id, .extensionsMenuExtensionButton icon) so that
+ * mobile UI overhauls that bridge the native wand menu — notably AstraProjecta, which
+ * reparents the live #extensionsMenu into its own drawer and preserves native ids,
+ * classes, and handlers — pick it up automatically.
+ */
+function ensureWandMenuButton(shouldExist) {
+    const existing = document.getElementById('charlib_wand_container');
+    if (!shouldExist) {
+        if (existing) existing.remove();
+        return;
+    }
+    if (existing) return;
+
+    const attach = () => {
+        const menu = document.getElementById('extensionsMenu');
+        if (!menu) return false;
+        if (document.getElementById('charlib_wand_container')) return true;
+
+        const container = document.createElement('div');
+        container.id = 'charlib_wand_container';
+        container.className = 'extension_container';
+        container.innerHTML = `
+            <div id="charlib_wand_button" class="list-group-item flex-container flexGap5 interactable" tabindex="0" title="Open Character Library">
+                <div class="fa-solid fa-layer-group extensionsMenuExtensionButton"></div>
+                <span>Character Library</span>
+            </div>
+        `;
+
+        container.querySelector('#charlib_wand_button').addEventListener('click', () => {
+            // When a UI overhaul (AstraProjecta) has reparented the menu into its own
+            // drawer, leave visibility to it — it closes its drawer on action clicks,
+            // and hiding the menu node here would leave it display:none on next open.
+            // In vanilla ST the menu stays open after item clicks, so close it ourselves.
+            const menuNode = document.getElementById('extensionsMenu');
+            const astraHosted = !!menuNode?.closest('[class*="astra-projecta"], [id*="astra-projecta"]');
+            if (menuNode && !astraHosted && typeof jQuery === 'function') {
+                jQuery(menuNode).fadeOut(200);
+            }
+            openGallery();
+        });
+
+        menu.appendChild(container);
+        clDebug(`${EXTENSION_NAME}: Wand menu button added to #extensionsMenu`);
+        return true;
+    };
+
+    if (attach()) return;
+
+    // #extensionsMenu is part of ST's static DOM, but guard against load order anyway
+    const observer = new MutationObserver(() => {
+        if (attach()) observer.disconnect();
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+    setTimeout(() => observer.disconnect(), 15000);
+}
+
 // ==============================================
 // Extension Settings UI (injected into ST's Extensions panel)
 // ==============================================
@@ -790,6 +872,10 @@ function injectExtensionSettings() {
                     <label style="display: flex; align-items: center; gap: 8px; padding: 4px 0; cursor: pointer;" title="When on, clicking SillyTavern's Characters icon opens a dropdown to pick between Character Management and Character Library. When off, the Characters icon behaves normally and a separate Character Library button is added to the top bar.">
                         <input type="checkbox" id="charlib-show-dropdown"${getShowDropdownInEmbedded() ? ' checked' : ''} />
                         <span>Show launcher dropdown on Characters button</span>
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 8px; padding: 4px 0; cursor: pointer;" title="Add a Character Library entry to the wand menu next to the chat input. Recommended on mobile and with UI overhaul extensions (e.g. AstraProjecta) that hide SillyTavern's top bar.">
+                        <input type="checkbox" id="charlib-show-wand-button"${getShowWandMenuButton() ? ' checked' : ''} />
+                        <span>Show button in wand menu (chat input)</span>
                     </label>
                     <div id="charlib-embedded-options" style="${currentMode === 'embedded' ? '' : 'display: none;'}">
                     <label style="display: flex; align-items: center; gap: 8px; padding: 4px 0; cursor: pointer;" title="Automatically open the embedded panel when SillyTavern loads">
@@ -855,6 +941,11 @@ function injectExtensionSettings() {
             const chev = document.querySelector('.charlib-chevron-badge');
             if (chev) chev.style.display = e.target.checked ? '' : 'none';
             ensureStandaloneGalleryButton(!e.target.checked);
+        });
+
+        document.getElementById('charlib-show-wand-button').addEventListener('change', (e) => {
+            setShowWandMenuButton(e.target.checked);
+            ensureWandMenuButton(e.target.checked);
         });
 
         document.getElementById('charlib-exclusive-panes').addEventListener('change', (e) => {
@@ -957,7 +1048,11 @@ jQuery(async () => {
     if (!hijacked || !getShowDropdownInEmbedded()) {
         ensureStandaloneGalleryButton(true);
     }
-    
+
+    // Wand menu entry (chat input row) — reachable in mobile UI overhauls like
+    // AstraProjecta that hide the top bar but bridge the native #extensionsMenu.
+    ensureWandMenuButton(getShowWandMenuButton());
+
     // Slash command fallback
     if (window.SlashCommandParser) {
         try {
