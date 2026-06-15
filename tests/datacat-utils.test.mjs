@@ -220,6 +220,29 @@ describe('isDatacatYoursCollectableHit', () => {
             name: 'Public DataCat row',
         }), true);
     });
+
+    it('shows Yours controls for real recent-public summary rows whether or not they were janny-recovered', () => {
+        // Real shape from /api/characters/recent-public?summary=1: collectability is
+        // signalled by appearOnPublicFeed/isPublic, NOT the *_in_db names. The
+        // has_janny_recovery / is_recovery_placeholder keys are present on every
+        // native row, so their mere presence must not gate the control off.
+        const summaryRow = {
+            characterId: '402d5565-705d-43e1-8bb6-fbdbd77a6765',
+            name: 'The Tribal Hunter has captured you for Marriage',
+            isPublic: true,
+            appearOnPublicFeed: true,
+            appear_on_public_feed: true,
+            isCollected: false,
+            isExtractedByYou: false,
+            extractedAt: '2026-06-15T17:49:05.903Z',
+            primary_content_source_kind: 'janitor_core',
+            is_recovery_placeholder: false,
+        };
+        // Non-janny-recovered public card (the reported bug) must be collectable.
+        assert.equal(isDatacatYoursCollectableHit({ ...summaryRow, has_janny_recovery: false }), true);
+        // Janny-recovered public card stays collectable.
+        assert.equal(isDatacatYoursCollectableHit({ ...summaryRow, has_janny_recovery: true }), true);
+    });
 });
 
 describe('isDatacatYoursSavedHit', () => {

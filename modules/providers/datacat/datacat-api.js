@@ -382,6 +382,15 @@ const DATACAT_YOURS_COLLECTABLE_FLAGS = [
     'is_public_in_db',
     'isFullyExtractedInDb',
     'is_fully_extracted_in_db',
+    // Field names actually present on /api/characters/recent-public?summary=1 rows.
+    // DataCat surfaces collectability here via the public-feed / extracted flags,
+    // not the *_in_db names above, so these must count as positive signals.
+    'isPublic',
+    'is_public',
+    'appearOnPublicFeed',
+    'appear_on_public_feed',
+    'isExtractedByYou',
+    'is_extracted_by_you',
     'hasJannyRecovery',
     'has_janny_recovery',
     'isRecoveryPlaceholder',
@@ -435,11 +444,14 @@ export function isDatacatYoursCollectableHit(hit) {
     if (hit._fullCharacter && typeof hit._fullCharacter === 'object') return true;
     if (hit.character && typeof hit.character === 'object') return true;
 
-    if (DATACAT_YOURS_COLLECTABLE_FLAGS.some(key => hit[key] === true)) return true;
-    if (hit.hasPartialExtraction === true || hit.has_partial_extraction === true) return false;
-
+    // External pre-index rows (Hampter/Meili/Saucepan) are not DataCat records yet,
+    // so exclude them before checking positive flags in case a future search source
+    // carries a public/extracted flag of its own.
     const source = String(hit._source || '').trim().toLowerCase();
     if (DATACAT_EXTERNAL_PREINDEX_SOURCES.has(source)) return false;
+
+    if (DATACAT_YOURS_COLLECTABLE_FLAGS.some(key => hit[key] === true)) return true;
+    if (hit.hasPartialExtraction === true || hit.has_partial_extraction === true) return false;
 
     const hasExplicitDbSignal = DATACAT_YOURS_EXPLICIT_DB_SIGNAL_FLAGS.some(key => hasOwnFlag(hit, key));
     if (hasExplicitDbSignal) return false;
