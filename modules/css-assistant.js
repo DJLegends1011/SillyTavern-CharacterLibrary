@@ -32,7 +32,7 @@ PARALLEL --cl-* TOKEN FAMILY (separate chain that powers module dialogs):
   --cl-accent-rgb        Comma-separated RGB. The "source" of this chain.
   --cl-accent            Derived: rgb(var(--cl-accent-rgb)). Override --cl-accent-rgb and this updates.
   --cl-accent-hover      Derived: color-mix(in srgb, var(--cl-accent), white 20%). Auto-updates from --cl-accent. Do NOT hand-pick a hover color.
-  --cl-border            General-purpose border token for module dialogs. Used for .cl-modal-content frames, internal dividers, panel outlines, dashed borders across batch-tagging, card-updates, character-versions, context-menu, playlists. NOT used by .cl-btn (the cl-btn family has no border at all).
+  --cl-border            General-purpose border token for module dialogs. Used for internal dividers, panel outlines, dashed borders across batch-tagging, card-updates, character-versions, context-menu, playlists. NOT used by .cl-btn: the base button is borderless, and the DEFAULT glass button style adds its own hardcoded 1px rgba(255,255,255,0.08) border that follows neither this token nor the accent (target :root[data-btn-style="glass"] .cl-btn to restyle it).
   --cl-text-primary      Default value resolves to #e0e0e0. (The declaration references SmartTheme but CL runs in its own browser tab where those vars are never defined, so the fallback always wins.)
   --cl-text-secondary    Default value resolves to #a0a0a0. Same situation.
   IMPORTANT for global accent retheme: override BOTH --accent / --accent-rgb AND --cl-accent-rgb. --accent-rgb drives --accent-glow. --cl-accent-rgb drives --cl-accent and --cl-accent-hover. Same hex value in both chains is the usual pattern. Setting --accent without --cl-accent-rgb leaves the .cl-btn family (used in every module dialog) on the default blue.
@@ -87,34 +87,41 @@ RESTORE SIMPLE / FLAT CHROME (anti-funhouse, "make modals opaque" / "kill the bl
 
   When user wants only the blur amount tuned (not full revert): .cl-modal-content { backdrop-filter: blur(<n>px); -webkit-backdrop-filter: blur(<n>px); } - 12px subtle, 20px default, 40px heavy frost. When user wants only the blur off (keep translucent + gradient header): drop just backdrop-filter / -webkit-backdrop-filter, leave the rest.
 
-GRADIENT-CLIPPED TITLE ICON (.cl-modal-header-icon) - OPT-IN HELPER:
-  Modal header icons default to flat color (inherits text color). Users can opt one icon into a richer accent-gradient look by adding the .cl-modal-header-icon class to the <i> inside the h3. The class is defined globally so it works on any .cl-modal-header without further scoping.
+GRADIENT-CLIPPED TITLE ICON (default):
+  The leading icon in a modal header (.cl-modal-header h3 > i:first-child) is accent-gradient clipped by DEFAULT (accent -> accent-secondary). The legacy .cl-modal-header-icon class is an alias for the same effect on an icon that is not the leading child.
 
-  When the user asks for "gradient icon", "make the title icon pop", "premium icon", "colored icon in the header", etc:
-    - If the icon is in shipped markup (e.g. settings, recommender, the dialog the user names), generate a Custom CSS snippet that scopes the icon directly via the modal ID, since you can't modify the shipped markup from Custom CSS. Example:
+  When the user asks to RECOLOR the title icon ("different gradient", "make it match X"): override the gradient stops. The icon is shipped markup, so scope via the modal ID (Custom CSS can't edit markup). Example:
         #recommenderModal .cl-modal-header h3 > i:first-child {
-            background: linear-gradient(135deg, var(--accent), var(--accent-secondary));
+            background: linear-gradient(135deg, <color-a>, <color-b>);
             -webkit-background-clip: text;
             background-clip: text;
             -webkit-text-fill-color: transparent;
         }
-    - The .cl-modal-header-icon class achieves the same effect for markup that does carry it. Snippets generated for end users should use the structural selector pattern above since they can't add classes to existing markup.
+
+  When the user wants the title icon FLAT (no gradient): reset the fill.
+        #recommenderModal .cl-modal-header h3 > i:first-child {
+            background: none;
+            -webkit-text-fill-color: currentColor;
+        }
 
   When NOT to use:
-    - User asks for color/accent changes (override --accent tokens instead).
-    - User asks for chrome / shadow / shape changes (those are now the default cl-modal look; no opt-in needed).
+    - User asks for app-wide accent changes (override --accent / --accent-secondary tokens instead; the gradient follows them automatically).
+    - User asks for chrome / shadow / shape changes (those are the default cl-modal look; no opt-in needed).
 
 MODAL SCRIM (the dimming overlay BEHIND a modal; separate from the modal's own background):
-  --cl-modal-scrim-light  Full rgba; default rgba(0, 0, 0, 0.6). Used on gentle overlays (image viewer, gallery viewer).
-  --cl-modal-scrim        Full rgba; default rgba(0, 0, 0, 0.7). Used on standard modals (settings, character detail, most cl-modal dialogs).
-  --cl-modal-scrim-heavy  Full rgba; default rgba(0, 0, 0, 0.8). Used on destructive confirms (delete, bulk-destroy).
+  --cl-modal-scrim-light  Full rgba; default rgba(0, 0, 0, 0.6). Nested overlays that open on top of an already-open surface: the showConfirm dialog overlay (.cl-confirm-overlay), version-history dialogs (.vt-dialog-overlay), the mobile tag-editor backdrop.
+  --cl-modal-scrim        Full rgba; default rgba(0, 0, 0, 0.7). Standard module dialogs (.cl-modal: settings, batch tagging, playlists, card updates, theme customizer).
+  --cl-modal-scrim-heavy  Full rgba; default rgba(0, 0, 0, 0.8). Full-screen primary modals (.modal-overlay: character detail, character creator) and destructive confirms (.confirm-modal).
   These are FULL rgba values, not alpha-only knobs. Tinting the scrim is supported (e.g. rgba(20, 0, 40, 0.7) for a purple-tinted dimming on a synthwave theme). Three tiers map to gesture, not aesthetic preference: pick by what the modal is asking the user to do.
+  NOT on the token system: the gallery viewer (.gv-modal) HARDCODES its scrim at rgba(0, 0, 0, 0.95) and the full-screen image/avatar viewer (.browse-avatar-viewer) at rgba(0, 0, 0, 0.88); overriding the scrim tokens does nothing there, retinting those two needs their class targeted directly.
 
 STATUS COLORS (semantic, three tiers; override on :root to retheme toasts/badges/banners):
   Muted Material tier: --cl-success (#4caf50), --cl-error (#f44336), --cl-warning (#ff9800), --cl-info (#29b6f6).
   Punchy Flat UI tier: --cl-success-bright (#2ecc71), --cl-error-bright (#e74c3c), --cl-warning-bright (#f39c12), --cl-info-bright (#3498db).
   Pale Material 300 tier: --cl-success-pale (#81c784), --cl-error-pale (#e57373), --cl-warning-pale (#ffd54f), --cl-info-pale (#64b5f6). Designed for legible text on translucent status backgrounds (tag pill labels, callout body text).
   Each muted/bright token has a matching *-rgb companion (e.g. --cl-success-rgb) for rgba() tints. In practice: muted tier powers toast chrome/icons and most status pills/badges; bright tier powers hero banners, big action buttons (danger/cancel gradients), and prominent status indicators; pale tier powers text on top of translucent status backgrounds.
+  Gradient second stops: the danger/cancel and warning button gradients run from the -bright token to a darker companion, --cl-error-bright-darker (#c0392b) and --cl-warning-bright-darker (#e67e22), each with a *-rgb form. Retheming --cl-error-bright or --cl-warning-bright WITHOUT also overriding its -darker companion leaves the gradient's far stop on the stock color (half-rethemed buttons).
+  --cl-danger-text (#ff6b7a): danger ACTION text on dark/translucent chrome, .cl-btn-danger text (both button styles), context-menu Delete rows (desktop + mobile sheet), playlist delete hover. Deliberately OUTSIDE the error tiers: retheming --cl-error-* does not move it, override --cl-danger-text directly.
   KNOWN COUPLING GAPS:
     1. .toast.info uses --accent (not --cl-info). Re-color info toasts by overriding --accent or by targeting .toast.info directly.
   INTENTIONAL DECOUPLING (do NOT route through the status tier):
@@ -170,7 +177,7 @@ Layout / Chrome (defined in library.css; no !important needed):
   .modal-glass           Full-viewport detail panel (character detail, character creator, chat preview). NOT gallery viewer (that's .gv-modal).
   .modal-sidebar         Right-side info pane inside the character detail modal.
   .tab-pane              Tab content panes inside the character detail modal. Use .tab-pane.active for the visible one.
-  .char-modal-nav        Prev/Next chevron buttons on the sides of the character detail modal (desktop only; mobile uses swipe). Variants: .char-modal-nav-prev, .char-modal-nav-next. Icon glyph is a ::before pseudo using Font Awesome 6 Free. Component-scoped vars for per-component theming (override on .char-modal-nav itself): --cmn-bg (default rgba(0,0,0,0.5)), --cmn-bg-hover (rgba(255,255,255,0.1)), --cmn-border (1px solid rgba(255,255,255,0.1)), --cmn-color (#fff), --cmn-width (50px), --cmn-height (80px), --cmn-side-offset (1%, distance from viewport edge), --cmn-icon-size (var(--font-2xl)), --cmn-icon-prev ('\\f053' = fa-chevron-left, override with any FA6 unicode), --cmn-icon-next ('\\f054' = fa-chevron-right), --cmn-disabled-opacity (0.3). Hidden on mobile via library-mobile.css; gated on the enableCharDetailNav setting.
+  .char-modal-nav        Prev/Next chevron buttons on the sides of the character detail modal (desktop only; mobile uses swipe). Floating glass capsules: blurred backdrop, idle opacity 0.75, accent-gradient glow + slight scale + directional icon nudge on hover, press feedback on :active. Variants: .char-modal-nav-prev, .char-modal-nav-next. Icon glyph is a ::before pseudo using Font Awesome 6 Free. Component-scoped vars for per-component theming (override on .char-modal-nav itself): --cmn-bg (default rgba(0,0,0,0.4)), --cmn-bg-hover (accent-to-accent-secondary gradient, FOLLOWS accent retheming; accepts any background value), --cmn-border (1px solid rgba(255,255,255,0.12)), --cmn-color (rgba(255,255,255,0.85)), --cmn-width (44px), --cmn-height (96px), --cmn-side-offset (1%, distance from viewport edge), --cmn-icon-size (var(--font-xl)), --cmn-icon-prev ('\\f053' = fa-chevron-left, override with any FA6 unicode), --cmn-icon-next ('\\f054' = fa-chevron-right), --cmn-disabled-opacity (0.3). Hover border/shadow also use --accent-rgb directly (follow retheming). Hidden on mobile via library-mobile.css; gated on the enableCharDetailNav setting.
   .toast / .toast-container  Toast notifications. Variants: .toast.success, .toast.error, .toast.warning, .toast.info.
   .toast-icon            Icon inside a toast.
   .close-btn             Generic X-close button on modals.
@@ -211,6 +218,11 @@ Context menu (defined in modules/context-menu.css; NEEDS !important):
 Gallery viewer (defined in modules/gallery-viewer.css; NEEDS !important):
   .gv-modal              Gallery viewer modal overlay.
   .gv-modal.visible      Visible state.
+
+Version history (defined in modules/character-versions.css; NEEDS !important):
+  .vt-dialog / .vt-dialog-overlay   Version-history dialog + its scrim (scrim rides --cl-modal-scrim-light).
+  .vt-stat / .vt-badge / .vt-lb-*   Diff stats, badges, lorebook-diff rows.
+  COUPLING GAP: the entire diff/status palette here is a deliberate VS Code-style carve-out, HARDCODED hexes (#89d185 added, #f48771 removed, #ffb450 modified, #bdbdbd local-only, ~20 hex + 23 rgba sites) bound to NO token. Retheming the --cl-* status tiers moves nothing in this surface; recoloring it means targeting .vt-* classes directly.
 
 Lorebooks (defined in modules/lorebook-manager.css; NEEDS !important for theme overrides). A self-contained World-Info editor plus AI-generation suite. It reuses the canonical shells (.modal-glass, .cl-modal-content) and the token system, but carries its own cohesive entry/button chrome (the way character-creator does). Accent-active states follow var(--accent-rgb) and retheme automatically EXCEPT where flagged:
   .lb-modal-glass        The manager's full-screen panel (reuses the .modal-glass shell at largest size).
@@ -273,6 +285,18 @@ Loaders & progress (CL does NOT use native <progress> elements):
   Real progress bars (custom div pairs, NOT <progress> elements):
     .import-progress-bar > .import-progress-fill                       Single-character import / apply-snippets progress.
     .import-summary-progress-bar > .import-summary-progress-fill       Bulk import summary.
+
+Notifications center (the topbar bell dropdown; shell in modules/gallery-sync.css, media-download rows in modules/media-download-queue.css; NEEDS !important for theme overrides):
+  .gallery-sync-dropdown   The dropdown panel itself. Despite the legacy "gallery-sync" name it is the SHARED shell for every notification section. HARDCODED dark surface (rgba(30,30,35,0.98) bg + rgba(255,255,255,0.15) border + heavy drop shadow), bound to NO token; retarget .gallery-sync-dropdown background/border directly to recolor the panel.
+  .notif-section           One section card inside the dropdown (today: media downloads + gallery sync). Neutral inset surface rgba(0,0,0,0.2) + var(--glass-border) + var(--radius-lg). The bg is HARDCODED (the app's recurring inset-panel value) and does NOT follow accent; retarget .notif-section background to recolor the cards.
+  Media downloads (.mdq-* selectors):
+    .mdq-header            Section eyebrow title ("MEDIA DOWNLOADS"); its <i> icon is var(--accent) (follows accent).
+    .mdq-job               One download row. Children: .mdq-job-icon (leading status glyph: var(--accent) for active; .mdq-job-icon-error adds var(--cl-error-bright) for failed), .mdq-job-body, .mdq-job-name, .mdq-job-sub (with faint .mdq-job-meta count/percent), .mdq-job-actions / .mdq-job-btn (icon buttons; hover bg rgba(var(--accent-rgb),0.15), follows accent).
+    .mdq-progress > .mdq-progress-fill   Active-job bar. The FILL is var(--accent) (follows accent); the TRACK (.mdq-progress bg) is a HARDCODED neutral rgba(255,255,255,0.07).
+    .mdq-pending           "N more queued" line. .mdq-error is a failed-job message in var(--cl-error-pale) (follows error tier). .mdq-done-row is the "N completed" footer; its check <i> is var(--cl-success) (follows success tier).
+  Gallery sync (.sync-dropdown-* / .gallery-sync-status-box selectors):
+    .sync-dropdown-header  Status line; .healthy = var(--cl-success-bright), .issues = var(--cl-warning-bright) (follow the status tiers).
+    .sync-dropdown-stats   The chars / with-ID stat row. .sync-dropdown-actions is the Details / Assign IDs / Settings .action-btn row. .sync-issue-details / .sync-detail-item is the expandable missing-id list.
 
 Mobile chrome (defined in library-mobile.css and modules/chats.css; mobile viewport @media-gated). Rules using these selectors typically need !important to beat the mobile stylesheet's existing rules:
   .mobile-bottom-nav            Persistent bottom navigation bar (mobile only; replaces topbar). Frosted-glass surface.
@@ -430,7 +454,7 @@ KNOWN GOTCHAS (avoid these failure modes):
 
 4. Catch-all substring attribute selectors are the trap to watch. ".cl-tag:not([class*='-success'])" looks like a clever way to target "info tags only" but actually matches every neutral .cl-tag in the app (character tags, lorebook tags, playlist labels, status pills). Use the actual class name (.cl-tag.cl-tag-info) or restrict by context (.recommender-result .cl-tag). This is specifically about substring matchers like [class*='X']; exact-attribute selectors like input[type='checkbox'] are fine and routinely needed.
 
-5. Module CSS files load AFTER the custom CSS <style> tag. Anything in modules/ needs !important to win source-order. Module CSS files (13): custom-css, recommender, playlists, card-update, batch-tagging, character-creator, character-versions, chats, css-assistant, gallery-sync, gallery-viewer, multi-select, context-menu. Provider browse CSS files (5): browse-shared, chub-browse, chartavern-browse, pygmalion-browse, datacat-browse. (Wyvern has a CSS file but uses ID selectors like #wyvern* rather than class prefixes. Janny has no CSS file; inherits from browse-shared.) Class-prefix map for the modules: .ccss-* (custom-css), .recommender-*, .pl-* (playlists), .card-update-*, .bt-* (batch-tagging), .creator-* (character-creator), .vt-* (character-versions), .chat-*, .css-assistant-*, .gallery-sync-*, .gv-* (gallery-viewer), .multi-select-*, .cl-context-menu-*, .browse-*, .chub-*, .ct-* (chartavern), .pyg-* (pygmalion), .datacat-*. For library.css selectors (.char-card, .topbar, .glass-btn, .toast, .settings-*, .view-toggle, .tab-pane, .modal-glass, .modal-sidebar, .favorite-indicator, etc.), source order favors custom CSS so no !important is needed.
+5. Module CSS files load AFTER the custom CSS <style> tag. Anything in modules/ needs !important to win source-order. Module CSS files (15): custom-css, recommender, playlists, card-update, batch-tagging, character-creator, character-versions, chats, css-assistant, gallery-sync, gallery-viewer, multi-select, context-menu, lorebook-manager, media-download-queue. Provider browse CSS files (6 with class prefixes): browse-shared, chub-browse, chartavern-browse, pygmalion-browse, datacat-browse, botbooru-browse. (Wyvern has a CSS file but uses ID selectors like #wyvern* rather than class prefixes. Janny has no CSS file; inherits from browse-shared.) Class-prefix map for the modules: .ccss-* (custom-css), .recommender-*, .pl-* (playlists), .card-update-*, .bt-* (batch-tagging), .creator-* (character-creator), .vt-* (character-versions), .chat-*, .css-assistant-*, .gallery-sync-*, .gv-* (gallery-viewer), .multi-select-*, .cl-context-menu-*, .lb-* (lorebook-manager), .mdq-* (media-download-queue), .browse-*, .chub-*, .ct-* (chartavern), .pyg-* (pygmalion), .datacat-*, .botbooru-*. For library.css selectors (.char-card, .topbar, .glass-btn, .toast, .settings-*, .view-toggle, .tab-pane, .modal-glass, .modal-sidebar, .favorite-indicator, etc.), source order favors custom CSS so no !important is needed.
 
 6. .toast.info reads from --accent, not --cl-info. Overriding --cl-info for a "blue info" semantic does NOT recolor info toasts. If a global theme needs info toasts to follow a non-accent color, target ".toast.info" directly with a !important rule on its border-color and ".toast.info .toast-icon" on the icon color.
 

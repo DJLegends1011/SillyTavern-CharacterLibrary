@@ -1413,7 +1413,7 @@ function charChatModalHtml() {
                     <div class="recommender-chat-settings-head">
                         <label class="recommender-chat-settings-label">System prompt</label>
                         <div class="recommender-chat-preset-row">
-                            <select id="recommenderChatPresetSelect" class="recommender-chat-preset-select cl-select-fluid"></select>
+                            <select id="recommenderChatPresetSelect" class="cl-select-fluid"></select>
                             <button class="recommender-chat-icon-btn" id="recommenderChatPresetSave" title="Save current as a preset"><i class="fa-solid fa-floppy-disk"></i></button>
                             <button class="recommender-chat-icon-btn" id="recommenderChatPresetDelete" title="Delete the selected preset"><i class="fa-solid fa-trash-can"></i></button>
                             <button class="recommender-chat-icon-btn" id="recommenderChatPresetReset" title="Reset to the default prompt"><i class="fa-solid fa-rotate-left"></i></button>
@@ -1474,7 +1474,14 @@ async function loadChatPrompts() {
                 if (text && text.trim()) data = JSON.parse(text);
             }
         } catch { /* missing or invalid file is fine */ }
-        _chatPrompts = (data && typeof data === 'object' && !Array.isArray(data)) ? data : {};
+        if (data && typeof data === 'object' && !Array.isArray(data)) {
+            // pre-envelope files carry no version key; accept them and upgrade on next save
+            if (data.version !== undefined && data.version !== 1) data = null;
+        } else {
+            data = null;
+        }
+        _chatPrompts = data || {};
+        delete _chatPrompts.version;
         if (!Array.isArray(_chatPrompts.presets)) _chatPrompts.presets = [];
         if (typeof _chatPrompts.active !== 'string') _chatPrompts.active = '';
         _chatPromptsLoaded = true;
@@ -1485,15 +1492,17 @@ async function loadChatPrompts() {
 }
 
 async function saveChatPrompts() {
-    if (!_chatPrompts) return;
-    if (_chatPromptsSaving) { _chatPromptsSaveQueued = true; return; }
+    if (!_chatPrompts) return false;
+    if (_chatPromptsSaving) { _chatPromptsSaveQueued = true; return false; }
     _chatPromptsSaving = true;
+    let ok = false;
     try {
         const resp = await CoreAPI.apiRequest('/files/upload', 'POST', {
             name: CHAT_PROMPTS_FILE,
-            data: CoreAPI.utf8ToBase64(JSON.stringify(_chatPrompts, null, 2)),
+            data: CoreAPI.utf8ToBase64(JSON.stringify({ version: 1, ..._chatPrompts }, null, 2)),
         });
         if (!resp.ok) throw new Error(`upload failed (${resp.status})`);
+        ok = true;
     } catch (e) {
         console.error('[Recommender] Failed to save chat prompts:', e.message);
         CoreAPI.showToast('Failed to save chat prompt', 'error');
@@ -1501,6 +1510,7 @@ async function saveChatPrompts() {
         _chatPromptsSaving = false;
         if (_chatPromptsSaveQueued) { _chatPromptsSaveQueued = false; saveChatPrompts(); }
     }
+    return ok;
 }
 
 // Debounced so typing in the editor doesn't spam file writes; discrete actions call saveChatPrompts directly.
@@ -1618,10 +1628,7 @@ function setChatBusy(busy) {
     if (input) input.disabled = busy;
 }
 
-// Normalize the LLM's text into clean block HTML BEFORE formatRichText: wrap prose in <p>, convert markdown
-// headings/lists, pass HTML blocks through, and drop blank lines. Dropping the blanks is the load-bearing part,
-// it stops formatRichText turning blank lines into <br><br> (the cause of cavernous paragraph spacing); gaps are
-// then governed by CSS margins. Handles markdown OR HTML; safePurify still runs last, so it stays XSS-safe.
+// Drops blank lines before formatRichText (else they become <br><br> = cavernous spacing); safePurify still runs last.
 function mdBlocksToHtml(text) {
     const out = [];
     let list = null, para = [];

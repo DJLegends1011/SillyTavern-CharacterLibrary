@@ -3,12 +3,9 @@
    Extracted from library.css
    ============================================ */
 
-.grid-suspended { visibility: hidden !important; max-height: 0 !important; overflow: hidden !important; }
-
 /* Online filter area - hidden by default, higher specificity.
    flex:1 when visible so margin-left:auto on #onlineFilterContent works. */
-.filter-area.online-filters,
-.filter-area.chub-filters {
+.filter-area.online-filters {
     display: none; /* Hidden by default, shown via JS */
     flex: 1;
 }
@@ -24,25 +21,6 @@
 
 #providerSelectorArea .custom-select-container {
     min-width: 140px;
-}
-
-/* Icon images inside custom select items and triggers */
-.item-icon-img,
-.trigger-icon-img {
-    width: 18px;
-    height: 18px;
-    border-radius: var(--radius-xs);
-    object-fit: cover;
-    flex-shrink: 0;
-    vertical-align: middle;
-}
-
-.trigger-icon-img {
-    margin-right: 6px;
-}
-
-.custom-select-item .item-icon-img {
-    margin-right: 8px;
 }
 
 #onlineFilterContent {
@@ -117,8 +95,7 @@
     to { opacity: 1; transform: translateY(0); }
 }
 
-.online-view,
-.chub-view {
+.online-view {
     display: flex;
     flex-direction: column;
     gap: var(--space-xl);
@@ -127,8 +104,7 @@
     padding: 0 0 20px;
 }
 
-.online-view.hidden,
-.chub-view.hidden {
+.online-view.hidden {
     display: none;
 }
 
@@ -208,6 +184,8 @@
 [data-select-id="chubDiscoveryPreset"],
 [data-select-id="chubTimelineSortHeader"],
 [data-select-id="pygFollowingSortSelect"],
+[data-select-id="botbooruSortPreset"],
+[data-select-id="botbooruTimelineSortHeader"],
 .browse-more-filters {
     transition: opacity 0.15s ease, visibility 0.15s ease;
 }
@@ -232,23 +210,13 @@
 
 
 [data-select-id="chubTimelineSortHeader"],
-[data-select-id="pygFollowingSortSelect"] {
+[data-select-id="pygFollowingSortSelect"],
+[data-select-id="botbooruTimelineSortHeader"] {
     position: absolute;
     top: 0;
     left: 0;
     width: 100%;
     max-width: 100%;
-}
-
-/* Dropdown Section Titles */
-.dropdown-section-title {
-    font-size: var(--font-xs);
-    font-weight: 600;
-    color: var(--text-secondary);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    padding: 4px 12px 6px;
-    margin-bottom: 4px;
 }
 
 .dropdown-menu .filter-checkbox {
@@ -307,6 +275,30 @@
     display: flex;
     align-items: center;
     gap: var(--space-sm);
+}
+
+/* Heart-red follow button shared by every author/uploader banner (chub, wyvern, botbooru) */
+.browse-author-follow-btn {
+    background: linear-gradient(135deg, rgba(var(--cl-error-bright-rgb), 0.2), rgba(var(--cl-error-bright-darker-rgb), 0.2));
+    border: 1px solid rgba(var(--cl-error-bright-rgb), 0.4);
+    color: var(--cl-error-bright);
+    padding: 6px 12px;
+    font-size: var(--font-md);
+}
+
+.browse-author-follow-btn:hover:not(:disabled) {
+    background: linear-gradient(135deg, rgba(var(--cl-error-bright-rgb), 0.3), rgba(var(--cl-error-bright-darker-rgb), 0.3));
+    border-color: rgba(var(--cl-error-bright-rgb), 0.6);
+}
+
+.browse-author-follow-btn.following {
+    background: linear-gradient(135deg, rgba(var(--cl-error-bright-rgb), 0.4), rgba(var(--cl-error-bright-darker-rgb), 0.4));
+    color: #fff;
+}
+
+.browse-author-follow-btn:disabled {
+    opacity: 0.6;
+    cursor: wait;
 }
 
 /* Clickable Author in Cards */
@@ -473,7 +465,8 @@
     border-radius: var(--radius-2xl);
     overflow: hidden;
     cursor: pointer;
-    transition: all 0.25s ease;
+    /* explicit props only: transition:all animated every incidental style change across the grid */
+    transition: transform 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
     display: flex;
     flex-direction: column;
     height: 100%;
@@ -569,12 +562,6 @@
     text-overflow: ellipsis;
 }
 
-.browse-card-creator {
-    font-size: var(--font-md);
-    color: var(--text-secondary);
-    margin-bottom: 8px;
-}
-
 .browse-card-tags {
     display: flex;
     flex-wrap: wrap;
@@ -668,9 +655,10 @@
     opacity: 0.4;
 }
 
+/* opacity-only: animating box-shadow repaints on the main thread every frame */
 @keyframes scroll-indicator-pulse {
-    0%, 100% { opacity: 0.3; box-shadow: 0 0 4px var(--accent); }
-    50% { opacity: 1; box-shadow: 0 0 12px var(--accent), 0 0 28px color-mix(in srgb, var(--accent) 40%, transparent); }
+    0%, 100% { opacity: 0.3; }
+    50% { opacity: 1; }
 }
 
 /* ChubAI Loading/Error/Empty States */
@@ -709,9 +697,8 @@
     border: none;
 }
 
-/* Online / ChubAI Filter Area */
-.online-filters,
-.chub-filters {
+/* Online Filter Area */
+.online-filters {
     gap: var(--space-sm-md);
 }
 
@@ -1055,6 +1042,91 @@ h2.browse-title-scroll-end {
     color: var(--accent);
 }
 
+/* Identity rows mirrored from the hidden header meta line (library-mobile.js);
+   mobile-only surface, the desktop header shows the originals */
+.browse-stat-identity {
+    display: none;
+}
+
+/* Login modal shell, shared by every provider's login/auth modal
+   (was chub-login-*; renamed when the fifth provider adopted it) */
+.browse-login-modal {
+    max-width: calc(500px * var(--modal-scale, 1));
+    width: 95%;
+}
+
+.browse-login-body {
+    padding: 20px;
+}
+
+.browse-login-info {
+    background: rgba(255, 255, 255, 0.03);
+    padding: 15px;
+    border-radius: var(--radius-lg);
+    line-height: 1.8;
+    margin-bottom: 20px;
+    font-size: var(--font-md);
+    color: var(--text-secondary);
+}
+
+.browse-login-info code {
+    background: rgba(0, 0, 0, 0.3);
+    padding: 2px 6px;
+    border-radius: var(--radius-sm);
+    font-family: monospace;
+    font-size: var(--font-md);
+    color: var(--accent);
+}
+
+.browse-login-info a {
+    color: var(--accent);
+    text-decoration: none;
+}
+
+.browse-login-info a:hover {
+    text-decoration: underline;
+}
+
+.browse-login-form {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm-md);
+    margin-bottom: 20px;
+}
+
+.browse-login-form label {
+    color: var(--text-secondary);
+    font-size: var(--font-md);
+}
+
+.browse-login-form input[type="password"] {
+    font-family: monospace;
+    font-size: var(--font-md);
+}
+
+.browse-login-actions {
+    display: flex;
+    gap: var(--space-sm-md);
+    justify-content: flex-end;
+}
+
+.browse-login-status {
+    margin-top: 15px;
+    padding: 10px;
+    border-radius: var(--radius-md);
+    text-align: center;
+}
+
+.browse-login-status.success {
+    background: rgba(var(--cl-success-bright-rgb), 0.2);
+    color: var(--cl-success-bright);
+}
+
+.browse-login-status.error {
+    background: rgba(var(--cl-error-bright-rgb), 0.2);
+    color: var(--cl-error-bright);
+}
+
 /* ChubAI Favorite Button - Inline version in header */
 
 /* ChubAI Modal Section Styles */
@@ -1260,7 +1332,6 @@ body.collapse-all-browse-sections
 }
 
 /* Legacy support for old class names */
-.browse-char-description h3,
 .browse-char-tagline h3 {
     margin-bottom: 10px;
     color: var(--accent);
@@ -1638,10 +1709,6 @@ body.collapse-all-browse-sections
     opacity: 0.8;
 }
 
-#chubTimeSelect {
-    min-width: 120px;
-}
-
 /* Filters active indicator */
 .browse-more-filters > .glass-btn.has-filters {
     background: rgba(var(--cl-error-bright-rgb), 0.2);
@@ -1653,8 +1720,7 @@ body.collapse-all-browse-sections
 }
 
 /* Favorite filter - only visible when logged in */
-.online-filters .glass-btn.logged-in,
-.chub-filters .glass-btn.logged-in {
+.online-filters .glass-btn.logged-in {
     background: rgba(var(--cl-success-bright-rgb), 0.15);
     border-color: rgba(var(--cl-success-bright-rgb), 0.3);
 }
@@ -2125,6 +2191,28 @@ body.collapse-all-browse-sections
         font-size: var(--font-xs);
     }
     .browse-stat { gap: var(--space-xs); font-size: var(--font-xs); white-space: nowrap; }
+    .browse-stat-identity {
+        display: flex;
+        cursor: pointer;
+        color: var(--accent);
+        max-width: 45vw;
+        /* widen the tap area without changing the row density */
+        padding: 10px 4px;
+        margin: -10px -4px;
+        touch-action: manipulation;
+    }
+    .browse-stat-identity span {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .browse-login-modal {
+        border-radius: var(--radius-2xl) var(--radius-2xl) 0 0 !important;
+    }
+    .browse-login-body { padding: 14px; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+    .browse-login-info { font-size: var(--font-md); padding: 12px; }
+    .browse-login-actions { flex-wrap: wrap; }
+    .browse-login-form .glass-input { font-size: var(--mobile-input-size); }
     .browse-char-tags { gap: var(--space-xs); }
     .browse-char-tags { --browse-tags-max-height: 56px; }
     .browse-tag { font-size: var(--font-xs); padding: 3px 8px; }
@@ -2226,7 +2314,7 @@ body.collapse-all-browse-sections
     .filter-checkbox { padding: 8px 12px; font-size: var(--font-md); }
 
     /* Online/Chub view container */
-    .online-view, .chub-view { padding: 0; padding-bottom: max(12px, var(--safe-bottom)); gap: var(--space-md); }
+    .online-view { padding: 0; padding-bottom: max(12px, var(--safe-bottom)); gap: var(--space-md); }
     .browse-recovery-banner { margin: 8px 8px 8px 8px; padding: 8px 12px; font-size: var(--font-xs); border-radius: var(--radius-md); }
     .browse-section { gap: var(--space-md); }
 
@@ -2249,7 +2337,8 @@ body.collapse-all-browse-sections
     .browse-author-banner-actions { width: 100%; gap: var(--space-xs-sm); }
     .browse-author-banner-actions .glass-select,
     .browse-author-banner-actions [data-select-id] { min-width: 0; flex: 0 1 auto; display: flex; font-size: var(--font-sm); }
-    .browse-author-banner-actions [data-select-id] .custom-select-trigger { min-width: 0; width: 100%; }
+    /* !important defeats the width-lock's inline minWidth so the trigger can shrink + ellipsize */
+    .browse-author-banner-actions [data-select-id] .custom-select-trigger { min-width: 0 !important; width: 100%; }
     .browse-author-banner-actions [data-select-id] .custom-select-trigger .trigger-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
     .browse-author-banner-actions .glass-btn { font-size: var(--font-sm); flex-shrink: 0; }
     .browse-author-banner-actions .glass-btn.icon-only { padding: 4px 8px; }
@@ -2268,7 +2357,6 @@ body.collapse-all-browse-sections
     .browse-card-image img { transition: opacity 0.3s ease; } /* keep fade-in, kill scale */
     .browse-card-body { padding: 8px; min-height: 60px; }
     .browse-card-name { font-size: var(--font-sm); }
-    .browse-card-creator { font-size: var(--font-2xs); margin-bottom: 4px; }
     .browse-card-tags { display: none !important; }
     .browse-nsfw-badge { font-size: var(--font-3xs); padding: 2px 5px; top: 5px; right: 5px; }
     .browse-card-footer { padding: 6px 8px; font-size: var(--font-3xs); min-height: 32px; }
@@ -2284,7 +2372,6 @@ body.collapse-all-browse-sections
 
     /* ChubAI character detail modal */
     .browse-char-body { padding: 8px; gap: var(--space-sm); }
-    .browse-char-description { font-size: var(--font-sm); line-height: 1.45; }
 
 }
 
@@ -2296,15 +2383,5 @@ body.collapse-all-browse-sections
         gap: var(--space-xs-sm);
     }
     .browse-card { contain-intrinsic-size: 120px 190px; }
-
-    /* Provider selector - icon only on phones */
-    .provider-tab-btn {
-        font-size: 0;
-        gap: 0;
-        padding: 5px 8px;
-    }
-    .provider-tab-btn i {
-        font-size: var(--font-sm);
-    }
 
 }

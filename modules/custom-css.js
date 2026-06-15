@@ -298,9 +298,9 @@ function buildModalHTML() {
 
                         <p><strong>Modal scrim.</strong> The dimming layer <em>behind</em> a modal (the dark sheet that covers the rest of the page while the modal is open). Separate from the modal&rsquo;s own background; three tiers picked by gesture:</p>
                         <ul class="custom-css-token-list">
-                            <li><code>--cl-modal-scrim-light</code> (alpha 0.6): gentle overlays like the image / gallery viewer.</li>
-                            <li><code>--cl-modal-scrim</code> (alpha 0.7): standard modals like settings and the character detail.</li>
-                            <li><code>--cl-modal-scrim-heavy</code> (alpha 0.8): destructive confirms (delete, &ldquo;really do this?&rdquo;).</li>
+                            <li><code>--cl-modal-scrim-light</code> (alpha 0.6): nested overlays (confirm dialogs, version-history dialogs, the mobile tag-editor backdrop).</li>
+                            <li><code>--cl-modal-scrim</code> (alpha 0.7): standard module dialogs (settings, batch tagging, playlists).</li>
+                            <li><code>--cl-modal-scrim-heavy</code> (alpha 0.8): full-screen modals (character detail, creator) and destructive confirms.</li>
                         </ul>
                         <p class="custom-css-tip-note">These are full <code>rgba()</code> values, not just an alpha knob, so you can tint the scrim too (e.g. <code>rgba(20, 0, 40, 0.7)</code> for a purple-tinted dimming on a synthwave theme).</p>
 

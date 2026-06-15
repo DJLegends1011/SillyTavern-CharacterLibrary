@@ -1,0 +1,162 @@
+/* Media download queue - notifications dropdown section */
+
+.mdq-section {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm-md);
+}
+
+.mdq-header {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    font-size: var(--font-xs);
+    font-weight: 700;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
+.mdq-header i {
+    color: var(--accent);
+    font-size: var(--font-sm);
+}
+
+/* Job row: leading status icon + stacked body */
+.mdq-job {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-sm);
+}
+
+.mdq-job-icon {
+    flex: 0 0 auto;
+    width: 18px;
+    margin-top: 1px;
+    text-align: center;
+    color: var(--accent);
+    font-size: var(--font-sm);
+}
+
+.mdq-job-icon-error {
+    color: var(--cl-error-bright);
+}
+
+.mdq-job-body {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2xs);
+}
+
+.mdq-job-line {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-sm);
+}
+
+.mdq-job-name {
+    font-size: var(--font-md);
+    font-weight: 500;
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mdq-job-actions {
+    display: flex;
+    gap: var(--space-2xs);
+    flex-shrink: 0;
+}
+
+.mdq-job-btn {
+    background: none;
+    border: none;
+    color: var(--text-faint);
+    cursor: pointer;
+    padding: var(--space-2xs) var(--space-xs);
+    border-radius: var(--radius-sm);
+    transition: color 0.15s ease, background 0.15s ease;
+}
+
+.mdq-job-btn:hover {
+    color: var(--text-primary);
+    background: rgba(var(--accent-rgb), 0.15);
+}
+
+.mdq-job-sub {
+    font-size: var(--font-xs);
+    color: var(--text-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mdq-job-meta {
+    color: var(--text-faint);
+    font-variant-numeric: tabular-nums;
+}
+
+.mdq-error {
+    color: var(--cl-error-pale);
+    white-space: normal;
+}
+
+.mdq-progress {
+    height: 6px;
+    border-radius: var(--radius-sm);
+    background: rgba(255, 255, 255, 0.07);
+    overflow: hidden;
+    margin-top: var(--space-2xs);
+}
+
+.mdq-progress-fill {
+    height: 100%;
+    border-radius: inherit;
+    background: var(--accent);
+    transition: width 0.25s ease;
+}
+
+.mdq-pending {
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs);
+    font-size: var(--font-sm);
+    color: var(--text-faint);
+}
+
+.mdq-pending i {
+    font-size: var(--font-2xs);
+    opacity: 0.7;
+}
+
+.mdq-done-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: var(--font-sm);
+    color: var(--text-secondary);
+    padding-top: var(--space-sm);
+    margin-top: var(--space-2xs);
+    border-top: 1px solid var(--glass-border);
+}
+
+.mdq-done-row > span {
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs);
+}
+
+.mdq-done-row i {
+    color: var(--cl-success);
+}
+
+@media (max-width: 768px) {
+    .mdq-job-btn {
+        min-width: 32px;
+        min-height: 32px;
+    }
+}

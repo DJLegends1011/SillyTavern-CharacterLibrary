@@ -2602,7 +2602,7 @@ async function aiProxyFetch(url, opts = {}) {
     if (!r.ok) {
         if (r.status === 404) {
             const t = await r.text().catch(() => '');
-            if (t.includes('CORS proxy is disabled')) throw new Error('SillyTavern\'s CORS proxy is disabled. Enable it in SillyTavern settings to fetch web pages.');
+            if (t.includes('CORS proxy is disabled')) throw new Error('SillyTavern\'s CORS proxy is disabled. Set enableCorsProxy: true in config.yaml and restart SillyTavern to fetch web pages.');
         }
         throw new Error(`HTTP ${r.status}`);
     }

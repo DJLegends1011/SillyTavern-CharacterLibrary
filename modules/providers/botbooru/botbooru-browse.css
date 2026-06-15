@@ -1,0 +1,188 @@
+/* Botbooru browse view - provider-specific styles.
+   Grid/cards/preview ride the shared browse-* classes in browse-shared.css. */
+
+/* Login modal rides the shared browse-login-* shell (browse-shared.css);
+   only botbooru-specific extras live here. */
+
+/* ---------------------------------------------------
+   TAGS DROPDOWN EXTRAS
+   --------------------------------------------------- */
+
+/* Category + usage count on each tag row (the tag DB carries both) */
+.botbooru-tag-meta {
+    margin-left: auto;
+    font-size: var(--font-3xs);
+    color: var(--text-muted);
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+/* Long tag names ellipsize instead of pushing the meta + star out of the row;
+   flex items default to min-width:auto and refuse to shrink without this */
+#botbooruTagsList .tag-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* ---------------------------------------------------
+   FAVORITE TAG STARS (tags dropdown)
+   --------------------------------------------------- */
+
+.botbooru-tag-fav-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--text-muted);
+    padding: 2px 4px;
+    flex-shrink: 0;
+    font-size: var(--font-sm);
+}
+
+.botbooru-tag-fav-btn:hover {
+    color: var(--cl-favorite-gold);
+}
+
+.botbooru-tag-fav-btn.faved {
+    color: var(--cl-favorite-gold);
+}
+
+/* ---------------------------------------------------
+   FAVORITE HEART (preview modal meta line)
+   --------------------------------------------------- */
+
+.botbooru-fav-btn-inline {
+    cursor: pointer;
+    padding: 2px 8px;
+    border-radius: var(--radius-sm);
+    transition: all 0.2s ease;
+    background: transparent;
+}
+
+.botbooru-fav-btn-inline:hover {
+    background: rgba(255, 100, 100, 0.15);
+}
+
+.botbooru-fav-btn-inline i {
+    color: #ff6b6b;
+    transition: transform 0.2s ease;
+}
+
+.botbooru-fav-btn-inline:hover i {
+    transform: scale(1.15);
+}
+
+.botbooru-fav-btn-inline.favorited i {
+    font-weight: 900;
+}
+
+.botbooru-fav-btn-inline.favorited {
+    background: rgba(255, 100, 100, 0.1);
+}
+
+.botbooru-fav-btn-inline.loading {
+    pointer-events: none;
+    opacity: 0.6;
+}
+
+/* ---------------------------------------------------
+   FILTER BAR
+   --------------------------------------------------- */
+
+/* Botbooru's sort labels run longer than the shared 14ch clamp; let the
+   trigger expand right before ellipsizing */
+[data-select-id="botbooruSortPreset"] .custom-select-trigger .trigger-text,
+[data-select-id="botbooruTimelineSortHeader"] .custom-select-trigger .trigger-text {
+    max-width: 22ch;
+}
+
+/* In-flow display-toggle, not the shared absolute overlay, so the active sort sizes to content and pushes neighbors instead of overflowing onto the visible Tags button. */
+#botbooruSortPreset.browse-filter-hidden,
+[data-select-id="botbooruSortPreset"].browse-filter-hidden,
+#botbooruTimelineSortHeader.browse-filter-hidden,
+[data-select-id="botbooruTimelineSortHeader"].browse-filter-hidden {
+    display: none;
+}
+
+[data-select-id="botbooruTimelineSortHeader"] {
+    position: static;
+    width: auto;
+    max-width: none;
+}
+
+/* ---------------------------------------------------
+   CARD NAME UPLOADER BUTTON
+   --------------------------------------------------- */
+
+/* Person icon on the name row: opens the uploader's uploads view
+   (the body creator line stays writer-tag-centric) */
+#botbooruGrid .browse-card-name,
+#botbooruTimelineGrid .browse-card-name {
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs);
+}
+
+.botbooru-card-name-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+}
+
+.botbooru-uploader-btn {
+    cursor: pointer;
+    margin-left: auto;
+    flex-shrink: 0;
+    line-height: 1;
+    font-size: var(--font-sm);
+    color: var(--text-muted);
+}
+
+.botbooru-uploader-btn:hover i {
+    color: var(--accent);
+}
+
+/* Mobile overrides */
+@media screen and (max-width: 768px) {
+
+    /* The manual-token input sits outside .browse-login-form (in the details
+       block), so the shared mobile zoom guard doesnt reach it */
+    #botbooruManualTokenInput { font-size: var(--mobile-input-size); }
+
+    /* Widen the footer uploader icon's tap area without changing the layout */
+    .botbooru-uploader-btn {
+        padding: 8px;
+        margin: -8px -8px -8px auto;
+    }
+
+}
+
+/* Curated extras (sort + freshness toggle) claim topbar space only while shown, so they
+   display:none when hidden rather than the shared visibility-hide, which would otherwise
+   reserve their width in every other sort mode. */
+#botbooruCuratedSort.browse-filter-hidden,
+[data-select-id="botbooruCuratedSort"].browse-filter-hidden,
+#botbooruCuratedFreshBtn.browse-filter-hidden {
+    display: none;
+}
+
+#botbooruCuratedFreshBtn.active {
+    color: var(--accent);
+    border-color: rgba(var(--accent-rgb), 0.5);
+}
+
+/* NSFL reads distinctly from NSFW: inverted treatment on the same badge
+   shell, existing error tokens only */
+.botbooru-nsfl-badge {
+    background: rgba(0, 0, 0, 0.85);
+    color: var(--cl-error-bright);
+    border: 1px solid rgba(var(--cl-error-bright-rgb), 0.8);
+}
+
+/* Native date pickers default to the UA light scheme on dark pages */
+.botbooru-date-input {
+    color-scheme: dark;
+}
+

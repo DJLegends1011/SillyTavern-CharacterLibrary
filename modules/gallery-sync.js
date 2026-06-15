@@ -63,7 +63,6 @@ function getSTContext() {
         const host = CoreAPI.getHostWindow();
         if (host?.SillyTavern?.getContext) return host.SillyTavern.getContext();
     } catch { /* cross-origin or unavailable */ }
-    if (window.SillyTavern?.getContext) return window.SillyTavern.getContext();
     return null;
 }
 
@@ -108,57 +107,55 @@ function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-export function updateWarningIndicator(audit = null) {
-    const syncBtn = document.getElementById('gallerySyncStatusBtn');
-    const dropdown = document.getElementById('gallerySyncDropdown');
-    if (!syncBtn) return;
+// Section status consumed by the notifications shell (library.js); kept in
+// sync by updateWarningIndicator and read back via getStatus
+let _sectionStatus = { visible: false, level: 'none', badge: '', title: '' };
 
-    const container = syncBtn.closest('.gallery-sync-container');
+export function updateWarningIndicator(audit = null) {
+    const dropdown = document.getElementById('notificationsDropdown');
     const uniqueFoldersEnabled = CoreAPI.getSetting('uniqueGalleryFolders') || false;
 
     if (!uniqueFoldersEnabled) {
-        if (container) container.classList.add('hidden');
+        _sectionStatus = { visible: false, level: 'none', badge: '', title: '' };
         const content = dropdown?.querySelector('.sync-dropdown-content');
         if (content) content.innerHTML = '';
-        syncBtn.classList.remove('has-issues');
+        CoreAPI.refreshNotificationsUI();
         return;
     }
 
-    if (container) container.classList.remove('hidden');
-
     if (CoreAPI.isExtensionsRecoveryInProgress()) {
-        syncBtn.classList.remove('has-issues');
-        syncBtn.title = 'Gallery sync — recovering character data…';
-        const icon = syncBtn.querySelector('i');
-        if (icon) icon.className = 'fa-solid fa-spinner fa-spin';
-        const badge = syncBtn.querySelector('.warning-badge');
-        if (badge) badge.classList.add('hidden');
+        _sectionStatus = {
+            visible: true,
+            level: 'activity',
+            icon: 'fa-solid fa-spinner fa-spin',
+            title: 'Gallery sync — recovering character data…',
+        };
         if (dropdown) showRecoveryDropdown(dropdown);
+        CoreAPI.refreshNotificationsUI();
         return;
     }
 
     if (!audit) audit = auditGalleryIntegrity();
 
     const missingIds = audit.issues.missingIds;
-    const badge = syncBtn.querySelector('.warning-badge');
-    const icon = syncBtn.querySelector('i');
-
     if (missingIds > 0) {
-        syncBtn.classList.add('has-issues');
-        syncBtn.title = `${missingIds} character${missingIds !== 1 ? 's' : ''} without gallery_id - click to review`;
-        if (icon) icon.className = 'fa-solid fa-triangle-exclamation';
-        if (badge) {
-            badge.classList.remove('hidden');
-            badge.textContent = missingIds > 99 ? '99+' : missingIds;
-        }
+        _sectionStatus = {
+            visible: true,
+            level: 'warning',
+            badge: missingIds > 99 ? '99+' : missingIds,
+            title: `${missingIds} character${missingIds !== 1 ? 's' : ''} without gallery_id - click to review`,
+        };
     } else {
-        syncBtn.classList.remove('has-issues');
-        syncBtn.title = 'Gallery sync status - all characters have IDs';
-        if (icon) icon.className = 'fa-solid fa-circle-info';
-        if (badge) badge.classList.add('hidden');
+        _sectionStatus = {
+            visible: true,
+            level: 'none',
+            badge: '',
+            title: 'Gallery sync status - all characters have IDs',
+        };
     }
 
     updateDropdownContent(dropdown, audit);
+    CoreAPI.refreshNotificationsUI();
 }
 
 function showRecoveryDropdown(dropdown) {
@@ -258,46 +255,28 @@ export async function init() {
 
     CoreAPI.debugLog('[GallerySync] Module initializing...');
 
-    const syncBtn = document.getElementById('gallerySyncStatusBtn');
-    const dropdown = document.getElementById('gallerySyncDropdown');
-
-    if (syncBtn && dropdown) {
-        syncBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            const isOpen = !dropdown.classList.contains('hidden');
-            CoreAPI.closeAllTopbarDropdowns('gallerySyncDropdown');
-
-            if (isOpen) {
-                dropdown.classList.add('hidden');
-            } else {
-                const content = dropdown.querySelector('.sync-dropdown-content');
-                if (content) {
-                    content.innerHTML = '<div class="sync-dropdown-loading"><i class="fa-solid fa-spinner fa-spin"></i> Checking...</div>';
-                }
-                dropdown.classList.remove('hidden');
-
-                if (CoreAPI.isExtensionsRecoveryInProgress()) {
-                    showRecoveryDropdown(dropdown);
-                    return;
-                }
-
-                setTimeout(() => {
-                    try {
-                        const audit = auditGalleryIntegrity();
-                        updateDropdownContent(dropdown, audit);
-                    } catch (err) {
-                        console.error('[GallerySync] Audit failed:', err);
-                    }
-                }, 50);
+    // The notifications shell (library.js) owns the button + dropdown chrome;
+    // this module just contributes its section
+    CoreAPI.registerNotificationSection({
+        id: 'gallery-sync',
+        getStatus: () => _sectionStatus,
+        onOpen: (sectionEl) => {
+            sectionEl.innerHTML = '<div class="sync-dropdown-loading"><i class="fa-solid fa-spinner fa-spin"></i> Checking...</div>';
+            const dropdown = document.getElementById('notificationsDropdown');
+            if (CoreAPI.isExtensionsRecoveryInProgress()) {
+                showRecoveryDropdown(dropdown);
+                return;
             }
-        });
-
-        document.addEventListener('click', (e) => {
-            if (!syncBtn.contains(e.target) && !dropdown.contains(e.target)) {
-                dropdown.classList.add('hidden');
-            }
-        });
-    }
+            setTimeout(() => {
+                try {
+                    const audit = auditGalleryIntegrity();
+                    updateDropdownContent(dropdown, audit);
+                } catch (err) {
+                    console.error('[GallerySync] Audit failed:', err);
+                }
+            }, 50);
+        },
+    });
 
     if (CoreAPI.isExtensionsRecoveryInProgress()) {
         updateWarningIndicator();
