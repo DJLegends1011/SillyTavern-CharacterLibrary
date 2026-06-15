@@ -2,7 +2,7 @@
 
 import { BrowseView } from '../browse-view.js';
 import CoreAPI from '../../core-api.js';
-import { IMG_PLACEHOLDER, formatNumber, BROWSE_PURIFY_CONFIG, skeletonLines, deferRender } from '../provider-utils.js';
+import { IMG_PLACEHOLDER, formatNumber, BROWSE_PURIFY_CONFIG, skeletonLines, deferRender, isMobileViewport } from '../provider-utils.js';
 import {
     searchCards,
     fetchCharacterDetail,
@@ -833,7 +833,7 @@ async function importCharacter(charData) {
         const mediaUrls = result.embeddedMediaUrls || [];
         const galleryPageUrls = result.galleryPageUrls || [];
         const showSummary = (mediaUrls.length > 0 || galleryPageUrls.length > 0)
-            && getSetting('notifyAdditionalContent') !== false;
+            && getSetting('importMediaAction') !== 'none';
 
         const summaryArgs = {
             mediaCharacters: [{
@@ -868,8 +868,8 @@ async function importCharacter(charData) {
 
         // Lightweight single-character add (avoids OOM from full list reload on mobile)
         const added = await fetchAndAddCharacter(result.fileName);
-        if (!added) await fetchCharacters(true);
-        view.buildLocalLibraryLookup();
+        if (added) view.addCharToLookup(added);
+        else await fetchCharacters(true);
         markCardAsImported(charData.path);
 
     } catch (err) {
@@ -1230,17 +1230,17 @@ function initCtView() {
     if (!modalEventsAttached) {
         modalEventsAttached = true;
 
-        if (!window.matchMedia('(max-width: 768px)').matches) {
-            const ctOverlay = document.getElementById('ctCharModal');
-            BrowseView.wireTitleScroll(document.getElementById('ctCharName'), ctOverlay, ctOverlay?.querySelector('.browse-char-modal'));
-        }
+        const ctOverlay = document.getElementById('ctCharModal');
+        BrowseView.wireTitleScroll(document.getElementById('ctCharName'), ctOverlay, ctOverlay?.querySelector('.browse-char-modal'));
 
         on('ctCharClose', 'click', () => closePreviewModal());
 
-        // Avatar click → full-size image viewer (desktop only; mobile has its own handler)
+        // Avatar click → full-size image viewer (desktop only at event time; on mobile
+        // bail before stopPropagation so the delegated tap runs)
         const ctAvatar = document.getElementById('ctCharAvatar');
-        if (ctAvatar && !window.matchMedia('(max-width: 768px)').matches) {
+        if (ctAvatar) {
             ctAvatar.addEventListener('click', (e) => {
+                if (isMobileViewport()) return;
                 e.stopPropagation();
                 if (!ctAvatar.src || ctAvatar.src.endsWith('/img/ai4.png')) return;
                 // Strip CDN resize params to get original full-size PNG
@@ -1713,17 +1713,17 @@ class ChartavernBrowseView extends BrowseView {
     _renderLoginModal() {
         return `
     <div id="ctLoginModal" class="modal-overlay hidden">
-        <div class="modal-glass chub-login-modal">
+        <div class="modal-glass browse-login-modal">
             <div class="modal-header">
                 <h2><i class="fa-solid fa-cookie-bite"></i> CharacterTavern Session</h2>
                 <button class="close-btn" id="ctLoginClose">&times;</button>
             </div>
-            <div class="chub-login-body">
-                <p class="chub-login-info">
+            <div class="browse-login-body">
+                <p class="browse-login-info">
                     <i class="fa-solid fa-check-circle" style="color: var(--cl-success-bright);"></i>
                     <strong>Browsing and downloading public characters works without logging in!</strong>
                 </p>
-                <p class="chub-login-info">
+                <p class="browse-login-info">
                     <i class="fa-solid fa-cookie-bite" style="color: var(--accent);"></i>
                     <strong>Optional:</strong> Paste your session cookies to see NSFW-tagged content.
                 </p>
@@ -1743,7 +1743,7 @@ class ChartavernBrowseView extends BrowseView {
                         </span>
                     </div>
 
-                    <div id="ctCookieForm" class="chub-login-form">
+                    <div id="ctCookieForm" class="browse-login-form">
                         <div id="ctCookieFields">
                             <div class="form-group">
                                 <label for="ctCookieInput">Cookie String</label>
@@ -1763,7 +1763,7 @@ class ChartavernBrowseView extends BrowseView {
                             </div>
                         </div>
 
-                        <div class="chub-login-actions" style="margin-top: 12px;">
+                        <div class="browse-login-actions" style="margin-top: 12px;">
                             <button id="ctSaveCookieBtn" class="action-btn primary">
                                 <i class="fa-solid fa-plug"></i> Save &amp; Connect
                             </button>
@@ -1791,7 +1791,7 @@ class ChartavernBrowseView extends BrowseView {
                     <div>
                         <h2 id="ctCharName">Character Name</h2>
                         <p class="browse-char-meta">
-                            by <a id="ctCharCreator" href="#" title="Click to see all characters by this author">Creator</a>
+                            by <a id="ctCharCreator" class="browse-meta-identity" href="#" title="Click to see all characters by this author">Creator</a>
                         </p>
                     </div>
                 </div>

@@ -512,7 +512,7 @@
 
 .pl-manage-delete:hover {
     opacity: 1;
-    color: #ff6b7a;
+    color: var(--cl-danger-text);
 }
 
 /* =========================================================

@@ -322,7 +322,6 @@
 .vt-lb-entry.local-only { opacity: 0.7; }
 .vt-lb-world-check { display: inline-flex; align-items: center; flex-shrink: 0; min-width: 14px; }
 
-.vt-lb-keep-toggle { display: inline-flex; align-items: center; gap: var(--space-xs-sm); cursor: pointer; font-size: var(--font-sm); color: var(--cl-text-secondary); }
 .vt-stat.local-only { color: #bdbdbd; background: rgba(158,158,158,0.1); }
 .vt-lb-name { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .vt-lb-keys {

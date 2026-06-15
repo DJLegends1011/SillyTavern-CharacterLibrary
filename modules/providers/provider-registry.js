@@ -1,5 +1,7 @@
 // Provider Registry - manages external source providers for the Online tab
 
+import { invalidateSharedBaseLookup } from './browse-view.js';
+
 /** @type {Map<string, import('./provider-interface.js').ProviderBase>} */
 const providers = new Map();
 
@@ -305,9 +307,15 @@ export function initProviderSelector(onSwitch) {
 // ========================================
 
 export function rebuildAllBrowseLookups() {
+    invalidateSharedBaseLookup();
     for (const p of providers.values()) {
         p.browseView?.rebuildLocalLibraryLookup();
     }
+}
+
+/** Mark the shared In-Library base stale without rebuilding (lazy rebuild on next use). */
+export function invalidateBrowseLookupBase() {
+    invalidateSharedBaseLookup();
 }
 
 export function refreshActiveBrowseBadges() {
@@ -414,6 +422,7 @@ export default {
     renderProviderSelector,
     initProviderSelector,
     rebuildAllBrowseLookups,
+    invalidateBrowseLookupBase,
     refreshActiveBrowseBadges,
     hideRecoveryBanner,
     updateRecoveryProgress,

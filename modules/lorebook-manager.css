@@ -320,7 +320,7 @@
 }
 
 .lb-empty > i {
-    font-size: 3rem;
+    font-size: var(--font-4xl);
     opacity: 0.25;
 }
 

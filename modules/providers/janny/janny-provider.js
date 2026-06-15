@@ -186,7 +186,7 @@ async function stProxyFetchHtml(url) {
     if (r.status === 404) {
         const t = await r.text();
         if (t.includes('CORS proxy is disabled')) {
-            throw new Error('ST CORS proxy is disabled, enable it in SillyTavern settings');
+            throw new Error('ST CORS proxy is disabled, set enableCorsProxy: true in config.yaml and restart SillyTavern');
         }
         throw new Error('ST proxy returned 404');
     }
@@ -408,7 +408,7 @@ class JannyProvider extends ProviderBase {
 
     get id() { return 'jannyai'; }
     get name() { return 'JannyAI'; }
-    get icon() { return 'fa-solid fa-robot'; }
+    get icon() { return 'fa-solid fa-broom'; }
     get iconUrl() { return 'https://tse3.mm.bing.net/th/id/OIP.nb-qi0od9W6zRsskVwL6QAHaHa?rs=1&pid=ImgDetMain&o=7&rm=3'; }
     get browseView() { return jannyBrowseView; }
 

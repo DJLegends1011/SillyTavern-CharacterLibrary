@@ -306,7 +306,7 @@ body.modal-size-large .css-assistant-modal .cl-modal-content { max-width: 1125px
 
     /* Code blocks: smaller, scroll horizontally, shorter cap */
     .css-assistant-code {
-        font-size: 12px;
+        font-size: var(--font-xs);
         padding: var(--space-sm);
         max-height: 280px;
     }

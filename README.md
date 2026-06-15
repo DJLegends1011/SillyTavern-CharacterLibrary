@@ -132,6 +132,7 @@ These options apply when Embedded Panel mode is selected:
 - **Full-screen viewer** with keyboard navigation (← → 0 Esc) and scroll-wheel zoom up to 5× with drag-to-pan
 - **Bulk localization** across your whole library from Settings, with progress tracking, abort, and history
 - **Optional provider gallery** inclusion in bulk localization
+- **Background media downloads** (opt-in): set **When an import has extra media** to **Download in the background** (**Settings → Media → Options**) and imports finish immediately while embedded media and gallery downloads run quietly, one character at a time, in a background queue. Track progress in the **notifications bell** in the topbar (**⋮ menu → Notifications** on mobile): live per-character progress, cancel, retry for failed jobs, and a clear-finished button. The queue survives page reloads and resumes automatically
 - **Grid card thumbnails** (opt-in) to cut decode cost and bandwidth on the characters grid. Enable in **Settings → Character Library → Grid Card Thumbnails**. By default thumbnails are served on mobile-sized viewports only; toggle "Also use on desktop" to extend coverage. With the [cl-helper plugin](#cl-helper-plugin-not-detected) installed, cl-helper resizes via jimp and caches each thumbnail on disk at a configurable size (384 / 512 / 640 / 768px wide). Without cl-helper, ST's built-in `/thumbnail` endpoint is used (fixed 96x144, can look blurry on high-DPR screens). Two cache management buttons: **Populate at current size** pre-generates a thumbnail for every character (skipping already-cached) and **Purge cache** deletes every cached thumbnail. The detail modal and gallery always use the full-resolution image
 
 > **Civitai API key** (optional): Required only for private or hidden Civitai posts. Public content extracts without a key. Configure in **Settings → Online → Civitai API Key**. Generate one at [civitai.com/user/account](https://civitai.com/user/account).
@@ -411,7 +412,7 @@ When disabled, you can choose to move images back to default folders, keep them 
 
 When **Unique Gallery Folders** is enabled, each character's gallery depends on a `gallery_id` stored in the card and a matching folder override registered with SillyTavern. If either gets out of sync (e.g., importing a card directly through SillyTavern, or after a backup restore), images can end up in the wrong folder or become invisible.
 
-- **Status indicator** showing audit results and warnings at a glance in the Gallery tab
+- **Status indicator** in the topbar **notifications bell** (shared with background media downloads): the bell switches to a warning icon with a count when characters are missing a `gallery_id`
 - **Integrity checks** for missing `gallery_id`s, orphaned mappings, and unregistered overrides
 - **Cleanup tools** to assign or remove orphaned mappings safely
 - **ST import warning + 1-click fix** when a card is added directly in SillyTavern
@@ -442,16 +443,16 @@ Providers with Following support include a **Followed Creators Manager** panel f
 
 ### Provider Feature Matrix
 
-| Feature | ChubAI | JanitorAI | CharacterTavern | Pygmalion | Wyvern | MasqueradeAI | DataCat |
-|---------|--------|-----------|-----------------|-----------|--------|--------------|----------|
-| Browse & Search | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Card Updates | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Character Linking | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Gallery Downloads | ✅ | -- | -- | ✅ | ✅ | ✅ | -- |
-| Remote Version History | ✅ | -- | -- | -- | -- | -- | -- |
-| Following / Timeline | ✅ | -- | -- | ✅ | ✅ | -- | ✅ |
-| Favorites | ✅ | -- | -- | -- | -- | -- | -- |
-| Auth Required | Optional | None | Optional | Optional | Optional | None | None |
+| Feature | ChubAI | JanitorAI | CharacterTavern | Pygmalion | Wyvern | MasqueradeAI | DataCat | Botbooru |
+|---------|--------|-----------|-----------------|-----------|--------|--------------|----------|----------|
+| Browse & Search | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Card Updates | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Character Linking | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Gallery Downloads | ✅ | -- | -- | ✅ | ✅ | ✅ | -- | ✅ |
+| Remote Version History | ✅ | -- | -- | -- | -- | -- | -- | -- |
+| Following / Timeline | ✅ | -- | -- | ✅ | ✅ | -- | ✅ | ✅ |
+| Favorites | ✅ | -- | -- | -- | -- | -- | -- | ✅ |
+| Auth Required | Optional | None | Optional | Optional | Optional | None | None | Optional (NSFW needs login) |
 
 <details>
 <summary><h3>ChubAI</h3></summary>
@@ -626,6 +627,37 @@ Extraction is handled entirely by DataCat's servers. The `appearOnPublicFeed` op
 
 </details>
 
+<details>
+<summary><h3>Botbooru</h3></summary>
+
+**Auth:** Optional username/password login. The login handshake goes through the [cl-helper plugin](#cl-helper-plugin-not-detected); without the plugin you can paste an API token manually instead. Anonymous browsing is **SFW-only**: the server filters NSFW regardless of client settings.
+
+- Browse and search the Botbooru card catalog (tag-driven: include tags, exclude with `-tag`)
+- Sort by latest, curated, or random, plus a full popularity matrix: most favorited, most viewed, and most downloaded, each over day, week, month, or all time
+- **Curated extras**: a **New uploads only** toggle excludes bumped/updated cards from the Curated feed; weighted-tag accounts also pick between Recent, Tag Score, and Only Followed orderings
+- **Advanced Options** (Tags dropdown): a **Min Tokens** threshold with an optional **Count lorebook tokens** switch, plus an uploaded after/before date range
+- **Hide AI-generated** content filter (Features dropdown)
+- In-app character preview with card details and tag list
+- Imports the full V2 card (PNG with embedded data, JSON also available)
+- Character linking and card updates
+- Gallery downloads from linked Botbooru posts
+- **Writer credit on cards**: the Writer tag is shown as the creator; the uploader has its own entry point to browse everything they've posted
+
+#### With Authentication
+- **NSFW browsing** - Character Library syncs your account's NSFW visibility switches automatically the first time you enable the NSFW toggle (a separate NSFL checkbox is available; NSFL cards carry their own badge, distinct from NSFW)
+- **Following timeline** built from uploaders you follow (follow by profile URL or numeric user id), with its own sort options (newest, oldest, name, favorites, views, downloads, random); uploader banners reflect your account's live follow state
+- **Post favorites** (heart) synced with your account
+- **Favorite tags** - starred tags act as boosters for the Curated sort and are stored on your account, manageable from Settings > Online > Botbooru (the tag inputs autocomplete from Botbooru's tag list; a `category:` prefix like `char:` narrows matches)
+- **Weighted tag mode (experimental)** - account-side switch in Settings > Online > Botbooru that replaces the simple favorite-tags list with per-tag weights (-1000 to 1000) plus always-follow / always-block flags, and unlocks the extra Curated orderings. While it's on, the site ignores the simple list (Character Library disables it with a warning) and the browse Tags-dropdown stars manage weight entries (+100) instead
+- Your account's tag blacklist applies server-side to browse results
+
+#### Login
+1. When you enable NSFW or use a login-required feature, the login modal appears (also reachable from the filter bar's account button)
+2. Enter your Botbooru username and password (requires the [cl-helper plugin](#cl-helper-plugin-not-detected))
+3. Without the plugin, paste a token manually in the same modal; tokens are long-lived (~90 days) and a copied `Bearer ` prefix is stripped automatically
+
+</details>
+
 ### Character Linking
 
 Link your local characters to their online source for updates, gallery downloads, and version history:
@@ -638,6 +670,7 @@ Link your local characters to their online source for updates, gallery downloads
 ### Batch Import
 
 - Paste multiple URLs from any supported provider (one per line)
+- **Direct URL downloads**: check **Import unrecognized URLs as direct downloads** (URL mode) to fetch links that don't match any provider as plain PNG cards. Catbox, Discord CDN, and raw GitHub links work out of the box; allow other hosts via `whitelistImportDomains` in SillyTavern's `config.yaml`. Downloaded cards ride the normal import pipeline: duplicate check, provider auto-link, and the auto-download options
 - Drag & drop or browse local PNG character card files
 - Progress tracking and error logging
 - Pre-import duplicate detection
@@ -660,6 +693,7 @@ Type these prefixes in the search bar for targeted filtering:
 | `pygmalion:` | `pygmalion:yes` or `pygmalion:no` | Pygmalion link specifically |
 | `wyvern:` | `wyvern:yes` or `wyvern:no` | Wyvern link specifically |
 | `datacat:` | `datacat:yes` or `datacat:no` | DataCat link specifically (also `dc:`) |
+| `botbooru:` | `botbooru:yes` or `botbooru:no` | Botbooru link specifically (also `bb:`) |
 | `version:` | `version:1.0` | Match character version string |
 | `gallery:` | `gallery:aB3x` or `gallery:none` | Match gallery ID (or `none` for unassigned) |
 | `uid:` | `uid:abc123` or `uid:none` | Match version UID (or `none` for unassigned) |
@@ -727,13 +761,12 @@ The **cl-helper** plugin is required for Pygmalion login, CharacterTavern NSFW a
 
 ### Media downloads fail with CORS errors
 
-Some image hosts (Imgur, Catbox, etc.) block direct browser requests due to CORS restrictions. Character Library automatically falls back to SillyTavern's built-in CORS proxy, but it must be enabled:
+Some image hosts (Imgur, Catbox, etc.) block direct browser requests due to CORS restrictions. Character Library automatically falls back to SillyTavern's built-in CORS proxy, but it must be enabled. This is a server-side setting; there is no toggle for it in SillyTavern's UI:
 
-1. Open **SillyTavern** (main page, not Character Library)
-2. Go to **User Settings** (top-left user icon)
-3. Scroll to the **Network** section
-4. Enable **"CORS Proxy"**
-5. Retry the download in Character Library
+1. Open `config.yaml` in your SillyTavern root folder
+2. Set `enableCorsProxy: true`
+3. Restart the SillyTavern server
+4. Retry the download in Character Library
 
 This affects embedded media downloads, provider gallery downloads, and bulk localization.
 
