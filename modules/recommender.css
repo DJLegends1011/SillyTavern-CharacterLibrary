@@ -1152,7 +1152,7 @@ body.modal-size-large .recommender-chat-modal .cl-modal-content { max-width: 112
     transition: color 0.15s, background 0.15s, border-color 0.15s;
 }
 .recommender-chat-icon-btn:hover { color: var(--text-primary); background: rgba(255, 255, 255, 0.07); }
-.recommender-chat-icon-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.recommender-chat-icon-btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
 
 .recommender-chat-prompt-editor {
     width: 100%;

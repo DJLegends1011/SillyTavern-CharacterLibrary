@@ -6,8 +6,8 @@
     <meta name="color-scheme" content="dark">
     <meta name="referrer" content="no-referrer">
     <title>SillyTavern Character Library</title>
-    <link rel="stylesheet" href="library.css?v=101">
-    <link rel="stylesheet" href="library-mobile.css?v=31" media="screen and (max-width: 768px)">
+    <link rel="stylesheet" href="library.css?v=102">
+    <link rel="stylesheet" href="library-mobile.css?v=32" media="screen and (max-width: 768px)">
     <!-- Noto Sans from SillyTavern's bundled webfonts -->
     <link rel="stylesheet" href="/webfonts/NotoSans/stylesheet.css">
     <!-- Font Awesome for Icons -->
@@ -174,13 +174,14 @@
                         </div>
                     </div>
                 </div>
-                <div class="gallery-sync-container hidden">
-                    <button id="gallerySyncStatusBtn" class="glass-btn icon-only gallery-sync-btn" title="Gallery sync status">
-                        <i class="fa-solid fa-circle-info"></i>
+                <div class="gallery-sync-container notifications-container hidden">
+                    <button id="notificationsBtn" class="glass-btn icon-only gallery-sync-btn" title="Notifications">
+                        <i class="fa-solid fa-bell"></i>
                         <span class="warning-badge hidden"></span>
                     </button>
-                    <div id="gallerySyncDropdown" class="dropdown-menu gallery-sync-dropdown hidden">
-                        <div class="sync-dropdown-content">
+                    <div id="notificationsDropdown" class="dropdown-menu gallery-sync-dropdown hidden">
+                        <div class="notif-section" data-notif-section="media-downloads"></div>
+                        <div class="notif-section sync-dropdown-content" data-notif-section="gallery-sync">
                             <div class="sync-dropdown-loading">
                                 <i class="fa-solid fa-spinner fa-spin"></i> Checking...
                             </div>
@@ -345,8 +346,8 @@
 
     <!-- Edit/Detail Modal -->
     <div id="charModal" class="modal-overlay hidden">
-        <button id="charModalNavPrev" class="char-modal-nav char-modal-nav-prev" title="Previous character (←)" aria-label="Previous character" style="display: none;"></button>
-        <button id="charModalNavNext" class="char-modal-nav char-modal-nav-next" title="Next character (→)" aria-label="Next character" style="display: none;"></button>
+        <button id="charModalNavPrev" class="char-modal-nav char-modal-nav-prev" aria-label="Previous character" style="display: none;"></button>
+        <button id="charModalNavNext" class="char-modal-nav char-modal-nav-next" aria-label="Next character" style="display: none;"></button>
         <div class="modal-glass">
             <div class="modal-header">
                 <h2 id="modalTitle">Character Name</h2>
@@ -436,15 +437,15 @@
                         </div>
                         
                         <div class="creator-notes-box" id="modalCreatorNotesBox" style="display:none; margin-bottom: 18px;">
-                            <details class="creator-notes-details" id="creatorNotesDetails" style="background: rgba(255, 255, 255, 0.05); border-radius: var(--radius-lg); padding: 8px; border: 1px solid var(--glass-border);">
-                                <summary style="cursor: pointer; font-weight: bold; color: var(--accent); display: flex; align-items: center; gap: 8px;">
-                                    <i class="fa-solid fa-feather-pointed"></i> 
+                            <details class="creator-notes-details detail-collapsible" id="creatorNotesDetails">
+                                <summary style="display: flex; align-items: center; gap: 8px;">
+                                    <i class="fa-solid fa-feather-pointed"></i>
                                     <span style="flex: 1;">Creator's Notes</span>
                                     <button type="button" class="creator-notes-expand-btn" id="creatorNotesExpandBtn" title="View full screen">
                                         <i class="fa-solid fa-expand"></i>
                                     </button>
                                 </summary>
-                                <div id="modalCreatorNotes" class="scrolling-text" style="margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--glass-border);"></div>
+                                <div id="modalCreatorNotes" class="scrolling-text detail-collapsible-body"></div>
                             </details>
                         </div>
 
@@ -460,28 +461,28 @@
                         </div>
 
                         <div class="alt-greetings-box" id="modalAltGreetingsBox" style="display:none; margin-top: 16px;">
-                            <details id="altGreetingsDetails" style="background: rgba(255, 255, 255, 0.05); border-radius: var(--radius-lg); padding: 8px; border: 1px solid var(--glass-border);">
-                                <summary style="cursor: pointer; font-weight: bold; color: var(--accent); display: flex; align-items: center; gap: 10px;">
+                            <details id="altGreetingsDetails" class="detail-collapsible">
+                                <summary style="display: flex; align-items: center; gap: 10px;">
                                     <span style="flex: 1;"><i class="fa-solid fa-comments" style="margin-right: 8px; opacity: 0.7;"></i>Alternate Greetings (<span id="altGreetingsCount">0</span>)</span>
                                     <button type="button" class="content-expand-btn" id="altGreetingsExpandBtn" title="Expand">
                                         <i class="fa-solid fa-expand"></i>
                                     </button>
                                 </summary>
-                                <div id="modalAltGreetings" class="scrolling-text" style="margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--glass-border);"></div>
+                                <div id="modalAltGreetings" class="scrolling-text detail-collapsible-body"></div>
                             </details>
                         </div>
 
                         <div class="lorebook-box" id="modalLorebookBox" style="display:none; margin-top: 16px;">
-                            <details style="background: rgba(255, 255, 255, 0.05); border-radius: var(--radius-lg); padding: 8px; border: 1px solid var(--glass-border);">
-                                <summary style="cursor: pointer; font-weight: bold; color: var(--accent);"><i class="fa-solid fa-book"></i> Embedded Lorebook (<span id="lorebookEntryCount">0</span> entries)</summary>
-                                <div id="modalLorebookContent" class="scrolling-text" style="margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--glass-border);"></div>
+                            <details class="detail-collapsible">
+                                <summary><i class="fa-solid fa-book"></i> Embedded Lorebook (<span id="lorebookEntryCount">0</span> entries)</summary>
+                                <div id="modalLorebookContent" class="scrolling-text detail-collapsible-body"></div>
                             </details>
                         </div>
 
                         <div class="lorebook-box" id="modalLinkedLorebookBox" style="display:none; margin-top: 16px;">
-                            <details style="background: rgba(255, 255, 255, 0.05); border-radius: var(--radius-lg); padding: 8px; border: 1px solid var(--glass-border);">
-                                <summary style="cursor: pointer; font-weight: bold; color: var(--accent);"><i class="fa-solid fa-book-atlas"></i> Linked Lorebook: <span id="linkedLorebookName"></span> (<span id="linkedLorebookEntryCount">0</span> entries)</summary>
-                                <div id="modalLinkedLorebookContent" class="scrolling-text" style="margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--glass-border);"></div>
+                            <details class="detail-collapsible">
+                                <summary><i class="fa-solid fa-book-atlas"></i> Linked Lorebook: <span id="linkedLorebookName"></span> (<span id="linkedLorebookEntryCount">0</span> entries)</summary>
+                                <div id="modalLinkedLorebookContent" class="scrolling-text detail-collapsible-body"></div>
                             </details>
                         </div>
                     </div>
@@ -526,6 +527,10 @@
                             <div class="form-group">
                                 <label>Tagline</label>
                                 <input type="search" id="editTagline" class="glass-input" placeholder="Short hook shown under the name" autocomplete="one-time-code">
+                            </div>
+                            <div class="form-group">
+                                <label>Listing Name</label>
+                                <input type="search" id="editListingName" class="glass-input" placeholder="Provider page title shown as an alternate name" autocomplete="one-time-code">
                             </div>
                         </div>
 
@@ -608,13 +613,16 @@
                             </div>
                         </div>
 
-                        <div class="edit-section linked-lorebook-section hidden" id="linkedLorebookEditRow">
+                        <div class="edit-section linked-lorebook-section" id="linkedLorebookEditRow">
                             <h4 class="section-header">
                                 <i class="fa-solid fa-book-atlas"></i> Linked Lorebook
                             </h4>
                             <div class="linked-lorebook-bar">
                                 <span class="linked-lorebook-name" id="linkedLorebookEditName" title=""></span>
                                 <div class="linked-lorebook-actions">
+                                    <button type="button" id="linkLorebookBtn" class="action-btn secondary small" title="Link an external lorebook to this character">
+                                        <i class="fa-solid fa-link"></i> <span id="linkLorebookBtnLabel">Link</span>
+                                    </button>
                                     <button type="button" id="openLinkedLorebookBtn" class="action-btn secondary small" title="Open in the Lorebook Manager">
                                         <i class="fa-solid fa-up-right-from-square"></i> Manage
                                     </button>
@@ -755,6 +763,23 @@
     </div>
 
     <!-- Provider Link Modal -->
+    <div id="linkLorebookModal" class="cl-modal cl-modal-drawer">
+        <div class="cl-modal-content lorebook-link-modal-content">
+            <div class="cl-modal-header">
+                <h3><i class="fa-solid fa-book-atlas cl-modal-header-icon"></i> Link Lorebook</h3>
+                <button class="cl-modal-close" id="linkLorebookCloseBtn" title="Close"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="cl-modal-body lorebook-link-body">
+                <div class="lorebook-link-subhead" id="linkLorebookSubhead"></div>
+                <div class="lorebook-link-search-wrap">
+                    <i class="fa-solid fa-magnifying-glass"></i>
+                    <input type="search" id="linkLorebookSearch" class="cl-input lorebook-link-search" placeholder="Search lorebooks..." autocomplete="off">
+                </div>
+                <div class="lorebook-link-list" id="linkLorebookList"></div>
+            </div>
+        </div>
+    </div>
+
     <div id="providerLinkModal" class="cl-modal">
         <div class="cl-modal-content provider-link-modal-content">
             <div class="cl-modal-header">
@@ -1270,7 +1295,7 @@ https://jannyai.com/characters/uuid_slug
                                 <li><strong>Mobile:</strong> swipe left/right on the detail modal header (the avatar / name area). The tab-swipe inside the modal body is left untouched</li>
                                 <li>Order follows your <strong>current sort and filter view</strong>: if you're sorted by Newest with a tag filter active, prev/next walks that filtered, sorted list</li>
                                 <li>If you have unsaved edits in the Edit tab, you'll get a confirm prompt before swapping to a different character</li>
-                                <li>Toggle the whole feature in <strong>Settings &rarr; Character Library &rarr; Card Grid &amp; Browse &rarr; Prev/Next navigation in character details</strong> (on by default)</li>
+                                <li>Toggle the whole feature in <strong>Settings &rarr; General &rarr; Card Grid &amp; Browse &rarr; Prev/Next navigation in character details</strong> (on by default)</li>
                             </ul>
                         </div>
                         <div class="info-section">
@@ -1337,6 +1362,10 @@ https://jannyai.com/characters/uuid_slug
                                 <div class="info-code-item">
                                     <code>dc:yes</code> / <code>dc:no</code>
                                     <span>Filter by DataCat link status</span>
+                                </div>
+                                <div class="info-code-item">
+                                    <code>botbooru:yes</code> / <code>bb:no</code>
+                                    <span>Filter by Botbooru link status</span>
                                 </div>
                                 <div class="info-code-item">
                                     <code>favorite:yes</code> / <code>fav:no</code>
@@ -1448,7 +1477,7 @@ https://jannyai.com/characters/uuid_slug
                                 <li><strong>Infinite scroll</strong> automatically loads more results as you scroll down (toggleable per provider in Settings)</li>
                                 <li>Cards already in your library are marked with an <strong>"In Library"</strong> badge</li>
                                 <li>Click a card to preview the full character details and gallery images, then import with one click</li>
-                                <li>Set <strong>Collapse all browse preview sections by default</strong> in Settings → Character Details to start each preview with all sections collapsed except creator's notes (cleaner view for large cards)</li>
+                                <li>Set <strong>Collapse all browse preview sections by default</strong> in Settings → General → Character Details to start each preview with all sections collapsed except creator's notes (cleaner view for large cards)</li>
                                 <li>Some providers support login for additional features (favorites, following lists)</li>
                             </ul>
                             <p class="info-tip"><i class="fa-solid fa-lightbulb"></i> Configure provider order and NSFW defaults in Settings → Online.</p>
@@ -1487,6 +1516,21 @@ https://jannyai.com/characters/uuid_slug
                             <p><strong>Extraction:</strong> When a character only exists on JanitorAI and hasn't been indexed by DataCat yet, the Import button changes to <strong>Extract</strong>. This sends a request to DataCat's cloud service, which visits the JanitorAI page and retrieves the full character definition. You can also paste a JanitorAI URL directly into the search bar to look up and extract specific characters.</p>
                             <p class="info-tip"><i class="fa-solid fa-lightbulb"></i> DataCat requires the cl-helper server plugin. Install it from Settings → Online → DataCat.</p>
                             <p class="info-tip"><i class="fa-solid fa-arrows-rotate"></i> <strong>Re-extract on update checks:</strong> Toggle in Settings → Online → DataCat to force DataCat to pull fresh data from JanitorAI before each update check. Slower, but avoids comparisons against stale cached data on DataCat's side.</p>
+                        </div>
+                        <div class="info-section">
+                            <h4><i class="fa-solid fa-robot"></i> Botbooru</h4>
+                            <p>Botbooru is a tag-driven character card catalog. SFW browsing and importing works without an account; logging in (Settings → Online → Botbooru, or the key button in the browse toolbar) unlocks NSFW, favorites, and follows, and applies your account's tag blacklist.</p>
+                            <ul>
+                                <li><strong>NSFW is account-gated:</strong> the NSFW toggle requires login. Include NSFL posts via Settings → Online → Botbooru → Content (only applies while NSFW is on); NSFL cards carry their own badge, distinct from NSFW</li>
+                                <li><strong>Curated sort + favorite tags:</strong> favorite tags boost matching cards in the Curated sort. Manage them in Settings → Online → Botbooru → Favorite Tags, or with the star icons in the browse Tags dropdown</li>
+                                <li><strong>Weighted tag mode (experimental):</strong> an account-side switch that replaces the simple favorite-tags list with per-tag weights (-1000 to 1000) plus always-follow / always-block flags, and unlocks extra Curated orderings (Recent, Tag Score, Only Followed). While on, the site ignores the simple list, and the dropdown stars add +100 weight entries you can fine-tune in Settings</li>
+                                <li><strong>New uploads only:</strong> the seedling button next to the sort dropdown (Curated only) excludes bumped/updated cards</li>
+                                <li><strong>Sorting:</strong> beyond Latest, Curated, and Random, popularity sorts cover favorites, views, and downloads over day, week, month, and all-time windows</li>
+                                <li><strong>Advanced Options</strong> (bottom of the Tags dropdown): minimum token count, optionally counting lorebook text, and an uploaded after/before date range</li>
+                                <li><strong>Features dropdown:</strong> My Favorites (login required), Hide Owned Characters, Hide Possible Matches, and Hide AI-generated</li>
+                                <li><strong>Following:</strong> follow uploaders from the banner that appears when browsing their cards, then switch to the Following timeline, which has its own sort options</li>
+                            </ul>
+                            <p class="info-tip"><i class="fa-solid fa-lightbulb"></i> Username/password login needs the cl-helper plugin. Without it, paste a token manually in the login dialog; a copied "Bearer " prefix is stripped automatically.</p>
                         </div>
                     </div>
 
@@ -1542,8 +1586,8 @@ https://jannyai.com/characters/uuid_slug
                             </ul>
                             <p><strong>Safety check for local-only entries:</strong></p>
                             <ul>
-                                <li><i class="fa-solid fa-shield-halved" style="color:#81c784;"></i> <strong>Safe</strong>: also exists in your World Info file</li>
-                                <li><i class="fa-solid fa-triangle-exclamation" style="color:#ffb74d;"></i> <strong>Warning</strong>: not found in your World Info file, will be permanently lost</li>
+                                <li><i class="fa-solid fa-shield-halved" style="color:var(--cl-success-pale);"></i> <strong>Safe</strong>: also exists in your World Info file</li>
+                                <li><i class="fa-solid fa-triangle-exclamation" style="color:var(--cl-warning-pale);"></i> <strong>Warning</strong>: not found in your World Info file, will be permanently lost</li>
                             </ul>
                             <p class="info-tip"><i class="fa-solid fa-lightbulb"></i> <strong>TL;DR:</strong> Updates only change the card's embedded data. Your World Info file (the copy that matters for chats) is never modified.</p>
                         </div>
@@ -1577,7 +1621,7 @@ https://jannyai.com/characters/uuid_slug
                             <h4><i class="fa-solid fa-image"></i> Grid Card Thumbnails</h4>
                             <p>Cut decode cost and bandwidth on the characters grid by serving smaller, pre-resized images for the grid cards. Detail modal, gallery, and full-screen viewer always keep full resolution.</p>
                             <ul>
-                                <li>Enable in <strong>Settings &rarr; Character Library &rarr; Grid Card Thumbnails &rarr; Use thumbnails in characters view</strong></li>
+                                <li>Enable in <strong>Settings &rarr; General &rarr; Grid Card Thumbnails &rarr; Use thumbnails in characters view</strong></li>
                                 <li>Applies to <strong>mobile-sized viewports only</strong> by default. Toggle <strong>"Also use on desktop"</strong> to extend coverage</li>
                                 <li>Two backends:
                                     <ul>
@@ -1613,9 +1657,22 @@ https://jannyai.com/characters/uuid_slug
                                 <li>Scans card text fields for remote URLs and downloads each file to the character's gallery folder</li>
                                 <li>Also downloads gallery images from linked providers</li>
                                 <li>Deduplication by file hash; won't re-download files you already have</li>
-                                <li>Some hosts require SillyTavern's <strong>CORS Proxy</strong> to be enabled (User Settings → Network)</li>
+                                <li>Some hosts require SillyTavern's <strong>CORS proxy</strong>: set <code>enableCorsProxy: true</code> in <code>config.yaml</code> (SillyTavern root folder), then restart the SillyTavern server</li>
                             </ul>
                             <p class="info-tip"><i class="fa-solid fa-lightbulb"></i> Enable "Replace remote media URLs" in Settings to auto-swap URLs when viewing. Use Bulk Localization in Settings → Media to process your entire library at once.</p>
+                        </div>
+                        <div class="info-section">
+                            <h4><i class="fa-solid fa-bell"></i> Background Downloads & Notifications</h4>
+                            <p>Let imports finish immediately and run media downloads quietly in a background queue:</p>
+                            <ul>
+                                <li>Set <strong>When an import has extra media</strong> to <strong>Download in the background</strong> in Settings → Media → Options</li>
+                                <li>While enabled, the download work from imports (embedded media, lorebook media, provider galleries, external galleries) is queued and processed one character at a time instead of blocking the import</li>
+                                <li>The <strong>notifications bell</strong> in the topbar tracks it: a bell when idle, a download icon while the queue is working, and a warning badge if a download failed. The button stays hidden when no section has anything to show</li>
+                                <li>Open the dropdown to watch the active job's progress bar, cancel it, retry or dismiss failed jobs, and clear finished ones</li>
+                                <li>The queue <strong>survives page reloads</strong>: pending downloads resume automatically on the next load, re-scanning the card and skipping files you already have</li>
+                                <li>Gallery Sync status shares the same dropdown (shown when Unique Gallery Folders is enabled)</li>
+                                <li><strong>Mobile:</strong> open it from the More menu → <strong>Notifications</strong></li>
+                            </ul>
                         </div>
                         <div class="info-section">
                             <h4><i class="fa-solid fa-folder-tree"></i> Gallery Sync</h4>
@@ -1640,7 +1697,7 @@ https://jannyai.com/characters/uuid_slug
                                 <li><strong>Google Drive</strong>: shared folders and individual files</li>
                             </ul>
                             <p>Extractors run automatically when you trigger <strong>Download Embedded Media</strong> from the Gallery tab or use Bulk Localization. No configuration is required for public content.</p>
-                            <p class="info-tip"><i class="fa-solid fa-key"></i> <strong>Civitai API key:</strong> Required only for private or hidden Civitai posts. Configure in Settings → Online → Civitai. Generate at <code>civitai.com/user/account</code>. The key is stored persistently and pushed to the cl-helper plugin at startup, so it stays server-side at request time.</p>
+                            <p class="info-tip"><i class="fa-solid fa-key"></i> <strong>Civitai API key:</strong> Required only for private or hidden Civitai posts. Configure in Settings → Media → Civitai API Key. Generate at <code>civitai.com/user/account</code>. The key is stored persistently and pushed to the cl-helper plugin at startup, so it stays server-side at request time.</p>
                         </div>
                     </div>
 
@@ -1683,6 +1740,7 @@ https://jannyai.com/characters/uuid_slug
                             <h4><i class="fa-solid fa-file-import"></i> Importing Characters</h4>
                             <ul>
                                 <li><strong>From URL:</strong> Paste one or more character URLs (one per line) from any supported provider</li>
+                                <li><strong>Direct downloads:</strong> Turn on <strong>Import unrecognized URLs as direct downloads</strong> in Settings &gt; General &gt; Imports to import card PNGs from plain file links (catbox, Discord attachments, etc.) in URL mode. The download is attempted through SillyTavern's server first, with a direct fetch as fallback; arbitrary hosts may need <code>whitelistImportDomains</code> in SillyTavern's <code>config.yaml</code>. Downloaded cards go through the normal import pipeline (duplicate check, gallery ID, provider auto-link)</li>
                                 <li><strong>From PNG:</strong> Drag & drop or browse local character card PNG files</li>
                                 <li><strong>From Online tab:</strong> Browse providers and import with one click from the preview modal</li>
                                 <li>Progress tracking and error logging for multi-character imports</li>
@@ -1993,7 +2051,7 @@ https://jannyai.com/characters/uuid_slug
                                 <span class="settings-hint">Lower = more matches shown</span>
                             </div>
                         </div>
-                        
+
                         <div class="settings-group">
                             <div class="settings-group-title"><i class="fa-solid fa-palette"></i> Theme &amp; Layout</div>
                             <div class="settings-row" id="themeCustomizerBtnRow" style="display:none;">
@@ -2228,12 +2286,12 @@ https://jannyai.com/characters/uuid_slug
                         </div>
 
                         <div class="settings-group">
-                            <div class="settings-group-title"><i class="fa-solid fa-bell"></i> Notifications</div>
+                            <div class="settings-group-title"><i class="fa-solid fa-file-import"></i> Imports</div>
                             <div class="settings-row">
                                 <label>
-                                    <input type="checkbox" id="settingsNotifyAdditionalContent" checked> Notify about additional content on import
+                                    <input type="checkbox" id="settingsImportDirectDownloads"> Import unrecognized URLs as direct downloads
                                 </label>
-                                <span class="settings-hint">Show notification when imported characters have gallery images or embedded media available</span>
+                                <span class="settings-hint">When importing from URLs, treat links no provider recognizes as direct card-PNG downloads (catbox, Discord attachments, etc.). Arbitrary hosts may need <code>whitelistImportDomains</code> in SillyTavern's <code>config.yaml</code>.</span>
                             </div>
                         </div>
 
@@ -2388,7 +2446,7 @@ https://jannyai.com/characters/uuid_slug
                         <!-- JannyAI provider settings -->
                         <details class="settings-provider-section" id="settingsJannySection">
                             <summary>
-                                <i class="fa-solid fa-robot provider-icon"></i> JannyAI
+                                <i class="fa-solid fa-broom provider-icon"></i> JannyAI
                                 <i class="fa-solid fa-chevron-right provider-chevron"></i>
                             </summary>
                             <div class="settings-provider-body">
@@ -2590,6 +2648,117 @@ https://jannyai.com/characters/uuid_slug
                             </div>
                         </details>
 
+                        <!-- Botbooru provider settings -->
+                        <details class="settings-provider-section" id="settingsBotbooruSection">
+                            <summary>
+                                <i class="fa-solid fa-robot provider-icon"></i> Botbooru
+                                <span class="settings-provider-badge">Beta</span>
+                                <i class="fa-solid fa-chevron-right provider-chevron"></i>
+                            </summary>
+                            <div class="settings-provider-body">
+                                <div class="cl-helper-banner cl-hidden" id="botbooruPluginBanner">
+                                    <i class="fa-solid fa-puzzle-piece"></i>
+                                    <div>
+                                        <strong>cl-helper plugin required</strong>
+                                        <span>Username/password login requires the cl-helper server plugin to proxy the auth request. Manual token paste works without it. <a href="#" class="cl-goto-info">Open cl-helper status &rarr;</a></span>
+                                    </div>
+                                </div>
+                                <div class="settings-group" id="botbooruSettingsFields">
+                                    <div class="settings-group-title"><i class="fa-solid fa-sign-in-alt"></i> Login</div>
+                                    <div class="settings-row">
+                                        <label for="settingsBotbooruUsername">Username:</label>
+                                        <div class="settings-input-group">
+                                            <input type="text" id="settingsBotbooruUsername" placeholder="Botbooru username" autocomplete="username">
+                                        </div>
+                                    </div>
+                                    <div class="settings-row">
+                                        <label for="settingsBotbooruPassword">Password:</label>
+                                        <div class="settings-input-group">
+                                            <input type="password" id="settingsBotbooruPassword" placeholder="Your Botbooru password" autocomplete="current-password" data-sensitive="true">
+                                            <button id="toggleBotbooruPasswordVisibility" class="glass-btn icon-only" title="Show/Hide">
+                                                <i class="fa-solid fa-eye"></i>
+                                            </button>
+                                            <button id="validateBotbooruBtn" class="settings-verify-btn" title="Log in and store the token">
+                                                <i class="fa-solid fa-check"></i>
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div class="settings-row">
+                                        <span class="settings-hint" id="botbooruLoginState"></span>
+                                    </div>
+                                </div>
+                                <div class="settings-group">
+                                    <div class="settings-group-title"><i class="fa-solid fa-download"></i> Downloads</div>
+                                    <div class="settings-row">
+                                        <label class="settings-checkbox-label">
+                                            <input type="checkbox" id="botbooruTrackDownloadsCheckbox" checked>
+                                            <span>Report downloads to Botbooru</span>
+                                        </label>
+                                    </div>
+                                    <div class="settings-row">
+                                        <span class="settings-hint">Feeds the download counters on the site when you import a card. Disable to import silently.</span>
+                                    </div>
+                                </div>
+                                <div class="settings-group">
+                                    <div class="settings-group-title"><i class="fa-solid fa-fire"></i> Content</div>
+                                    <div class="settings-row">
+                                        <label class="settings-checkbox-label">
+                                            <input type="checkbox" id="botbooruShowNsflCheckbox">
+                                            <span>Include NSFL posts</span>
+                                        </label>
+                                    </div>
+                                    <div class="settings-row">
+                                        <span class="settings-hint">Only applies while the NSFW toggle is on. Sets the matching account-side switch on your Botbooru account.</span>
+                                    </div>
+                                </div>
+                                <div class="settings-group">
+                                    <div class="settings-group-title"><i class="fa-solid fa-star"></i> Favorite Tags</div>
+                                    <div class="settings-row">
+                                        <label>
+                                            <input type="checkbox" id="botbooruWeightedModeCheckbox"> Weighted tag mode (experimental)
+                                        </label>
+                                        <span class="settings-hint">Account-side switch. Replaces the simple favorite-tags boost with per-tag weights (-1000 to 1000) plus always-follow / always-block flags, and unlocks extra Curated orderings in browse. While on, the site ignores the simple list below.</span>
+                                    </div>
+                                    <div class="settings-row hidden" id="botbooruWeightsEditorRow">
+                                        <div class="provider-exclude-tags-container">
+                                            <div id="botbooruTagWeightsList" class="botbooru-weights-list"></div>
+                                            <div class="settings-input-group">
+                                                <input type="search" class="glass-input provider-exclude-tags-input" id="botbooruTagWeightsInput" placeholder="Tag to weight" autocomplete="off">
+                                                <input type="number" class="glass-input botbooru-weight-input" id="botbooruTagWeightsValue" min="-1000" max="1000" step="10" value="100" title="Weight (-1000 to 1000)">
+                                                <button id="botbooruTagWeightsAddBtn" class="glass-btn icon-only" title="Add tag weight">
+                                                    <i class="fa-solid fa-plus"></i>
+                                                </button>
+                                            </div>
+                                        </div>
+                                        <span class="settings-hint">Positive weights boost, negative bury. Star = always follow, ban = always block. Stored on your Botbooru account.</span>
+                                    </div>
+                                    <div class="settings-row" id="botbooruBasicFavTagsRow">
+                                        <div class="provider-exclude-tags-container">
+                                            <div class="provider-exclude-tags-pills" id="botbooruFavTagsPills"></div>
+                                            <div class="settings-input-group">
+                                                <input type="search" class="glass-input provider-exclude-tags-input" id="botbooruFavTagsInput" placeholder="Type a tag" autocomplete="off">
+                                                <button id="botbooruFavTagsAddBtn" class="glass-btn icon-only" title="Add favorite tag">
+                                                    <i class="fa-solid fa-plus"></i>
+                                                </button>
+                                            </div>
+                                        </div>
+                                        <span class="settings-hint">Favorite tags boost matching cards in the Curated sort. Stored on your Botbooru account (login required); also manageable via the star icons in the browse Tags dropdown.</span>
+                                        <span class="settings-hint hidden" id="botbooruFavTagsInertWarn"><i class="fa-solid fa-triangle-exclamation"></i> Weighted tag mode is ON: the site ignores this simple list. Use the weights editor above.</span>
+                                    </div>
+                                </div>
+                                <div class="settings-group">
+                                    <div class="settings-group-title"><i class="fa-solid fa-ban"></i> Exclude Tags</div>
+                                    <div class="settings-row">
+                                        <div class="provider-exclude-tags-container">
+                                            <div class="provider-exclude-tags-pills" id="botbooruExcludeTagsPills"></div>
+                                            <input type="text" class="glass-input provider-exclude-tags-input" id="botbooruExcludeTagsInput" placeholder="Type a tag and press Enter" autocomplete="off">
+                                        </div>
+                                        <span class="settings-hint">Tags entered here are always excluded from Botbooru browse results. Your Botbooru account's own site blacklist also applies automatically while logged in.</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </details>
+
                         <!-- Card Updates (shared across providers) -->
                         <div class="settings-group">
                             <div class="settings-group-title"><i class="fa-solid fa-arrows-rotate"></i> Card Updates</div>
@@ -2675,6 +2844,15 @@ https://jannyai.com/characters/uuid_slug
                                     <input type="checkbox" id="settingsFastSkipValidateHeaders"> Validate file size on match
                                 </label>
                                 <span class="settings-hint">When a filename match is found, verify the file is at least 1 KB via a HEAD request. Catches empty or truncated files.</span>
+                            </div>
+                            <div class="settings-row">
+                                <label for="settingsImportMediaAction">When an import has extra media:</label>
+                                <select id="settingsImportMediaAction" class="glass-select">
+                                    <option value="ask" data-icon="fa-solid fa-circle-question" selected>Ask me (show a download prompt)</option>
+                                    <option value="background" data-icon="fa-solid fa-cloud-arrow-down">Download in the background</option>
+                                    <option value="none" data-icon="fa-solid fa-ban">Do nothing</option>
+                                </select>
+                                <span class="settings-hint">What happens to a card's gallery / embedded media after import. Background runs quietly in a queue you track from the notifications bell (survives reloads); Ask shows a prompt; Do nothing skips it.</span>
                             </div>
                         </div>
 
@@ -2848,7 +3026,7 @@ https://jannyai.com/characters/uuid_slug
                         <div class="settings-group">
                             <div class="settings-group-title"><i class="fa-solid fa-info-circle"></i> Version Info</div>
                             <div class="settings-row">
-                                <span class="settings-hint" style="font-family: monospace;">Character Library v6.2.0</span>
+                                <span class="settings-hint" style="font-family: monospace;">Character Library v6.3.0</span>
                             </div>
                         </div>
 
@@ -3004,8 +3182,8 @@ https://jannyai.com/characters/uuid_slug
     <div id="toastContainer" class="toast-container"></div>
 
     <!-- Scripts -->
-    <script src="library.js?v=189"></script>
-    <script type="module" src="../modules/module-loader.js?v=41"></script>
-    <script src="library-mobile.js?v=18"></script>
+    <script src="library.js?v=190"></script>
+    <script type="module" src="../modules/module-loader.js?v=42"></script>
+    <script src="library-mobile.js?v=20"></script>
 </body>
 </html>

@@ -7,7 +7,7 @@
 
 import { BrowseView } from '../browse-view.js';
 import CoreAPI from '../../core-api.js';
-import { IMG_PLACEHOLDER, formatNumber, BROWSE_PURIFY_CONFIG, skeletonLines, deferRender } from '../provider-utils.js';
+import { IMG_PLACEHOLDER, formatNumber, BROWSE_PURIFY_CONFIG, skeletonLines, deferRender, deferCall, isMobileViewport } from '../provider-utils.js';
 import {
     DATACAT_API_BASE,
     resolveDatacatAvatarUrl,
@@ -2627,7 +2627,8 @@ async function fetchAndPopulateDetails(hit, token) {
             if (immediateDesc) {
                 ctaNotesSection.style.display = 'block';
                 datacatLastCreatorNotes = immediateDesc;
-                renderCreatorNotesSecure(immediateDesc, name, ctaNotesEl);
+                if (!ctaNotesEl.querySelector('iframe')) ctaNotesEl.innerHTML = skeletonLines(3);
+                deferCall(ctaNotesEl, () => renderCreatorNotesSecure(immediateDesc, name, ctaNotesEl));
             } else {
                 ctaNotesSection.style.display = 'none';
                 cleanupCreatorNotesContainer(ctaNotesEl);
@@ -2790,7 +2791,10 @@ async function fetchAndPopulateDetails(hit, token) {
         if (fullCreatorNotes && fullCreatorNotes !== datacatLastCreatorNotes) {
             datacatLastCreatorNotes = fullCreatorNotes;
             if (creatorNotesSection) creatorNotesSection.style.display = 'block';
-            if (creatorNotesEl) renderCreatorNotesSecure(fullCreatorNotes, name, creatorNotesEl);
+            if (creatorNotesEl) {
+                if (!creatorNotesEl.querySelector('iframe')) creatorNotesEl.innerHTML = skeletonLines(3);
+                deferCall(creatorNotesEl, () => renderCreatorNotesSecure(fullCreatorNotes, name, creatorNotesEl));
+            }
         } else if (!fullCreatorNotes && !datacatLastCreatorNotes) {
             if (creatorNotesSection) creatorNotesSection.style.display = 'none';
             if (creatorNotesEl) creatorNotesEl.innerHTML = '';
@@ -3172,7 +3176,7 @@ async function importCharacter(charData) {
         const galleryPageUrls = result.galleryPageUrls || [];
         const hasGallery = !!result.hasGallery;
         const showSummary = (hasGallery || mediaUrls.length > 0 || galleryPageUrls.length > 0)
-            && getSetting('notifyAdditionalContent') !== false;
+            && getSetting('importMediaAction') !== 'none';
 
         const summaryArgs = {
             galleryCharacters: hasGallery ? [{
@@ -3216,8 +3220,8 @@ async function importCharacter(charData) {
         showToast(`Imported "${result.characterName}"`, 'success');
 
         const added = await fetchAndAddCharacter(result.fileName);
-        if (!added) await fetchCharacters(true);
-        view.buildLocalLibraryLookup();
+        if (added) view.addCharToLookup(added);
+        else await fetchCharacters(true);
         markCardAsImported(charId);
 
     } catch (err) {
@@ -3640,10 +3644,8 @@ function ensureModalEventsAttached() {
     if (!document.getElementById('datacatCharModal')) return;
     modalEventsAttached = true;
 
-    if (!window.matchMedia('(max-width: 768px)').matches) {
-        const datacatOverlay = document.getElementById('datacatCharModal');
-        BrowseView.wireTitleScroll(document.getElementById('datacatCharName'), datacatOverlay, datacatOverlay?.querySelector('.browse-char-modal'));
-    }
+    const datacatOverlay = document.getElementById('datacatCharModal');
+    BrowseView.wireTitleScroll(document.getElementById('datacatCharName'), datacatOverlay, datacatOverlay?.querySelector('.browse-char-modal'));
 
     on('datacatCharClose', 'click', () => closePreviewModal());
 
@@ -3676,9 +3678,11 @@ function ensureModalEventsAttached() {
         });
     }
 
+    // Desktop only at event time; on mobile bail before stopPropagation so the delegated tap runs
     const avatar = document.getElementById('datacatCharAvatar');
-    if (avatar && !window.matchMedia('(max-width: 768px)').matches) {
+    if (avatar) {
         avatar.addEventListener('click', (e) => {
+            if (isMobileViewport()) return;
             e.stopPropagation();
             if (!avatar.src || avatar.src.endsWith('/img/ai4.png')) return;
             BrowseView.openAvatarViewer(avatar.src);
@@ -4096,7 +4100,7 @@ const datacatBrowseView = new (class DatacatBrowseView extends BrowseView {
                     <div>
                         <h2 id="datacatCharName">Character Name</h2>
                         <p class="browse-char-meta">
-                            by <a id="datacatCharCreator" href="#" class="creator-link" title="Click to browse this creator's characters">Creator</a>
+                            by <a id="datacatCharCreator" href="#" class="creator-link browse-meta-identity" title="Click to browse this creator's characters">Creator</a>
                         </p>
                     </div>
                 </div>

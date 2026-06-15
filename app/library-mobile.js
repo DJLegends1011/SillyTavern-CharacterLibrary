@@ -238,8 +238,11 @@
      visible   {function} - optional override: (el) => bool. Default auto-detects: cl-modal uses .visible, others use !.hidden.
    ======================================== */
 window._overlayRegistry = window._overlayRegistry || [];
+// Replace-by-id (mirrors the library.js bootstrap, which normally wins the || race)
 window.registerOverlay = window.registerOverlay || function(cfg) {
-    window._overlayRegistry.push(cfg);
+    const i = window._overlayRegistry.findIndex(r => r.id === cfg.id);
+    if (i !== -1) window._overlayRegistry[i] = cfg;
+    else window._overlayRegistry.push(cfg);
 };
 
 /* ========================================
@@ -253,72 +256,201 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
         return window.matchMedia('(max-width: 768px)').matches;
     }
 
-    if (!isMobile()) return;
-
     // Shared signal: card-swipe sets this true when it commits to a horizontal
     // gesture so pull-to-refresh and view-swipe back off in the same touch.
     let activeCardSwipe = false;
 
-    // Ensure viewport-fit=cover for safe-area-inset to work
-    (function fixViewport() {
+    function fixViewport() {
         var meta = document.querySelector('meta[name="viewport"]');
         if (meta && meta.content.indexOf('viewport-fit') === -1) {
             meta.content += ', viewport-fit=cover';
         }
-    })();
+    }
 
-    // Wait for DOM to be ready
+    // ---- Lifecycle: run/teardown so crossing the 768px breakpoint live re-inits cleanly ----
+    // mobileLive holds the active session, or null when the mobile layer is torn down. setup() captures
+    // everything it attaches/mutates into the session (see the capture block in setup() below), so
+    // teardown reverses it all: listeners removed, observers disconnected, timers cleared, created nodes
+    // removed, reparents + globals + body/meta restored.
+    let mobileLive = null;
+
+    function runMobile() {
+        if (mobileLive) return; // already active
+        const ctx = mobileLive = {
+            capturing: false, // gate: wrappers record into ctx only while true (setup + armed callbacks)
+            uninstall: null,  // removes the session patches; called first in teardown
+            captured: [],  // [target, type, handler, opts] from setup + armed observer callbacks
+            adds: [],      // nodes the layer created (no prior parent) -> removed on teardown
+            moves: [],     // nodes the layer reparented (had a prior parent) -> moved back on teardown
+            observers: [],
+            timers: [],
+            restore: [],   // explicit undo fns: globals, viewport meta, body styles
+        };
+        // Snapshot the true viewport baseline before fixViewport() mutates it, so teardown restores the
+        // real desktop value rather than the viewport-fit=cover-polluted one.
+        const vp = document.querySelector('meta[name="viewport"]');
+        if (vp) { const vpBefore = vp.content; ctx.restore.push(() => { vp.content = vpBefore; }); }
+        ctx.uninstall = installSessionPatches(ctx);
+        fixViewport();
+        setup(ctx);
+    }
+
+    function teardownMobile() {
+        const ctx = mobileLive;
+        if (!ctx) return;
+        mobileLive = null;
+        try { ctx.uninstall?.(); } catch {} // restore the real globals before anything else runs
+        ctx.observers.forEach(o => { try { o.disconnect(); } catch {} }); // before the moves, so they don't react to them
+        ctx.timers.forEach(t => { try { clearInterval(t); } catch {} });
+        ctx.captured.forEach(([t, ty, h, o]) => { try { t.removeEventListener(ty, h, o); } catch {} });
+        ctx.adds.forEach(n => { try { n.remove(); } catch {} });
+        ctx.moves.reverse().forEach(({ node, parent, next }) => {
+            try {
+                if (!parent) return;
+                // The captured nextSibling anchor can be gone by restore time (eg. it was a
+                // mobile-created node removed by the adds sweep above); a stale anchor makes
+                // insertBefore throw and silently strands the node wherever mobile left it.
+                if (next && next.parentNode !== parent) next = null;
+                parent.insertBefore(node, next);
+            } catch {}
+        });
+        while (ctx.restore.length) { try { ctx.restore.pop()(); } catch {} } // globals, viewport meta, body styles
+        // Reset guard flags + residual classes so a re-run re-applies relocations / swipe wiring cleanly.
+        document.querySelectorAll('[data-relocated], [data-swipe-init], .mobile-reparented').forEach(el => {
+            el.removeAttribute('data-relocated');
+            el.removeAttribute('data-swipe-init');
+            el.classList.remove('mobile-reparented');
+        });
+        document.documentElement.classList.remove('cl-keyboard-open');
+    }
+
+    // First load: run only on mobile, after a short delay so library.js finishes its own init.
+    function init() {
+        if (isMobile()) setTimeout(runMobile, 200);
+    }
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', init);
     } else {
         init();
     }
 
-    function init() {
-        // Small delay to let library.js finish initialization
-        setTimeout(setup, 200);
+    // Live breakpoint crossing: re-init in the correct mode when the viewport crosses 768px. Debounced
+    // so dragging a window across the boundary doesn't thrash. teardown fully reverses the layer, so a
+    // desktop session is clean and a re-entry to mobile rebuilds from scratch.
+    const mq = window.matchMedia('(max-width: 768px)');
+    let crossTimer = 0;
+    function onBreakpointChange() {
+        clearTimeout(crossTimer);
+        crossTimer = setTimeout(() => {
+            mq.matches ? runMobile() : teardownMobile();
+            // The chrome rebuild changes layout after the triggering resize already settled; nudge the
+            // virtual-scroll grid to re-measure or it keeps stale column math (dead right/bottom space).
+            window.dispatchEvent(new Event('resize'));
+        }, 250);
+    }
+    if (mq.addEventListener) mq.addEventListener('change', onBreakpointChange);
+    else if (mq.addListener) mq.addListener(onBreakpointChange); // older Safari/iOS
+
+    function recordInsert(ctx, node) {
+        if (!node || node.nodeType !== 1) return;
+        // A node that already has a parent is being REPARENTED (restore its origin on teardown); a
+        // freshly-created node (no parent) is created chrome (remove on teardown).
+        if (node.parentNode) ctx.moves.push({ node, parent: node.parentNode, next: node.nextSibling });
+        else ctx.adds.push(node);
     }
 
-    function setup() {
+    // Flip capture on for the duration of an observer callback: lazy wire/attach paths fire after setup
+    // finished, and uncaptured attachments would leak past teardown / double-attach on re-cross.
+    function armObserverCb(ctx, cb) {
+        return function (...args) {
+            if (mobileLive !== ctx) return cb.apply(this, args); // session ended/replaced; don't capture
+            const prev = ctx.capturing;
+            const before = ctx.captured.length + ctx.adds.length;
+            ctx.capturing = true;
+            try { return cb.apply(this, args); } finally {
+                ctx.capturing = prev;
+                if (ctx.captured.length + ctx.adds.length !== before) {
+                    // This fire captured something; drop entries whose node left the DOM (transient
+                    // viewers are create-per-open) so long sessions dont pin detached trees.
+                    ctx.captured = ctx.captured.filter(([t]) => !(t instanceof Node) || t.isConnected);
+                    ctx.adds = ctx.adds.filter(n => n.isConnected);
+                }
+            }
+        };
+    }
+
+    // Patch the globals this layer uses so everything it attaches/mutates is recorded into ctx; returns
+    // the uninstaller. Installed ONCE per mobile session and gated on ctx.capturing (true only during
+    // setup and armed observer callbacks): repeatedly swapping prototype methods per observer fire would
+    // invalidate engine inline caches on the virtual-scroll hot path, a flag check doesn't.
+    //   - addEventListener -> captured for removeEventListener
+    //   - MutationObserver  -> registered for disconnect, callback armed so its own lazy work is captured
+    //   - appendChild/insertBefore/insertAdjacentElement -> reparent (restore origin) vs created (remove)
+    function installSessionPatches(ctx) {
+        const realAEL = EventTarget.prototype.addEventListener;
+        const realMO = window.MutationObserver;
+        const realAppend = Node.prototype.appendChild;
+        const realInsert = Node.prototype.insertBefore;
+        const realIAE = Element.prototype.insertAdjacentElement; // lives on Element, not Node
+        EventTarget.prototype.addEventListener = function (type, handler, opts) {
+            if (ctx.capturing) ctx.captured.push([this, type, handler, opts]);
+            return realAEL.call(this, type, handler, opts);
+        };
+        window.MutationObserver = function (cb) {
+            const o = new realMO(ctx.capturing ? armObserverCb(ctx, cb) : cb);
+            if (ctx.capturing) ctx.observers.push(o);
+            return o;
+        };
+        window.MutationObserver.prototype = realMO.prototype;
+        Node.prototype.appendChild = function (node) { if (ctx.capturing) recordInsert(ctx, node); return realAppend.call(this, node); };
+        Node.prototype.insertBefore = function (node, ref) { if (ctx.capturing) recordInsert(ctx, node); return realInsert.call(this, node, ref); };
+        Element.prototype.insertAdjacentElement = function (pos, el) { if (ctx.capturing) recordInsert(ctx, el); return realIAE.call(this, pos, el); };
+        return function uninstallSessionPatches() {
+            EventTarget.prototype.addEventListener = realAEL;
+            window.MutationObserver = realMO;
+            Node.prototype.appendChild = realAppend;
+            Node.prototype.insertBefore = realInsert;
+            Element.prototype.insertAdjacentElement = realIAE;
+        };
+    }
+
+    function setup(ctx) {
         const topbar = document.querySelector('.topbar');
         if (!topbar) return;
 
-        createSearchButton(topbar);
-        createSettingsButton(topbar);
-        createMenuButton(topbar);
-        createProviderQuickSwitch(topbar);
-        setupBottomNav();
-        migrateTopbarToBottomNav();
-        setupHideTopbarOnScroll();
-        setupBottomSheetDismiss();
-        setupPullToRefresh();
-        setupCardSwipeGestures();
-        setupOnlineSearchOverlay();
-        setupModalAvatar();
-        setupGallerySwipe();
-        setupBrowseGallerySwipe();
-        setupGreetingsSwipe();
-        setupTabSwipe();
-        setupCharModalNavSwipe();
-        setupViewSwipe();
-        setupContextMenu();
-        setupViewportFix();
-        relocateTagPopup();
-        relocatePlaylistPopup();
-        relocateAdvFilterPanel();
-        setDefaultExpandZoom();
-        setupLorebookModalToolbar();
-        fixInvalidDateText();
-        setupChubFilterArea();
-        setupGallerySyncDropdown();
-        fixRefreshLoadingStuck();
-        preventAutoFocusOnOpen();
-        setupMobileTagEditor();
-        setupModalHeaderCollapse();
-        setupTitleScrollReveal();
-        setupMultiSelectConfirm();
-        setupBrowseModalActionsMenu();
-        setupBackButton();
+        // Snapshot the globals this layer assigns or re-wraps; restore on teardown. pushOverlayGuard is
+        // called by the browse views too, so a stale one would push orphan hash guards on desktop.
+        const g = {
+            switchView: window.switchView, addTag: window.addTag,
+            removeTag: window.removeTag, showSheetAutocomplete: window.showSheetAutocomplete,
+            pushOverlayGuard: window.pushOverlayGuard,
+        };
+        ctx.restore.push(() => { Object.keys(g).forEach(k => { try { window[k] = g[k]; } catch {} }); });
+
+        // setup() runs fully synchronously, so capture sees only this layer's setup-time work.
+        ctx.capturing = true;
+        try {
+            applySetup(topbar);
+        } finally {
+            ctx.capturing = false;
+        }
+    }
+
+    function applySetup(topbar) {
+        // Isolated so one failing step cant silently kill every later one; failures log the step name.
+        [
+            createSearchButton, createSettingsButton, createMenuButton, createProviderQuickSwitch,
+            setupBottomNav, migrateTopbarToBottomNav, setupHideTopbarOnScroll, setupBottomSheetDismiss,
+            setupPullToRefresh, setupCardSwipeGestures, setupOnlineSearchOverlay, setupModalAvatar,
+            setupGallerySwipe, setupBrowseGallerySwipe, setupGreetingsSwipe, setupTabSwipe,
+            setupCharModalNavSwipe, setupViewSwipe, setupContextMenu, setupViewportFix,
+            relocateTagPopup, relocatePlaylistPopup, relocateAdvFilterPanel, setDefaultExpandZoom,
+            setupLorebookModalToolbar, fixInvalidDateText, setupChubFilterArea, setupGallerySyncDropdown,
+            fixRefreshLoadingStuck, preventAutoFocusOnOpen, setupMobileTagEditor, setupModalHeaderCollapse,
+            setupTitleScrollReveal, setupMultiSelectConfirm, setupBrowseModalActionsMenu, setupBackButton,
+        ].forEach(step => {
+            try { step(topbar); } catch (e) { console.error('[CL mobile] setup step failed:', step.name, e); }
+        });
     }
 
     /* ========== BOTTOM NAVIGATION + FAB ========== */
@@ -911,6 +1043,12 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
                 const mode = btn.dataset.mode;
                 btn.classList.toggle('active', mode === modes[0]);
                 btn.style.display = modes.includes(mode) ? '' : 'none';
+                // Per-provider tab label (eg. botbooru calls its creators Uploaders); keep the icon
+                const label = browseView?.getSearchModeLabel?.(mode);
+                if (label) {
+                    const icon = btn.querySelector('i')?.outerHTML || '';
+                    btn.innerHTML = `${icon} ${label}`;
+                }
             });
         } else {
             modesContainer.hidden = true;
@@ -918,7 +1056,8 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
 
         const initialMode = modes[0];
         title.textContent = `Search ${providerName}`;
-        input.placeholder = initialMode === 'creator' ? 'Creator name...' : 'Character name...';
+        input.placeholder = browseView?.getSearchPlaceholder?.(initialMode)
+            || (initialMode === 'creator' ? 'Creator name...' : 'Character name...');
         input.dataset.activeMode = initialMode;
         input.value = '';
         overlay.querySelector('.mobile-online-search-clear').classList.add('hidden');
@@ -956,7 +1095,8 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
                 const mode = btn.dataset.mode;
                 modeButtons.forEach(b => b.classList.toggle('active', b === btn));
                 input.dataset.activeMode = mode;
-                input.placeholder = mode === 'creator' ? 'Creator name...' : 'Character name...';
+                input.placeholder = getActiveBrowseView()?.getSearchPlaceholder?.(mode)
+                    || (mode === 'creator' ? 'Creator name...' : 'Character name...');
                 input.focus();
             });
         });
@@ -1640,9 +1780,56 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
             if (real) {
                 real.value = mtBrowseSortSelect.value;
                 real.dispatchEvent(new Event('change', { bubbles: true }));
+                setTimeout(syncSubSort, 100);
             }
         });
         mtSortSection.appendChild(mtBrowseSortSelect);
+
+        // Optional sub-sort extras (eg. botbooru's curated ordering). Mirror the real
+        // filter-bar elements: browse-filter-hidden on them already encodes sort+mode+account gating
+        const mtSubSortSelect = document.createElement('select');
+        mtSubSortSelect.className = 'mobile-settings-select';
+        mtSubSortSelect.style.display = 'none';
+        mtSubSortSelect.style.marginTop = 'var(--space-sm)';
+        mtSubSortSelect.addEventListener('change', () => {
+            const ids = getIds();
+            const real = ids?.subSort ? document.getElementById(ids.subSort) : null;
+            if (real) {
+                real.value = mtSubSortSelect.value;
+                real.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+        });
+        mtSortSection.appendChild(mtSubSortSelect);
+
+        const mtSubSortChip = createChip('');
+        mtSubSortChip.style.display = 'none';
+        mtSubSortChip.style.marginTop = 'var(--space-sm)';
+        mtSubSortChip.addEventListener('click', () => {
+            const ids = getIds();
+            const realBtn = ids?.subSortBtn ? document.getElementById(ids.subSortBtn) : null;
+            if (realBtn) { realBtn.click(); setTimeout(syncSubSort, 100); }
+        });
+        mtSortSection.appendChild(mtSubSortChip);
+
+        function syncSubSort() {
+            const ids = getIds();
+            const real = ids?.subSort ? document.getElementById(ids.subSort) : null;
+            const realTarget = real ? (real._customSelect?.container || real) : null;
+            const showSelect = !!realTarget && !realTarget.classList.contains('browse-filter-hidden');
+            if (showSelect) {
+                mtSubSortSelect.innerHTML = real.innerHTML;
+                mtSubSortSelect.value = real.value;
+            }
+            mtSubSortSelect.style.display = showSelect ? '' : 'none';
+            const realBtn = ids?.subSortBtn ? document.getElementById(ids.subSortBtn) : null;
+            const showBtn = !!realBtn && !realBtn.classList.contains('browse-filter-hidden');
+            if (showBtn) {
+                const icon = realBtn.querySelector('i')?.outerHTML || '';
+                mtSubSortChip.innerHTML = icon + ' ' + (realBtn.dataset.mobileLabel || realBtn.title || '');
+                mtSubSortChip.classList.toggle('active', realBtn.classList.contains('active'));
+            }
+            mtSubSortChip.style.display = showBtn ? '' : 'none';
+        }
 
         const mtFollowSortSelect = document.createElement('select');
         mtFollowSortSelect.className = 'mobile-settings-select';
@@ -1925,6 +2112,7 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
                     syncMode();
                     syncMtNsfwState();
                     syncSort();
+                    syncSubSort();
                 }
             } else if (activeView === 'chats') {
                 syncGrouping();
@@ -2004,19 +2192,18 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
             });
         }
 
-        // Gallery sync status - directly toggle dropdown (the real button is in a hidden container)
-        const syncDropdown = document.getElementById('gallerySyncDropdown');
+        // Notifications - directly toggle dropdown (the real button is in a hidden container)
+        const syncDropdown = document.getElementById('notificationsDropdown');
         if (syncDropdown) {
             const syncItem = document.createElement('button');
             syncItem.className = 'mobile-sheet-item';
-            syncItem.innerHTML = '<i class="fa-solid fa-circle-info"></i> Gallery Sync Status';
+            syncItem.innerHTML = '<i class="fa-solid fa-bell"></i> Notifications';
             syncItem.addEventListener('click', () => {
                 close();
                 // Small delay so the sheet closes first
                 setTimeout(() => openGallerySyncDropdown(syncDropdown), 350);
             });
             syncItem.dataset.gallerySyncItem = 'true';
-            if (!window.getSetting?.('uniqueGalleryFolders')) syncItem.style.display = 'none';
             sheet.appendChild(syncItem);
         }
 
@@ -2394,6 +2581,8 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
                 if (isOpen) attach();
                 else detach();
             }).observe(overlay, { attributes: true, attributeFilter: ['class'] });
+            // Already-open modal on a desktop->mobile cross: attach now, no mutation will fire
+            if (!overlay.classList.contains('hidden')) attach();
         }
 
         // charModal (local character details)
@@ -2430,7 +2619,7 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
             return `/thumbnail?type=avatar&file=${m[1]}${m[2] || ''}`;
         };
 
-        const observer = new MutationObserver(() => {
+        const injectAvatar = () => {
             if (modal.classList.contains('hidden')) return;
 
             const header = modal.querySelector('.modal-header');
@@ -2465,9 +2654,11 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
             });
             // Insert before the title h2
             header.insertBefore(avatar, header.firstChild);
-        });
+        };
 
-        observer.observe(modal, { attributes: true, attributeFilter: ['class'] });
+        new MutationObserver(injectAvatar).observe(modal, { attributes: true, attributeFilter: ['class'] });
+        // The modal can already be open when crossing into mobile; no class mutation will fire then
+        injectAvatar();
 
         // Browse-view avatar tap → full-size image viewer (delegated because
         // modal elements are injected lazily when the Online tab first activates)
@@ -2500,6 +2691,11 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
                 if (target.src.endsWith('/img/ai4.png')) return;
                 e.stopPropagation();
                 openAvatarViewer(target.src);
+            } else if (target.id === 'botbooruCharAvatar') {
+                if (target.src.endsWith('/img/ai4.png')) return;
+                e.stopPropagation();
+                // The browse view stashes the card PNG url on the element
+                openAvatarViewer(target.dataset.full || target.src, target.src);
             }
         });
     }
@@ -2859,14 +3055,17 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
        ======================================== */
     function setupGallerySwipe() {
         // Wait for the gallery viewer to be injected into the DOM
-        const observer = new MutationObserver(() => {
+        // Scan-then-observe: #galleryViewerContent is injected once and never re-added, so a re-cross
+        // must wire an already-present viewer immediately, then watch for future injections.
+        const scan = () => {
             const content = document.getElementById('galleryViewerContent');
             if (content && !content.dataset.swipeInit) {
                 content.dataset.swipeInit = 'true';
                 attachSwipeHandlers(content);
             }
-        });
-        observer.observe(document.body, { childList: true, subtree: true });
+        };
+        scan();
+        new MutationObserver(scan).observe(document.body, { childList: true, subtree: true });
     }
 
     function attachSwipeHandlers(container) {
@@ -3120,14 +3319,16 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
        Swipe left/right on browse-avatar-viewer to navigate gallery images
        ======================================== */
     function setupBrowseGallerySwipe() {
-        const observer = new MutationObserver(() => {
+        // Scan-then-observe (mirror setupGallerySwipe) so an already-present viewer re-wires on re-cross.
+        const scan = () => {
             const viewer = document.querySelector('.browse-avatar-viewer.has-gallery');
             if (viewer && !viewer.dataset.swipeInit) {
                 viewer.dataset.swipeInit = 'true';
                 attachBrowseGallerySwipe(viewer);
             }
-        });
-        observer.observe(document.body, { childList: true, subtree: true });
+        };
+        scan();
+        new MutationObserver(scan).observe(document.body, { childList: true, subtree: true });
     }
 
     function attachBrowseGallerySwipe(overlay) {
@@ -3666,6 +3867,23 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
                 menu.appendChild(item);
             });
 
+            // The favorite heart lives in the header meta line, which is hidden on
+            // mobile; providers that support favoriting mark it with .browse-fav-toggle
+            const favBtn = controls.closest('.browse-char-modal')?.querySelector('.browse-fav-toggle');
+            if (favBtn) {
+                const faved = favBtn.classList.contains('favorited');
+                const item = document.createElement('button');
+                item.type = 'button';
+                item.className = 'mobile-more-actions-item';
+                item.innerHTML = `<i class="fa-${faved ? 'solid' : 'regular'} fa-heart"></i> ${faved ? 'Unfavorite' : 'Favorite'}`;
+                item.addEventListener('click', (ev) => {
+                    ev.stopPropagation();
+                    closeMenu();
+                    favBtn.click();
+                });
+                menu.appendChild(item);
+            }
+
             if (!menu.children.length) return;
 
             document.body.appendChild(menu);
@@ -3775,8 +3993,68 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
             }
         }
 
+        /* Identity mirror: the header meta line (creator / uploader) is display:none
+           on mobile, so elements marked .browse-meta-identity get mirrored into the
+           stats block as mobile-only rows (CSS hides them on desktop). The mirror
+           re-syncs on meta mutations since providers populate it async, and taps
+           proxy to the original element so each provider's own handler runs. */
+        const mirrorArmed = new WeakSet(); // per-session: re-setup after teardown re-arms
+
+        function syncIdentityMirror(modal) {
+            const meta = modal.querySelector('.browse-char-meta');
+            const stats = modal.querySelector('.browse-char-stats');
+            if (!meta || !stats) return;
+            stats.querySelectorAll('.browse-stat-identity').forEach(n => n.remove());
+            meta.querySelectorAll('.browse-meta-identity').forEach(src => {
+                const name = (src.textContent || '').trim();
+                if (!name) return;
+                // Providers toggle identity rows via inline display on a wrapper span
+                for (let el = src; el && el !== meta; el = el.parentElement) {
+                    if (el.style?.display === 'none') return;
+                }
+                const stat = document.createElement('div');
+                stat.className = 'browse-stat browse-stat-identity';
+                stat.title = src.title || 'Creator';
+                const icon = document.createElement('i');
+                icon.className = src.dataset.identityIcon || 'fa-solid fa-user-pen';
+                const label = document.createElement('span');
+                label.textContent = name;
+                stat.append(icon, label);
+                stat.addEventListener('click', (ev) => {
+                    ev.stopPropagation();
+                    src.click();
+                });
+                stats.appendChild(stat);
+            });
+        }
+
+        function armIdentityMirror(modal) {
+            if (!modal.querySelector('.browse-meta-identity')) return;
+            if (mirrorArmed.has(modal)) return;
+            mirrorArmed.add(modal);
+            const meta = modal.querySelector('.browse-char-meta');
+            if (!meta) return;
+            let queued = false;
+            const queue = () => {
+                if (queued) return;
+                queued = true;
+                requestAnimationFrame(() => { queued = false; syncIdentityMirror(modal); });
+            };
+            new MutationObserver(queue).observe(meta, {
+                childList: true,
+                characterData: true,
+                subtree: true,
+                attributes: true,
+                attributeFilter: ['style', 'title'],
+            });
+            syncIdentityMirror(modal);
+        }
+
         function scan() {
-            document.querySelectorAll('.browse-char-modal').forEach(injectKebabIntoModal);
+            document.querySelectorAll('.browse-char-modal').forEach(m => {
+                injectKebabIntoModal(m);
+                armIdentityMirror(m);
+            });
         }
 
         scan();
@@ -3784,8 +4062,8 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
             for (const m of mutations) {
                 for (const node of m.addedNodes) {
                     if (node.nodeType !== 1) continue;
-                    if (node.matches?.('.browse-char-modal')) injectKebabIntoModal(node);
-                    node.querySelectorAll?.('.browse-char-modal').forEach(injectKebabIntoModal);
+                    if (node.matches?.('.browse-char-modal')) { injectKebabIntoModal(node); armIdentityMirror(node); }
+                    node.querySelectorAll?.('.browse-char-modal').forEach(n => { injectKebabIntoModal(n); armIdentityMirror(n); });
                 }
             }
         }).observe(document.body, { childList: true, subtree: true });
@@ -3927,19 +4205,30 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
        VIEWPORT FIX
        ======================================== */
     function setupViewportFix() {
-        // Prevent horizontal scrolling
-        document.documentElement.style.overflowX = 'hidden';
-        document.body.style.overflowX = 'hidden';
-        document.documentElement.style.maxWidth = '100vw';
-        document.body.style.maxWidth = '100vw';
-
-        // Set viewport meta for mobile
+        const root = document.documentElement;
         let viewport = document.querySelector('meta[name="viewport"]');
         if (!viewport) {
             viewport = document.createElement('meta');
             viewport.name = 'viewport';
             document.head.appendChild(viewport);
         }
+        // Capture prior inline styles so teardown lets desktop scroll again. (The viewport meta baseline
+        // is captured in runMobile, before fixViewport touches it.)
+        if (mobileLive) {
+            const prev = {
+                rOX: root.style.overflowX, bOX: document.body.style.overflowX,
+                rMW: root.style.maxWidth, bMW: document.body.style.maxWidth,
+            };
+            mobileLive.restore.push(() => {
+                root.style.overflowX = prev.rOX; document.body.style.overflowX = prev.bOX;
+                root.style.maxWidth = prev.rMW; document.body.style.maxWidth = prev.bMW;
+            });
+        }
+        // Prevent horizontal scrolling + lock scale on mobile
+        root.style.overflowX = 'hidden';
+        document.body.style.overflowX = 'hidden';
+        root.style.maxWidth = '100vw';
+        document.body.style.maxWidth = '100vw';
         viewport.content = 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no';
     }
 
@@ -4069,13 +4358,16 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
 
         // Aggressive sweep: fast for first 10s, then slow
         let sweepCount = 0;
+        const live = mobileLive; // register both timers into the session so teardown clears them
         const fastSweep = setInterval(() => {
             sweep();
             if (++sweepCount >= 20) { // 20 × 500ms = 10s
                 clearInterval(fastSweep);
-                setInterval(sweep, 3000); // then every 3s
+                const slow = setInterval(sweep, 3000); // then every 3s
+                if (live) live.timers.push(slow);
             }
         }, 500);
+        if (live) live.timers.push(fastSweep);
     }
 
     /* ========================================
@@ -4111,17 +4403,6 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
         // Re-run whenever provider switch rebuilds the filter bar content
         new MutationObserver(() => relocateDropdowns())
             .observe(filterContent, { childList: true });
-
-        // Toggle topbar wrapping when online filter area is visible
-        function syncTopbar() {
-            const visible = onlineFilters.style.display && onlineFilters.style.display !== 'none';
-            topbar.classList.toggle('chub-active', visible);
-        }
-
-        new MutationObserver(syncTopbar).observe(onlineFilters, {
-            attributes: true, attributeFilter: ['style']
-        });
-        syncTopbar();
     }
 
     /* ========================================
@@ -4131,7 +4412,7 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
        overlay so it displays as a bottom-sheet-style panel.
        ======================================== */
     function setupGallerySyncDropdown() {
-        const dropdown = document.getElementById('gallerySyncDropdown');
+        const dropdown = document.getElementById('notificationsDropdown');
         if (!dropdown) return;
 
         // Move dropdown to body so it escapes the hidden container
@@ -4166,32 +4447,13 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
         // Show scrim
         if (dropdown._mobileScrim) dropdown._mobileScrim.style.display = 'block';
 
-        // Show loading state
-        const content = dropdown.querySelector('.sync-dropdown-content');
-        if (content) {
-            content.innerHTML = '<div class="sync-dropdown-loading"><i class="fa-solid fa-spinner fa-spin"></i> Checking...</div>';
+        // The notifications shell renders every visible section (gallery sync
+        // audit included); fall back to a bare un-hide if it isnt loaded yet
+        if (typeof window.openNotificationsDropdown === 'function') {
+            window.openNotificationsDropdown();
+        } else {
+            dropdown.classList.remove('hidden');
         }
-        dropdown.classList.remove('hidden');
-
-        // Run audit using globally exposed functions (set by module-loader.js)
-        setTimeout(async () => {
-            try {
-                if (typeof window.auditGalleryIntegrity === 'function') {
-                    const audit = await window.auditGalleryIntegrity();
-                    // updateGallerySyncWarning is updateWarningIndicator - updates dropdown content
-                    if (typeof window.updateGallerySyncWarning === 'function') {
-                        window.updateGallerySyncWarning(audit);
-                    }
-                } else if (content) {
-                    content.innerHTML = '<div class="sync-dropdown-loading">Gallery sync module not loaded</div>';
-                }
-            } catch (err) {
-                console.error('[MobileSync] Audit failed:', err);
-                if (content) {
-                    content.innerHTML = '<div class="sync-dropdown-loading">Error running audit</div>';
-                }
-            }
-        }, 50);
     }
 
     /* ========================================
@@ -4597,6 +4859,13 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
         const charModal = document.getElementById('charModal');
         if (charModal) {
             modalObserver.observe(charModal, { attributes: true, attributeFilter: ['class'] });
+            // Sync once for a modal already open at cross time (no mutation fires for it)
+            if (!charModal.classList.contains('hidden')) {
+                const tags = typeof getCurrentTagsArray === 'function' ? getCurrentTagsArray() : [];
+                renderEditTagsPreview(tags);
+                const btn = document.getElementById('editTagsBtn');
+                if (btn) btn.disabled = !document.querySelector('.edit-lock-header.unlocked');
+            }
         }
     }
 

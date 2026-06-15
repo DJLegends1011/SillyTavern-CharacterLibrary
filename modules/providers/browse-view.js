@@ -1,7 +1,59 @@
 // BrowseView - base class for provider browse views in the Online tab
 
 import CoreAPI from '../core-api.js';
-import { normalizeBrowseName } from './provider-utils.js';
+import { normalizeBrowseName, isMobileViewport } from './provider-utils.js';
+
+// ── Shared In-Library lookup base ────────────────────────
+// byNameAndCreator + byNormalizedName are pure functions of the global character list, so
+// theyre byte-identical for every provider. Compute them ONCE and share by reference across
+// all browse views; only byProviderId is per-provider. A generation token invalidates the
+// shared base whenever the character list changes (full reload, delete, import).
+const _sharedBaseLookup = {
+    byNameAndCreator: new Set(),
+    byNormalizedName: new Map(),
+    gen: -1,
+};
+let _baseLookupGen = 0;
+
+/** Mark the shared base stale so the next build recomputes it. O(1). */
+export function invalidateSharedBaseLookup() {
+    _baseLookupGen++;
+}
+
+/** Normalized name variants for cross-provider matching (|| splits to its primary). */
+function computeNameVariants(rawName) {
+    const full = normalizeBrowseName(rawName);
+    const variants = new Set();
+    if (full.length >= 4) variants.add(full);
+    if (rawName.includes('||')) {
+        const primary = normalizeBrowseName(rawName.split('||')[0]);
+        if (primary.length >= 4) variants.add(primary);
+    }
+    return variants;
+}
+
+function buildSharedBaseLookup() {
+    const byNameAndCreator = new Set();
+    const byNormalizedName = new Map();
+    for (const char of CoreAPI.getAllCharacters()) {
+        if (!char) continue;
+        const name = (char.name || '').toLowerCase().trim();
+        const creator = String(char.creator || char.data?.creator || '').toLowerCase().trim();
+        if (name && creator) byNameAndCreator.add(`${name}|${creator}`);
+        for (const variant of computeNameVariants(char.name || '')) {
+            let creatorSet = byNormalizedName.get(variant);
+            if (!creatorSet) { creatorSet = new Set(); byNormalizedName.set(variant, creatorSet); }
+            if (creator) creatorSet.add(creator);
+        }
+    }
+    _sharedBaseLookup.byNameAndCreator = byNameAndCreator;
+    _sharedBaseLookup.byNormalizedName = byNormalizedName;
+    _sharedBaseLookup.gen = _baseLookupGen;
+}
+
+function ensureSharedBaseLookup() {
+    if (_sharedBaseLookup.gen !== _baseLookupGen) buildSharedBaseLookup();
+}
 
 /**
  * Base class for Online tab browse views.
@@ -120,6 +172,16 @@ export class BrowseView {
     /** @returns {string | null} DOM id of the inline input to proxy. */
     getSearchInputId(mode) { return null; }
 
+    /** @returns {string} placeholder for the mobile search overlay input. */
+    getSearchPlaceholder(mode) {
+        return mode === 'creator' ? 'Creator name...' : 'Character name...';
+    }
+
+    /** @returns {string} tab label for the mobile search overlay mode. */
+    getSearchModeLabel(mode) {
+        return mode === 'creator' ? 'Creator' : 'Character';
+    }
+
     /** Default proxies through the inline input + submit button (or Enter). */
     performSearch(mode, query) {
         const inputId = this.getSearchInputId(mode);
@@ -169,34 +231,49 @@ export class BrowseView {
      * delegates provider-specific ID extraction to _extractProviderIds().
      */
     buildLocalLibraryLookup() {
-        const { byNameAndCreator, byProviderId, byNormalizedName } = this._lookup;
-        byNameAndCreator.clear();
+        // Reuse the provider-agnostic base (built once across all providers); only
+        // byProviderId is per-provider, so rebuild just that from the live list.
+        ensureSharedBaseLookup();
+        this._lookup.byNameAndCreator = _sharedBaseLookup.byNameAndCreator;
+        this._lookup.byNormalizedName = _sharedBaseLookup.byNormalizedName;
+
+        const byProviderId = this._lookup.byProviderId;
         byProviderId.clear();
-        byNormalizedName.clear();
-
         for (const char of CoreAPI.getAllCharacters()) {
-            if (!char) continue;
-
-            const name = (char.name || '').toLowerCase().trim();
-            const creator = String(char.creator || char.data?.creator || '').toLowerCase().trim();
-            if (name && creator) byNameAndCreator.add(`${name}|${creator}`);
-
-            this._extractProviderIds(char, byProviderId);
-
-            for (const variant of this._nameVariants(char.name || '')) {
-                let creatorSet = byNormalizedName.get(variant);
-                if (!creatorSet) {
-                    creatorSet = new Set();
-                    byNormalizedName.set(variant, creatorSet);
-                }
-                if (creator) creatorSet.add(creator);
-            }
+            if (char) this._extractProviderIds(char, byProviderId);
         }
 
         CoreAPI.debugLog(`[${this.provider.name}] Library lookup built:`,
-            'nameCreators:', byNameAndCreator.size,
+            'nameCreators:', this._lookup.byNameAndCreator.size,
             'providerIds:', byProviderId.size,
-            'normalizedNames:', byNormalizedName.size);
+            'normalizedNames:', this._lookup.byNormalizedName.size);
+    }
+
+    /**
+     * Incrementally add ONE freshly imported character to the lookup in O(1), instead of a
+     * full rebuild. Mutates the shared base (so all providers see it) plus own byProviderId.
+     * Falls back to a full rebuild only if this view is not on the current shared base.
+     * @param {Object} char - the slim character just pushed into allCharacters
+     */
+    addCharToLookup(char) {
+        if (!char) return;
+        if (this._lookup.byNameAndCreator !== _sharedBaseLookup.byNameAndCreator
+            || _sharedBaseLookup.gen !== _baseLookupGen) {
+            // This view is not on the current shared base; rebuild fresh from the live list
+            // (which already contains char).
+            invalidateSharedBaseLookup();
+            this.buildLocalLibraryLookup();
+            return;
+        }
+        const name = (char.name || '').toLowerCase().trim();
+        const creator = String(char.creator || char.data?.creator || '').toLowerCase().trim();
+        if (name && creator) this._lookup.byNameAndCreator.add(`${name}|${creator}`);
+        this._extractProviderIds(char, this._lookup.byProviderId);
+        for (const variant of computeNameVariants(char.name || '')) {
+            let creatorSet = this._lookup.byNormalizedName.get(variant);
+            if (!creatorSet) { creatorSet = new Set(); this._lookup.byNormalizedName.set(variant, creatorSet); }
+            if (creator) creatorSet.add(creator);
+        }
     }
 
     /**
@@ -267,16 +344,7 @@ export class BrowseView {
      * @returns {string[]} unique normalized variants with length >= 4
      */
     _nameVariants(rawName) {
-        const full = normalizeBrowseName(rawName);
-        const variants = new Set();
-        if (full.length >= 4) variants.add(full);
-
-        if (rawName.includes('||')) {
-            const primary = normalizeBrowseName(rawName.split('||')[0]);
-            if (primary.length >= 4) variants.add(primary);
-        }
-
-        return variants;
+        return computeNameVariants(rawName);
     }
 
     /**
@@ -454,7 +522,9 @@ export class BrowseView {
         if (!container) return;
         const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
         const preloadBottom = viewportHeight + 700;
-        const images = container.querySelectorAll('.browse-card-image img[data-src]');
+        // :not(.loaded) keeps getBoundingClientRect off already-loaded cards; on a deep grid
+        // this scan ran over every card ever appended and was the main forced-layout source.
+        const images = container.querySelectorAll('.browse-card-image:not(.loaded) img[data-src]');
         for (const img of images) {
             if (img.dataset.failed) continue;
             const rect = img.getBoundingClientRect();
@@ -473,7 +543,7 @@ export class BrowseView {
      */
     eagerPreloadImages(container) {
         if (!container) return;
-        const images = container.querySelectorAll('.browse-card-image img[data-src]');
+        const images = container.querySelectorAll('.browse-card-image:not(.loaded) img[data-src]');
         let loaded = 0;
         for (const img of images) {
             if (loaded >= this._preloadLimit) break;
@@ -1295,6 +1365,7 @@ export class BrowseView {
         }
 
         titleEl.addEventListener('click', async () => {
+            if (isMobileViewport()) return; // mobile reveals long titles via its own tap handler
             if (_anim) { cancel(); return; }
 
             const distance = titleEl.scrollWidth - titleEl.clientWidth;

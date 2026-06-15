@@ -4,7 +4,13 @@
 // elsewhere in this file. library-mobile.js (loaded after this script) reuses
 // this same array via `window._overlayRegistry = window._overlayRegistry || []`.
 window._overlayRegistry = window._overlayRegistry || [];
-window.registerOverlay = window.registerOverlay || function(cfg) { window._overlayRegistry.push(cfg); };
+// Replace-by-id: mobile setup re-registers its overlays on every breakpoint
+// crossing, and duplicate ids would make stale configs race the fresh ones.
+window.registerOverlay = window.registerOverlay || function(cfg) {
+    const i = window._overlayRegistry.findIndex(r => r.id === cfg.id);
+    if (i !== -1) window._overlayRegistry[i] = cfg;
+    else window._overlayRegistry.push(cfg);
+};
 
 const API_BASE = '/api'; 
 const isEmbedded = new URLSearchParams(window.location.search).get('embedded') === '1';
@@ -368,6 +374,21 @@ function initCustomSelect(select) {
     });
     widthObserver.observe(trigger);
 
+    // Viewport crossings invalidate the locked width (measured under the old
+    // breakpoint's fonts/layout, it persists as an inline style and overflows
+    // eg. the author-banner sort on mobile). Clears + re-measures on reveal.
+    function relockWidth() {
+        if (skipWidthLock) return;
+        trigger.style.minWidth = '';
+        const obs = new IntersectionObserver((entries) => {
+            if (entries[0].isIntersecting) {
+                lockTriggerWidth();
+                obs.disconnect();
+            }
+        });
+        obs.observe(trigger);
+    }
+
     // Intercept .value to keep visuals in sync
     Object.defineProperty(select, 'value', {
         get() { return nativeValueGetter.call(this); },
@@ -379,7 +400,7 @@ function initCustomSelect(select) {
     });
 
     // --- Public API stored on the select element ---
-    select._customSelect = { container, trigger, menu, open, close, toggle, refresh() { buildMenu(); syncVisuals(); }, update: syncVisuals };
+    select._customSelect = { container, trigger, menu, open, close, toggle, relockWidth, refresh() { buildMenu(); syncVisuals(); }, update: syncVisuals };
 
     return container;
 }
@@ -431,6 +452,7 @@ function prepareCharacterKeys(chars) {
         c._lowerListingName = (getListingNameFromExtensions(c) || '').toLowerCase();
         const tags = getTags(c);
         c._tagsLower = tags.length > 0 ? tags.join(' ').toLowerCase() : '';
+        c._lowerNotes = String(c.creator_notes || c.data?.creator_notes || '').toLowerCase();
         // Pre-compute numeric timestamps for date sorting
         c._dateAdded = getCharacterDateAdded(c);
         c._createDate = getCharacterCreateDate(c);
@@ -464,6 +486,15 @@ const DEFAULT_SETTINGS = {
     datacatPublicFeed: false,
     datacatReextractOnUpdate: false,
     datacatFlareSolverrUrl: '',
+    botbooruToken: null,
+    botbooruUsername: null,
+    botbooruPassword: null,
+    botbooruTrackDownloads: true,
+    botbooruMinTokens: 0,
+    botbooruNsfw: false,
+    botbooruShowNsfl: false,
+    botbooruNsfwAccountSynced: false,
+    botbooruUseTagWeights: false,
     ctCookie: null,
     civitaiApiKey: null,
 
@@ -496,7 +527,8 @@ const DEFAULT_SETTINGS = {
     mediaLocalizationEnabled: true,
     fixFilenames: true,
     mediaLocalizationPerChar: {},
-    notifyAdditionalContent: true,
+    importMediaAction: 'ask',
+    importDirectDownloads: false,
     fastFilenameSkip: false,
     fastSkipValidateHeaders: false,
     includeExternalGalleries: true,
@@ -543,7 +575,7 @@ const DEFAULT_SETTINGS = {
     providerOrder: null,
     providerDefaults: {},
     infiniteScroll: {},
-    disabledProviders: ['datacat'],
+    disabledProviders: ['datacat', 'botbooru'],
     datacatFollowedCreators: [],
     providerExcludeTags: {},
 
@@ -1092,6 +1124,13 @@ function migrateSettings() {
         delete gallerySettings.showChubTagline;
         saveGallerySettings();
     }
+    // not in DEFAULT_SETTINGS anymore, so presence here means a real saved value (existing install)
+    if ('notifyAdditionalContent' in gallerySettings || 'backgroundMediaLocalization' in gallerySettings) {
+        gallerySettings.importMediaAction = gallerySettings.notifyAdditionalContent === false ? 'none' : 'background';
+        delete gallerySettings.notifyAdditionalContent;
+        delete gallerySettings.backgroundMediaLocalization;
+        saveGallerySettings();
+    }
 }
 
 /**
@@ -1529,6 +1568,10 @@ function setupSettingsModal() {
     const togglePygmalionPasswordVisibility = document.getElementById('togglePygmalionPasswordVisibility');
     const pygmalionPluginBanner = document.getElementById('pygmalionPluginBanner');
     const pygmalionSettingsFields = document.getElementById('pygmalionSettingsFields');
+    const botbooruUsernameInput = document.getElementById('settingsBotbooruUsername');
+    const botbooruPasswordInput = document.getElementById('settingsBotbooruPassword');
+    const botbooruPluginBanner = document.getElementById('botbooruPluginBanner');
+    const botbooruSettingsFields = document.getElementById('botbooruSettingsFields');
     const ctCookieInput = document.getElementById('settingsCtCookie');
     const ctPluginBanner = document.getElementById('ctPluginBanner');
     const ctSettingsFields = document.getElementById('ctSettingsFields');
@@ -1543,6 +1586,7 @@ function setupSettingsModal() {
     const datacatSessionStatus = document.getElementById('datacatSessionStatus');
     const minScoreSlider = document.getElementById('settingsMinScore');
     const minScoreValue = document.getElementById('minScoreValue');
+    const importDirectDownloadsCheckbox = document.getElementById('settingsImportDirectDownloads');
     
     // Search defaults
     const searchNameCheckbox = document.getElementById('settingsSearchName');
@@ -1568,15 +1612,13 @@ function setupSettingsModal() {
     const includeLorebookCheckbox = document.getElementById('settingsIncludeLorebook');
     const fastFilenameSkipCheckbox = document.getElementById('settingsFastFilenameSkip');
     const fastSkipValidateHeadersCheckbox = document.getElementById('settingsFastSkipValidateHeaders');
+    const importMediaActionSelect = document.getElementById('settingsImportMediaAction');
     const fastSkipValidateRow = document.getElementById('fastSkipValidateRow');
     const includeExternalGalleriesCheckbox = document.getElementById('settingsIncludeExternalGalleries');
     const galleryThumbnailsCheckbox = document.getElementById('settingsGalleryThumbnails');
     const galleryThumbPrewarmCheckbox = document.getElementById('settingsGalleryThumbPrewarm');
     const galleryThumbPrewarmRow = document.getElementById('galleryThumbPrewarmRow');
-    
-    // Notifications
-    const notifyAdditionalContentCheckbox = document.getElementById('settingsNotifyAdditionalContent');
-    
+
     // Display
     const replaceUserPlaceholderCheckbox = document.getElementById('settingsReplaceUserPlaceholder');
     
@@ -2014,6 +2056,7 @@ function setupSettingsModal() {
         { id: 'chartavern', inputId: 'ctExcludeTagsInput', pillsId: 'ctExcludeTagsPills' },
         { id: 'wyvern', inputId: 'wyvernExcludeTagsInput', pillsId: 'wyvernExcludeTagsPills' },
         { id: 'datacat', inputId: 'datacatExcludeTagsInput', pillsId: 'datacatExcludeTagsPills' },
+        { id: 'botbooru', inputId: 'botbooruExcludeTagsInput', pillsId: 'botbooruExcludeTagsPills' },
     ];
 
     function renderExcludeTagPills(providerId, pillsId) {
@@ -2072,6 +2115,8 @@ function setupSettingsModal() {
         chubTokenInput.value = getSetting('chubToken') || '';
         rememberTokenCheckbox.checked = getSetting('chubRememberToken') || false;
         if (pygmalionEmailInput) pygmalionEmailInput.value = getSetting('pygmalionEmail') || '';
+        if (botbooruUsernameInput) botbooruUsernameInput.value = getSetting('botbooruUsername') || '';
+        if (botbooruPasswordInput) botbooruPasswordInput.value = getSetting('botbooruPassword') || '';
         if (pygmalionPasswordInput) pygmalionPasswordInput.value = getSetting('pygmalionPassword') || '';
         if (pygmalionRememberCredsCheckbox) pygmalionRememberCredsCheckbox.checked = getSetting('pygmalionRememberCredentials') || false;
         if (ctCookieInput) ctCookieInput.value = getSetting('ctCookie') || '';
@@ -2093,6 +2138,395 @@ function setupSettingsModal() {
             datacatReextractCheckbox.checked = getSetting('datacatReextractOnUpdate') === true;
             datacatReextractCheckbox.addEventListener('change', () => {
                 setSetting('datacatReextractOnUpdate', datacatReextractCheckbox.checked);
+            });
+        }
+        // The stored token itself stays invisible; this row just answers "am I logged in"
+        const botbooruLoginState = document.getElementById('botbooruLoginState');
+        const refreshBotbooruLoginState = () => {
+            if (!botbooruLoginState) return;
+            botbooruLoginState.innerHTML = getSetting('botbooruToken')
+                ? '<i class="fa-solid fa-circle-check" style="color: var(--cl-success-bright);"></i> Logged in, token stored'
+                : '<i class="fa-solid fa-circle-xmark" style="color: var(--text-faint);"></i> Not logged in';
+        };
+        refreshBotbooruLoginState();
+        const toggleBotbooruPasswordBtn = document.getElementById('toggleBotbooruPasswordVisibility');
+        if (toggleBotbooruPasswordBtn && botbooruPasswordInput) {
+            toggleBotbooruPasswordBtn.onclick = () => {
+                const isPassword = botbooruPasswordInput.type === 'password';
+                botbooruPasswordInput.type = isPassword ? 'text' : 'password';
+                toggleBotbooruPasswordBtn.innerHTML = `<i class="fa-solid fa-eye${isPassword ? '-slash' : ''}"></i>`;
+            };
+        }
+        const validateBotbooruBtn = document.getElementById('validateBotbooruBtn');
+        if (validateBotbooruBtn && botbooruUsernameInput && botbooruPasswordInput) {
+            validateBotbooruBtn.onclick = async (e) => {
+                e.preventDefault();
+                const username = botbooruUsernameInput.value.trim();
+                const password = botbooruPasswordInput.value;
+                if (!username || !password) {
+                    showToast('Enter Botbooru username and password', 'warning');
+                    return;
+                }
+                const originalHtml = validateBotbooruBtn.innerHTML;
+                validateBotbooruBtn.classList.remove('success', 'error');
+                validateBotbooruBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
+                validateBotbooruBtn.disabled = true;
+                try {
+                    const resp = await apiRequest('/plugins/cl-helper/botbooru-login', 'POST', { username, password });
+                    const data = await resp.json().catch(() => ({}));
+                    if (resp.ok && data.access_token) {
+                        setSettings({
+                            botbooruToken: data.access_token,
+                            botbooruUsername: username,
+                            botbooruPassword: password,
+                            botbooruNsfwAccountSynced: false,
+                            botbooruUseTagWeights: false,
+                        });
+                        refreshBotbooruLoginState();
+                        window.renderBotbooruFavTagPills?.();
+                        validateBotbooruBtn.classList.add('success');
+                        showToast('Logged in to Botbooru, token stored', 'success');
+                    } else {
+                        validateBotbooruBtn.classList.add('error');
+                        const detail = typeof data.detail === 'string' ? data.detail : data.error;
+                        showToast(resp.status === 404
+                            ? 'cl-helper plugin not found (install it and restart SillyTavern)'
+                            : (detail || `Botbooru login failed (${resp.status})`), 'error');
+                    }
+                } catch (err) {
+                    validateBotbooruBtn.classList.add('error');
+                    showToast(`Botbooru login failed: ${err.message}`, 'error');
+                } finally {
+                    validateBotbooruBtn.disabled = false;
+                    const ok = validateBotbooruBtn.classList.contains('success');
+                    validateBotbooruBtn.innerHTML = ok ? '<i class="fa-solid fa-check"></i>' : '<i class="fa-solid fa-times"></i>';
+                    setTimeout(() => {
+                        validateBotbooruBtn.classList.remove('success', 'error');
+                        validateBotbooruBtn.innerHTML = originalHtml;
+                    }, 2500);
+                }
+            };
+        }
+        // Favorite tags (curated boosters): server-side on the Botbooru account
+        const botbooruFavTagsPills = document.getElementById('botbooruFavTagsPills');
+        const botbooruFavTagsInput = document.getElementById('botbooruFavTagsInput');
+        window.renderBotbooruFavTagPills = async function () {
+            if (!botbooruFavTagsPills) return;
+            const favAddBtn = document.getElementById('botbooruFavTagsAddBtn');
+            const setFavInputEnabled = (on, placeholder) => {
+                if (botbooruFavTagsInput) {
+                    botbooruFavTagsInput.disabled = !on;
+                    botbooruFavTagsInput.placeholder = placeholder;
+                }
+                if (favAddBtn) favAddBtn.disabled = !on;
+            };
+            const prov = window.ProviderRegistry?.getProvider('botbooru');
+            if (!getSetting('botbooruToken') || !prov?.listFollowedTags) {
+                botbooruFavTagsPills.innerHTML = '';
+                setFavInputEnabled(false, 'Log in to use favorite tags');
+                return;
+            }
+            // Weighted mode sidelines the basic list entirely (cached flag here;
+            // the status refresh below re-applies once the account answers)
+            const weightedOn = getSetting('botbooruUseTagWeights') === true;
+            setFavInputEnabled(!weightedOn, weightedOn ? 'Weighted tag mode is on' : 'Type a tag');
+            // Weighted-mode status drives the whole group; refresh it alongside
+            window.renderBotbooruWeightedTagsUI?.();
+            botbooruFavTagsPills.innerHTML = '<span class="settings-hint"><i class="fa-solid fa-spinner fa-spin"></i></span>';
+            const entries = await prov.listFollowedTags();
+            if (!entries) {
+                botbooruFavTagsPills.innerHTML = '<span class="settings-hint">Could not load favorite tags</span>';
+                return;
+            }
+            // An empty list renders as an empty (collapsed) container, no placeholder
+            botbooruFavTagsPills.innerHTML = entries.map(en =>
+                `<span class="provider-exclude-tag-pill" data-entry-id="${en.id}">${escapeHtml(en.tag_name)}<button class="provider-exclude-tag-remove" title="Remove">&times;</button></span>`
+            ).join('');
+        };
+        if (botbooruFavTagsPills) {
+            botbooruFavTagsPills.addEventListener('click', async (e) => {
+                const removeBtn = e.target.closest('.provider-exclude-tag-remove');
+                if (!removeBtn) return;
+                const pill = removeBtn.closest('[data-entry-id]');
+                const prov = window.ProviderRegistry?.getProvider('botbooru');
+                if (!pill || !prov?.unfollowTag) return;
+                const ok = await prov.unfollowTag(pill.dataset.entryId);
+                if (!ok) { showToast('Failed to remove favorite tag', 'error'); return; }
+                prov.browseView?.invalidateFollowedTags?.();
+                window.renderBotbooruFavTagPills();
+            });
+        }
+        // Count-sorted tag autocomplete on the settings inputs; supports a
+        // "category:term" prefix override (eg "art:", "char:"). Attached BEFORE
+        // the Enter-add handlers so picking a suggestion intercepts the keydown.
+        function attachBotbooruTagSuggest(input) {
+            if (!input) return;
+            const group = input.closest('.settings-input-group') || input.parentElement;
+            group.classList.add('botbooru-suggest-anchor');
+            const list = document.createElement('div');
+            list.className = 'dropdown-menu botbooru-tag-suggest hidden';
+            group.appendChild(list);
+            let items = [];
+            let active = -1;
+            let seq = 0;
+            const close = () => { list.classList.add('hidden'); list.innerHTML = ''; items = []; active = -1; };
+            const render = () => {
+                if (!items.length) { close(); return; }
+                list.innerHTML = items.map((t, i) => `
+                    <button type="button" class="dropdown-item botbooru-tag-suggest-item${i === active ? ' active' : ''}" data-idx="${i}">
+                        <span class="bts-name">${escapeHtml(t.name)}</span>
+                        <span class="bts-meta">${escapeHtml(t.category || 'General')} · ${(t.count || 0).toLocaleString()}</span>
+                    </button>`).join('');
+                list.classList.remove('hidden');
+            };
+            const pick = (item) => {
+                if (!item) return;
+                input.value = item.name;
+                input._pickedTag = { name: item.name, category: item.category || 'General' };
+                close();
+                input.focus();
+            };
+            input.addEventListener('input', debounce(async () => {
+                input._pickedTag = null;
+                const q = input.value.trim();
+                if (q.length < 2) { close(); return; }
+                const mySeq = ++seq;
+                const prov = window.ProviderRegistry?.getProvider('botbooru');
+                const res = await prov?.searchTags?.(q, 8);
+                if (mySeq !== seq || !document.contains(input)) return;
+                items = res || [];
+                active = -1;
+                render();
+            }, 150));
+            input.addEventListener('keydown', (e) => {
+                if (list.classList.contains('hidden')) return;
+                if (e.key === 'ArrowDown') { e.preventDefault(); active = Math.min(active + 1, items.length - 1); render(); }
+                else if (e.key === 'ArrowUp') { e.preventDefault(); active = Math.max(active - 1, 0); render(); }
+                else if (e.key === 'Enter' && active >= 0) { e.preventDefault(); e.stopImmediatePropagation(); pick(items[active]); }
+                else if (e.key === 'Escape') { e.stopImmediatePropagation(); close(); }
+            });
+            // mousedown beats the input's blur, so the click lands before close
+            list.addEventListener('mousedown', (e) => {
+                const btn = e.target.closest('[data-idx]');
+                if (btn) { e.preventDefault(); pick(items[+btn.dataset.idx]); }
+            });
+            input.addEventListener('blur', () => setTimeout(close, 150));
+        }
+
+        // Picked suggestions carry an explicit category (the follow endpoint
+        // 422s without one and same-name tags exist across categories)
+        function pickedCategoryFor(input, value) {
+            const picked = input?._pickedTag;
+            return picked && picked.name.toLowerCase() === String(value).toLowerCase() ? picked.category : null;
+        }
+
+        attachBotbooruTagSuggest(botbooruFavTagsInput);
+
+        async function addBotbooruFavTag(value) {
+            const prov = window.ProviderRegistry?.getProvider('botbooru');
+            if (!getSetting('botbooruToken')) { showToast('Login to Botbooru first', 'warning'); return; }
+            // followTag resolves the required category from the tag DB; the first
+            // call downloads it (seconds on mobile), so show a busy state
+            const prevPlaceholder = botbooruFavTagsInput.placeholder;
+            botbooruFavTagsInput.disabled = true;
+            botbooruFavTagsInput.placeholder = 'Adding...';
+            try {
+                const entry = await prov?.followTag?.(value, pickedCategoryFor(botbooruFavTagsInput, value));
+                if (!entry) { showToast(`Tag "${value}" not found on Botbooru (or the request failed)`, 'error'); return; }
+                botbooruFavTagsInput.value = '';
+                prov.browseView?.invalidateFollowedTags?.();
+                window.renderBotbooruFavTagPills();
+            } finally {
+                botbooruFavTagsInput.disabled = false;
+                botbooruFavTagsInput.placeholder = prevPlaceholder;
+            }
+        }
+        if (botbooruFavTagsInput) {
+            botbooruFavTagsInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    const value = botbooruFavTagsInput.value.trim();
+                    if (value) addBotbooruFavTag(value);
+                }
+            });
+            // Tap target for mobile keyboards whose Enter doesnt reach the input
+            document.getElementById('botbooruFavTagsAddBtn')?.addEventListener('click', () => {
+                const value = botbooruFavTagsInput.value.trim();
+                if (value) addBotbooruFavTag(value);
+            });
+        }
+
+        // Weighted tag mode (account-side experimental switch + weights editor)
+        const botbooruWeightedModeCheckbox = document.getElementById('botbooruWeightedModeCheckbox');
+        const botbooruWeightsEditorRow = document.getElementById('botbooruWeightsEditorRow');
+        const botbooruTagWeightsList = document.getElementById('botbooruTagWeightsList');
+        let bbWeightEntriesById = {};
+
+        function renderBotbooruWeightRows(entries) {
+            if (!botbooruTagWeightsList) return;
+            bbWeightEntriesById = {};
+            for (const en of entries) bbWeightEntriesById[en.id] = en;
+            botbooruTagWeightsList.innerHTML = entries.length === 0
+                ? '<span class="settings-hint">No weighted tags yet</span>'
+                : entries.map(en => `
+                    <div class="botbooru-weight-row" data-entry-id="${en.id}">
+                        <span class="bw-name" title="${escapeHtml(en.category || '')}">${escapeHtml(en.tag_name)}</span>
+                        <input type="number" class="glass-input bw-weight" min="-1000" max="1000" step="10" value="${Number(en.weight) || 0}" title="Weight">
+                        <button class="glass-btn icon-only bw-flag${en.always_follow ? ' active' : ''}" data-flag="always_follow" title="Always follow"><i class="fa-solid fa-star"></i></button>
+                        <button class="glass-btn icon-only bw-flag${en.always_block ? ' active' : ''}" data-flag="always_block" title="Always block"><i class="fa-solid fa-ban"></i></button>
+                        <button class="glass-btn icon-only bw-remove" title="Remove"><i class="fa-solid fa-xmark"></i></button>
+                    </div>`).join('');
+        }
+
+        async function loadBotbooruWeightRows() {
+            if (!botbooruTagWeightsList) return;
+            const prov = window.ProviderRegistry?.getProvider('botbooru');
+            botbooruTagWeightsList.innerHTML = '<span class="settings-hint"><i class="fa-solid fa-spinner fa-spin"></i></span>';
+            const entries = await prov?.listTagWeights?.();
+            if (!entries) {
+                botbooruTagWeightsList.innerHTML = '<span class="settings-hint">Could not load tag weights</span>';
+                return;
+            }
+            renderBotbooruWeightRows(entries);
+        }
+
+        window.renderBotbooruWeightedTagsUI = async function () {
+            if (!botbooruWeightedModeCheckbox) return;
+            const inertWarn = document.getElementById('botbooruFavTagsInertWarn');
+            const prov = window.ProviderRegistry?.getProvider('botbooru');
+            if (!getSetting('botbooruToken')) {
+                botbooruWeightedModeCheckbox.checked = false;
+                botbooruWeightedModeCheckbox.disabled = true;
+                botbooruWeightsEditorRow?.classList.add('hidden');
+                inertWarn?.classList.add('hidden');
+                document.getElementById('botbooruBasicFavTagsRow')?.classList.remove('botbooru-fav-tags-inert');
+                return;
+            }
+            botbooruWeightedModeCheckbox.disabled = false;
+            // Account status first; the cached setting is only the fallback
+            const status = await prov?.refreshWeightedModeStatus?.();
+            const on = status != null ? status : getSetting('botbooruUseTagWeights') === true;
+            botbooruWeightedModeCheckbox.checked = on;
+            botbooruWeightsEditorRow?.classList.toggle('hidden', !on);
+            inertWarn?.classList.toggle('hidden', !on);
+            document.getElementById('botbooruBasicFavTagsRow')?.classList.toggle('botbooru-fav-tags-inert', on);
+            const favInput = document.getElementById('botbooruFavTagsInput');
+            const favAddBtn = document.getElementById('botbooruFavTagsAddBtn');
+            if (favInput) {
+                favInput.disabled = on;
+                favInput.placeholder = on ? 'Weighted tag mode is on' : 'Type a tag';
+            }
+            if (favAddBtn) favAddBtn.disabled = on;
+            prov?.browseView?.refreshCuratedSortVisibility?.();
+            if (on) loadBotbooruWeightRows();
+        };
+
+        if (botbooruWeightedModeCheckbox) {
+            botbooruWeightedModeCheckbox.addEventListener('change', async () => {
+                const prov = window.ProviderRegistry?.getProvider('botbooru');
+                const wanted = botbooruWeightedModeCheckbox.checked;
+                botbooruWeightedModeCheckbox.disabled = true;
+                const result = await prov?.setWeightedMode?.(wanted);
+                botbooruWeightedModeCheckbox.disabled = false;
+                if (result == null) {
+                    botbooruWeightedModeCheckbox.checked = !wanted;
+                    showToast('Could not update weighted tag mode', 'error');
+                    return;
+                }
+                window.renderBotbooruWeightedTagsUI();
+            });
+        }
+
+        if (botbooruTagWeightsList) {
+            botbooruTagWeightsList.addEventListener('change', async (e) => {
+                const input = e.target.closest('.bw-weight');
+                const row = e.target.closest('[data-entry-id]');
+                if (!input || !row) return;
+                const prov = window.ProviderRegistry?.getProvider('botbooru');
+                const entry = bbWeightEntriesById[row.dataset.entryId];
+                if (!entry) return;
+                const updated = await prov?.updateTagWeightEntry?.(entry, { weight: input.value });
+                if (!updated) {
+                    input.value = Number(entry.weight) || 0;
+                    showToast('Failed to update tag weight', 'error');
+                    return;
+                }
+                bbWeightEntriesById[updated.id] = updated;
+                input.value = Number(updated.weight) || 0;
+                prov?.browseView?.invalidateFollowedTags?.();
+            });
+            botbooruTagWeightsList.addEventListener('click', async (e) => {
+                const row = e.target.closest('[data-entry-id]');
+                if (!row) return;
+                const prov = window.ProviderRegistry?.getProvider('botbooru');
+                const entry = bbWeightEntriesById[row.dataset.entryId];
+                if (!entry) return;
+                const flagBtn = e.target.closest('.bw-flag');
+                if (flagBtn) {
+                    const flag = flagBtn.dataset.flag;
+                    const updated = await prov?.updateTagWeightEntry?.(entry, { [flag]: !entry[flag] });
+                    if (!updated) { showToast('Failed to update tag weight', 'error'); return; }
+                    bbWeightEntriesById[updated.id] = updated;
+                    flagBtn.classList.toggle('active', !!updated[flag]);
+                    prov?.browseView?.invalidateFollowedTags?.();
+                    return;
+                }
+                if (e.target.closest('.bw-remove')) {
+                    const ok = await prov?.removeTagWeight?.(entry.id);
+                    if (!ok) { showToast('Failed to remove tag weight', 'error'); return; }
+                    delete bbWeightEntriesById[entry.id];
+                    row.remove();
+                    if (Object.keys(bbWeightEntriesById).length === 0) renderBotbooruWeightRows([]);
+                    prov?.browseView?.invalidateFollowedTags?.();
+                }
+            });
+        }
+
+        attachBotbooruTagSuggest(document.getElementById('botbooruTagWeightsInput'));
+
+        async function addBotbooruTagWeight() {
+            const nameInput = document.getElementById('botbooruTagWeightsInput');
+            const valueInput = document.getElementById('botbooruTagWeightsValue');
+            const value = nameInput?.value.trim();
+            if (!value) return;
+            const prov = window.ProviderRegistry?.getProvider('botbooru');
+            const prevPlaceholder = nameInput.placeholder;
+            nameInput.disabled = true;
+            nameInput.placeholder = 'Adding...';
+            try {
+                const entry = await prov?.setTagWeight?.(value, { weight: valueInput?.value ?? 100, category: pickedCategoryFor(nameInput, value) });
+                if (!entry) { showToast(`Tag "${value}" not found on Botbooru (or the request failed)`, 'error'); return; }
+                nameInput.value = '';
+                prov?.browseView?.invalidateFollowedTags?.();
+                loadBotbooruWeightRows();
+            } finally {
+                nameInput.disabled = false;
+                nameInput.placeholder = prevPlaceholder;
+            }
+        }
+        document.getElementById('botbooruTagWeightsInput')?.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') { e.preventDefault(); addBotbooruTagWeight(); }
+        });
+        document.getElementById('botbooruTagWeightsAddBtn')?.addEventListener('click', addBotbooruTagWeight);
+
+        const botbooruTrackDownloadsCheckbox = document.getElementById('botbooruTrackDownloadsCheckbox');
+        if (botbooruTrackDownloadsCheckbox) {
+            botbooruTrackDownloadsCheckbox.checked = getSetting('botbooruTrackDownloads') !== false;
+            botbooruTrackDownloadsCheckbox.addEventListener('change', () => {
+                setSetting('botbooruTrackDownloads', botbooruTrackDownloadsCheckbox.checked);
+            });
+        }
+        const botbooruShowNsflCheckbox = document.getElementById('botbooruShowNsflCheckbox');
+        if (botbooruShowNsflCheckbox) {
+            botbooruShowNsflCheckbox.checked = getSetting('botbooruShowNsfl') === true;
+            botbooruShowNsflCheckbox.addEventListener('change', () => {
+                // If the account already went through the first NSFW-enable consent,
+                // push the switch to the account right away; otherwise the first
+                // NSFW enable sends both flags (approved UX)
+                const wasSynced = getSetting('botbooruNsfwAccountSynced') === true;
+                setSetting('botbooruShowNsfl', botbooruShowNsflCheckbox.checked);
+                setSetting('botbooruNsfwAccountSynced', false);
+                window.ProviderRegistry?.getProvider('botbooru')?.browseView?.refreshAfterContentFlagsChange?.(wasSynced);
             });
         }
 
@@ -2180,6 +2614,7 @@ function setupSettingsModal() {
         const galleryThumbsClHelperFields = document.getElementById('galleryThumbsClHelperFields');
         checkClHelperPlugin(
             pygmalionPluginBanner, pygmalionSettingsFields,
+            botbooruPluginBanner, botbooruSettingsFields,
             ctPluginBanner, ctSettingsFields,
             datacatPluginBanner, datacatSettingsFields,
             gridThumbsClHelperBanner, settingsGridThumbClHelperFields,
@@ -2200,6 +2635,9 @@ function setupSettingsModal() {
         const minScore = getSetting('duplicateMinScore') || 35;
         minScoreSlider.value = minScore;
         minScoreValue.textContent = parseInt(minScore) >= 120 ? 'Exact' : minScore;
+        if (importDirectDownloadsCheckbox) {
+            importDirectDownloadsCheckbox.checked = getSetting('importDirectDownloads') === true;
+        }
         
         // Search defaults
         searchNameCheckbox.checked = getSetting('searchInName') !== false;
@@ -2239,6 +2677,9 @@ function setupSettingsModal() {
             fastFilenameSkipCheckbox.checked = getSetting('fastFilenameSkip') || false;
             if (fastSkipValidateRow) fastSkipValidateRow.style.display = fastFilenameSkipCheckbox.checked ? '' : 'none';
         }
+        if (importMediaActionSelect) {
+            importMediaActionSelect.value = getSetting('importMediaAction') || 'ask';
+        }
         if (fastSkipValidateHeadersCheckbox) {
             fastSkipValidateHeadersCheckbox.checked = getSetting('fastSkipValidateHeaders') || false;
         }
@@ -2252,12 +2693,7 @@ function setupSettingsModal() {
         if (galleryThumbPrewarmCheckbox) {
             galleryThumbPrewarmCheckbox.checked = getSetting('galleryThumbPrewarm') !== false;
         }
-        
-        // Notifications
-        if (notifyAdditionalContentCheckbox) {
-            notifyAdditionalContentCheckbox.checked = getSetting('notifyAdditionalContent') !== false; // Default true
-        }
-        
+
         // Display
         if (replaceUserPlaceholderCheckbox) {
             replaceUserPlaceholderCheckbox.checked = getSetting('replaceUserPlaceholder') !== false; // Default true
@@ -2373,6 +2809,7 @@ function setupSettingsModal() {
         buildProviderOrderUI();
         buildInfiniteScrollUI();
         populateAllExcludeTagPills();
+        window.renderBotbooruFavTagPills?.();
         
         // Reset to first section
         switchSettingsSection('general');
@@ -2734,11 +3171,14 @@ function setupSettingsModal() {
             pygmalionEmail: pygmalionEmailInput ? (pygmalionEmailInput.value || null) : null,
             pygmalionPassword: pygmalionPasswordInput ? (pygmalionPasswordInput.value || null) : null,
             pygmalionRememberCredentials: pygmalionRememberCredsCheckbox ? pygmalionRememberCredsCheckbox.checked : false,
+            botbooruUsername: botbooruUsernameInput ? (botbooruUsernameInput.value || null) : null,
+            botbooruPassword: botbooruPasswordInput ? (botbooruPasswordInput.value || null) : null,
             ctCookie: ctCookieInput ? (ctCookieInput.value?.trim() || null) : null,
             wyvernEmail: wyvernEmailInput ? (wyvernEmailInput.value || null) : null,
             wyvernPassword: wyvernPasswordInput ? (wyvernPasswordInput.value || null) : null,
             wyvernRememberCredentials: wyvernRememberCredsCheckbox ? wyvernRememberCredsCheckbox.checked : false,
             duplicateMinScore: parseInt(minScoreSlider.value),
+            importDirectDownloads: importDirectDownloadsCheckbox ? importDirectDownloadsCheckbox.checked : false,
             searchInName: searchNameCheckbox.checked,
             searchInListingName: searchListingNameCheckbox ? searchListingNameCheckbox.checked : true,
             searchInTags: searchTagsCheckbox.checked,
@@ -2759,10 +3199,10 @@ function setupSettingsModal() {
             includeLorebook: includeLorebookCheckbox ? includeLorebookCheckbox.checked : false,
             fastFilenameSkip: fastFilenameSkipCheckbox ? fastFilenameSkipCheckbox.checked : false,
             fastSkipValidateHeaders: fastSkipValidateHeadersCheckbox ? fastSkipValidateHeadersCheckbox.checked : false,
+            importMediaAction: importMediaActionSelect ? (importMediaActionSelect.value || 'ask') : 'ask',
             includeExternalGalleries: includeExternalGalleriesCheckbox ? includeExternalGalleriesCheckbox.checked : true,
             galleryThumbnails: galleryThumbnailsCheckbox ? galleryThumbnailsCheckbox.checked : true,
             galleryThumbPrewarm: galleryThumbPrewarmCheckbox ? galleryThumbPrewarmCheckbox.checked : true,
-            notifyAdditionalContent: notifyAdditionalContentCheckbox ? notifyAdditionalContentCheckbox.checked : true,
             replaceUserPlaceholder: replaceUserPlaceholderCheckbox ? replaceUserPlaceholderCheckbox.checked : true,
             debugMode: debugModeCheckbox ? debugModeCheckbox.checked : false,
             themeCustomizer: themeCustomizerCheckbox ? themeCustomizerCheckbox.checked : false,
@@ -2849,6 +3289,7 @@ function setupSettingsModal() {
         if (typeof window.updateGallerySyncWarning === 'function') {
             window.updateGallerySyncWarning();
         }
+        const uniqueFoldersEnabled = getSetting('uniqueGalleryFolders') || false;
         const menuGSync = document.getElementById('menuGallerySyncBtn');
         if (menuGSync) menuGSync.style.display = uniqueFoldersEnabled ? '' : 'none';
         const mobileSyncItem = document.querySelector('[data-gallery-sync-item]');
@@ -2909,6 +3350,9 @@ function setupSettingsModal() {
         if (wyvernRememberCredsCheckbox) wyvernRememberCredsCheckbox.checked = false;
         minScoreSlider.value = DEFAULT_SETTINGS.duplicateMinScore;
         minScoreValue.textContent = String(DEFAULT_SETTINGS.duplicateMinScore);
+        if (importDirectDownloadsCheckbox) {
+            importDirectDownloadsCheckbox.checked = DEFAULT_SETTINGS.importDirectDownloads;
+        }
         searchNameCheckbox.checked = DEFAULT_SETTINGS.searchInName;
         if (searchListingNameCheckbox) searchListingNameCheckbox.checked = DEFAULT_SETTINGS.searchInListingName;
         searchTagsCheckbox.checked = DEFAULT_SETTINGS.searchInTags;
@@ -2938,8 +3382,8 @@ function setupSettingsModal() {
         if (replaceUserPlaceholderCheckbox) {
             replaceUserPlaceholderCheckbox.checked = DEFAULT_SETTINGS.replaceUserPlaceholder;
         }
-        if (notifyAdditionalContentCheckbox) {
-            notifyAdditionalContentCheckbox.checked = DEFAULT_SETTINGS.notifyAdditionalContent;
+        if (importMediaActionSelect) {
+            importMediaActionSelect.value = DEFAULT_SETTINGS.importMediaAction;
         }
         if (uniqueGalleryFoldersCheckbox) {
             uniqueGalleryFoldersCheckbox.checked = DEFAULT_SETTINGS.uniqueGalleryFolders;
@@ -6512,7 +6956,28 @@ document.addEventListener('DOMContentLoaded', async () => {
         // Self-correct XL if saved alongside a non-80% ui scale.
         syncXlModalSizeAvailability();
     }
-    
+    // Re-apply on a live breakpoint cross: UI scale + modal size are desktop-only chrome (mobile runs
+    // unzoomed), so a session that loaded on one side of 768px would keep the wrong chrome after crossing.
+    const uiScaleMq = window.matchMedia('(max-width: 768px)');
+    function applyViewportChrome() {
+        if (uiScaleMq.matches) {
+            document.body.style.zoom = '';
+            document.body.style.height = '';
+        } else {
+            applyUiScale(getSetting('uiScale'));
+            applyModalSize(getSetting('modalSize'));
+            syncXlModalSizeAvailability();
+        }
+        // Width-locked custom-select triggers were measured under the old
+        // breakpoint; re-measure them all for the new one
+        document.querySelectorAll('.glass-select, .glass-select-small').forEach(s => {
+            s._customSelect?.relockWidth?.();
+        });
+    }
+    if (uiScaleMq.addEventListener) uiScaleMq.addEventListener('change', applyViewportChrome);
+    else if (uiScaleMq.addListener) uiScaleMq.addListener(applyViewportChrome); // older Safari/iOS
+
+
     // Apply button style
     applyButtonStyle(getSetting('buttonStyle'));
 
@@ -7063,7 +7528,7 @@ let _needsCharacterRefresh = false;
  * Non-essential processing (tag filter rebuild, gallery audit) is deferred
  * to the next full refresh (triggered on characters view entry).
  * @param {string} avatarFileName - The avatar filename returned by the import API
- * @returns {Promise<boolean>} true if the character was added successfully
+ * @returns {Promise<Object|null>} the added slim character object, or null on failure
  */
 async function fetchAndAddCharacter(avatarFileName, options = {}) {
     // ST refresh runs in parallel to CL's slim add and doesn't depend on it succeeding.
@@ -7075,11 +7540,11 @@ async function fetchAndAddCharacter(avatarFileName, options = {}) {
         const response = await apiRequest(ENDPOINTS.CHARACTERS_GET, 'POST', { avatar_url: avatarFileName });
         if (!response.ok) {
             debugLog('[fetchAndAddCharacter] Single-character fetch failed:', response.status);
-            return false;
+            return null;
         }
 
         const char = await response.json();
-        if (!char || !char.avatar) return false;
+        if (!char || !char.avatar) return null;
 
         if (char.data?.extensions) {
             _extensionsCache.set(char.avatar, char.data.extensions);
@@ -7091,10 +7556,10 @@ async function fetchAndAddCharacter(avatarFileName, options = {}) {
         currentCharacters.push(slim);
 
         _needsCharacterRefresh = true;
-        return true;
+        return slim;
     } catch (e) {
         console.warn('[fetchAndAddCharacter] Failed:', e);
-        return false;
+        return null;
     }
 }
 
@@ -7146,6 +7611,7 @@ function slimCharacter(char) {
         _lowerCreator: char._lowerCreator,
         _lowerListingName: char._lowerListingName || '',
         _tagsLower: char._tagsLower,
+        _lowerNotes: char._lowerNotes || '',
         _dateAdded: char._dateAdded,
         _createDate: char._createDate,
         _dateLastChat: char._dateLastChat,
@@ -7373,9 +7839,16 @@ function processAndRender(data) {
     populateTagFilter(allTags);
     
     currentCharacters = [...allCharacters];
-    
-    // Build lookup for online browse "in library" matching
-    window.ProviderRegistry?.rebuildAllBrowseLookups?.();
+
+    // Build lookup for online browse "in library" matching.
+    // Under ST shallow, byProviderId needs extensions that are not recovered yet, so the
+    // recovery completion does the authoritative rebuild; here just invalidate the shared
+    // base (so a stale one is not reused) and skip the doomed full rebuild.
+    if (isSTShallow) {
+        window.ProviderRegistry?.invalidateBrowseLookupBase?.();
+    } else {
+        window.ProviderRegistry?.rebuildAllBrowseLookups?.();
+    }
     
     // Apply current sort/filter settings and render the grid.
     // If the characters view isn't active (e.g. we're on the online view after a download),
@@ -7407,7 +7880,11 @@ function processAndRender(data) {
     }
     
     document.getElementById('loading').style.display = 'none';
-    
+
+    // Load signal for modules that defer work until characters exist (fires
+    // even in the shallow case; extensions recovery has its own event)
+    document.dispatchEvent(new CustomEvent('cl-characters-loaded'));
+
     // ST lazy loading: skip gallery sync here - gallery_ids are stripped.
     // recoverShallowExtensions() re-runs sync+audit after patching extensions.
     if (isSTShallow) return;
@@ -7501,21 +7978,19 @@ function populateTagFilter(tagMap) {
     const searchInput = document.getElementById('tagSearchInput');
 
     if (content) {
-        // Build DOM elements once
-        content.innerHTML = '';
-        sortedTags.forEach(tag => {
+        const buildRow = (tag) => {
             const item = document.createElement('div');
             item.className = 'tag-filter-item';
-            item.dataset.tag = tag.toLowerCase(); // For filtering
-            
+            item.dataset.tag = tag.toLowerCase();
+
             const currentState = activeTagFilters.get(tag); // 'include', 'exclude', or undefined
-            
+
             // Create tri-state button
             const stateBtn = document.createElement('button');
             stateBtn.className = 'tag-state-btn';
             stateBtn.dataset.state = currentState || 'neutral';
             updateTagStateButton(stateBtn, currentState);
-            
+
             const label = document.createElement('span');
             label.className = 'tag-label';
             label.textContent = tag;
@@ -7523,7 +7998,7 @@ function populateTagFilter(tagMap) {
             const count = document.createElement('span');
             count.className = 'tag-count';
             count.textContent = tagMap.get(tag) || '';
-            
+
             // Tri-state cycling: neutral -> include -> exclude -> neutral
             const cycleState = (e) => {
                 e.stopPropagation();
@@ -7541,42 +8016,63 @@ function populateTagFilter(tagMap) {
                 }
                 stateBtn.dataset.state = newState;
                 updateTagStateButton(stateBtn, newState === 'neutral' ? undefined : newState);
-                
+
                 // Update tag button indicator and logic row visibility
                 updateTagFilterButtonIndicator();
                 updateTagLogicRowVisibility();
-                
+
                 // Trigger Search/Filter update
                 document.getElementById('searchInput').dispatchEvent(new Event('input'));
             };
 
             stateBtn.onclick = cycleState;
             label.onclick = cycleState;
-            
+
             item.appendChild(stateBtn);
             item.appendChild(label);
             item.appendChild(count);
-            content.appendChild(item);
-        });
+            return item;
+        };
 
-        // Filter function uses visibility instead of rebuilding
-        const filterList = (filterText = "") => {
+        // Windowed render: booru-tagged libraries reach 5 digits of unique tags, and
+        // styling that many rows makes the popup toggle take seconds. Only a chunk is
+        // in the DOM; scrolling near the bottom appends the next one.
+        const CHUNK = 300;
+        let matchedTags = sortedTags;
+        let renderedCount = 0;
+
+        const renderChunk = () => {
+            const end = Math.min(renderedCount + CHUNK, matchedTags.length);
+            const frag = document.createDocumentFragment();
+            for (let i = renderedCount; i < end; i++) frag.appendChild(buildRow(matchedTags[i]));
+            renderedCount = end;
+            content.appendChild(frag);
+        };
+
+        const renderList = (filterText = '') => {
             const lowerFilter = filterText.toLowerCase();
-            content.querySelectorAll('.tag-filter-item').forEach(item => {
-                const matches = !filterText || item.dataset.tag.includes(lowerFilter);
-                item.style.display = matches ? '' : 'none';
-            });
+            matchedTags = !lowerFilter ? sortedTags : sortedTags.filter(t => t.toLowerCase().includes(lowerFilter));
+            renderedCount = 0;
+            content.innerHTML = '';
+            renderChunk();
+        };
+
+        renderList(searchInput?.value || '');
+
+        content.onscroll = () => {
+            if (renderedCount >= matchedTags.length) return;
+            if (content.scrollTop + content.clientHeight >= content.scrollHeight - 200) renderChunk();
         };
 
         // Search Listener
         if (searchInput) {
             searchInput.oninput = (e) => {
-                filterList(e.target.value);
+                renderList(e.target.value);
             };
             // Prevent popup closing when clicking search
             searchInput.onclick = (e) => e.stopPropagation();
         }
-        
+
         // Update indicator on initial load
         updateTagFilterButtonIndicator();
         initTagLogicToggles();
@@ -8142,6 +8638,8 @@ function setupVirtualScrollListener(grid, scrollContainer) {
     const SCROLL_END_DELAY = 100;
 
     currentScrollHandler = () => {
+        // .gallery-content also scrolls the chats/online views; dont drive the hidden character grid from their scroll events
+        if (currentView !== 'characters') return;
         if (!isScrolling) {
             isScrolling = true;
             window.requestAnimationFrame(() => {
@@ -8156,6 +8654,8 @@ function setupVirtualScrollListener(grid, scrollContainer) {
         lastScrollEventTime = performance.now();
         if (!scrollTimeout) {
             scrollTimeout = setTimeout(function checkScrollEnd() {
+                // view switched mid-scroll: drop the pending force update instead of measuring a display:none grid
+                if (currentView !== 'characters') { scrollTimeout = null; return; }
                 if (performance.now() - lastScrollEventTime >= SCROLL_END_DELAY) {
                     scrollTimeout = null;
                     updateVisibleCards(grid, scrollContainer, true);
@@ -8233,7 +8733,8 @@ window.addEventListener('resize', () => {
         cachedGridGap = 0;
         cachedGridCols = 0;
         const grid = document.getElementById('characterGrid');
-        if (grid && currentCharsList.length > 0) {
+        // cache clearing above still runs in other views; the re-render waits for performSearch on view re-entry
+        if (grid && currentCharsList.length > 0 && currentView === 'characters') {
             updateGridHeight(grid);
             const scrollContainer = document.querySelector('.gallery-content');
             updateVisibleCards(grid, scrollContainer, true);
@@ -9597,10 +10098,11 @@ async function openModal(char, { navList } = {}) {
     const authorEl = document.getElementById('modalAuthor');
     if (author && authContainer) {
         authorEl.innerText = author;
-        authorEl.onclick = (e) => {
+        authorEl.onclick = async (e) => {
             e.preventDefault();
-            modal.classList.add('hidden');
-            filterLocalByCreator(author);
+            // Dirty-checked close; only filter when the modal actually closed
+            await maybeCloseModal();
+            if (modal.classList.contains('hidden')) filterLocalByCreator(author);
         };
         authContainer.style.display = 'inline';
     } else if (authContainer) {
@@ -9881,6 +10383,8 @@ function populateEditPane() {
     // Read tagline from the active namespace (not getDisplayTagline) so a linked card's stored value stays editable.
     const editTaglineNs = window.ProviderRegistry?.getActiveTaglineNamespace?.(char) ?? 'cl';
     document.getElementById('editTagline').value = char?.data?.extensions?.[editTaglineNs]?.tagline || '';
+    // Listing name loads from the resolver so the field shows the same value as the Details tab; the save writes it back to the active namespace.
+    document.getElementById('editListingName').value = getListingNameFromExtensions(char) || '';
     document.getElementById('editPersonality').value = personality;
     document.getElementById('editScenario').value = scenario;
     document.getElementById('editMesExample').value = mesExample;
@@ -9911,6 +10415,7 @@ function populateEditPane() {
         creator: document.getElementById('editCreator').value,
         character_version: document.getElementById('editVersion').value,
         tagline: document.getElementById('editTagline').value,
+        listingName: document.getElementById('editListingName').value,
         tagsArray: [..._editTagsArray],
         personality: document.getElementById('editPersonality').value,
         scenario: document.getElementById('editScenario').value,
@@ -11186,6 +11691,9 @@ async function deleteCharacter(char, deleteChats = false) {
             window.playlistsOnCharDeleted(avatar);
         }
 
+        // Evict any queued/active background media download
+        if (avatar) window.mediaDownloadQueueOnCharDeleted?.(avatar);
+
         // Clean up per-character name preference
         if (avatar) {
             const prefs = gallerySettings.namePreferences;
@@ -11257,6 +11765,7 @@ function collectEditValues() {
         creator: document.getElementById('editCreator').value,
         character_version: document.getElementById('editVersion').value,
         tagline: document.getElementById('editTagline').value,
+        listingName: document.getElementById('editListingName').value,
         tagsArray: [..._editTagsArray],
         personality: document.getElementById('editPersonality').value,
         scenario: document.getElementById('editScenario').value,
@@ -11279,6 +11788,7 @@ function generateChangesDiff(original, current) {
         creator: 'Creator',
         character_version: 'Version',
         tagline: 'Tagline',
+        listingName: 'Listing Name',
         tagsArray: 'Tags',
         personality: 'Personality',
         scenario: 'Scenario',
@@ -11551,8 +12061,8 @@ function showSaveConfirmation() {
         return;
     }
 
-    // Tagline as a leaf write so the namespace's sibling fields (id, full_path, linkedAt) survive the spread.
-    const taglineNs = window.ProviderRegistry?.getActiveTaglineNamespace?.(activeChar) ?? 'cl';
+    // Tagline and listing name as leaf writes so the namespace's sibling fields (id, full_path, linkedAt) survive the spread.
+    const activeNs = window.ProviderRegistry?.getActiveTaglineNamespace?.(activeChar) ?? 'cl';
     pendingUpdates = {
         name: currentValues.name,
         description: currentValues.description,
@@ -11568,7 +12078,8 @@ function showSaveConfirmation() {
         tags: currentValues.tagsArray,
         alternate_greetings: currentValues.alternate_greetings,
         character_book: currentValues.character_book,
-        [`extensions.${taglineNs}.tagline`]: currentValues.tagline ?? '',
+        [`extensions.${activeNs}.tagline`]: currentValues.tagline ?? '',
+        [`extensions.${activeNs}.pageName`]: currentValues.listingName ?? '',
     };
     
     // Build diff HTML
@@ -11688,6 +12199,12 @@ async function performSave() {
                 clearPendingAvatar();
             }
             
+            // Listing name feeds _lowerListingName (search + filter), CL-side state the card write doesnt touch, so recompute it before the grid re-renders below.
+            for (const c of [activeChar, charIndex !== -1 ? allCharacters[charIndex] : null].filter(Boolean)) {
+                const ln = getListingNameFromExtensions(c);
+                c._lowerListingName = ln ? ln.toLowerCase() : '';
+            }
+
             // Force re-render the grid to show updated data immediately
             performSearch();
             
@@ -11774,7 +12291,7 @@ function refreshModalDisplay() {
         };
         const showTagline = getSetting('showProviderTagline') !== false;
         if (showTagline && providerTagline) {
-            taglineEl.textContent = providerTagline;
+            taglineEl.innerHTML = sanitizeTaglineHtml(providerTagline, char.name);
             taglineRow.style.display = 'block';
         } else {
             taglineEl.textContent = '';
@@ -11960,7 +12477,13 @@ function setEditLock(locked) {
             btn.style.pointerEvents = 'none';
             btn.style.opacity = '0.5';
         });
-        
+
+        // Linked-lorebook change buttons follow the lock; Manage stays enabled (its navigation, not an edit).
+        const linkLbBtn = document.getElementById('linkLorebookBtn');
+        const unlinkLbBtn = document.getElementById('unlinkLorebookBtn');
+        if (linkLbBtn) linkLbBtn.disabled = true;
+        if (unlinkLbBtn) unlinkLbBtn.disabled = true;
+
         // Hide tag input and show non-editable tags
         if (tagInputWrapper) tagInputWrapper.classList.add('hidden');
         if (tagsContainer) tagsContainer.classList.remove('editable');
@@ -12006,7 +12529,12 @@ function setEditLock(locked) {
             btn.style.pointerEvents = '';
             btn.style.opacity = '';
         });
-        
+
+        const linkLbBtn = document.getElementById('linkLorebookBtn');
+        const unlinkLbBtn = document.getElementById('unlinkLorebookBtn');
+        if (linkLbBtn) linkLbBtn.disabled = false;
+        if (unlinkLbBtn) unlinkLbBtn.disabled = false;
+
         // Show tag input and make tags editable
         if (tagInputWrapper) tagInputWrapper.classList.remove('hidden');
         if (tagsContainer) tagsContainer.classList.add('editable');
@@ -12024,6 +12552,7 @@ function cancelEditing() {
     document.getElementById('editCreator').value = originalValues.creator || '';
     document.getElementById('editVersion').value = originalValues.character_version || '';
     document.getElementById('editTagline').value = originalValues.tagline || '';
+    document.getElementById('editListingName').value = originalValues.listingName || '';
     document.getElementById('editPersonality').value = originalValues.personality || '';
     document.getElementById('editScenario').value = originalValues.scenario || '';
     document.getElementById('editMesExample').value = originalValues.mes_example || '';
@@ -12616,6 +13145,34 @@ function initSectionExpandButtons() {
             unlinkLorebookFromCharacter();
         });
     }
+
+    // Link / Change: open the world picker (mirrors the chat-lore picker).
+    const linkLbBtn = document.getElementById('linkLorebookBtn');
+    if (linkLbBtn) {
+        linkLbBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            openLinkLorebookPicker();
+        });
+    }
+
+    // Link-lorebook picker modal: static modal, listeners attach once (this init runs once at boot).
+    const linkLbModal = document.getElementById('linkLorebookModal');
+    if (linkLbModal) {
+        document.getElementById('linkLorebookCloseBtn')?.addEventListener('click', closeLinkLorebookPicker);
+        linkLbModal.addEventListener('click', (e) => { if (e.target === linkLbModal) closeLinkLorebookPicker(); });
+        document.getElementById('linkLorebookSearch')?.addEventListener('input', renderLinkLorebookList);
+        document.getElementById('linkLorebookList')?.addEventListener('click', (e) => {
+            const row = e.target.closest('[data-world]');
+            if (row) linkLorebookToCharacter(row.dataset.world);
+        });
+        window.registerOverlay?.({
+            id: 'linkLorebookModal',
+            tier: 4,
+            close: () => closeLinkLorebookPicker(),
+            visible: (el) => el.classList.contains('visible'),
+        });
+    }
 }
 
 /**
@@ -12641,6 +13198,78 @@ async function unlinkLorebookFromCharacter() {
     populateLorebookEditor(activeChar.data?.character_book || activeChar.character_book);
     populateLinkedLorebookBox(activeChar);
     showToast(`Unlinked "${worldName}".`, 'success', 5000);
+}
+
+// The link picker below is a near-copy of the chat-lore picker in chats.js (openChatLorePicker
+// and friends). If a third world-picker ever lands its worth pulling them into one shared helper,
+// but for two it isnt worth the churn yet.
+let _linkLorebookWorlds = [];
+
+/**
+ * Open the picker to link or change the character's external lorebook (data.extensions.world).
+ * Immediate write, not part of the field-edit save flow (same model as unlink).
+ */
+async function openLinkLorebookPicker() {
+    if (!activeChar) return;
+    _linkLorebookWorlds = await window.listWorldInfoFiles();
+    renderLinkLorebookPicker();
+    document.getElementById('linkLorebookModal')?.classList.add('visible');
+    setTimeout(() => document.getElementById('linkLorebookSearch')?.focus(), 60);
+}
+
+function closeLinkLorebookPicker() {
+    document.getElementById('linkLorebookModal')?.classList.remove('visible');
+}
+
+function renderLinkLorebookPicker() {
+    const current = activeChar?.data?.extensions?.world || '';
+    const sub = document.getElementById('linkLorebookSubhead');
+    if (sub) {
+        sub.innerHTML = current
+            ? `Linked to <strong>${escapeHtml(current)}</strong>. Pick another to change it.`
+            : `Pick a lorebook to link to ${escapeHtml(getCharacterName(activeChar) || 'this character')}.`;
+    }
+    const searchEl = document.getElementById('linkLorebookSearch');
+    if (searchEl) searchEl.value = '';
+    renderLinkLorebookList();
+}
+
+function renderLinkLorebookList() {
+    const listEl = document.getElementById('linkLorebookList');
+    if (!listEl) return;
+    const current = activeChar?.data?.extensions?.world || '';
+    const q = (document.getElementById('linkLorebookSearch')?.value || '').trim().toLowerCase();
+    // Match + show by file_id (filename): thats what ST stores in extensions.world, not the internal JSON name.
+    const worlds = (_linkLorebookWorlds || []).filter(w => !q || w.file_id.toLowerCase().includes(q));
+    if (!worlds.length) {
+        listEl.innerHTML = `<div class="lorebook-link-empty">${(_linkLorebookWorlds || []).length ? 'No matches.' : 'No lorebooks found. Create one in the Lorebook Manager first.'}</div>`;
+        return;
+    }
+    listEl.innerHTML = worlds.map(w => {
+        const isCurrent = w.file_id === current;
+        return `
+            <button class="lorebook-link-row${isCurrent ? ' current' : ''}" data-world="${escapeHtml(w.file_id)}">
+                <i class="fa-solid fa-book"></i>
+                <span class="lorebook-link-row-name">${escapeHtml(w.file_id)}</span>
+                ${isCurrent ? '<i class="fa-solid fa-check lorebook-link-row-check"></i>' : ''}
+            </button>`;
+    }).join('');
+}
+
+/**
+ * Link an external world file to the active character (sets data.extensions.world).
+ * Refreshes the same two surfaces the unlink path does.
+ */
+async function linkLorebookToCharacter(fileId) {
+    if (!activeChar || !fileId) return;
+    const current = activeChar.data?.extensions?.world || '';
+    if (current === fileId) { closeLinkLorebookPicker(); return; }
+    const success = await applyCardFieldUpdates(activeChar.avatar, { 'extensions.world': fileId });
+    if (!success) { showToast('Failed to link lorebook', 'error'); return; }
+    closeLinkLorebookPicker();
+    populateLorebookEditor(activeChar.data?.character_book || activeChar.character_book);
+    populateLinkedLorebookBox(activeChar);
+    showToast(`Linked "${fileId}".`, 'success', 5000);
 }
 
 /**
@@ -13693,6 +14322,7 @@ const ADV_FILTER_PROVIDERS = [
     { value: 'pygmalion', label: 'Pygmalion' },
     { value: 'wyvern', label: 'Wyvern' },
     { value: 'datacat', label: 'DataCat' },
+    { value: 'botbooru', label: 'Botbooru' },
 ];
 
 // ========== FILTER PRESETS ==========
@@ -14254,7 +14884,7 @@ function performSearch() {
     //   "creator:john linked:yes dark elf"
     // ========================================================================
     
-    const prefixPattern = /(?:^|\s)((?:creator|version|gallery|uid|favorite|fav|linked|chub|janny|charactertavern|ct|pygmalion|wyvern|datacat|dc|playlist):(?:[^\s]+))/gi;
+    const prefixPattern = /(?:^|\s)((?:creator|version|gallery|uid|favorite|fav|linked|chub|janny|charactertavern|ct|pygmalion|wyvern|datacat|dc|botbooru|bb|playlist):(?:[^\s]+))/gi;
     
     let creatorFilter = null;
     let versionFilter = null;
@@ -14291,7 +14921,7 @@ function performSearch() {
             favoriteFilter = value;
             filterFavoriteYes = value === 'yes' || value === 'true';
             filterFavoriteNo = value === 'no' || value === 'false';
-        } else if (['linked', 'chub', 'janny', 'charactertavern', 'ct', 'pygmalion', 'wyvern', 'datacat', 'dc'].includes(prefix)) {
+        } else if (['linked', 'chub', 'janny', 'charactertavern', 'ct', 'pygmalion', 'wyvern', 'datacat', 'dc', 'botbooru', 'bb'].includes(prefix)) {
             linkFilterPrefix = prefix;
             linkFilterWantLinked = value === 'yes' || value === 'true' || value === 'linked';
         } else if (prefix === 'playlist') {
@@ -14306,6 +14936,16 @@ function performSearch() {
     const playlistAvatarSet = activePlaylistFilter
         ? (window.playlistsGetAvatarSet?.(activePlaylistFilter) || null)
         : null;
+
+    // Tag filter selections are per-pass constants too; split them once here
+    const includedTags = [];
+    const excludedTags = [];
+    activeTagFilters.forEach((state, tag) => {
+        if (state === 'include') includedTags.push(tag);
+        else if (state === 'exclude') excludedTags.push(tag);
+    });
+    const includedTagSet = new Set(includedTags);
+    const excludedTagSet = new Set(excludedTags);
 
     const filtered = allCharacters.filter(c => {
         
@@ -14359,6 +14999,7 @@ function performSearch() {
                     : linkFilterPrefix === 'pygmalion' ? 'pygmalion'
                     : linkFilterPrefix === 'wyvern' ? 'wyvern'
                     : (linkFilterPrefix === 'datacat' || linkFilterPrefix === 'dc') ? 'datacat'
+                    : (linkFilterPrefix === 'botbooru' || linkFilterPrefix === 'bb') ? 'botbooru'
                     : null;
                 const prov = provId ? window.ProviderRegistry?.getProvider(provId) : null;
                 isLinked = prov ? !!prov.getLinkInfo(c) : false;
@@ -14403,10 +15044,7 @@ function performSearch() {
             if (!matchesSearch && useListingName && c._lowerListingName && c._lowerListingName.includes(query)) matchesSearch = true;
             if (!matchesSearch && useTags && c._tagsLower.includes(query)) matchesSearch = true;
             if (!matchesSearch && useAuthor && c._lowerCreator.includes(query)) matchesSearch = true;
-            if (!matchesSearch && useNotes) {
-                 const notes = c.creator_notes || (c.data ? c.data.creator_notes : "") || "";
-                 if (notes.toLowerCase().includes(query)) matchesSearch = true;
-            }
+            if (!matchesSearch && useNotes && (c._lowerNotes || '').includes(query)) matchesSearch = true;
         }
 
         // 2. Tag Filter Logic - Tri-state: include, exclude, neutral
@@ -14414,25 +15052,18 @@ function performSearch() {
         //    Exclude mode: 'any' = reject if has any, 'all' = reject only if has all
         if (activeTagFilters.size > 0) {
              const charTags = getTags(c);
-             
-             const includedTags = [];
-             const excludedTags = [];
-             activeTagFilters.forEach((state, tag) => {
-                 if (state === 'include') includedTags.push(tag);
-                 else if (state === 'exclude') excludedTags.push(tag);
-             });
-             
+
              if (excludedTags.length > 0) {
                  const hasExcluded = tagExcludeMode === 'all'
                      ? excludedTags.every(t => charTags.includes(t))
-                     : charTags.some(t => excludedTags.includes(t));
+                     : charTags.some(t => excludedTagSet.has(t));
                  if (hasExcluded) return false;
              }
-             
+
              if (includedTags.length > 0) {
                  const hasIncluded = tagIncludeMode === 'all'
                      ? includedTags.every(t => charTags.includes(t))
-                     : charTags.some(t => includedTags.includes(t));
+                     : charTags.some(t => includedTagSet.has(t));
                  if (!hasIncluded) return false;
              }
         }
@@ -14517,7 +15148,7 @@ function filterLocalByCreator(creatorName) {
 // Debounced search for better performance (150ms delay)
 const debouncedSearch = debounce(performSearch, 150);
 
-const TOPBAR_DROPDOWN_IDS = ['tagFilterPopup', 'playlistFilterPopup', 'searchSettingsMenu', 'moreOptionsMenu', 'gallerySyncDropdown', 'advFilterPanel'];
+const TOPBAR_DROPDOWN_IDS = ['tagFilterPopup', 'playlistFilterPopup', 'searchSettingsMenu', 'moreOptionsMenu', 'notificationsDropdown', 'advFilterPanel'];
 
 function closeAllTopbarDropdowns(exceptId) {
     for (const id of TOPBAR_DROPDOWN_IDS) {
@@ -14528,8 +15159,101 @@ function closeAllTopbarDropdowns(exceptId) {
     window.closeActiveBrowseDropdowns?.();
 }
 
+// ========================================
+// NOTIFICATIONS CENTER
+// Section-based topbar dropdown. Modules contribute sections (gallery sync,
+// media downloads); the shell owns the button state, visibility, and open
+// dispatch. Warning beats activity beats neutral for the button icon.
+// ========================================
+
+const _notifSections = new Map(); // id -> { id, getStatus, onOpen }
+
+function registerNotificationSection(cfg) {
+    if (!cfg?.id) return;
+    _notifSections.set(cfg.id, cfg);
+    refreshNotificationsUI();
+}
+
+function getNotificationSectionEl(id) {
+    return document.querySelector(`#notificationsDropdown [data-notif-section="${id}"]`);
+}
+
+function refreshNotificationsUI() {
+    const btn = document.getElementById('notificationsBtn');
+    if (!btn) return;
+    const container = btn.closest('.notifications-container');
+    const statuses = [];
+    for (const s of _notifSections.values()) {
+        try { statuses.push(s.getStatus?.() || {}); } catch { statuses.push({}); }
+    }
+    const anyVisible = statuses.some(s => s.visible);
+    container?.classList.toggle('hidden', !anyVisible);
+    if (!anyVisible) {
+        document.getElementById('notificationsDropdown')?.classList.add('hidden');
+        return;
+    }
+    const warning = statuses.find(s => s.visible && s.level === 'warning');
+    const activity = statuses.find(s => s.visible && s.level === 'activity');
+    const icon = btn.querySelector('i');
+    const badge = btn.querySelector('.warning-badge');
+    btn.classList.toggle('has-issues', !!warning);
+    btn.classList.toggle('notif-activity', !warning && !!activity);
+    if (warning) {
+        if (icon) icon.className = warning.icon || 'fa-solid fa-triangle-exclamation';
+        if (badge) {
+            const text = warning.badge != null ? String(warning.badge) : '';
+            badge.classList.toggle('hidden', !text);
+            badge.textContent = text;
+        }
+        btn.title = warning.title || 'Attention needed';
+    } else if (activity) {
+        if (icon) icon.className = activity.icon || 'fa-solid fa-download';
+        if (badge) badge.classList.add('hidden');
+        btn.title = activity.title || 'Working...';
+    } else {
+        if (icon) icon.className = 'fa-solid fa-bell';
+        if (badge) badge.classList.add('hidden');
+        btn.title = 'Notifications';
+    }
+}
+
+// Renders every visible section; used by the button click and the mobile sheet
+function openNotificationsDropdown() {
+    const dropdown = document.getElementById('notificationsDropdown');
+    if (!dropdown) return;
+    dropdown.classList.remove('hidden');
+    for (const s of _notifSections.values()) {
+        const el = getNotificationSectionEl(s.id);
+        if (!el) continue;
+        const visible = (() => { try { return !!s.getStatus?.()?.visible; } catch { return false; } })();
+        el.classList.toggle('hidden', !visible);
+        if (!visible) continue;
+        try { s.onOpen?.(el); } catch (e) { console.error('[Notifications] onOpen failed:', s.id, e); }
+    }
+}
+
+function setupNotificationsCenter() {
+    const btn = document.getElementById('notificationsBtn');
+    const dropdown = document.getElementById('notificationsDropdown');
+    if (!btn || !dropdown) return;
+    btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const isOpen = !dropdown.classList.contains('hidden');
+        closeAllTopbarDropdowns('notificationsDropdown');
+        if (isOpen) dropdown.classList.add('hidden');
+        else openNotificationsDropdown();
+    });
+    document.addEventListener('click', (e) => {
+        if (!btn.contains(e.target) && !dropdown.contains(e.target)) {
+            dropdown.classList.add('hidden');
+        }
+    });
+}
+
 // Event Listeners
 function setupEventListeners() {
+    setupNotificationsCenter();
+
     // View Toggle Buttons (Characters / Chats / Online)
     document.querySelectorAll('.view-toggle-btn').forEach(btn => {
         btn.addEventListener('click', (e) => {
@@ -15197,15 +15921,27 @@ function populateLorebookEditor(characterBook) {
     const container = document.getElementById('lorebookEntriesEdit');
     const countEl = document.getElementById('lorebookEditCount');
 
-    // The Linked Lorebook row is its own section, shown only when the card links an external
-    // world. Keeps the linked-world controls out of the Embedded Lorebook header (they are
-    // different things: embedded = in-card entries, linked = a separate world file).
+    // The Linked Lorebook row is its own section (linked = a separate world file, embedded =
+    // in-card entries). Always shown now: linked state shows the name + Change/Manage/Unlink, the
+    // unlinked state shows a muted placeholder + the Link button.
     const linkedWorld = activeChar?.data?.extensions?.world || '';
     const linkedRow = document.getElementById('linkedLorebookEditRow');
     if (linkedRow) {
-        linkedRow.classList.toggle('hidden', !linkedWorld);
         const nameEl = document.getElementById('linkedLorebookEditName');
-        if (nameEl) { nameEl.textContent = linkedWorld; nameEl.title = linkedWorld; }
+        const linkLabel = document.getElementById('linkLorebookBtnLabel');
+        const manageBtn = document.getElementById('openLinkedLorebookBtn');
+        const unlinkBtn = document.getElementById('unlinkLorebookBtn');
+        if (linkedWorld) {
+            if (nameEl) { nameEl.textContent = linkedWorld; nameEl.title = linkedWorld; nameEl.classList.remove('is-unlinked'); }
+            if (linkLabel) linkLabel.textContent = 'Change';
+            manageBtn?.classList.remove('hidden');
+            unlinkBtn?.classList.remove('hidden');
+        } else {
+            if (nameEl) { nameEl.textContent = 'No lorebook linked'; nameEl.title = ''; nameEl.classList.add('is-unlinked'); }
+            if (linkLabel) linkLabel.textContent = 'Link';
+            manageBtn?.classList.add('hidden');
+            unlinkBtn?.classList.add('hidden');
+        }
     }
 
     if (!container) return;
@@ -15476,7 +16212,7 @@ function getCharacterBookFromEditor() {
 // Utility Functions
 // ==============================================
 
-const PROVIDER_EXT_KEYS = ['chub', 'jannyai', 'pygmalion', 'wyvern', 'chartavern', 'datacat'];
+const PROVIDER_EXT_KEYS = ['chub', 'jannyai', 'pygmalion', 'wyvern', 'chartavern', 'datacat', 'botbooru'];
 
 function getListingNameFromExtensions(char) {
     const ext = char?.data?.extensions;
@@ -16268,7 +17004,7 @@ function switchImportSource(source) {
     // Show/hide panels
     if (importSourceUrl) importSourceUrl.classList.toggle('hidden', source !== 'url');
     if (importSourceLocal) importSourceLocal.classList.toggle('hidden', source !== 'local');
-    
+
     // Update info hint
     if (importInfoHint) {
         if (source === 'url') {
@@ -16432,6 +17168,46 @@ importClearFiles?.addEventListener('click', () => {
  * @param {File} file - The PNG file
  * @returns {Promise<Object>} Import result: { success, fileName, fullPath, avatarUrl, error }
  */
+// Direct-URL import: ST's server-side endpoint first (its host handlers plus
+// config.yaml whitelistImportDomains; no CORS involved), then the hardened
+// media fetch as fallback for hosts ST refuses. Returns a File for the
+// local-import pipeline.
+async function fetchDirectImportFile(url, signal) {
+    const nameFromUrl = () => {
+        let name = '';
+        try { name = decodeURIComponent(new URL(url).pathname.split('/').pop() || ''); } catch {}
+        if (!name) name = 'character';
+        return /\.png$/i.test(name) ? name : `${name}.png`;
+    };
+
+    try {
+        const resp = await apiRequest('/content/importURL', 'POST', { url }, { signal });
+        if (resp.ok) {
+            const kind = resp.headers.get('x-custom-content-type');
+            if (kind && kind !== 'character') throw new Error(`URL resolves to a ${kind}, not a character card`);
+            const blob = await resp.blob();
+            const cd = resp.headers.get('content-disposition') || '';
+            let name = cd.match(/filename="?([^";]+)"?/i)?.[1] || nameFromUrl();
+            if (!/\.png$/i.test(name)) name += '.png';
+            return new File([blob], name, { type: 'image/png' });
+        }
+        debugLog('[Import] ST importURL refused', resp.status, '- falling back to direct fetch:', url);
+    } catch (e) {
+        if (signal?.aborted) throw e;
+        if (/not a character card/.test(e?.message || '')) throw e;
+        debugLog('[Import] ST importURL failed, falling back to direct fetch:', e?.message || e);
+    }
+
+    const dl = await downloadMediaToMemory(url, 30000, signal);
+    if (!dl.success) {
+        throw new Error(`download failed: ${dl.error || 'unknown error'} (arbitrary hosts may need whitelistImportDomains in SillyTavern's config.yaml)`);
+    }
+    if (!/^image\/png$/i.test(dl.detectedType || dl.contentType || '')) {
+        throw new Error(`URL is ${dl.detectedType || dl.contentType || 'not a PNG'}; only PNG character cards are supported`);
+    }
+    return new File([dl.arrayBuffer], nameFromUrl(), { type: 'image/png' });
+}
+
 async function importLocalCharacter(file) {
     try {
         const arrayBuffer = await file.arrayBuffer();
@@ -16908,7 +17684,9 @@ startImportBtn?.addEventListener('click', async () => {
         
         // Parse URLs through provider registry
         const lines = text.split('\n').map(l => l.trim()).filter(l => l);
-        
+        const directDownloadEnabled = getSetting('importDirectDownloads') === true;
+        let skippedDirectCandidates = 0;
+
         for (const line of lines) {
             const provider = window.ProviderRegistry?.getProviderForUrl(line);
             if (provider) {
@@ -16917,12 +17695,24 @@ startImportBtn?.addEventListener('click', async () => {
                     const slug = String(identifier).split('/').pop() || identifier;
                     importItems.push({ displayName: slug, identifier, provider, url: line });
                 }
+            } else if (directDownloadEnabled && /^https?:\/\//i.test(line)) {
+                // Unrecognized URL: treat as a direct card download (issue #25)
+                let displayName = line;
+                try { displayName = decodeURIComponent(new URL(line).pathname.split('/').pop() || line); } catch {}
+                importItems.push({ displayName: displayName.replace(/\.png$/i, ''), directUrl: line });
+            } else if (/^https?:\/\//i.test(line)) {
+                skippedDirectCandidates++;
             }
         }
-        
+
         if (importItems.length === 0) {
-            showToast('No valid character URLs found. Make sure a provider supports the URL format.', 'error');
+            showToast(skippedDirectCandidates > 0
+                ? `No recognized provider for ${skippedDirectCandidates === 1 ? 'that link' : 'those links'}. To import plain file links (catbox, Discord, etc.), turn on Direct Downloads in Settings > General > Imports.`
+                : 'No valid character URLs found. Make sure a provider supports the URL format.', 'error');
             return;
+        }
+        if (skippedDirectCandidates > 0) {
+            showToast(`${skippedDirectCandidates} unrecognized link${skippedDirectCandidates === 1 ? '' : 's'} skipped. Turn on Direct Downloads in Settings > General > Imports to import plain file links.`, 'info');
         }
     } else {
         // Local PNG mode
@@ -17013,13 +17803,31 @@ startImportBtn?.addEventListener('click', async () => {
         const displayName = item.displayName;
         
         const logEntry = addImportLogEntry(`Checking ${displayName}`, 'pending');
-        
+
+        // Direct-URL items download first so the file-based checks below apply
+        if (item.directUrl && !item.file) {
+            try {
+                updateLogEntry(logEntry, `Downloading ${displayName}`, 'pending');
+                item.file = await fetchDirectImportFile(item.directUrl, importAbortState.controller.signal);
+                updateLogEntry(logEntry, `Checking ${displayName}`, 'pending');
+            } catch (e) {
+                if (shouldStop()) { wasCancelled = true; break; }
+                errorCount++;
+                updateStats();
+                updateLogEntry(logEntry, `${displayName}: ${e.message}`, 'error');
+                const progress = ((i + 1) / importItems.length) * 100;
+                importProgressFill.style.width = `${progress}%`;
+                importProgressCount.textContent = `${i + 1}/${importItems.length}`;
+                continue;
+            }
+        }
+
         // === PRE-IMPORT DUPLICATE CHECK ===
         if (skipDuplicates) {
             try {
                 if (shouldStop()) { wasCancelled = true; break; }
-                
-                if (importSourceMode === 'url') {
+
+                if (item.provider) {
                     // URL mode: check if any existing character is linked to same provider+identifier
                     const importId = String(item.identifier).toLowerCase();
                     const batchKey = `${item.provider.id}:${importId}`;
@@ -17116,8 +17924,8 @@ startImportBtn?.addEventListener('click', async () => {
         
         updateLogEntry(logEntry, `Importing ${displayName}`, 'pending');
         
-        // Execute the import based on mode
-        const result = importSourceMode === 'url'
+        // Execute the import based on item shape (provider URL vs local/direct file)
+        const result = item.provider
             ? await item.provider.importCharacter(item.identifier)
             : await importLocalCharacter(item.file);
         
@@ -17127,7 +17935,7 @@ startImportBtn?.addEventListener('click', async () => {
             if (result.success) {
                 successCount++;
                 if (result.fileName) importedFileNames.push(result.fileName);
-                if (importSourceMode === 'url') batchImportedIds.add(`${item.provider.id}:${String(item.identifier).toLowerCase()}`);
+                if (item.provider) batchImportedIds.add(`${item.provider.id}:${String(item.identifier).toLowerCase()}`);
                 updateStats();
                 updateLogEntry(logEntry, `${displayName} imported successfully`, 'success');
             }
@@ -17141,7 +17949,7 @@ startImportBtn?.addEventListener('click', async () => {
         if (result.success) {
             successCount++;
             if (result.fileName) importedFileNames.push(result.fileName);
-            if (importSourceMode === 'url') batchImportedIds.add(`${item.provider.id}:${String(item.identifier).toLowerCase()}`);
+            if (item.provider) batchImportedIds.add(`${item.provider.id}:${String(item.identifier).toLowerCase()}`);
             updateStats();
             updateLogEntry(logEntry, `${displayName} imported successfully`, 'success');
             
@@ -17159,7 +17967,7 @@ startImportBtn?.addEventListener('click', async () => {
             // Auto-download media via unified pipeline
             let galleryProvider = null;
             let galleryLinkInfo = null;
-            if (importSourceMode === 'url') {
+            if (item.provider) {
                 galleryProvider = item.provider;
                 galleryLinkInfo = { id: result.providerCharId, fullPath: result.fullPath };
             } else if (result.linkedProvider) {
@@ -17177,7 +17985,22 @@ startImportBtn?.addEventListener('click', async () => {
                 importPhases.push('providerGallery');
             }
 
-            if (importPhases.length > 0) {
+            if (importPhases.length > 0 && getSetting('importMediaAction') === 'background') {
+                // Background mode: hand the already-computed payload to the queue
+                // and keep importing; the import itself already succeeded
+                window.enqueueMediaDownloadJob?.({
+                    avatar: result.fileName,
+                    name: result.characterName,
+                    folderName,
+                    phases: importPhases,
+                    embeddedUrls: result.embeddedMediaUrls || [],
+                    lorebookUrls: result.lorebookMediaUrls || [],
+                    galleryPageUrls: result.galleryPageUrls || [],
+                    providerOverride: galleryProvider ? { provider: galleryProvider, linkInfo: galleryLinkInfo } : undefined,
+                    pseudoChar: { avatar: result.fileName, name: result.characterName, data: result.cardData || { extensions: {} }, _slim: false },
+                });
+                addImportLogEntry('  ↳ Media downloads queued in background', 'info');
+            } else if (importPhases.length > 0) {
                 if (shouldStop()) { wasCancelled = true; break; }
 
                 const pseudoChar = { avatar: result.fileName, name: result.characterName, data: result.cardData || { extensions: {} }, _slim: false };
@@ -17320,6 +18143,10 @@ startImportBtn?.addEventListener('click', async () => {
 
             if (!incrementalDone) {
                 await fetchCharacters(true);
+            } else {
+                // Incremental adds dont touch the browse In-Library lookup; invalidate the
+                // shared base so the next Online-tab open reflects the new characters.
+                window.ProviderRegistry?.invalidateBrowseLookupBase?.();
             }
 
             // Also refresh the main SillyTavern window's character list (fire-and-forget)
@@ -17402,7 +18229,68 @@ async function handleImportSummaryCloseRequest() {
  * @param {Array<{name: string, fullPath: string, url: string, chubId: number}>} options.galleryCharacters - Characters with ChubAI galleries
  * @param {Array<{name: string, avatar: string, mediaUrls: string[]}>} options.mediaCharacters - Characters with embedded media
  */
+// Merge the two pending lists into per-character download jobs. Shared by the
+// summary's Download All button and the background-queue gate so the phase
+// rules cant drift between the two paths.
+function buildImportSummaryJobs(mediaCharacters, galleryCharacters) {
+    const includeGallery = getSetting('includeProviderGallery') !== false;
+    const includeExt = getSetting('includeExternalGalleries') !== false;
+    const charMap = new Map();
+    for (const c of mediaCharacters) {
+        charMap.set(c.avatar || c.name, { ...c });
+    }
+    for (const c of galleryCharacters) {
+        const key = c.avatar || c.name;
+        if (charMap.has(key)) {
+            const existing = charMap.get(key);
+            existing.provider = c.provider;
+            existing.linkInfo = c.linkInfo;
+        } else {
+            charMap.set(key, { ...c });
+        }
+    }
+    const jobs = [];
+    for (const charInfo of charMap.values()) {
+        const phases = [];
+        if (charInfo.mediaUrls?.length > 0) phases.push('embedded');
+        if (includeGallery && charInfo.provider?.supportsGallery && charInfo.linkInfo) phases.push('providerGallery');
+        if (includeExt && charInfo.galleryPageUrls?.length > 0) phases.push('extGallery');
+        if (phases.length === 0) continue;
+        jobs.push({
+            charInfo,
+            folderName: getImportSummaryFolderName(charInfo),
+            pseudoChar: { avatar: charInfo.avatar, name: charInfo.name, data: charInfo.cardData || { extensions: {} }, _slim: false },
+            phases,
+        });
+    }
+    return jobs;
+}
+
 function showImportSummaryModal({ galleryCharacters = [], mediaCharacters = [] }) {
+    // Background mode: queue everything silently instead of offering the
+    // blocking download step; the modal never opens.
+    if (getSetting('importMediaAction') === 'background') {
+        const jobs = buildImportSummaryJobs(mediaCharacters, galleryCharacters);
+        let queued = 0;
+        for (const job of jobs) {
+            const ok = window.enqueueMediaDownloadJob?.({
+                avatar: job.charInfo.avatar,
+                name: job.charInfo.name,
+                folderName: job.folderName,
+                phases: job.phases,
+                embeddedUrls: job.charInfo.mediaUrls || [],
+                lorebookUrls: [],
+                galleryPageUrls: job.charInfo.galleryPageUrls || [],
+                providerOverride: job.charInfo.provider ? { provider: job.charInfo.provider, linkInfo: job.charInfo.linkInfo } : undefined,
+                pseudoChar: job.pseudoChar,
+            });
+            if (ok) queued++;
+        }
+        if (queued > 0) {
+            showToast(`Media downloads queued in background (${queued} character${queued === 1 ? '' : 's'})`, 'info');
+        }
+        return;
+    }
     const modal = document.getElementById('importSummaryModal');
     const galleryRow = document.getElementById('importSummaryGalleryRow');
     const galleryDesc = document.getElementById('importSummaryGalleryDesc');
@@ -17560,34 +18448,10 @@ on('importSummaryDownloadAllBtn', 'click', async () => {
         }
     };
 
-    // Build unified per-character list from both pending arrays
-    const charMap = new Map();
-    for (const c of pendingMediaCharacters) {
-        const key = c.avatar || c.name;
-        charMap.set(key, { ...c });
-    }
-    for (const c of pendingGalleryCharacters) {
-        const key = c.avatar || c.name;
-        if (charMap.has(key)) {
-            const existing = charMap.get(key);
-            existing.provider = c.provider;
-            existing.linkInfo = c.linkInfo;
-        } else {
-            charMap.set(key, { ...c });
-        }
-    }
-
-    for (const charInfo of charMap.values()) {
+    // Unified per-character job list (shared with the background-queue gate)
+    for (const job of buildImportSummaryJobs(pendingMediaCharacters, pendingGalleryCharacters)) {
         if (importSummaryDownloadState.abort) { wasAborted = true; break; }
-
-        const folderName = getImportSummaryFolderName(charInfo);
-        const pseudoChar = { avatar: charInfo.avatar, name: charInfo.name, data: charInfo.cardData || { extensions: {} }, _slim: false };
-
-        const phases = [];
-        if (charInfo.mediaUrls?.length > 0) phases.push('embedded');
-        if (hasGallery && charInfo.provider?.supportsGallery && charInfo.linkInfo) phases.push('providerGallery');
-        if (getSetting('includeExternalGalleries') !== false && charInfo.galleryPageUrls?.length > 0) phases.push('extGallery');
-        if (phases.length === 0) continue;
+        const { charInfo, folderName, pseudoChar, phases } = job;
 
         const pResult = await downloadCharacterMedia(pseudoChar, folderName, {
             embeddedUrls: charInfo.mediaUrls || [],
@@ -22330,6 +23194,11 @@ async function calculateHash(arrayBuffer) {
 // ========================================
 
 // Duplicate scan cache
+// Closing the duplicates modal mid-scan bumps the generation; the scan
+// re-checks it at every await boundary and bails without caching.
+let _dupScanGen = 0;
+let _dupScanActive = false;
+
 let duplicateScanCache = {
     timestamp: 0,
     charCount: 0,
@@ -23036,16 +23905,21 @@ async function findCharacterDuplicates(forceRefresh = false) {
     
     const statusEl = document.getElementById('charDuplicatesScanStatus');
     const totalChars = allCharacters.length;
-    
+
+    const scanGen = ++_dupScanGen;
+    _dupScanActive = true;
+    const scanCancelled = () => scanGen !== _dupScanGen;
+
     debugLog('[Duplicates] Scanning', totalChars, 'characters...');
-    
+
     // Phase 1: Build normalized data (show progress)
     if (statusEl) {
         statusEl.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Preparing character data...';
     }
-    
+
     // Yield to UI
     await new Promise(r => setTimeout(r, 10));
+    if (scanCancelled()) return null;
     
     // Fetch full data for content comparison (allCharacters stores slim objects)
     let fullDataMap = null;
@@ -23074,6 +23948,7 @@ async function findCharacterDuplicates(forceRefresh = false) {
         }
     }
     
+    if (scanCancelled()) return null;
     const normalizedData = buildNormalizedCharacterData(fullDataMap);
     const hadFullData = fullDataMap !== null;
     fullDataMap = null; // Release full data - normalizedData has extracted what it needs
@@ -23138,6 +24013,7 @@ async function findCharacterDuplicates(forceRefresh = false) {
                 statusEl.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Comparing characters (${percent}%)...`;
             }
             await new Promise(r => setTimeout(r, 0)); // Yield to UI
+            if (scanCancelled()) return null;
         }
     }
     
@@ -23149,13 +24025,15 @@ async function findCharacterDuplicates(forceRefresh = false) {
             statusEl.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Refining scores with full data...';
         }
         await new Promise(r => setTimeout(r, 0));
-        
+        if (scanCancelled()) return null;
+
         const charsToHydrate = new Set();
         for (const group of groups) {
             charsToHydrate.add(group.reference);
             for (const dup of group.duplicates) charsToHydrate.add(dup.char);
         }
         await Promise.all([...charsToHydrate].map(c => hydrateCharacter(c)));
+        if (scanCancelled()) return null;
         
         // Re-score each pair with hydrated content
         const minScore = getSetting('duplicateMinScore') || 35;
@@ -23197,6 +24075,8 @@ async function findCharacterDuplicates(forceRefresh = false) {
         return bMaxScore - aMaxScore;
     });
     
+    if (scanCancelled()) return null;
+
     // Update cache
     duplicateScanCache = {
         timestamp: now,
@@ -23204,9 +24084,10 @@ async function findCharacterDuplicates(forceRefresh = false) {
         groups: groups,
         normalizedData: normalizedData
     };
-    
+
     debugLog('[Duplicates] Found', groups.length, 'potential duplicate groups');
-    
+
+    _dupScanActive = false;
     return applyDuplicateMinScoreFilter(groups);
 }
 
@@ -23276,6 +24157,17 @@ function buildProviderLinkIndex() {
  * @param {{ pathIndex: Map, providerIndex: Map }|null} linkIndex - Pre-built index from buildProviderLinkIndex()
  * @returns {Array}
  */
+// Loose path equality for the provider-path duplicate checks. Substring
+// matching exists for URL-vs-path flexibility, but empty paths never match
+// and purely numeric ids (eg. botbooru post ids) only match exactly:
+// "148402".includes("48402") is not the same card.
+function providerPathsMatch(a, b) {
+    if (!a || !b) return false;
+    if (a === b) return true;
+    if (/^\d+$/.test(a) || /^\d+$/.test(b)) return false;
+    return a.includes(b) || b.includes(a);
+}
+
 function checkCharacterForDuplicates(newChar, linkIndex) {
     const matches = [];
     
@@ -23311,7 +24203,7 @@ function checkCharacterForDuplicates(newChar, linkIndex) {
         } else {
             // Substring fallback: scan index entries (still no getLinkInfo calls)
             for (const [indexedPath, entry] of linkIndex.pathIndex) {
-                if (indexedPath.includes(newFullPath) || newFullPath.includes(indexedPath)) {
+                if (providerPathsMatch(indexedPath, newFullPath)) {
                     matches.push({
                         char: entry.char,
                         confidence: 'high',
@@ -23340,7 +24232,7 @@ function checkCharacterForDuplicates(newChar, linkIndex) {
                 const linkInfo = provider.getLinkInfo(existing);
                 if (!linkInfo) continue;
                 const existingPath = (linkInfo.fullPath || '').toLowerCase();
-                if (existingPath === newFullPath || existingPath.includes(newFullPath) || newFullPath.includes(existingPath)) {
+                if (providerPathsMatch(existingPath, newFullPath)) {
                     matches.push({
                         char: existing,
                         confidence: 'high',
@@ -23361,7 +24253,7 @@ function checkCharacterForDuplicates(newChar, linkIndex) {
                 if (existingChubUrl) {
                     const match = existingChubUrl.match(/characters\/([^\/]+\/[^\/\?]+)/);
                     const existingPath = match ? match[1].toLowerCase() : existingChubUrl.toLowerCase();
-                    if (existingPath === newFullPath || existingPath.includes(newFullPath)) {
+                    if (providerPathsMatch(existingPath, newFullPath)) {
                         matches.push({
                             char: existing,
                             confidence: 'high',
@@ -23905,6 +24797,8 @@ function showDupPlaylistSelectionMenu(anchorBtn, groups) {
  * Render duplicate groups in the modal
  */
 async function renderDuplicateGroups(groups) {
+    const modalEl = document.getElementById('charDuplicatesModal');
+    if (!modalEl?.classList.contains('visible')) return; // closed while results were being prepared
     const resultsEl = document.getElementById('charDuplicatesResults');
     const statusEl = document.getElementById('charDuplicatesScanStatus');
     
@@ -24679,7 +25573,7 @@ async function deleteDuplicateChar(avatar, groupIdx) {
             
             // Re-run duplicate scan with new data
             const groups = await findCharacterDuplicates(true);
-            await renderDuplicateGroups(groups);
+            if (groups) await renderDuplicateGroups(groups);
         } else {
             showToast(`Failed to delete "${name}"`, 'error');
             confirmBtn.disabled = false;
@@ -24706,7 +25600,31 @@ async function openCharDuplicatesModal(useCache = true) {
     // Run scan (async)
     await new Promise(r => setTimeout(r, 50)); // Let modal render
     const groups = await findCharacterDuplicates(!useCache);
+    if (!groups) return; // scan cancelled by closing the modal
     await renderDuplicateGroups(groups);
+}
+
+/**
+ * Close the duplicates modal; a scan still in flight gets a cancel confirm first.
+ */
+async function closeCharDuplicatesModal() {
+    if (_dupScanActive) {
+        const cancelScan = await showConfirm({
+            title: 'Cancel duplicate scan?',
+            message: 'The scan is still running. Close the window and cancel it?',
+            icon: 'fa-solid fa-clone',
+            confirmLabel: 'Cancel Scan',
+            cancelLabel: 'Keep Scanning',
+        });
+        if (!cancelScan) return;
+        // The scan may have finished while the prompt was open
+        if (_dupScanActive) {
+            _dupScanGen++;
+            _dupScanActive = false;
+            showToast('Duplicate scan cancelled', 'info');
+        }
+    }
+    hideModal('charDuplicatesModal');
 }
 
 // Character Duplicates Modal Event Listeners
@@ -24743,9 +25661,9 @@ document.getElementById('charDuplicatesResults')?.addEventListener('click', (e) 
     }
 });
 
-on('closeCharDuplicatesModal', 'click', () => hideModal('charDuplicatesModal'));
+on('closeCharDuplicatesModal', 'click', () => closeCharDuplicatesModal());
 
-on('closeCharDuplicatesModalBtn', 'click', () => hideModal('charDuplicatesModal'));
+on('closeCharDuplicatesModalBtn', 'click', () => closeCharDuplicatesModal());
 
 // ========================================
 // PRE-IMPORT DUPLICATE CHECK
@@ -26194,7 +27112,7 @@ window.registerOverlay?.({ id: 'localizeModal',             tier: 7, close: _hid
 window.registerOverlay?.({ id: 'bulkLocalizeModal',         tier: 7, close: _hideClModalVisible('bulkLocalizeModal') });
 window.registerOverlay?.({ id: 'bulkLocalizeSummaryModal',  tier: 7, close: _hideClModalVisible('bulkLocalizeSummaryModal') });
 window.registerOverlay?.({ id: 'bulkAutoLinkModal',         tier: 7, close: _hideClModalVisible('bulkAutoLinkModal') });
-window.registerOverlay?.({ id: 'charDuplicatesModal',       tier: 7, close: _hideClModalVisible('charDuplicatesModal') });
+window.registerOverlay?.({ id: 'charDuplicatesModal',       tier: 7, close: () => closeCharDuplicatesModal() });
 window.registerOverlay?.({ id: 'preImportDuplicateModal',   tier: 7, close: _hideClModalVisible('preImportDuplicateModal') });
 window.registerOverlay?.({ id: 'providerLinkModal',         tier: 7, close: _hideClModalVisible('providerLinkModal') });
 
@@ -26452,6 +27370,11 @@ window.getExistingFileIndex = getExistingFileIndex;
 window.extractSanitizedUrlName = extractSanitizedUrlName;
 window.buildDedupState = buildDedupState;
 window.downloadCharacterMedia = downloadCharacterMedia;
+window.markMediaLocalizationComplete = markMediaLocalizationComplete;
+window.getCompletedMediaLocalizations = getCompletedMediaLocalizations;
+window.registerNotificationSection = registerNotificationSection;
+window.refreshNotificationsUI = refreshNotificationsUI;
+window.openNotificationsDropdown = openNotificationsDropdown;
 window.arrayBufferToBase64 = arrayBufferToBase64;
 window.ENDPOINTS = ENDPOINTS;
 
@@ -26920,6 +27843,13 @@ async function writeCardFields(char, fieldUpdates) {
             }
         }
         if (updatedData.extensions) _extensionsCache.set(char.avatar, updatedData.extensions);
+
+        // The Online In-Library lookup base is keyed on name+creator; a surgical write that
+        // changes either must invalidate it (other edit paths refresh via fetchCharacters).
+        const touchedNameOrCreator = Object.keys(fieldUpdates).some(
+            f => f === 'name' || f === 'creator' || f.endsWith('.name') || f.endsWith('.creator')
+        );
+        if (touchedNameOrCreator) window.ProviderRegistry?.invalidateBrowseLookupBase?.();
 
         return { ok: true, response };
     } catch (error) {

@@ -213,10 +213,20 @@ async function openChat(char, chatFile) {
             const characterIndex = mainCharacters.findIndex(c => c.avatar === char.avatar);
 
             if (characterIndex !== -1 && context) {
-                await context.selectCharacterById(characterIndex);
-
-                if (context.openCharacterChat) {
+                // open the wanted chat in one CHAT_CHANGED (old select-then-openCharacterChat fired two)
+                const alreadyActive = String(context.characterId) === String(characterIndex);
+                if (alreadyActive && typeof context.openCharacterChat === 'function') {
                     await context.openCharacterChat(chatName);
+                } else {
+                    // unshallow first so selectCharacterById's internal getChat->unshallow wont re-fetch
+                    // and reset the chat pointer we set below (ST lazy loading)
+                    let targetChar = mainCharacters[characterIndex];
+                    if (targetChar?.shallow && typeof context.getOneCharacter === 'function') {
+                        await context.getOneCharacter(targetChar.avatar);
+                        targetChar = mainCharacters[characterIndex];
+                    }
+                    if (targetChar) targetChar.chat = chatName;
+                    await context.selectCharacterById(characterIndex);
                 }
 
                 return;

@@ -2,7 +2,7 @@
 
 import { BrowseView } from '../browse-view.js';
 import CoreAPI from '../../core-api.js';
-import { IMG_PLACEHOLDER, formatNumber, BROWSE_PURIFY_CONFIG, skeletonLines, deferRender } from '../provider-utils.js';
+import { IMG_PLACEHOLDER, formatNumber, BROWSE_PURIFY_CONFIG, skeletonLines, deferRender, deferCall, isMobileViewport } from '../provider-utils.js';
 import {
     CHUB_API_BASE,
     CHUB_GATEWAY_BASE,
@@ -534,7 +534,7 @@ class ChubBrowseView extends BrowseView {
                             <option value="download_count">📥 Most Downloaded</option>
                             <option value="star_count">⭐ Top Rated</option>
                         </select>
-                        <button id="chubFollowAuthorBtn" class="glass-btn" title="Follow this author on ChubAI">
+                        <button id="chubFollowAuthorBtn" class="glass-btn browse-author-follow-btn" title="Follow this author on ChubAI">
                             <i class="fa-solid fa-heart"></i> <span>Follow</span>
                         </button>
                         <button id="chubClearAuthorBtn" class="glass-btn icon-only" title="Clear author filter">
@@ -588,22 +588,22 @@ class ChubBrowseView extends BrowseView {
     _renderLoginModal() {
         return `
     <div id="chubLoginModal" class="modal-overlay hidden">
-        <div class="modal-glass chub-login-modal">
+        <div class="modal-glass browse-login-modal">
             <div class="modal-header">
                 <h2><i class="fa-solid fa-key"></i> ChubAI Authentication</h2>
                 <button class="close-btn" id="chubLoginClose">&times;</button>
             </div>
-            <div class="chub-login-body">
-                <p class="chub-login-info">
+            <div class="browse-login-body">
+                <p class="browse-login-info">
                     <i class="fa-solid fa-check-circle" style="color: var(--cl-success-bright);"></i>
                     <strong>Browsing and downloading public characters works without a token!</strong>
                 </p>
-                <p class="chub-login-info">
+                <p class="browse-login-info">
                     <i class="fa-solid fa-key" style="color: var(--accent);"></i>
                     <strong>Optional:</strong> Add your URQL_TOKEN to access your favorites and restricted content.
                 </p>
 
-                <div class="chub-login-form">
+                <div class="browse-login-form">
                     <div class="form-group">
                         <label for="chubApiKeyInput">URQL_TOKEN</label>
                         <input type="password" id="chubApiKeyInput" class="glass-input" placeholder="Paste your URQL_TOKEN here..." autocomplete="new-password">
@@ -611,7 +611,7 @@ class ChubBrowseView extends BrowseView {
                     <label class="checkbox-label" style="margin-top: 10px;">
                         <input type="checkbox" id="chubRememberKey" checked> Remember token
                     </label>
-                    <div class="chub-login-status" style="display:none;"></div>
+                    <div class="browse-login-status" style="display:none;"></div>
                 </div>
 
                 <details style="margin-top: 15px; background: rgba(255,255,255,0.03); padding: 10px; border-radius: var(--radius-lg);">
@@ -633,7 +633,7 @@ class ChubBrowseView extends BrowseView {
                     </div>
                 </details>
 
-                <div class="chub-login-actions">
+                <div class="browse-login-actions">
                     <button id="chubSaveKeyBtn" class="action-btn primary">
                         <i class="fa-solid fa-save"></i> Save Token
                     </button>
@@ -659,11 +659,11 @@ class ChubBrowseView extends BrowseView {
                     <div>
                         <h2 id="chubCharName">Character Name</h2>
                         <p class="browse-char-meta">
-                            by <a id="chubCharCreator" href="#" title="Click to see all characters by this author">Creator</a>
+                            by <a id="chubCharCreator" class="browse-meta-identity" href="#" title="Click to see all characters by this author">Creator</a>
                             <a id="chubCreatorExternal" href="#" target="_blank" class="creator-external-link" title="Open author's ChubAI profile"><i class="fa-solid fa-external-link"></i></a> •
                             <span id="chubCharRating" title="Rating"><i class="fa-solid fa-star"></i> 0</span> •
                             <span id="chubCharDownloads" title="Downloads"><i class="fa-solid fa-download"></i> 0</span> •
-                            <span id="chubCharFavoriteBtn" class="chub-favorite-btn-inline" title="Add to favorites on ChubAI"><i class="fa-regular fa-heart"></i> <span id="chubCharFavoriteCount">0</span></span>
+                            <span id="chubCharFavoriteBtn" class="chub-favorite-btn-inline browse-fav-toggle" title="Add to favorites on ChubAI"><i class="fa-regular fa-heart"></i> <span id="chubCharFavoriteCount">0</span></span>
                         </p>
                     </div>
                 </div>
@@ -1173,19 +1173,18 @@ function initChubView() {
     // persist in document.body across provider switches (DOM recreation)
     if (!chubModalEventsAttached) {
         chubModalEventsAttached = true;
-        const isDesktop = !window.matchMedia('(max-width: 768px)').matches;
 
-        if (isDesktop) {
-            const chubOverlay = document.getElementById('chubCharModal');
-            BrowseView.wireTitleScroll(document.getElementById('chubCharName'), chubOverlay, chubOverlay?.querySelector('.browse-char-modal'));
-        }
+        const chubOverlay = document.getElementById('chubCharModal');
+        BrowseView.wireTitleScroll(document.getElementById('chubCharName'), chubOverlay, chubOverlay?.querySelector('.browse-char-modal'));
 
         on('chubCharFavoriteBtn', 'click', toggleChubCharFavorite);
 
-        // Avatar click → full-size image viewer (desktop only; mobile has its own handler)
+        // Avatar click → full-size image viewer (desktop only; mobile has its own handler,
+        // so bail BEFORE stopPropagation or the mobile delegated tap never sees the event)
         const chubAvatar = document.getElementById('chubCharAvatar');
-        if (chubAvatar && isDesktop) {
+        if (chubAvatar) {
             chubAvatar.addEventListener('click', (e) => {
+                if (isMobileViewport()) return;
                 e.stopPropagation();
                 if (!chubAvatar.src) return;
                 const fullSrc = chubAvatar.src.replace(/\/avatar\.webp$/, '/chara_card_v2.png');
@@ -1286,7 +1285,8 @@ function saveChubToken() {
     
     if (!tokenInput) return;
     
-    const token = tokenInput.value.trim();
+    // DevTools header copies arrive as "Bearer <token>"; strip the scheme
+    const token = tokenInput.value.trim().replace(/^bearer\s+/i, '');
     if (!token) {
         alert('Please enter your URQL token');
         return;
@@ -3426,7 +3426,8 @@ async function openChubCharPreview(char) {
         const notes = (raw || '').trim();
         if (notes) {
             if (creatorNotesSection) creatorNotesSection.style.display = 'block';
-            renderCreatorNotesSecure(notes, char.name, creatorNotesEl);
+            if (creatorNotesEl && !creatorNotesEl.querySelector('iframe')) creatorNotesEl.innerHTML = skeletonLines(3);
+            deferCall(creatorNotesEl, () => renderCreatorNotesSecure(notes, char.name, creatorNotesEl));
         } else {
             if (creatorNotesSection) creatorNotesSection.style.display = 'none';
             cleanupCreatorNotesContainer(creatorNotesEl);
@@ -4117,7 +4118,7 @@ async function downloadChubCharacter() {
         const mediaUrls = result.embeddedMediaUrls || [];
         const galleryPageUrls = result.galleryPageUrls || [];
         const showSummary = (hasGallery || mediaUrls.length > 0 || galleryPageUrls.length > 0)
-            && getSetting('notifyAdditionalContent') !== false;
+            && getSetting('importMediaAction') !== 'none';
 
         const summaryArgs = {
             galleryCharacters: hasGallery ? [{
@@ -4164,11 +4165,12 @@ async function downloadChubCharacter() {
         // === REFRESH + SYNC ===
         await new Promise(r => setTimeout(r, 200));
         const added = await fetchAndAddCharacter(localAvatarFileName);
-        if (!added) {
+        if (added) {
+            view.addCharToLookup(added);
+        } else {
             await new Promise(r => setTimeout(r, 500));
             await fetchCharacters(true);
         }
-        view.buildLocalLibraryLookup();
         markChubCardAsImported(fullPath);
 
     } catch (e) {

@@ -8,76 +8,6 @@
     max-width: calc(550px * var(--modal-scale, 1));
 }
 
-.chub-gallery-list {
-    max-height: calc(300px * var(--modal-scale, 1));
-    overflow-y: auto;
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-sm-md);
-    padding: 10px 0;
-}
-
-.chub-gallery-item {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-lg);
-    padding: 12px 15px;
-    background: rgba(0, 0, 0, 0.3);
-    border-radius: var(--radius-lg);
-    border: 1px solid var(--glass-border);
-}
-
-.chub-gallery-item-avatar {
-    width: 48px;
-    height: 48px;
-    border-radius: var(--radius-lg);
-    object-fit: cover;
-    flex-shrink: 0;
-    background: rgba(0, 0, 0, 0.3);
-}
-
-.chub-gallery-item-info {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2xs);
-    flex: 1;
-    min-width: 0;
-}
-
-.chub-gallery-item-info i {
-    color: var(--accent);
-    font-size: var(--font-lg);
-}
-
-.chub-gallery-item-name {
-    font-weight: 500;
-    color: var(--text-primary);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-.chub-gallery-item-creator {
-    font-size: var(--font-md);
-    color: var(--text-muted);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-.chub-gallery-link {
-    padding: 6px 12px;
-    font-size: var(--font-md);
-    white-space: nowrap;
-}
-
-.chub-gallery-link:hover {
-    background: var(--accent);
-    color: var(--accent-text);
-}
-
-
 /* Timeline Header */
 .chub-timeline-header {
     display: flex;
@@ -114,11 +44,6 @@
 .chub-timeline-header p {
     margin: 0;
     color: var(--text-secondary);
-    font-size: var(--font-md);
-}
-
-#chubTimelineSortSelect {
-    min-width: 150px;
     font-size: var(--font-md);
 }
 
@@ -203,29 +128,6 @@
 }
 
 
-#chubFollowAuthorBtn {
-    background: linear-gradient(135deg, rgba(var(--cl-error-bright-rgb), 0.2), rgba(var(--cl-error-bright-darker-rgb), 0.2));
-    border: 1px solid rgba(var(--cl-error-bright-rgb), 0.4);
-    color: var(--cl-error-bright);
-    padding: 6px 12px;
-    font-size: var(--font-md);
-}
-
-#chubFollowAuthorBtn:hover:not(:disabled) {
-    background: linear-gradient(135deg, rgba(var(--cl-error-bright-rgb), 0.3), rgba(var(--cl-error-bright-darker-rgb), 0.3));
-    border-color: rgba(var(--cl-error-bright-rgb), 0.6);
-}
-
-#chubFollowAuthorBtn.following {
-    background: linear-gradient(135deg, rgba(var(--cl-error-bright-rgb), 0.4), rgba(var(--cl-error-bright-darker-rgb), 0.4));
-    color: #fff;
-}
-
-#chubFollowAuthorBtn:disabled {
-    opacity: 0.6;
-    cursor: wait;
-}
-
 /* ChubAI Favorite Button - Inline version in header */
 .chub-favorite-btn-inline {
     cursor: pointer;
@@ -261,171 +163,15 @@
     opacity: 0.6;
 }
 
-/* ChubAI Favorite Button - Block version (legacy) */
-.chub-favorite-btn {
-    cursor: pointer;
-    padding: 6px 12px;
-    border-radius: var(--radius-md);
-    transition: all 0.2s ease;
-    background: rgba(255, 100, 100, 0.05);
-    border: 1px solid transparent;
-}
-
-.chub-favorite-btn:hover {
-    background: rgba(255, 100, 100, 0.15);
-    border-color: rgba(255, 100, 100, 0.3);
-}
-
-.chub-favorite-btn i {
-    color: #ff6b6b;
-    transition: transform 0.2s ease;
-}
-
-.chub-favorite-btn:hover i {
-    transform: scale(1.1);
-}
-
-.chub-favorite-btn.favorited i {
-    font-weight: 900;
-}
-
-.chub-favorite-btn.favorited {
-    background: rgba(255, 100, 100, 0.2);
-    border-color: rgba(255, 100, 100, 0.4);
-}
-
-.chub-favorite-btn.loading {
-    pointer-events: none;
-    opacity: 0.7;
-}
-
 /* ChubAI Modal Section Styles */
 
-/* ChubAI Login Modal */
-.chub-login-modal {
-    max-width: calc(500px * var(--modal-scale, 1));
-    width: 95%;
-}
-
-.chub-login-body {
-    padding: 20px;
-}
-
-.chub-login-info {
-    background: rgba(255, 255, 255, 0.03);
-    padding: 15px;
-    border-radius: var(--radius-lg);
-    line-height: 1.8;
-    margin-bottom: 20px;
-    font-size: var(--font-md);
-    color: var(--text-secondary);
-}
-
-.chub-login-info code {
-    background: rgba(0, 0, 0, 0.3);
-    padding: 2px 6px;
-    border-radius: var(--radius-sm);
-    font-family: monospace;
-    font-size: var(--font-md);
-    color: var(--accent);
-}
-
-.chub-login-info a {
-    color: var(--accent);
-    text-decoration: none;
-}
-
-.chub-login-info a:hover {
-    text-decoration: underline;
-}
-
-.chub-login-form {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-sm-md);
-    margin-bottom: 20px;
-}
-
-.chub-login-form label {
-    color: var(--text-secondary);
-    font-size: var(--font-md);
-}
-
-.chub-login-form input[type="password"] {
-    font-family: monospace;
-    font-size: var(--font-md);
-}
-
-.chub-login-remember {
-    display: flex;
-    align-items: center;
-    gap: var(--space-sm);
-}
-
-.chub-login-remember label {
-    display: flex;
-    align-items: center;
-    gap: var(--space-sm);
-    cursor: pointer;
-}
-
-.chub-login-actions {
-    display: flex;
-    gap: var(--space-sm-md);
-    justify-content: flex-end;
-}
-
-.chub-login-status {
-    margin-top: 15px;
-    padding: 10px;
-    border-radius: var(--radius-md);
-    text-align: center;
-}
-
-.chub-login-status.success {
-    background: rgba(var(--cl-success-bright-rgb), 0.2);
-    color: var(--cl-success-bright);
-}
-
-.chub-login-status.error {
-    background: rgba(var(--cl-error-bright-rgb), 0.2);
-    color: var(--cl-error-bright);
-}
-
-/* Login button states */
-#chubLoginBtn.logged-in {
-    background: rgba(var(--cl-success-bright-rgb), 0.15);
-    border-color: rgba(var(--cl-success-bright-rgb), 0.3);
-}
-
-#chubLoginBtn.logged-in i {
-    color: var(--cl-success-bright);
-}
-
-/* Favorites filter disabled state */
-#chubFavoritesLabel[title="Login required"] {
-    opacity: 0.6;
-}
-
-#chubFavoritesLabel:not([title="Login required"]) {
-    opacity: 1;
-}
+/* Login modal shell moved to browse-shared.css as browse-login-*
+   (every provider's login modal shares it) */
 
 
 
 /* Mobile overrides */
 @media screen and (max-width: 768px) {
-
-    /* ---------------------------------------------------
-       CHUB LOGIN MODAL
-       --------------------------------------------------- */
-    .chub-login-modal {
-        border-radius: var(--radius-2xl) var(--radius-2xl) 0 0 !important;
-    }
-    .chub-login-body { padding: 14px; overflow-y: auto; -webkit-overflow-scrolling: touch; }
-    .chub-login-info { font-size: var(--font-md); padding: 12px; }
-    .chub-login-actions { flex-wrap: wrap; }
-    .chub-login-form .glass-input { font-size: var(--mobile-input-size); }
 
     .chub-author-banner { flex-direction: column; gap: var(--space-sm-md); padding: 10px 12px; }
     .chub-author-banner-content { font-size: var(--font-sm); min-width: 0; }
@@ -433,7 +179,8 @@
     .chub-author-banner-actions { width: 100%; gap: var(--space-xs-sm); }
     .chub-author-banner-actions .glass-select,
     .chub-author-banner-actions [data-select-id] { min-width: 0; flex: 0 1 auto; display: flex; font-size: var(--font-sm); }
-    .chub-author-banner-actions [data-select-id] .custom-select-trigger { min-width: 0; width: 100%; }
+    /* !important defeats the width-lock's inline minWidth so the trigger can shrink + ellipsize */
+    .chub-author-banner-actions [data-select-id] .custom-select-trigger { min-width: 0 !important; width: 100%; }
     .chub-author-banner-actions [data-select-id] .custom-select-trigger .trigger-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
     .chub-author-banner-actions .glass-btn { font-size: var(--font-sm); flex-shrink: 0; }
     .chub-author-banner-actions .glass-btn.icon-only { padding: 4px 8px; }

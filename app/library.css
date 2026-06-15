@@ -144,10 +144,9 @@ body.modal-size-small .card-update-modal .cl-modal-content { max-width: 600px; }
 body.modal-size-small .card-update-modal .cl-modal-body { max-height: 52vh; }
 body.modal-size-small .custom-css-modal .cl-modal-content { max-width: 880px; max-height: 76vh; }
 body.modal-size-small .cl-modal-content.chub-gallery-modal-content { max-width: 440px; }
-body.modal-size-small .chub-gallery-list { max-height: 240px; }
 body.modal-size-small .vt-dialog { max-width: 320px; }
 body.modal-size-small .ai-studio-modal { width: min(720px, 92vw); height: min(68vh, 640px); }
-body.modal-size-small .chub-login-modal { max-width: 400px; }
+body.modal-size-small .browse-login-modal { max-width: 400px; }
 body.modal-size-small .cl-modal-content.import-modal-content { max-width: 520px; max-height: 72vh; }
 body.modal-size-small .cl-modal-content.pre-import-duplicate-content { max-width: 680px; }
 body.modal-size-small .cl-modal-content.char-duplicates-modal-content { min-width: 960px; max-height: 76vh; }
@@ -188,10 +187,9 @@ body.modal-size-large .card-update-modal .cl-modal-content { max-width: 937px; }
 body.modal-size-large .card-update-modal .cl-modal-body { max-height: 81vh; }
 body.modal-size-large .custom-css-modal .cl-modal-content { max-width: 1375px; max-height: 100vh; }
 body.modal-size-large .cl-modal-content.chub-gallery-modal-content { max-width: 687px; }
-body.modal-size-large .chub-gallery-list { max-height: 375px; }
 body.modal-size-large .vt-dialog { max-width: 500px; }
 body.modal-size-large .ai-studio-modal { width: min(1125px, 96vw); height: min(97vh, 1000px); }
-body.modal-size-large .chub-login-modal { max-width: 625px; }
+body.modal-size-large .browse-login-modal { max-width: 625px; }
 body.modal-size-large .cl-modal-content.import-modal-content { max-width: 812px; max-height: 100vh; }
 body.modal-size-large .cl-modal-content.pre-import-duplicate-content { max-width: 1062px; }
 body.modal-size-large .cl-modal-content.char-duplicates-modal-content { min-width: 1500px; max-height: 100vh; }
@@ -209,10 +207,12 @@ body.modal-size-large .cl-modal-content.creator-saveas-diff-content { max-width:
  *   .action-btn             - Action button, solid base + glass override (.primary / .secondary / .danger)
  *   .cl-btn                 - Module dialog button (.cl-btn-primary / .cl-btn-secondary / .cl-btn-danger / .cl-btn-sm)
  *   .settings-action-btn    - Settings panel action button (.primary / .danger)
+ *   .settings-verify-btn    - Square verify/test button in settings rows
+ *   .provider-toggle-btn    - Eye toggle enabling/disabling a provider in the order list
  *
  * INPUTS
  *   .glass-input            - Standard text/textarea input
- *   .glass-input-small      - Compact input (inside dropdowns/panels)
+ *   .glass-input-small      - Compact input (defined in browse-shared.css, no marker)
  *   .cl-input               - Module dialog input
  *
  * SELECTS / DROPDOWNS
@@ -221,20 +221,46 @@ body.modal-size-large .cl-modal-content.creator-saveas-diff-content { max-width:
  *   .dropdown-item          - Clickable row inside .dropdown-menu
  *   .dropdown-section-title - Section header inside .dropdown-menu
  *
- * MODALS
+ * MODALS / OVERLAYS
  *   .modal-glass            - Full-screen detail/viewer panel
  *   .cl-modal               - Lightweight dialog overlay (confirm, edit)
  *   .cl-modal-content       - Dialog box inside .cl-modal
- *     .cl-modal-header-icon - Opt-in helper: gradient-clipped title icon (add to <i> inside h3)
+ *     .cl-modal-header-icon - Gradient-clipped title icon: default on the leading <i> in h3; class aliases any icon
  *     .cl-modal-drawer      - Marker: hides back-arrow on tap-away bottom-sheet drawers
+ *   .cl-confirm-overlay     - showConfirm() Y/N dialog (popup desktop, bottom sheet mobile)
+ *   .preset-picker-* / #savePresetPickerOverlay - shared save-preset picker (window.savePresetPicker)
+ *   .char-modal-nav         - Prev/next chevrons on the char detail modal (-prev / -next, desktop only)
+ *   .theme-customizer-overlay - Theme Customizer panel shell
+ *
+ * LOADING / EMPTY STATES
+ *   .cl-loading             - Hero loader (renderLoadingState(): icon + label + progress bar)
+ *   .cl-spinner-inline      - Lightweight inline spinner for grid/list slots
+ *   .cl-skeleton-card       - Skeleton placeholder card for grids
+ *   .cl-skeleton-list       - Skeleton placeholder rows for lists
+ *   .cl-empty-state         - Empty-state block (icon + message)
+ *
+ * SETTINGS CHROME
+ *   .settings-platform-badge      - Faded Desktop/Mobile marker on platform-specific rows
+ *   .settings-row[data-platform]  - Platform visibility (settings-platform-visibility marker)
+ *   .settings-status-badge        - Inline status pill in settings rows
+ *   .settings-provider-badge      - Small uppercase provider chip
+ *   .provider-beta-badge          - Beta chip on provider rows
  *
  * TAGS
- *   .cl-tag                 - Pill-style tag (.removable variant adds ×)
+ *   .cl-tag                 - Pill-style tag (.cl-tag-success / -warning / -info / -danger variants)
  *   .provider-exclude-tag-pill - Red pill in settings exclude tags input
  *
- * UTILITIES
+ * HEADINGS / UTILITIES
+ *   .section-h3             - Inline section heading h3 (accent + bottom border; section-heading marker)
  *   .cl-hidden              - display: none !important
  *   .hidden                 - display: none (general hide class)
+ *
+ * MODULE-CSS CANONICALS (defined in the owning module's css file)
+ *   .creator-ai-btn         - character-creator.css - per-field AI generate button
+ *   .ai-studio-overlay      - character-creator.css - AI Studio sub-panel shell
+ *   .browse-recovery-banner - browse-shared.css - extensions-recovery notice in browse views
+ *   .browse-author-banner   - browse-shared.css - author/uploader filter banner
+ *   .browse-avatar-viewer   - browse-shared.css - full-screen avatar/image viewer overlay
  *
  * CSS VARIABLES
  *   --accent, --text-primary, --glass-border, etc. - see :root above
@@ -325,6 +351,25 @@ body.modal-size-large .cl-modal-content.creator-saveas-diff-content { max-width:
 .custom-select-menu .dropdown-section-title {
     padding: 4px 8px 2px;
     margin-top: 2px;
+}
+
+/* Icon images inside custom select items and triggers */
+.item-icon-img,
+.trigger-icon-img {
+    width: 18px;
+    height: 18px;
+    border-radius: var(--radius-xs);
+    object-fit: cover;
+    flex-shrink: 0;
+    vertical-align: middle;
+}
+
+.trigger-icon-img {
+    margin-right: 6px;
+}
+
+.custom-select-item .item-icon-img {
+    margin-right: 8px;
 }
 
 .custom-select-item.selected {
@@ -1206,31 +1251,6 @@ body {
     to { box-shadow: 0 0 10px rgba(var(--cl-favorite-gold-rgb), 0.6); }
 }
 
-/* Favorites Filter Button in Top Bar */
-.favorites-filter-btn {
-    transition: all 0.2s ease;
-}
-
-.favorites-filter-btn:hover {
-    color: var(--cl-favorite-gold);
-    border-color: rgba(var(--cl-favorite-gold-rgb), 0.5);
-}
-
-.favorites-filter-btn.active {
-    background: rgba(var(--cl-favorite-gold-rgb), 0.2);
-    border-color: var(--cl-favorite-gold);
-    color: var(--cl-favorite-gold);
-}
-
-.favorites-filter-btn.active i {
-    animation: starPulse 1s ease-in-out infinite alternate;
-}
-
-@keyframes starPulse {
-    from { transform: scale(1); }
-    to { transform: scale(1.15); }
-}
-
 /* Favorite Button in Modal - neutral at rest, gold on hover (mirrors .danger-hover) */
 .favorite-btn {
     background: rgba(255, 255, 255, 0.1);
@@ -1446,16 +1466,6 @@ body {
     background: rgba(var(--accent-rgb), 0.2);
 }
 
-.tag-autocomplete-item.new-tag {
-    font-style: italic;
-    color: var(--accent);
-    border-top: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-.tag-autocomplete-item.new-tag::before {
-    content: "+ Create: ";
-}
-
 /* No Tags Hint */
 .no-tags-hint {
     color: rgba(255, 255, 255, 0.4);
@@ -1529,23 +1539,30 @@ body.char-modal-above .cl-modal.visible {
 
 /* @canonical char-modal-nav */
 .char-modal-nav {
-    --cmn-bg: rgba(0, 0, 0, 0.5);
-    --cmn-bg-hover: rgba(255, 255, 255, 0.1);
-    --cmn-border: 1px solid rgba(255, 255, 255, 0.1);
-    --cmn-color: #fff;
-    --cmn-width: 50px;
-    --cmn-height: 80px;
+    --cmn-bg: rgba(16, 17, 22, 0.46);
+    --cmn-bg-hover: rgba(24, 26, 32, 0.6);
+    --cmn-border: 1px solid rgba(255, 255, 255, 0.07);
+    --cmn-border-hover: rgba(255, 255, 255, 0.16);
+    --cmn-color: rgba(255, 255, 255, 0.6);
+    --cmn-color-hover: rgba(255, 255, 255, 0.95);
+    --cmn-width: 40px;
+    --cmn-height: 96px;
     --cmn-side-offset: 1%;
     --cmn-icon-size: var(--font-2xl);
-    --cmn-icon-prev: '\f053';
-    --cmn-icon-next: '\f054';
-    --cmn-disabled-opacity: 0.3;
+    --cmn-icon-prev: '\f104';
+    --cmn-icon-next: '\f105';
+    --cmn-disabled-opacity: 0.25;
+    --cmn-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    --cmn-shadow: 0 4px 16px rgba(0, 0, 0, 0.28);
 
     position: absolute;
     top: 50%;
     transform: translateY(-50%);
     background: var(--cmn-bg);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
     border: var(--cmn-border);
+    border-radius: var(--radius-2xl);
     color: var(--cmn-color);
     width: var(--cmn-width);
     height: var(--cmn-height);
@@ -1553,35 +1570,51 @@ body.char-modal-above .cl-modal.visible {
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: background 0.2s, opacity 0.2s;
+    opacity: 0.65;
+    box-shadow: var(--cmn-shadow), var(--cmn-highlight);
+    transition: opacity 0.2s ease, background-color 0.2s ease, border-color 0.2s ease,
+                color 0.2s ease, transform 0.15s ease;
     z-index: 10;
 }
 .char-modal-nav:hover:not(:disabled) {
     background: var(--cmn-bg-hover);
+    border-color: var(--cmn-border-hover);
+    color: var(--cmn-color-hover);
+    opacity: 1;
+}
+.char-modal-nav:active:not(:disabled) {
+    transform: translateY(-50%) scale(0.96);
 }
 .char-modal-nav:disabled {
     opacity: var(--cmn-disabled-opacity);
     cursor: not-allowed;
 }
+/* angle glyphs (f104/f105) read thinner than chevron, sleeker at this size */
 .char-modal-nav::before {
     font-family: 'Font Awesome 6 Free';
     font-weight: 900;
     font-size: var(--cmn-icon-size);
     line-height: 1;
+    filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.45));
+    transition: transform 0.2s ease;
 }
 .char-modal-nav-prev {
     left: var(--cmn-side-offset);
-    border-radius: 0 var(--radius-lg) var(--radius-lg) 0;
 }
 .char-modal-nav-prev::before {
     content: var(--cmn-icon-prev);
 }
+.char-modal-nav-prev:hover:not(:disabled)::before {
+    transform: translateX(-2px);
+}
 .char-modal-nav-next {
     right: var(--cmn-side-offset);
-    border-radius: var(--radius-lg) 0 0 var(--radius-lg);
 }
 .char-modal-nav-next::before {
     content: var(--cmn-icon-next);
+}
+.char-modal-nav-next:hover:not(:disabled)::before {
+    transform: translateX(2px);
 }
 
 .modal-header {
@@ -1914,7 +1947,7 @@ body.char-modal-above .cl-modal.visible {
 :root[data-btn-style="glass"] .cl-btn-danger {
     background: linear-gradient(135deg, rgba(255, 255, 255, 0.07) 0%, rgba(255, 255, 255, 0.03) 100%);
     border-color: rgba(var(--cl-error-bright-rgb), 0.25);
-    color: #ff6b7a;
+    color: var(--cl-danger-text);
 }
 
 :root[data-btn-style="glass"] .cl-btn-danger:hover {
@@ -2037,6 +2070,125 @@ body.char-modal-above .cl-modal.visible {
     display: flex;
     align-items: center;
     gap: var(--space-sm);
+    flex-shrink: 0;
+}
+
+.linked-lorebook-actions .action-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.linked-lorebook-name.is-unlinked {
+    font-weight: 400;
+    font-style: italic;
+    color: var(--text-faint);
+}
+
+/* Link-lorebook picker, opened from the edit-tab Link button. List/row/search chrome mirrors the chat-lore picker (chats.css). */
+.lorebook-link-modal-content {
+    width: min(460px, 92vw);
+    max-height: 80vh;
+    display: flex;
+    flex-direction: column;
+}
+
+.lorebook-link-body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+    min-height: 0;
+}
+
+.lorebook-link-subhead {
+    font-size: var(--font-md);
+    color: var(--text-secondary);
+}
+
+.lorebook-link-subhead strong {
+    color: var(--text-primary);
+}
+
+.lorebook-link-search-wrap {
+    position: relative;
+    display: flex;
+    align-items: center;
+}
+
+.lorebook-link-search-wrap > i {
+    position: absolute;
+    left: var(--space-sm);
+    color: var(--text-faint);
+    font-size: var(--font-sm);
+    pointer-events: none;
+}
+
+/* Wrap-scoped (0,2,0) so it beats .cl-input (0,1,0) on specificity and the padding-left wins
+   regardless of source order; without it .cl-input's padding shorthand sits the text over the icon. */
+.lorebook-link-search-wrap .lorebook-link-search {
+    width: 100%;
+    padding-left: calc(var(--space-lg) + var(--space-sm));
+}
+
+.lorebook-link-list {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2xs);
+    min-height: 120px;
+}
+
+.lorebook-link-empty {
+    padding: var(--space-xl);
+    text-align: center;
+    color: var(--text-muted);
+    font-size: var(--font-sm);
+}
+
+.lorebook-link-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    padding: var(--space-sm) var(--space-md);
+    border-radius: var(--radius-lg);
+    border: 1px solid transparent;
+    background: rgba(255, 255, 255, 0.03);
+    color: var(--text-primary);
+    cursor: pointer;
+    text-align: left;
+    width: 100%;
+    transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.lorebook-link-row:hover {
+    background: rgba(255, 255, 255, 0.07);
+}
+
+.lorebook-link-row.current {
+    background: rgba(var(--accent-rgb), 0.16);
+    border-color: rgba(var(--accent-rgb), 0.5);
+}
+
+.lorebook-link-row > i:first-child {
+    color: var(--text-faint);
+    flex-shrink: 0;
+}
+
+.lorebook-link-row.current > i:first-child {
+    color: var(--accent);
+}
+
+.lorebook-link-row-name {
+    flex: 1;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-size: var(--font-md);
+}
+
+.lorebook-link-row-check {
+    color: var(--accent);
     flex-shrink: 0;
 }
 
@@ -2226,12 +2378,6 @@ body.char-modal-above .cl-modal.visible {
     align-items: center;
     margin-bottom: 10px;
     gap: var(--space-sm-md);
-}
-
-.lorebook-entry-name {
-    flex: 1;
-    font-weight: 600;
-    color: var(--accent);
 }
 
 .lorebook-entry-controls {
@@ -2552,11 +2698,9 @@ body.char-modal-above .cl-modal.visible {
     text-align: left;
 }
 
-/* @canonical section-heading
-   Use on inline section heading h3s (e.g. character-detail "Description" /
-   "First Message" panels). Accent color + bottom border to separate from the
-   section body below. Modal headers, browse view section titles, etc. do
-   NOT use this; they own their own typography in their canonical components. */
+/* @canonical section-heading */
+/* Inline section heading h3s (eg character-detail "Description" panels). Modal headers
+   and browse section titles do NOT use this; they own their own typography. */
 .section-h3 {
     margin-bottom: 12px;
     color: var(--accent);
@@ -2806,6 +2950,26 @@ body.char-modal-above .cl-modal.visible {
 /* Expandable field container */
 .form-group.expandable-field {
     position: relative;
+}
+
+/* Collapsible info boxes in the detail modal (creator notes, alt greetings, lorebooks) */
+.detail-collapsible {
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: var(--radius-lg);
+    padding: var(--space-sm);
+    border: 1px solid var(--glass-border);
+}
+
+.detail-collapsible > summary {
+    cursor: pointer;
+    font-weight: bold;
+    color: var(--accent);
+}
+
+.detail-collapsible-body {
+    margin-top: var(--space-sm);
+    padding-top: var(--space-sm);
+    border-top: 1px solid var(--glass-border);
 }
 
 .creator-notes-details summary {
@@ -4579,6 +4743,17 @@ input[type="search"]::-webkit-search-results-decoration {
     display: none;
 }
 
+/* Dropdown Section Titles */
+.dropdown-section-title {
+    font-size: var(--font-xs);
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 4px 12px 6px;
+    margin-bottom: 4px;
+}
+
 .dropdown-item {
     display: flex;
     align-items: center;
@@ -4626,6 +4801,9 @@ input[type="search"]::-webkit-search-results-decoration {
     border-radius: var(--radius-md);
     gap: var(--space-sm);
     margin: 0 4px;
+    /* big libraries put thousands of rows here; skip layout/paint offscreen */
+    content-visibility: auto;
+    contain-intrinsic-size: auto 30px;
 }
 
 .tag-filter-item:hover {
@@ -5143,90 +5321,6 @@ input[type="search"]::-webkit-search-results-decoration {
     display: flex;
     gap: var(--space-sm);
     align-items: center;
-}
-
-/* Download Media Dropdown */
-.download-media-dropdown {
-    position: relative;
-    display: flex;
-}
-
-.download-media-dropdown .action-btn:first-child {
-    border-top-right-radius: 0;
-    border-bottom-right-radius: 0;
-    border-right: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-.download-media-dropdown .dropdown-toggle {
-    border-top-left-radius: 0;
-    border-bottom-left-radius: 0;
-    padding: 6px 8px;
-    min-width: 28px;
-}
-
-.download-media-dropdown .dropdown-toggle i {
-    margin: 0;
-}
-
-.download-media-menu {
-    position: absolute;
-    top: 100%;
-    right: 0;
-    margin-top: 4px;
-    background: var(--glass-bg);
-    border: 1px solid var(--glass-border);
-    border-radius: var(--radius-lg);
-    padding: 8px;
-    min-width: 180px;
-    z-index: 100;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-    backdrop-filter: blur(10px);
-}
-
-.download-media-option {
-    display: flex;
-    align-items: center;
-    gap: var(--space-sm);
-    padding: 8px 10px;
-    cursor: pointer;
-    border-radius: var(--radius-md);
-    transition: background 0.2s;
-    user-select: none;
-}
-
-.download-media-option:hover {
-    background: rgba(255, 255, 255, 0.1);
-}
-
-.download-media-option input[type="checkbox"] {
-    width: 16px;
-    height: 16px;
-    cursor: pointer;
-}
-
-.download-media-option span {
-    display: flex;
-    align-items: center;
-    gap: var(--space-xs-sm);
-    font-size: var(--font-md);
-    color: var(--text-secondary);
-}
-
-.download-media-option input:checked + span {
-    color: var(--accent);
-}
-
-.download-media-option input:checked + span i {
-    color: var(--cl-success-bright);
-}
-
-.download-media-option.disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-}
-
-.download-media-option.disabled input {
-    pointer-events: none;
 }
 
 /* Media Localization Toggle */
@@ -6002,12 +6096,6 @@ input[type="search"]::-webkit-search-results-decoration {
     width: 95vw;
 }
 
-.gallery-info-body {
-    max-height: calc(85vh - 140px);
-    overflow-y: auto;
-    padding: 0 20px 20px 20px;
-}
-
 /* Help sidebar layout (mirrors settings) */
 .help-layout {
     display: flex;
@@ -6657,13 +6745,6 @@ input[type="search"]::-webkit-search-results-decoration {
     font-size: var(--font-3xs);
 }
 
-/* Old grid layout - deprecated */
-.char-dup-diff-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: var(--space-sm);
-}
-
 /* New vertical stack layout */
 .char-dup-diff-stack {
     display: flex;
@@ -7113,13 +7194,6 @@ input[type="search"]::-webkit-search-results-decoration {
     color: var(--cl-error-bright);
 }
 
-.dup-delete-transfer-warning {
-    margin: 0;
-    text-align: center;
-    color: var(--text-secondary);
-    font-size: var(--font-md-lg);
-}
-
 .dup-delete-transfer-target {
     margin-top: 12px;
     padding-top: 12px;
@@ -7464,11 +7538,9 @@ input[type="search"]::-webkit-search-results-decoration {
     border-top: 1px solid var(--glass-border);
 }
 
-/* @canonical cl-confirm-overlay
-   Standard confirmation dialog overlay. Use via window.showConfirm({...}).
-   Sleek floating popup on desktop, slide-up bottom sheet on mobile.
-   Internal dividers and the header gradient are stripped so the dialog
-   reads as one unified surface. */
+/* @canonical cl-confirm-overlay */
+/* showConfirm({...}) dialog: floating popup on desktop, slide-up sheet on mobile.
+   Dividers and header gradient stripped so it reads as one unified surface. */
 .cl-confirm-overlay {
     position: fixed;
     inset: 0;
@@ -7568,10 +7640,10 @@ input[type="search"]::-webkit-search-results-decoration {
     to   { opacity: 1; transform: scale(1) translateY(0); }
 }
 
-/* @canonical preset-picker
-   Shared "save preset" picker (window.savePresetPicker). Type a name to create, or pick an existing
-   preset to overwrite (confirmed). Modeled on the playlist picker. Sits above base modals (10000),
-   below showConfirm (10003) so the overwrite confirm stacks on top. */
+/* @canonical preset-picker */
+/* Shared "save preset" picker (window.savePresetPicker): type to create or pick existing to
+   overwrite. Sits above base modals (10000), below showConfirm (10003) so the overwrite
+   confirm stacks on top. */
 #savePresetPickerOverlay {
     z-index: 10002;
 }
@@ -8064,6 +8136,142 @@ details.settings-provider-section > .settings-provider-body {
     opacity: 1;
 }
 
+/* Botbooru weighted-tag editor (Settings > Online > Botbooru). Lives inside
+   the provider-exclude-tags chrome, so controls go borderless-compact like
+   the tag input above; full glass-input chrome in here reads double-boxed. */
+.botbooru-weights-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2xs);
+    width: 100%;
+}
+
+.botbooru-weight-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs);
+    padding: var(--space-2xs) var(--space-xs);
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-md);
+}
+
+.botbooru-weight-row:hover {
+    background: rgba(255, 255, 255, 0.06);
+}
+
+.botbooru-weight-row .bw-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--font-sm);
+    color: var(--text-primary);
+}
+
+.botbooru-weight-row .bw-weight,
+.botbooru-weight-input {
+    width: 70px;
+    flex: 0 0 auto;
+    text-align: right;
+    background: rgba(0, 0, 0, 0.25) !important;
+    border: 1px solid var(--glass-border) !important;
+    border-radius: var(--radius-sm);
+    padding: 2px var(--space-xs) !important;
+    font-size: var(--font-sm);
+    color: var(--text-primary);
+}
+
+.botbooru-weight-row .glass-btn.icon-only {
+    width: 24px;
+    height: 24px;
+    min-width: 24px;
+    min-height: 24px;
+    padding: 0;
+    font-size: var(--font-xs);
+    border-radius: var(--radius-sm);
+}
+
+.botbooru-weight-row .bw-flag {
+    opacity: 0.4;
+}
+
+.botbooru-weight-row .bw-flag.active {
+    opacity: 1;
+    color: var(--accent);
+}
+
+.botbooru-weight-row .bw-flag.active[data-flag="always_block"] {
+    color: var(--cl-error-pale);
+}
+
+.botbooru-weight-row .bw-remove {
+    opacity: 0.55;
+}
+
+.botbooru-weight-row .bw-remove:hover {
+    opacity: 1;
+}
+
+/* Tag autocomplete on the Botbooru settings inputs (rides the canonical
+   dropdown-menu/dropdown-item chrome; only anchoring + item layout here) */
+.botbooru-suggest-anchor {
+    position: relative;
+}
+
+.botbooru-tag-suggest {
+    position: absolute;
+    top: calc(100% + var(--space-2xs));
+    left: 0;
+    right: 0;
+    z-index: 30;
+    max-height: 240px;
+    overflow-y: auto;
+}
+
+.botbooru-tag-suggest-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-sm);
+    width: 100%;
+}
+
+.botbooru-tag-suggest-item .bts-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.botbooru-tag-suggest-item .bts-meta {
+    flex-shrink: 0;
+    font-size: var(--font-xs);
+    color: var(--text-faint);
+}
+
+.botbooru-tag-suggest-item.active {
+    background: rgba(var(--accent-rgb), 0.18);
+}
+
+/* Weighted mode on: the site ignores the basic favorite-tags list, so the
+   whole row is visibly out of service, not just footnoted */
+#botbooruBasicFavTagsRow.botbooru-fav-tags-inert .provider-exclude-tags-container,
+#botbooruBasicFavTagsRow.botbooru-fav-tags-inert .settings-hint:not(#botbooruFavTagsInertWarn) {
+    opacity: 0.4;
+    pointer-events: none;
+    filter: grayscale(0.4);
+}
+
+#botbooruFavTagsInertWarn {
+    color: var(--cl-warning-pale);
+    font-weight: 600;
+}
+
+#botbooruFavTagsInertWarn i {
+    color: var(--cl-warning);
+}
+
 /* @canonical settings-platform-visibility */
 @media (min-width: 769px) {
     .settings-row[data-platform="mobile"] { display: none !important; }
@@ -8292,14 +8500,6 @@ details.settings-provider-section > .settings-provider-body {
     border-color: var(--accent);
 }
 
-.provider-order-defaults-label {
-    font-size: var(--font-2xs);
-    color: var(--text-secondary);
-    opacity: 0.6;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    white-space: nowrap;
-}
 
 .provider-order-badge {
     font-size: var(--font-3xs);
@@ -8385,28 +8585,6 @@ details.settings-provider-section > .settings-provider-body {
     font-size: var(--font-md-lg);
 }
 
-/* Lightweight divider subheadings within settings groups */
-.settings-subheading {
-    font-size: var(--font-xs);
-    font-weight: 600;
-    color: var(--text-secondary);
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    margin-top: var(--space-xl);
-    margin-bottom: var(--space-sm);
-    padding-bottom: var(--space-xs-sm);
-    border-bottom: 1px solid var(--glass-border);
-    display: flex;
-    align-items: center;
-    gap: var(--space-xs-sm);
-}
-
-.settings-subheading i {
-    color: var(--accent);
-    opacity: 0.6;
-    font-size: var(--font-2xs);
-}
-
 /* Sub-sections within groups */
 .settings-sub-section {
     padding: 12px;
@@ -8447,19 +8625,6 @@ details.settings-provider-section > .settings-provider-body {
 .settings-warning i {
     margin-top: 2px;
     flex-shrink: 0;
-}
-
-/* Debug tag */
-.debug-tag {
-    display: inline-block;
-    padding: 2px 6px;
-    background: rgba(100, 100, 100, 0.3);
-    border-radius: var(--radius-sm);
-    font-size: var(--font-2xs);
-    color: var(--text-secondary);
-    opacity: 0.7;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
 }
 
 /* @canonical settings-action-btn */
@@ -8590,34 +8755,6 @@ details.settings-provider-section > .settings-provider-body {
     .settings-nav-item i {
         font-size: var(--font-lg);
     }
-}
-
-.settings-body {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-xl);
-}
-
-.settings-section {
-    background: rgba(0, 0, 0, 0.15);
-    border-radius: var(--radius-lg);
-    padding: 15px;
-    border: 1px solid rgba(255, 255, 255, 0.05);
-}
-
-.settings-section h4 {
-    margin: 0 0 12px 0;
-    font-size: var(--font-pre-base);
-    color: var(--accent);
-    display: flex;
-    align-items: center;
-    gap: var(--space-sm);
-    padding-bottom: 8px;
-    border-bottom: 1px solid var(--glass-border);
-}
-
-.settings-section h4 i {
-    opacity: 0.8;
 }
 
 .settings-row {
@@ -10197,15 +10334,6 @@ details.settings-provider-section > .settings-provider-body {
     flex-shrink: 0;
 }
 
-.bulk-summary-item .char-name {
-    flex: 1;
-    font-weight: 500;
-    color: var(--text-primary);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
 .bulk-summary-item .char-name-link {
     flex: 1;
     font-weight: 500;
@@ -10351,19 +10479,6 @@ details.settings-provider-section > .settings-provider-body {
     padding: 6px 8px;
     border-radius: var(--radius-lg);
     cursor: pointer;
-}
-
-/* Personas hover toggle effect - keep button blue and styled */
-.view-toggle-btn.active.personas-toggle-hover {
-    background: var(--accent);
-    color: var(--accent-text);
-    box-shadow: 0 2px 10px var(--accent-glow);
-}
-
-.view-toggle-btn.active.personas-toggle-hover i {
-    color: var(--accent-text);
-    background: rgba(255, 255, 255, 0.2);
-    filter: drop-shadow(0 0 6px rgba(255, 255, 255, 0.3));
 }
 
 /* Lockout chrome while initial fetchCharacters is in flight */
@@ -11403,9 +11518,6 @@ html.cl-initial-loading .mobile-fab {
     .gallery-sync-container {
         display: none;
     }
-    #refreshBtn {
-        display: none;
-    }
     #multiSelectToggleBtn {
         display: none;
     }
@@ -11482,6 +11594,9 @@ html.cl-initial-loading .mobile-fab {
     --cl-warning-pale: #ffd54f;
     --cl-info-pale: #64b5f6;
     --cl-error-pale: #e57373;
+    /* Danger ACTION text on dark/translucent chrome (cl-btn-danger, context-menu
+       Delete rows, playlist delete hover). Deliberately outside the error tiers. */
+    --cl-danger-text: #ff6b7a;
     /* Favorite-star gold. Universal idiom; deliberately outside the status tiers. */
     --cl-favorite-gold: #ffd700;
     --cl-favorite-gold-rgb: 255, 215, 0;
@@ -11514,6 +11629,11 @@ html.cl-initial-loading .mobile-fab {
 .cl-modal.visible {
     opacity: 1;
     visibility: visible;
+}
+
+/* visibility:hidden doesnt stop CSS animations - leftover spinners in closed dialogs kept the refresh driver at 60fps */
+.cl-modal:not(.visible) * {
+    animation-play-state: paused;
 }
 
 .cl-modal-content {
@@ -11599,12 +11719,30 @@ html.cl-initial-loading .mobile-fab {
     border-top: 1px solid var(--cl-border);
 }
 
-/* @canonical modal-header-icon: opt-in gradient-clip on header title icons */
+/* @canonical modal-header-icon */
+/* Default on the leading header icon; the class aliases it for any non-leading icon */
+.cl-modal-header h3 > i:first-child,
 .cl-modal-header-icon {
     background: linear-gradient(135deg, var(--accent), var(--accent-secondary));
     -webkit-background-clip: text;
     background-clip: text;
     -webkit-text-fill-color: transparent;
+}
+
+/* Notifications button - animated gradient sweep on the icon while
+   background downloads are running (class toggled by refreshNotificationsUI) */
+.gallery-sync-btn.notif-activity i {
+    background: linear-gradient(90deg, var(--accent), var(--accent-secondary), var(--accent));
+    background-size: 200% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    animation: notif-download-sweep 1.4s linear infinite;
+}
+
+@keyframes notif-download-sweep {
+    from { background-position: 200% 0; }
+    to { background-position: 0% 0; }
 }
 
 /* @canonical button-module */
@@ -11653,7 +11791,7 @@ html.cl-initial-loading .mobile-fab {
 
 .cl-btn-danger {
     background: rgba(var(--cl-error-rgb), 0.2);
-    color: #ff6b7a;
+    color: var(--cl-danger-text);
 }
 
 .cl-btn-danger:hover {
@@ -11730,9 +11868,6 @@ html.cl-initial-loading .mobile-fab {
 /* Stage 3: Hide sort, favorites, tags - only search + view toggle + ⋮ remain */
 @media (max-width: 900px) {
     [data-select-id="sortSelect"] {
-        display: none;
-    }
-    .favorites-filter-btn {
         display: none;
     }
     .filter-group {
@@ -11818,9 +11953,6 @@ html.cl-initial-loading .mobile-fab {
     .browse-card-name {
         font-size: var(--font-pre-base);
     }
-    .browse-card-creator {
-        font-size: var(--font-sm);
-    }
 }
 
 @media (max-width: 1000px) {
@@ -11881,8 +12013,7 @@ html.cl-initial-loading .mobile-fab {
         grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
     }
     /* Hide some card metadata at very small sizes */
-    .char-card .card-tags, 
-    .browse-card-creator {
+    .char-card .card-tags {
         display: none !important;
     }
     /* Minimal modal sidebar */

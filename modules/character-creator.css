@@ -318,7 +318,7 @@
 }
 
 .creator-connection-dot.connected { background: var(--cl-success); }
-.creator-connection-dot.neutral { background: #888; }
+.creator-connection-dot.neutral { background: var(--text-faint); }
 
 /* Mobile-only quick-access strip (avatar + profile) */
 .creator-mobile-topbar {
@@ -819,10 +819,6 @@
     font-size: var(--font-xs);
     padding: 4px 8px;
     min-height: 28px;
-}
-
-.studio-settings-presets .custom-select-dropdown {
-    font-size: var(--font-xs);
 }
 
 .studio-settings-presets .ai-studio-nav-btn {
@@ -1901,7 +1897,7 @@
     }
 
     .ai-studio-input {
-        font-size: 14px !important;
+        font-size: var(--mobile-input-size) !important;
     }
 
     .ai-studio-input-row {
