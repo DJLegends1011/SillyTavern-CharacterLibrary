@@ -460,8 +460,8 @@ export function safePurify(html, config) {
  * @param {string} html - Raw tagline HTML from external data
  * @returns {string} Sanitized HTML
  */
-export function sanitizeTaglineHtml(html) {
-    return window.sanitizeTaglineHtml?.(html) || '';
+export function sanitizeTaglineHtml(...args) {
+    return window.sanitizeTaglineHtml?.(...args) || '';
 }
 
 /**
@@ -668,11 +668,11 @@ export function fetchCharacters(forceRefresh = false) {
 }
 
 /**
- * @param {string} avatarFileName
- * @returns {Promise<boolean>}
+ * @param {...*} args - avatarFileName, options
+ * @returns {Promise<Object|null>}
  */
-export function fetchAndAddCharacter(avatarFileName) {
-    return window.fetchAndAddCharacter?.(avatarFileName) || Promise.resolve(false);
+export function fetchAndAddCharacter(...args) {
+    return window.fetchAndAddCharacter?.(...args) ?? Promise.resolve(null);
 }
 
 /**
@@ -914,6 +914,31 @@ export function buildDedupState(folderName) {
  */
 export function downloadCharacterMedia(character, folderName, options) {
     return window.downloadCharacterMedia?.(character, folderName, options);
+}
+
+/** Mark a character's media localization as complete (Files-API set). */
+export function markMediaLocalizationComplete(...args) {
+    return window.markMediaLocalizationComplete?.(...args);
+}
+
+/** Contribute a section to the topbar notifications dropdown. */
+export function registerNotificationSection(...args) {
+    return window.registerNotificationSection?.(...args);
+}
+
+/** Recompute the notifications button icon/badge/visibility from all sections. */
+export function refreshNotificationsUI(...args) {
+    return window.refreshNotificationsUI?.(...args);
+}
+
+/** Open the notifications dropdown and render every visible section. */
+export function openNotificationsDropdown(...args) {
+    return window.openNotificationsDropdown?.(...args);
+}
+
+/** @returns {Set<string>} avatars with completed media localization */
+export function getCompletedMediaLocalizations(...args) {
+    return window.getCompletedMediaLocalizations?.(...args);
 }
 
 /**
@@ -1375,6 +1400,11 @@ export default {
     extractSanitizedUrlName,
     buildDedupState,
     downloadCharacterMedia,
+    markMediaLocalizationComplete,
+    getCompletedMediaLocalizations,
+    registerNotificationSection,
+    refreshNotificationsUI,
+    openNotificationsDropdown,
     downloadMediaToMemory,
     isUrlSafeForDownload,
     calculateHash,

@@ -168,7 +168,7 @@
     display: none;
 }
 
-/* Gallery Sync Dropdown */
+/* Notifications dropdown (shared shell for the media-downloads + gallery-sync sections) */
 .gallery-sync-dropdown {
     position: absolute;
     top: 100%;
@@ -183,10 +183,18 @@
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
     z-index: 1000;
     overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm-md);
+    padding: var(--space-sm-md);
 }
 
-.sync-dropdown-content {
-    padding: 12px;
+/* Each notification section reads as its own card (matches .gallery-sync-status-box) */
+.notif-section {
+    background: rgba(0, 0, 0, 0.2);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-lg);
+    padding: var(--space-md);
 }
 
 .sync-dropdown-loading {

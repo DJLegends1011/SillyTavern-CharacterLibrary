@@ -2,7 +2,7 @@
 
 import { BrowseView } from '../browse-view.js';
 import CoreAPI from '../../core-api.js';
-import { IMG_PLACEHOLDER, formatNumber, BROWSE_PURIFY_CONFIG, skeletonLines, deferRender } from '../provider-utils.js';
+import { IMG_PLACEHOLDER, formatNumber, BROWSE_PURIFY_CONFIG, skeletonLines, deferRender, deferCall, isMobileViewport } from '../provider-utils.js';
 import { createBookmarkModule } from '../bookmark-module.js';
 import {
     JANNY_SEARCH_URL,
@@ -553,7 +553,8 @@ function openPreviewModal(hit) {
     const creatorNotesEl = document.getElementById('jannyCharCreatorNotes');
     if (rawDescription.trim()) {
         creatorNotesSection.style.display = 'block';
-        renderCreatorNotesSecure(rawDescription, name, creatorNotesEl);
+        if (creatorNotesEl && !creatorNotesEl.querySelector('iframe')) creatorNotesEl.innerHTML = skeletonLines(3);
+        deferCall(creatorNotesEl, () => renderCreatorNotesSecure(rawDescription, name, creatorNotesEl));
     } else {
         creatorNotesSection.style.display = 'none';
         if (creatorNotesEl) creatorNotesEl.innerHTML = '';
@@ -816,7 +817,7 @@ async function importCharacter(charData) {
         const mediaUrls = result.embeddedMediaUrls || [];
         const galleryPageUrls = result.galleryPageUrls || [];
         const showSummary = (mediaUrls.length > 0 || galleryPageUrls.length > 0)
-            && getSetting('notifyAdditionalContent') !== false;
+            && getSetting('importMediaAction') !== 'none';
 
         const summaryArgs = {
             mediaCharacters: [{
@@ -852,8 +853,8 @@ async function importCharacter(charData) {
 
         // Lightweight single-character add (avoids OOM from full list reload on mobile)
         const added = await fetchAndAddCharacter(result.fileName);
-        if (!added) await fetchCharacters(true);
-        view.buildLocalLibraryLookup();
+        if (added) view.addCharToLookup(added);
+        else await fetchCharacters(true);
         markCardAsImported(charId);
 
     } catch (err) {
@@ -1175,10 +1176,8 @@ function initJannyView() {
     if (!modalEventsAttached) {
         modalEventsAttached = true;
 
-        if (!window.matchMedia('(max-width: 768px)').matches) {
-            const jannyOverlay = document.getElementById('jannyCharModal');
-            BrowseView.wireTitleScroll(document.getElementById('jannyCharName'), jannyOverlay, jannyOverlay?.querySelector('.browse-char-modal'));
-        }
+        const jannyOverlay = document.getElementById('jannyCharModal');
+        BrowseView.wireTitleScroll(document.getElementById('jannyCharName'), jannyOverlay, jannyOverlay?.querySelector('.browse-char-modal'));
 
         on('jannyCharClose', 'click', () => closePreviewModal());
 
@@ -1194,10 +1193,12 @@ function initJannyView() {
             });
         }
 
-        // Avatar click → full-size image viewer (desktop only; mobile has its own handler)
+        // Avatar click → full-size image viewer (desktop only at event time; on mobile
+        // bail before stopPropagation so the delegated tap runs)
         const jannyAvatar = document.getElementById('jannyCharAvatar');
-        if (jannyAvatar && !window.matchMedia('(max-width: 768px)').matches) {
+        if (jannyAvatar) {
             jannyAvatar.addEventListener('click', (e) => {
+                if (isMobileViewport()) return;
                 e.stopPropagation();
                 if (!jannyAvatar.src || jannyAvatar.src.endsWith('/img/ai4.png')) return;
                 BrowseView.openAvatarViewer(jannyAvatar.src);
@@ -1479,7 +1480,7 @@ class JannyBrowseView extends BrowseView {
                     <div>
                         <h2 id="jannyCharName">Character Name</h2>
                         <p class="browse-char-meta">
-                            by <a id="jannyCharCreator" href="#" class="creator-link" title="Click to see all characters by this author">Creator</a>
+                            by <a id="jannyCharCreator" href="#" class="creator-link browse-meta-identity" title="Click to see all characters by this author">Creator</a>
                         </p>
                     </div>
                 </div>

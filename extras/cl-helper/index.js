@@ -564,6 +564,55 @@ function registerPygmalionRoutes(router) {
 }
 
 // =============================================================================
+// Botbooru: login proxy
+// =============================================================================
+
+const BOTBOORU_AUTH_URL = 'https://botbooru.com/auth/token';
+
+function registerBotbooruRoutes(router) {
+    /**
+     * POST /botbooru-login
+     * Body: { username, password }
+     *
+     * Proxies Botbooru's form-encoded token login. Exists because ST's CORS
+     * proxy re-serializes bodies as JSON, which this endpoint rejects (422).
+     * Stateless: the token goes straight back to the client, nothing is
+     * stored server-side.
+     */
+    router.post('/botbooru-login', async (req, res) => {
+        const { username, password } = req.body ?? {};
+
+        if (!username || !password) {
+            return res.status(400).json({ error: 'username and password are required' });
+        }
+
+        if (typeof username !== 'string' || typeof password !== 'string'
+            || username.length > 256 || password.length > 256) {
+            return res.status(400).json({ error: 'Invalid credentials format' });
+        }
+
+        try {
+            const body = new URLSearchParams({ username, password }).toString();
+
+            const response = await fetch(BOTBOORU_AUTH_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body,
+            });
+
+            const text = await response.text();
+
+            res.status(response.status);
+            res.set('Content-Type', response.headers.get('content-type') || 'application/json');
+            res.send(text);
+        } catch (err) {
+            console.error('[cl-helper] Botbooru login proxy error:', err.message);
+            res.status(502).json({ error: 'Failed to reach Botbooru auth server' });
+        }
+    });
+}
+
+// =============================================================================
 // CharacterTavern: cookie session + read-only API proxy
 // =============================================================================
 
@@ -1801,6 +1850,7 @@ export async function init(router) {
 
     registerThumbnailRoutes(router);
     registerPygmalionRoutes(router);
+    registerBotbooruRoutes(router);
     registerCharacterTavernRoutes(router);
     registerDataCatRoutes(router);
     registerImgchestRoutes(router);

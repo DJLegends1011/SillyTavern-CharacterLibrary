@@ -24,6 +24,11 @@
     visibility: visible;
 }
 
+/* visibility:hidden doesnt stop CSS animations - a viewer closed mid-load parks its placeholder spinner forever */
+.gv-modal:not(.visible) * {
+    animation-play-state: paused;
+}
+
 .gv-container {
     width: 100%;
     height: 100%;
@@ -187,7 +192,7 @@
 
 .gv-placeholder-spinner {
     position: relative;
-    font-size: 2rem;
+    font-size: var(--font-3xl);
     color: rgba(255, 255, 255, 0.7);
     z-index: 1;
     opacity: 0;
