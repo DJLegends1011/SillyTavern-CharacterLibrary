@@ -65,7 +65,7 @@
 }
 
 .cl-context-menu-item.danger {
-    color: #ff6b7a;
+    color: var(--cl-danger-text);
 }
 
 .cl-context-menu-item.danger:hover {
@@ -189,6 +189,6 @@
         font-size: var(--font-base);
     }
     .mobile-ctx-sheet .cl-context-menu-item.danger {
-        color: #ff6b7a;
+        color: var(--cl-danger-text);
     }
 }

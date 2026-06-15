@@ -2,7 +2,7 @@
 
 import { BrowseView } from '../browse-view.js';
 import CoreAPI from '../../core-api.js';
-import { IMG_PLACEHOLDER, formatNumber, fetchWithProxy, BROWSE_PURIFY_CONFIG, skeletonLines, deferRender } from '../provider-utils.js';
+import { IMG_PLACEHOLDER, formatNumber, fetchWithProxy, BROWSE_PURIFY_CONFIG, skeletonLines, deferRender, deferCall, isMobileViewport } from '../provider-utils.js';
 import {
     WYVERN_API_BASE,
     WYVERN_SITE_BASE,
@@ -400,7 +400,7 @@ class WyvernBrowseView extends BrowseView {
                             <option value="votes">❤️ Most Likes</option>
                             <option value="messages">💬 Most Messages</option>
                         </select>
-                        <button id="wyvernFollowCreatorBtn" class="glass-btn" title="Follow this creator on Wyvern">
+                        <button id="wyvernFollowCreatorBtn" class="glass-btn browse-author-follow-btn" title="Follow this creator on Wyvern">
                             <i class="fa-solid fa-heart"></i> <span>Follow</span>
                         </button>
                         <button id="wyvernClearCreatorBtn" class="glass-btn icon-only" title="Clear creator filter">
@@ -449,22 +449,22 @@ class WyvernBrowseView extends BrowseView {
     _renderLoginModal() {
         return `
     <div id="wyvernLoginModal" class="modal-overlay hidden">
-        <div class="modal-glass chub-login-modal">
+        <div class="modal-glass browse-login-modal">
             <div class="modal-header">
                 <h2><i class="fa-solid fa-dragon"></i> Wyvern Login</h2>
                 <button class="close-btn" id="wyvernLoginClose">&times;</button>
             </div>
-            <div class="chub-login-body">
-                <p class="chub-login-info">
+            <div class="browse-login-body">
+                <p class="browse-login-info">
                     <i class="fa-solid fa-check-circle" style="color: var(--cl-success-bright);"></i>
                     <strong>Browsing, search, and NSFW Popular sort work without an account!</strong>
                 </p>
-                <p class="chub-login-info">
+                <p class="browse-login-info">
                     <i class="fa-solid fa-fire" style="color: var(--accent);"></i>
                     <strong>Log in</strong> to see NSFW content in all sort modes.
                 </p>
 
-                <div class="chub-login-form">
+                <div class="browse-login-form">
                     <div class="form-group">
                         <label for="wyvernLoginEmail">Email</label>
                         <input type="email" id="wyvernLoginEmail" class="glass-input" placeholder="your@email.com" autocomplete="email">
@@ -476,11 +476,11 @@ class WyvernBrowseView extends BrowseView {
                     <label class="checkbox-label" style="margin-top: 10px;">
                         <input type="checkbox" id="wyvernRememberKey" checked> Remember credentials
                     </label>
-                    <div id="wyvernLoginStatus" class="chub-login-status" style="display:none;"></div>
-                    <div id="wyvernTokenStatus" class="chub-login-status" style="display:none;"></div>
+                    <div id="wyvernLoginStatus" class="browse-login-status" style="display:none;"></div>
+                    <div id="wyvernTokenStatus" class="browse-login-status" style="display:none;"></div>
                 </div>
 
-                <div class="chub-login-actions">
+                <div class="browse-login-actions">
                     <button id="wyvernLoginBtn" class="action-btn primary">
                         <i class="fa-solid fa-sign-in-alt"></i> Log In
                     </button>
@@ -506,7 +506,7 @@ class WyvernBrowseView extends BrowseView {
                     <div>
                         <h2 id="wyvernCharName">Character Name</h2>
                         <p class="browse-char-meta">
-                            by <a id="wyvernCharCreator" href="#" title="Click to see all characters by this author">Creator</a> •
+                            by <a id="wyvernCharCreator" class="browse-meta-identity" href="#" title="Click to see all characters by this author">Creator</a> •
                             <span id="wyvernCharMessages" title="Messages"><i class="fa-solid fa-message"></i> 0</span> •
                             <span id="wyvernCharLikes" title="Likes"><i class="fa-solid fa-heart"></i> 0</span>
                         </p>
@@ -962,17 +962,16 @@ function initWyvernView() {
     // Modal + document-level listeners - attach once (persist across provider switches)
     if (!wyvernModalEventsAttached) {
         wyvernModalEventsAttached = true;
-        const isDesktop = !window.matchMedia('(max-width: 768px)').matches;
 
-        if (isDesktop) {
-            const wyvernOverlay = document.getElementById('wyvernCharModal');
-            BrowseView.wireTitleScroll(document.getElementById('wyvernCharName'), wyvernOverlay, wyvernOverlay?.querySelector('.browse-char-modal'));
-        }
+        const wyvernOverlay = document.getElementById('wyvernCharModal');
+        BrowseView.wireTitleScroll(document.getElementById('wyvernCharName'), wyvernOverlay, wyvernOverlay?.querySelector('.browse-char-modal'));
 
-        // Avatar click → full-size
+        // Avatar click → full-size (desktop only at event time; on mobile bail
+        // before stopPropagation so the delegated tap runs)
         const wyvernAvatar = document.getElementById('wyvernCharAvatar');
-        if (wyvernAvatar && isDesktop) {
+        if (wyvernAvatar) {
             wyvernAvatar.addEventListener('click', (e) => {
+                if (isMobileViewport()) return;
                 e.stopPropagation();
                 if (!wyvernAvatar.src) return;
                 BrowseView.openAvatarViewer(wyvernAvatar.src);
@@ -2433,7 +2432,8 @@ async function openWyvernCharPreview(char) {
         const notes = (raw || '').trim();
         if (notes) {
             if (creatorNotesSection) creatorNotesSection.style.display = 'block';
-            renderCreatorNotesSecure(notes, char.name, creatorNotesEl);
+            if (creatorNotesEl && !creatorNotesEl.querySelector('iframe')) creatorNotesEl.innerHTML = skeletonLines(3);
+            deferCall(creatorNotesEl, () => renderCreatorNotesSecure(notes, char.name, creatorNotesEl));
         } else {
             if (creatorNotesSection) creatorNotesSection.style.display = 'none';
             cleanupCreatorNotesContainer(creatorNotesEl);
@@ -2896,7 +2896,7 @@ async function downloadWyvernCharacter() {
         const mediaUrls = result.embeddedMediaUrls || [];
         const galleryPageUrls = result.galleryPageUrls || [];
         const showSummary = (hasGallery || mediaUrls.length > 0 || galleryPageUrls.length > 0)
-            && getSetting('notifyAdditionalContent') !== false;
+            && getSetting('importMediaAction') !== 'none';
 
         const summaryArgs = {
             galleryCharacters: hasGallery ? [{
@@ -2941,8 +2941,8 @@ async function downloadWyvernCharacter() {
         await new Promise(r => setTimeout(r, 200));
 
         const added = await fetchAndAddCharacter(result.fileName);
-        if (!added) await fetchCharacters(true);
-        view.buildLocalLibraryLookup();
+        if (added) view.addCharToLookup(added);
+        else await fetchCharacters(true);
         markWyvernCardAsImported(charId);
 
     } catch (e) {

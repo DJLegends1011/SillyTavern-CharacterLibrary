@@ -380,9 +380,20 @@ function setupPostMessageBridge() {
                     if (!context) break;
                     const idx = (context.characters || []).findIndex(c => c.avatar === msg.avatar);
                     if (idx !== -1 && typeof context.selectCharacterById === 'function') {
-                        await context.selectCharacterById(idx);
-                        if (typeof context.openCharacterChat === 'function') {
+                        // open the wanted chat in one CHAT_CHANGED (old select-then-openCharacterChat fired two)
+                        const alreadyActive = String(context.characterId) === String(idx);
+                        if (alreadyActive && typeof context.openCharacterChat === 'function') {
                             await context.openCharacterChat(msg.chatName);
+                        } else {
+                            // unshallow first so selectCharacterById's internal getChat->unshallow wont re-fetch
+                            // and reset the chat pointer we set below (ST lazy loading)
+                            let targetChar = context.characters[idx];
+                            if (targetChar?.shallow && typeof context.getOneCharacter === 'function') {
+                                await context.getOneCharacter(targetChar.avatar);
+                                targetChar = context.characters[idx];
+                            }
+                            if (targetChar) targetChar.chat = msg.chatName;
+                            await context.selectCharacterById(idx);
                         }
                     }
                 } catch (err) {
@@ -1681,7 +1692,7 @@ async function localizeCharacterInfoPanels() {
 // Display Name Override in SillyTavern Chat
 // ==============================================
 
-const PROVIDER_EXT_KEYS = ['chub', 'jannyai', 'pygmalion', 'wyvern', 'chartavern', 'datacat'];
+const PROVIDER_EXT_KEYS = ['chub', 'jannyai', 'pygmalion', 'wyvern', 'chartavern', 'datacat', 'botbooru'];
 let _displayNameUiObserver = null;
 let _displayNameUiRaf = 0;
 

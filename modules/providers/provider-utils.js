@@ -3,6 +3,8 @@
 // Contains network helpers, text utilities, image processing,
 // and the import pipeline shared by all provider implementations.
 
+import CoreAPI from '../core-api.js';
+
 // ========================================
 // CONSTANTS
 // ========================================
@@ -10,6 +12,14 @@
 export const IMG_PLACEHOLDER = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'/%3E";
 
 export const CL_HELPER_PLUGIN_BASE = '/plugins/cl-helper';
+
+// Live viewport check for handlers that branch per breakpoint. Always evaluate at event time,
+// never at listener-attach time: the browse modal listener guards never reset, so an attach-time
+// snapshot goes stale when the viewport crosses 768px mid-session.
+const _mobileMq = window.matchMedia('(max-width: 768px)');
+export function isMobileViewport() {
+    return _mobileMq.matches;
+}
 
 // XSS gate for any third-party browse content rendered via innerHTML.
 // Never bypass; never duplicate this config per-provider.
@@ -42,27 +52,77 @@ export function skeletonLines(n = 3) {
 
 // A browse preview fills several heavy fields (each a safePurify(formatRichText(...)) on big
 // third-party content); doing them in one frame is a long task that janks the open. deferRender runs
-// one queued job per frame, so N fields cost N short frames instead of one freeze.
+// one queued job per frame, and only for fields actually on screen: a job whose element is hidden
+// (collapsed section) or below the fold is parked instead of built, and an IntersectionObserver
+// re-queues it on first reveal. Content the user never scrolls to never pays the sanitize cost.
 let _deferQueue = [];
 let _deferRaf = 0;
+const _deferParked = new WeakMap(); // el -> job, waiting for first reveal
+let _deferIO = null;
+
+// 200px lookahead so a slow scroll meets built content instead of a skeleton.
+const DEFER_REVEAL_MARGIN = 200;
+
+// In-layout + within (margin-padded) viewport. getClientRects() is empty for display:none but not
+// for zero-height boxes, so still-empty containers (eg. alt-greeting bodies) count as visible.
+function _deferOnScreen(el) {
+    if (!el.getClientRects().length) return false;
+    const r = el.getBoundingClientRect();
+    return r.top < window.innerHeight + DEFER_REVEAL_MARGIN && r.bottom > -DEFER_REVEAL_MARGIN;
+}
+
+function _deferReveal() {
+    if (_deferIO) return _deferIO;
+    _deferIO = new IntersectionObserver((entries) => {
+        for (const en of entries) {
+            if (!en.isIntersecting) continue;
+            _deferIO.unobserve(en.target);
+            const job = _deferParked.get(en.target);
+            if (job) { _deferParked.delete(en.target); _enqueueDeferJob(job); }
+        }
+    }, { rootMargin: `${DEFER_REVEAL_MARGIN}px` });
+    return _deferIO;
+}
+
 function _pumpDefer() {
     _deferRaf = 0;
     const job = _deferQueue.shift();
     if (job && job.el && job.el.isConnected) {
-        try { job.el.innerHTML = job.build(); } catch { /* skip a field that fails to build */ }
+        if (_deferOnScreen(job.el)) {
+            const t0 = performance.now();
+            // build jobs assign innerHTML; call jobs run a side effect (eg. append a sanitized iframe).
+            try { if (job.run) job.run(); else job.el.innerHTML = job.build(); } catch { /* skip a field that fails */ }
+            CoreAPI.debugLog(`[defer] ${(performance.now() - t0).toFixed(1)}ms`, job.el.id || job.el.className);
+        } else {
+            _deferParked.set(job.el, job);
+            _deferReveal().observe(job.el);
+        }
     }
     if (_deferQueue.length) _deferRaf = requestAnimationFrame(_pumpDefer);
 }
 
-// Queue `el.innerHTML = build()` onto its own frame; build() (the sanitize pipeline) runs in the pump.
-// Reusing the same element replaces its pending job, so re-opening the (shared) preview modal with a
-// new card supersedes the prior card's queued fields instead of briefly painting them.
+// Pace one job per frame, only for on-screen elements; park the rest until first reveal. Reusing the
+// same element replaces its pending job (queued or parked), so re-opening the (shared) preview modal
+// with a new card supersedes the prior card's pending work instead of briefly painting it.
+function _enqueueDeferJob(job) {
+    _deferParked.delete(job.el);
+    const i = _deferQueue.findIndex(j => j.el === job.el);
+    if (i !== -1) _deferQueue.splice(i, 1);
+    _deferQueue.push(job);
+    if (!_deferRaf) _deferRaf = requestAnimationFrame(_pumpDefer);
+}
+
+// build() returns HTML assigned via `el.innerHTML` in the pump (a text field's sanitize pipeline).
 export function deferRender(el, build) {
     if (!el || typeof build !== 'function') return;
-    const i = _deferQueue.findIndex(j => j.el === el);
-    if (i !== -1) _deferQueue.splice(i, 1);
-    _deferQueue.push({ el, build });
-    if (!_deferRaf) _deferRaf = requestAnimationFrame(_pumpDefer);
+    _enqueueDeferJob({ el, build });
+}
+
+// run() runs a side-effecting callback in the pump instead of assigning innerHTML, for renders that
+// append nodes themselves (eg. renderCreatorNotesSecure's sanitized iframe). Same pacing + parking.
+export function deferCall(el, run) {
+    if (!el || typeof run !== 'function') return;
+    _enqueueDeferJob({ el, run });
 }
 
 // ========================================
@@ -70,6 +130,28 @@ export function deferRender(el, build) {
 // ========================================
 
 const _proxyOrigins = new Set();
+
+// Short human snippet from an error body: JSON detail/message/error fields
+// when present, else the tag-stripped raw start. Capped at 200 chars.
+function errorSnippetFromText(text) {
+    const t = (text || '').trim();
+    if (!t) return '';
+    try {
+        const j = JSON.parse(t);
+        const msg = j?.detail || j?.message || j?.error;
+        if (typeof msg === 'string' && msg) return `: ${msg.slice(0, 200)}`;
+        if (msg) return `: ${JSON.stringify(msg).slice(0, 200)}`;
+    } catch { /* not JSON; fall through to raw */ }
+    return `: ${t.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200)}`;
+}
+
+async function errorBodySnippet(resp) {
+    try {
+        return errorSnippetFromText(await resp.text());
+    } catch {
+        return '';
+    }
+}
 
 /**
  * Fetch with automatic CORS proxy fallback.
@@ -89,18 +171,17 @@ export async function fetchWithProxy(url, opts = {}) {
             _proxyOrigins.add(origin);
         }
         if (directResponse) {
-            if (!directResponse.ok) throw new Error(`HTTP ${directResponse.status}`);
+            if (!directResponse.ok) throw new Error(`HTTP ${directResponse.status}${await errorBodySnippet(directResponse)}`);
             return directResponse;
         }
     }
     const r = await fetch(`/proxy/${encodeURIComponent(url)}`, opts);
     if (!r.ok) {
-        if (r.status === 404) {
-            const t = await r.text();
-            if (t.includes('CORS proxy is disabled'))
-                throw new Error('CORS proxy is disabled in SillyTavern settings');
+        const t = await r.text().catch(() => '');
+        if (r.status === 404 && t.includes('CORS proxy is disabled')) {
+            throw new Error('CORS proxy is disabled. Set enableCorsProxy: true in SillyTavern\'s config.yaml and restart the server');
         }
-        throw new Error(`HTTP ${r.status}`);
+        throw new Error(`HTTP ${r.status}${errorSnippetFromText(t)}`);
     }
     return r;
 }
@@ -141,6 +222,31 @@ export function stripHtml(html) {
 }
 
 /**
+ * Rewrite root-relative media references in remote card text to the provider's site.
+ * Covers markdown image destinations and <img src>; a single leading slash in remote
+ * content can only mean site-relative, left alone the browser resolves it against the
+ * ST origin and 404s (eg botbooru's ![](/mirror/<hash>.png) mirror rewrites).
+ * Protocol-relative (//host) and absolute URLs pass through untouched.
+ * @param {string} text
+ * @param {string} base - provider site origin, eg 'https://botbooru.com'
+ * @returns {string}
+ */
+export function absolutizeMediaPaths(text, base) {
+    if (!text || !base) return text || '';
+    const root = String(base).replace(/\/+$/, '');
+    return String(text)
+        .replace(/(!\[[^\]]*\]\()\/(?!\/)/g, (m, p1) => `${p1}${root}/`)
+        .replace(/(<img\s[^>]*?src=["'])\/(?!\/)/gi, (m, p1) => `${p1}${root}/`);
+}
+
+// Pure-function memo: same raw name always normalizes the same, so a hit is never stale.
+// Both consumers re-run it over stable inputs (library rebuild over allCharacters, per-card
+// match checks over recurring browse names), so the cache erases the regex cost on repeats.
+// FIFO-evict past the cap to bound a long browse session; dropping any entry is always safe.
+const _normalizeBrowseNameCache = new Map();
+const NORMALIZE_BROWSE_NAME_CACHE_CAP = 50000;
+
+/**
  * Normalize a character name for cross-provider matching.
  * Strips version suffixes, common modifiers, and collapses whitespace.
  * @param {string} name
@@ -148,7 +254,9 @@ export function stripHtml(html) {
  */
 export function normalizeBrowseName(name) {
     if (!name) return '';
-    return name
+    const cached = _normalizeBrowseNameCache.get(name);
+    if (cached !== undefined) return cached;
+    const result = name
         .toLowerCase()
         .trim()
         .replace(/\s*[\(\[\{]?\s*v(?:er(?:sion)?)?\.?\s*\d+[\)\]\}]?\s*$/i, '')
@@ -156,6 +264,11 @@ export function normalizeBrowseName(name) {
         .replace(/\s*[\(\[\{]?(?:updated?|fixed?|new|old|alt(?:ernate)?|edit(?:ed)?|copy|backup|nsfw)[\)\]\}]?\s*$/i, '')
         .replace(/\s+/g, ' ')
         .trim();
+    if (_normalizeBrowseNameCache.size >= NORMALIZE_BROWSE_NAME_CACHE_CAP) {
+        _normalizeBrowseNameCache.delete(_normalizeBrowseNameCache.keys().next().value);
+    }
+    _normalizeBrowseNameCache.set(name, result);
+    return result;
 }
 
 /**

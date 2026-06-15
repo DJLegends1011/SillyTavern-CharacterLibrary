@@ -353,7 +353,10 @@ async function listFolder(folderId, signal) {
 async function getDownloadUrl(folderId, fileHandle, signal) {
     const res = await megaApi(folderId, [{ a: 'g', g: 1, n: fileHandle }], signal);
     if (typeof res[0] === 'number') return null;
-    return res[0]?.g || null;
+    const url = res[0]?.g || null;
+    // MEGA's API hands out http:// storage hosts; they all speak TLS, and
+    // strict HTTPS-Only setups refuse the plain ones
+    return url ? url.replace(/^http:\/\//i, 'https://') : null;
 }
 
 // ========================================================================

@@ -5,7 +5,7 @@
 
 import { BrowseView } from '../browse-view.js';
 import CoreAPI from '../../core-api.js';
-import { IMG_PLACEHOLDER, formatNumber, BROWSE_PURIFY_CONFIG, skeletonLines, deferRender } from '../provider-utils.js';
+import { IMG_PLACEHOLDER, formatNumber, BROWSE_PURIFY_CONFIG, skeletonLines, deferRender, isMobileViewport } from '../provider-utils.js';
 import {
     searchCharacters,
     fetchCharacterDetail,
@@ -1010,7 +1010,7 @@ async function importCharacter(charData) {
         const mediaUrls = result.embeddedMediaUrls || [];
         const galleryPageUrls = result.galleryPageUrls || [];
         const showSummary = (hasGallery || mediaUrls.length > 0 || galleryPageUrls.length > 0)
-            && getSetting('notifyAdditionalContent') !== false;
+            && getSetting('importMediaAction') !== 'none';
 
         const summaryArgs = {
             galleryCharacters: hasGallery ? [{
@@ -1053,8 +1053,8 @@ async function importCharacter(charData) {
         showToast(`Imported "${result.characterName}"`, 'success');
 
         const added = await fetchAndAddCharacter(result.fileName);
-        if (!added) await fetchCharacters(true);
-        view.buildLocalLibraryLookup();
+        if (added) view.addCharToLookup(added);
+        else await fetchCharacters(true);
         markCardAsImported(charData.id);
 
     } catch (err) {
@@ -2210,12 +2210,9 @@ function initPygView() {
     // ── Preview modal events (attached once - persist across provider switches)
     if (!modalEventsAttached) {
         modalEventsAttached = true;
-        const isDesktop = !window.matchMedia('(max-width: 768px)').matches;
 
-        if (isDesktop) {
-            const pygOverlay = document.getElementById('pygCharModal');
-            BrowseView.wireTitleScroll(document.getElementById('pygCharName'), pygOverlay, pygOverlay?.querySelector('.browse-char-modal'));
-        }
+        const pygOverlay = document.getElementById('pygCharModal');
+        BrowseView.wireTitleScroll(document.getElementById('pygCharName'), pygOverlay, pygOverlay?.querySelector('.browse-char-modal'));
 
         on('pygCharClose', 'click', () => closePreviewModal());
         on('pygImportBtn', 'click', () => { if (pygSelectedChar) importCharacter(pygSelectedChar); });
@@ -2234,11 +2231,12 @@ function initPygView() {
             });
         }
 
-        // Avatar click → full-size viewer (desktop only; mobile has its own handler)
+        // Avatar click → full-size viewer (desktop only at event time; mobile has its own handler)
         const avatar = document.getElementById('pygCharAvatar');
-        if (avatar && isDesktop) {
+        if (avatar) {
             avatar.style.cursor = 'pointer';
             avatar.addEventListener('click', () => {
+                if (isMobileViewport()) return;
                 const src = avatar.src;
                 if (src && src !== '/img/ai4.png') {
                     BrowseView.openAvatarViewer(src, '/img/ai4.png');
@@ -2616,17 +2614,17 @@ class PygmalionBrowseView extends BrowseView {
     _renderLoginModal() {
         return `
     <div id="pygLoginModal" class="modal-overlay hidden">
-        <div class="modal-glass chub-login-modal">
+        <div class="modal-glass browse-login-modal">
             <div class="modal-header">
                 <h2><i class="fa-solid fa-key"></i> Pygmalion Authentication</h2>
                 <button class="close-btn" id="pygLoginClose">&times;</button>
             </div>
-            <div class="chub-login-body">
-                <p class="chub-login-info">
+            <div class="browse-login-body">
+                <p class="browse-login-info">
                     <i class="fa-solid fa-check-circle" style="color: var(--cl-success-bright);"></i>
                     <strong>Browsing and downloading public characters works without logging in!</strong>
                 </p>
-                <p class="chub-login-info">
+                <p class="browse-login-info">
                     <i class="fa-solid fa-key" style="color: var(--accent);"></i>
                     <strong>Optional:</strong> Log in to enable NSFW content, follow authors, and access your Following timeline.
                 </p>
@@ -2646,7 +2644,7 @@ class PygmalionBrowseView extends BrowseView {
                         </span>
                     </div>
 
-                    <div id="pygLoginForm" class="chub-login-form">
+                    <div id="pygLoginForm" class="browse-login-form">
                         <div class="form-group">
                             <label for="pygLoginEmail">Email</label>
                             <input type="email" id="pygLoginEmail" class="glass-input" placeholder="your-email@example.com" autocomplete="email">
@@ -2656,7 +2654,7 @@ class PygmalionBrowseView extends BrowseView {
                             <input type="password" id="pygLoginPassword" class="glass-input" placeholder="Your Pygmalion password" autocomplete="current-password">
                         </div>
 
-                        <div class="chub-login-actions" style="margin-top: 15px; display: flex; gap: 8px; justify-content: flex-start;">
+                        <div class="browse-login-actions" style="margin-top: 15px; display: flex; gap: 8px; justify-content: flex-start;">
                             <button id="pygLoginBtn" class="glass-btn" disabled style="color: var(--cl-success-bright); border-color: rgba(var(--cl-success-bright-rgb), 0.4);">
                                 <i class="fa-solid fa-sign-in-alt"></i> Log In
                             </button>
@@ -2681,7 +2679,7 @@ class PygmalionBrowseView extends BrowseView {
                     <div>
                         <h2 id="pygCharName">Character Name</h2>
                         <p class="browse-char-meta">
-                            by <a id="pygCharCreator" href="#" title="Click to see all characters by this author">Creator</a>
+                            by <a id="pygCharCreator" class="browse-meta-identity" href="#" title="Click to see all characters by this author">Creator</a>
                             <a id="pygCreatorExternal" href="#" target="_blank" class="creator-external-link" title="Open author's Pygmalion profile"><i class="fa-solid fa-external-link"></i></a>
                         </p>
                     </div>

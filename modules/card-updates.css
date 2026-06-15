@@ -989,14 +989,6 @@ body.char-modal-above .gv-modal.visible {
 .lorebook-diff-badge.local-only { background: rgba(158, 158, 158, 0.25); color: #bdbdbd; font-size: var(--font-2xs); }
 .lorebook-diff-entry.local-only { opacity: 0.7; }
 
-.lorebook-diff-summary {
-    padding: 6px 10px;
-    font-size: var(--font-sm);
-    color: var(--cl-text-secondary);
-    border-bottom: 1px dashed rgba(255,255,255,0.08);
-    line-height: 1.4;
-}
-
 .lorebook-diff-info-box {
     display: flex;
     gap: var(--space-sm-md);
@@ -1081,9 +1073,6 @@ body.char-modal-above .gv-modal.visible {
     align-items: center;
     margin-left: 4px;
 }
-
-.lorebook-diff-local-only-section { padding: 6px 10px; border-top: 1px dashed rgba(255,255,255,0.08); }
-.lorebook-diff-keep-toggle { display: inline-flex; align-items: center; gap: var(--space-xs-sm); cursor: pointer; font-size: var(--font-sm); color: var(--cl-text-secondary); }
 
 .lorebook-diff-entry-name {
     font-weight: 500;
@@ -1350,7 +1339,6 @@ body.char-modal-above .gv-modal.visible {
     .card-update-diff-item.long-text .card-update-diff-header label { flex-shrink: 1; min-width: 0; }
     .card-update-diff-stats { font-size: var(--font-xs); white-space: nowrap; }
     .lorebook-entry-counts { font-size: var(--font-xs); margin-left: 4px; gap: var(--space-2xs); }
-    .lorebook-diff-summary { font-size: var(--font-xs); }
 
     /* --- Card update lorebook diff entries (mobile) --- */
     .lorebook-diff-entries { padding: 6px 8px; gap: var(--space-2xs); }
@@ -1362,7 +1350,6 @@ body.char-modal-above .gv-modal.visible {
         font-size: var(--font-xs);
         line-height: 1.4;
     }
-    .lorebook-diff-info-detail { font-size: var(--font-md); }
     .lorebook-diff-entry {
         flex-wrap: wrap;
         gap: var(--space-xs) var(--space-xs-sm);

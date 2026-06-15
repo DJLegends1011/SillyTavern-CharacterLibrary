@@ -71,17 +71,10 @@
     color: var(--accent);
 }
 
-.pyg-manual-token-body {
-    margin-top: 10px;
-    padding-top: 10px;
-    border-top: 1px solid var(--glass-border);
-}
-
 
 /* Mobile overrides */
 @media screen and (max-width: 768px) {
 
     .pyg-plugin-status { font-size: var(--font-sm); }
-    .pyg-manual-token-body .glass-input { font-size: var(--mobile-input-size); }
 
 }

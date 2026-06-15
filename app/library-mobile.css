@@ -117,7 +117,6 @@
     .confirm-modal,
     .toast,
     .tag-autocomplete,
-    .download-media-menu,
     .accent-icon {
         backdrop-filter: none !important;
         -webkit-backdrop-filter: none !important;
@@ -132,9 +131,6 @@
 
     /* Kill infinite animations on cards in the scroll grid */
     .char-card.is-favorite .favorite-indicator {
-        animation: none !important;
-    }
-    .favorites-filter-btn.active i {
         animation: none !important;
     }
 
@@ -246,8 +242,7 @@
         touch-action: manipulation;
     }
     #tagFilterPopup .tag-search-row input { font-size: var(--mobile-input-size); padding: 10px 12px; border-radius: var(--radius-lg); }
-    #tagFilterPopup .tag-item,
-    #tagFilterPopup .tag-filter-item { padding: 10px 14px; min-height: var(--touch-target-min); margin: 0 6px; }
+    #tagFilterPopup .tag-filter-item { padding: 10px 14px; min-height: var(--touch-target-min); margin: 0 6px; contain-intrinsic-size: auto 56px; }
     #tagFilterPopup .tag-state-btn { width: 24px; height: 24px; min-width: 24px; touch-action: manipulation; }
     #tagFilterPopup .tag-count { font-size: var(--font-sm); }
     .tag-filter-item .tag-label { font-size: var(--font-sm); }
@@ -954,6 +949,17 @@
     .cl-modal-drawer .confirm-modal-header,
     .cl-modal-drawer .modal-header {
         padding-left: var(--space-md) !important;
+    }
+
+    /* Link-lorebook picker: partial-height tap-away drawer (mirrors #chatLoreModal in chats.css). */
+    .lorebook-link-search { font-size: var(--mobile-input-size); }
+    .lorebook-link-row { min-height: 48px; }
+    #linkLorebookModal .cl-modal-content {
+        height: auto !important;
+        max-height: 75vh !important;
+        border: 1px solid var(--glass-border) !important;
+        border-bottom: none !important;
+        padding-bottom: max(var(--space-sm), env(safe-area-inset-bottom));
     }
 
     /* JS injects kebab + quick-import; cl-browse-quick-import on <html> picks one */
@@ -1801,6 +1807,24 @@
         min-height: 28px;
     }
 
+    /* Botbooru weighted-tag editor: lift the compact desktop controls to a
+       usable tap size; the weight field stays un-stretched (the basis-100%
+       input rule above would make the number field full-width) */
+    .botbooru-weight-row .glass-btn.icon-only {
+        width: 36px;
+        height: 36px;
+        min-width: 36px;
+        min-height: 36px;
+        font-size: var(--font-sm);
+    }
+    .botbooru-weight-row .bw-weight,
+    .settings-input-group .botbooru-weight-input {
+        flex-basis: auto !important;
+        width: 84px !important;
+        font-size: var(--mobile-input-size) !important;
+        padding: var(--space-2xs) var(--space-xs) !important;
+    }
+
     /* Platform-specific settings visibility */
     .settings-row[data-platform="desktop"] { display: none !important; }
 
@@ -2113,7 +2137,6 @@
         width: 30px;
         height: 30px;
     }
-    .bulk-summary-item .char-name,
     .bulk-summary-item .char-name-link {
         font-size: var(--font-sm);
     }
@@ -2260,14 +2283,6 @@
     .gallery-info-modal-content .cl-modal-header {
         padding: var(--space-xs-sm) var(--space-md);
         flex-shrink: 0;
-    }
-    .gallery-info-body {
-        padding: 16px;
-        font-size: var(--font-md);
-        max-height: none !important;
-        flex: 1;
-        overflow-y: auto;
-        -webkit-overflow-scrolling: touch;
     }
     .gallery-info-modal-content .cl-modal-footer {
         flex-shrink: 0;
@@ -2444,15 +2459,9 @@
     .char-dup-diff-container { margin: 0 10px 10px; gap: var(--space-sm); }
     .char-dup-diff details { padding: 8px 10px; }
     .char-dup-diff summary { font-size: var(--font-xs); }
-    .char-dup-diff-grid { grid-template-columns: 1fr !important; gap: var(--space-xs-sm); }
     .char-dup-diff-content { font-size: var(--font-2xs); max-height: 150px; padding: 8px; }
     .char-dup-diff-label { font-size: var(--font-3xs); }
     .char-dup-diff-content-label { font-size: var(--font-3xs); }
-
-    /* Meta diffs in the center column → hidden (merged into cards on mobile) */
-    .char-dup-meta-diffs {
-        display: none;
-    }
 
     /* Divider between stacked cards */
     .char-dup-divider {
@@ -2511,7 +2520,6 @@
         margin-bottom: 14px;
     }
     .dup-delete-transfer-header { font-size: var(--font-sm); margin-bottom: 8px; }
-    .dup-delete-transfer-warning { font-size: var(--font-xs); }
     .dup-delete-transfer-radio {
         padding: 8px 10px;
         font-size: var(--font-xs);
@@ -2571,11 +2579,6 @@
     }
     .settings-nav-item span { display: none !important; }
     .settings-nav-item i { font-size: var(--font-base) !important; margin: 0 !important; }
-    .settings-body {
-        flex: 1;
-        overflow-y: auto;
-        -webkit-overflow-scrolling: touch;
-    }
     .settings-content { padding: 14px; }
     .settings-panel-header h4 { font-size: var(--font-pre-base); }
     .settings-panel-desc { font-size: var(--font-sm); }
@@ -2680,9 +2683,6 @@
         background: rgba(0, 0, 0, 0.35);
         border: 1px solid rgba(255, 255, 255, 0.1);
         color: var(--text-primary);
-    }
-    .provider-order-defaults-label {
-        display: none;
     }
     .provider-order-item.provider-disabled {
         opacity: 0.55;
@@ -2873,8 +2873,6 @@
         background: rgba(var(--accent-rgb), 0.14);
         color: var(--accent);
     }
-    .mobile-bottom-nav-divider { display: none; }
-
     html.cl-filters-active #mobileNavFiltersBtn::after {
         content: '';
         position: absolute;
@@ -2968,11 +2966,6 @@
     }
     .mobile-fab.hidden {
         display: none !important;
-    }
-    .mobile-fab.fab-fade {
-        opacity: 0;
-        pointer-events: none;
-        transform: scale(0.85);
     }
     .mobile-fab.hidden-by-keyboard {
         opacity: 0;
