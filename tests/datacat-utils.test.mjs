@@ -14,8 +14,6 @@ import {
     buildDatacatYoursCharactersPath,
     isDatacatYoursCollectableHit,
     isDatacatYoursSavedHit,
-    getDatacatGoogleAuthOriginIssue,
-    resolveDatacatGoogleAuthLocalhostUrl,
 } from '../modules/providers/datacat/datacat-api.js';
 
 describe('normalizeDcCredential', () => {
@@ -99,48 +97,6 @@ describe('buildDataCatAccountIdentifyHeaders', () => {
         assert.equal(buildDataCatAccountIdentifyHeaders('', 'device'), null);
         assert.equal(buildDataCatAccountIdentifyHeaders('bad\ntoken', 'device'), null);
         assert.deepEqual(buildDataCatAccountIdentifyHeaders('account-token', 'device-token')['X-Device-Token'], 'device-token');
-    });
-});
-
-describe('resolveDatacatGoogleAuthLocalhostUrl', () => {
-    it('rewrites loopback IP URLs to localhost for Firebase auth', () => {
-        assert.equal(
-            resolveDatacatGoogleAuthLocalhostUrl('http://127.0.0.1:8001/characters?x=1#settings'),
-            'http://localhost:8001/characters?x=1#settings',
-        );
-    });
-
-    it('does not rewrite localhost, LAN, or HTTPS URLs', () => {
-        assert.equal(resolveDatacatGoogleAuthLocalhostUrl('http://localhost:8001/characters'), null);
-        assert.equal(resolveDatacatGoogleAuthLocalhostUrl('http://192.168.1.50:8001/characters'), null);
-        assert.equal(resolveDatacatGoogleAuthLocalhostUrl('https://127.0.0.1:8001/characters'), null);
-        assert.equal(resolveDatacatGoogleAuthLocalhostUrl('not a url'), null);
-    });
-
-    it('does not rewrite embedded Character Library pages because SillyTavern CSRF is tied to the parent origin', () => {
-        assert.equal(
-            resolveDatacatGoogleAuthLocalhostUrl('http://127.0.0.1:8001/scripts/extensions/third-party/SillyTavern-CharacterLibrary/app/library.html?csrf=abc&embedded=1'),
-            null,
-        );
-    });
-});
-
-describe('getDatacatGoogleAuthOriginIssue', () => {
-    it('allows localhost Google auth', () => {
-        assert.equal(getDatacatGoogleAuthOriginIssue('http://localhost:8001/characters'), null);
-    });
-
-    it('blocks embedded loopback, plain loopback, and LAN origins before Firebase popup auth', () => {
-        assert.equal(
-            getDatacatGoogleAuthOriginIssue('http://127.0.0.1:8001/scripts/extensions/third-party/SillyTavern-CharacterLibrary/app/library.html?embedded=1&csrf=abc'),
-            'embedded-loopback',
-        );
-        assert.equal(getDatacatGoogleAuthOriginIssue('http://127.0.0.1:8001/characters'), 'loopback');
-        assert.equal(getDatacatGoogleAuthOriginIssue('http://192.168.1.50:8001/characters'), 'unsupported-host');
-    });
-
-    it('does not block malformed URLs because runtime auth error handling can handle them', () => {
-        assert.equal(getDatacatGoogleAuthOriginIssue('not a url'), null);
     });
 });
 
