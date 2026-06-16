@@ -70,17 +70,6 @@ export function buildDataCatAccountIdentifyHeaders(accountToken, deviceToken = n
     return buildDataCatHeaders({ sessionToken, deviceToken, json: true });
 }
 
-export function buildDataCatGoogleSigninBody(firebaseIdToken, anonymousToken = null) {
-    const token = normalizeDcCredential(firebaseIdToken);
-    if (!token) return null;
-
-    const body = { token };
-    const anonToken = normalizeDcCredential(anonymousToken);
-    if (anonToken) body.anonToken = anonToken;
-
-    return body;
-}
-
 export function sanitizeDataCatUser(user = null) {
     if (!user || typeof user !== 'object' || Array.isArray(user)) return null;
 

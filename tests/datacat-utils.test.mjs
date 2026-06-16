@@ -4,7 +4,6 @@ import { describe, it } from 'node:test';
 import {
     buildDataCatHeaders,
     buildDataCatAccountIdentifyHeaders,
-    buildDataCatGoogleSigninBody,
     chooseDataCatToken,
     isDataCatCharacterId,
     normalizeDcCredential,
@@ -100,23 +99,6 @@ describe('buildDataCatAccountIdentifyHeaders', () => {
         assert.equal(buildDataCatAccountIdentifyHeaders('', 'device'), null);
         assert.equal(buildDataCatAccountIdentifyHeaders('bad\ntoken', 'device'), null);
         assert.deepEqual(buildDataCatAccountIdentifyHeaders('account-token', 'device-token')['X-Device-Token'], 'device-token');
-    });
-});
-
-describe('buildDataCatGoogleSigninBody', () => {
-    it('builds the DataCat Google sign-in payload with an optional anonymous token', () => {
-        assert.deepEqual(buildDataCatGoogleSigninBody('  firebase-id-token  ', '  anon-token  '), {
-            token: 'firebase-id-token',
-            anonToken: 'anon-token',
-        });
-        assert.deepEqual(buildDataCatGoogleSigninBody('firebase-id-token', ''), {
-            token: 'firebase-id-token',
-        });
-    });
-
-    it('rejects invalid Firebase ID tokens', () => {
-        assert.equal(buildDataCatGoogleSigninBody('', 'anon-token'), null);
-        assert.equal(buildDataCatGoogleSigninBody('bad\ntoken', 'anon-token'), null);
     });
 });
 
