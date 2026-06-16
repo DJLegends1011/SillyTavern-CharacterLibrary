@@ -15,16 +15,6 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
 const API_BASE = '/api'; 
 const isEmbedded = new URLSearchParams(window.location.search).get('embedded') === '1';
 const embeddedShowTopBar = new URLSearchParams(window.location.search).get('showTopBar') === '1';
-const DATACAT_FIREBASE_APP_NAME = 'datacat-character-library';
-const DATACAT_FIREBASE_CONFIG = Object.freeze({
-    apiKey: 'AIzaSyBIFHsGwcFG0naVBLpT7czdEGAwaG2qLNM',
-    authDomain: 'liberator-57c22.firebaseapp.com',
-    projectId: 'liberator-57c22',
-    storageBucket: 'liberator-57c22.firebasestorage.app',
-    messagingSenderId: '818119750572',
-    appId: '1:818119750572:web:04e7def94deb60f40f8009',
-});
-let datacatFirebaseAuthPromise = null;
 let allCharacters = [];
 let currentCharacters = [];
 
@@ -1564,60 +1554,6 @@ async function performClHelperSelfUpdate(btn) {
     }
 }
 
-async function getDatacatFirebaseAuth() {
-    if (!datacatFirebaseAuthPromise) {
-        datacatFirebaseAuthPromise = (async () => {
-            const [firebaseApp, firebaseAuth] = await Promise.all([
-                import('https://www.gstatic.com/firebasejs/10.7.0/firebase-app.js'),
-                import('https://www.gstatic.com/firebasejs/10.7.0/firebase-auth.js'),
-            ]);
-            const existingApp = firebaseApp.getApps()
-                .find(app => app.name === DATACAT_FIREBASE_APP_NAME);
-            const app = existingApp
-                || firebaseApp.initializeApp(DATACAT_FIREBASE_CONFIG, DATACAT_FIREBASE_APP_NAME);
-            const auth = firebaseAuth.getAuth(app);
-            const provider = new firebaseAuth.GoogleAuthProvider();
-            provider.setCustomParameters({ prompt: 'select_account' });
-            return { auth, provider, signInWithPopup: firebaseAuth.signInWithPopup };
-        })().catch(err => {
-            datacatFirebaseAuthPromise = null;
-            throw err;
-        });
-    }
-    return datacatFirebaseAuthPromise;
-}
-
-function formatDatacatGoogleAuthError(err) {
-    const code = err?.code || '';
-    if (code === 'auth/popup-closed-by-user') return null;
-    if (code === 'auth/popup-blocked') {
-        return 'Google popup was blocked. Allow popups for this page and try again.';
-    }
-    if (code === 'auth/unauthorized-domain') {
-        return 'Google blocked this origin. Try desktop localhost, or DataCat needs to authorize this host for Firebase login.';
-    }
-    if (code === 'auth/network-request-failed') {
-        return 'Network error. Please check your connection.';
-    }
-    if (code === 'auth/operation-not-supported-in-this-environment') {
-        return 'Google popup login is not supported in this browser context. Try desktop localhost.';
-    }
-    return err?.message || 'Google sign-in failed';
-}
-
-function formatDatacatGoogleOriginIssue(issue) {
-    if (issue === 'embedded-loopback') {
-        return 'Google cannot authorize the embedded 127.0.0.1 page without breaking SillyTavern CSRF. Use Account Token instead.';
-    }
-    if (issue === 'loopback') {
-        return 'Google does not authorize 127.0.0.1 for this DataCat login. Open Character Library on localhost or use Account Token.';
-    }
-    if (issue === 'unsupported-host') {
-        return 'Google does not authorize this local host for DataCat login. Use Account Token instead.';
-    }
-    return 'Google cannot authorize this page. Use Account Token instead.';
-}
-
 /**
  * Setup the Gallery Settings Modal
  */
@@ -1655,11 +1591,7 @@ function setupSettingsModal() {
     const datacatSettingsFields = document.getElementById('datacatSettingsFields');
     const datacatSessionStatus = document.getElementById('datacatSessionStatus');
     const datacatAccountStatus = document.getElementById('datacatAccountStatus');
-    const datacatAccountEmailInput = document.getElementById('settingsDatacatAccountEmail');
-    const datacatAccountPasswordInput = document.getElementById('settingsDatacatAccountPassword');
     const datacatAccountTokenInput = document.getElementById('settingsDatacatAccountToken');
-    const datacatAccountLoginBtn = document.getElementById('datacatAccountLoginBtn');
-    const datacatAccountGoogleLoginBtn = document.getElementById('datacatAccountGoogleLoginBtn');
     const datacatAccountTokenConnectBtn = document.getElementById('datacatAccountTokenConnectBtn');
     const datacatAccountOpenLoginBtn = document.getElementById('datacatAccountOpenLoginBtn');
     const datacatAccountLogoutBtn = document.getElementById('datacatAccountLogoutBtn');
@@ -3436,8 +3368,6 @@ function setupSettingsModal() {
         if (wyvernEmailInput) wyvernEmailInput.value = '';
         if (wyvernPasswordInput) wyvernPasswordInput.value = '';
         if (wyvernRememberCredsCheckbox) wyvernRememberCredsCheckbox.checked = false;
-        if (datacatAccountEmailInput) datacatAccountEmailInput.value = '';
-        if (datacatAccountPasswordInput) datacatAccountPasswordInput.value = '';
         if (datacatUseAccountExtractionCheckbox) datacatUseAccountExtractionCheckbox.checked = DEFAULT_SETTINGS.datacatUseAccountForExtraction;
         if (datacatSyncYoursCheckbox) datacatSyncYoursCheckbox.checked = DEFAULT_SETTINGS.datacatSyncYours;
         renderDatacatAccountStatus({ valid: false });
@@ -3741,8 +3671,6 @@ function setupSettingsModal() {
             const label = user.username || user.email || 'Signed in';
             datacatAccountStatus.className = 'settings-status-badge active';
             datacatAccountStatus.innerHTML = `<i class="fa-solid fa-circle"></i> ${escapeHtml(label)}`;
-            if (datacatAccountLoginBtn) datacatAccountLoginBtn.style.display = 'none';
-            if (datacatAccountGoogleLoginBtn) datacatAccountGoogleLoginBtn.style.display = 'none';
             if (datacatAccountTokenConnectBtn) datacatAccountTokenConnectBtn.style.display = 'none';
             if (datacatAccountOpenLoginBtn) datacatAccountOpenLoginBtn.style.display = 'none';
             if (datacatAccountLogoutBtn) datacatAccountLogoutBtn.style.display = '';
@@ -3752,8 +3680,6 @@ function setupSettingsModal() {
         if (valid) {
             datacatAccountStatus.className = 'settings-status-badge active';
             datacatAccountStatus.innerHTML = '<i class="fa-solid fa-circle"></i> Signed in';
-            if (datacatAccountLoginBtn) datacatAccountLoginBtn.style.display = 'none';
-            if (datacatAccountGoogleLoginBtn) datacatAccountGoogleLoginBtn.style.display = 'none';
             if (datacatAccountTokenConnectBtn) datacatAccountTokenConnectBtn.style.display = 'none';
             if (datacatAccountOpenLoginBtn) datacatAccountOpenLoginBtn.style.display = 'none';
             if (datacatAccountLogoutBtn) datacatAccountLogoutBtn.style.display = '';
@@ -3762,8 +3688,6 @@ function setupSettingsModal() {
 
         datacatAccountStatus.className = 'settings-status-badge inactive';
         datacatAccountStatus.innerHTML = `<i class="fa-solid fa-circle"></i> ${result?.error ? 'Error' : 'Signed out'}`;
-        if (datacatAccountLoginBtn) datacatAccountLoginBtn.style.display = '';
-        if (datacatAccountGoogleLoginBtn) datacatAccountGoogleLoginBtn.style.display = '';
         if (datacatAccountTokenConnectBtn) datacatAccountTokenConnectBtn.style.display = '';
         if (datacatAccountOpenLoginBtn) datacatAccountOpenLoginBtn.style.display = '';
         if (datacatAccountLogoutBtn) datacatAccountLogoutBtn.style.display = 'none';
@@ -3878,88 +3802,6 @@ function setupSettingsModal() {
         setSetting('datacatAccountToken', result.accountToken);
         setSetting('datacatDeviceToken', result.deviceToken || null);
         setSetting('datacatAccountUser', result.user || null);
-    }
-
-    if (datacatAccountLoginBtn) {
-        datacatAccountLoginBtn.onclick = async () => {
-            const email = (datacatAccountEmailInput?.value || '').trim();
-            const password = datacatAccountPasswordInput?.value || '';
-            if (!email || !password) {
-                showToast('Enter your DataCat email and password', 'warning');
-                return;
-            }
-
-            datacatAccountLoginBtn.disabled = true;
-            datacatAccountLoginBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Logging in...';
-            try {
-                const result = await window.datacatLoginAccount?.(email, password);
-                if (!result?.ok || !result?.accountToken) throw new Error(result?.error || result?.reason || 'Login failed');
-                storeDatacatAccountResult(result);
-                if (datacatAccountPasswordInput) datacatAccountPasswordInput.value = '';
-                showToast('DataCat account connected', 'success');
-                renderDatacatAccountStatus({ valid: true, user: result.user });
-            } catch (err) {
-                showToast(`DataCat login failed: ${err.message}`, 'error');
-                renderDatacatAccountStatus({ valid: false });
-            } finally {
-                datacatAccountLoginBtn.disabled = false;
-                datacatAccountLoginBtn.innerHTML = '<i class="fa-solid fa-right-to-bracket"></i> Login';
-            }
-        };
-    }
-
-    if (datacatAccountGoogleLoginBtn) {
-        datacatAccountGoogleLoginBtn.onclick = async () => {
-            const localhostUrl = window.datacatResolveGoogleAuthLocalhostUrl?.(window.location.href);
-            if (localhostUrl) {
-                showToast('Google login needs localhost instead of 127.0.0.1. Redirecting...', 'info', 6000);
-                window.location.href = localhostUrl;
-                return;
-            }
-            const originIssue = window.datacatGetGoogleAuthOriginIssue?.(window.location.href);
-            if (originIssue) {
-                showToast(`DataCat Google login unavailable: ${formatDatacatGoogleOriginIssue(originIssue)}`, 'warning', 10000);
-                datacatAccountTokenInput?.focus();
-                return;
-            }
-
-            if (!window.datacatLoginAccountWithGoogle) {
-                showToast('DataCat module not ready', 'error');
-                return;
-            }
-
-            const originalGoogleHtml = datacatAccountGoogleLoginBtn.innerHTML;
-            datacatAccountGoogleLoginBtn.disabled = true;
-            if (datacatAccountLoginBtn) datacatAccountLoginBtn.disabled = true;
-            datacatAccountGoogleLoginBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Opening Google...';
-
-            try {
-                const { auth, provider, signInWithPopup } = await getDatacatFirebaseAuth();
-                const firebaseResult = await signInWithPopup(auth, provider);
-                const firebaseIdToken = await firebaseResult.user.getIdToken();
-
-                datacatAccountGoogleLoginBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Connecting...';
-                const result = await window.datacatLoginAccountWithGoogle(firebaseIdToken);
-                if (!result?.ok || !result?.accountToken) {
-                    throw new Error(result?.error || result?.reason || 'Google login failed');
-                }
-
-                storeDatacatAccountResult(result);
-                if (datacatAccountPasswordInput) datacatAccountPasswordInput.value = '';
-                showToast('DataCat Google account connected', 'success');
-                renderDatacatAccountStatus({ valid: true, user: result.user });
-            } catch (err) {
-                const message = formatDatacatGoogleAuthError(err);
-                if (message) {
-                    showToast(`DataCat Google login failed: ${message}`, 'error');
-                    renderDatacatAccountStatus({ valid: false, error: message });
-                }
-            } finally {
-                datacatAccountGoogleLoginBtn.disabled = false;
-                if (datacatAccountLoginBtn) datacatAccountLoginBtn.disabled = false;
-                datacatAccountGoogleLoginBtn.innerHTML = originalGoogleHtml;
-            }
-        };
     }
 
     if (datacatAccountTokenConnectBtn) {
