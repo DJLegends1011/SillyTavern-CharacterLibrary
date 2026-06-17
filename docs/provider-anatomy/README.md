@@ -11,6 +11,11 @@ These docs describe the code as it exists on the `codex/provider-guide-docs`
 branch (CharacterLibrary v6.3.0 base). The **masquerade** provider is not on
 this branch; it lives on `codex/masquerade-provider`.
 
+> **Start here when implementing a new site:**
+> [CHOOSING-A-BASELINE.md](./CHOOSING-A-BASELINE.md) is the selection &
+> cloning playbook — propose a site, match it to the closest provider here,
+> clone that provider 1:1, reroute it, verify parity, then add custom features.
+
 ## Comparison matrix
 
 | Provider | cl-helper? | Auth model | Data source | Save / favorites | Gallery | Best copied when the target is… |
