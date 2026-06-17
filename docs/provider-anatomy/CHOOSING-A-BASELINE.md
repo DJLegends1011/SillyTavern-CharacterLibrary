@@ -105,6 +105,30 @@ Parity rule: every control, modal shell, card field, and stat slot from the
 baseline stays identical unless the target site has no equivalent data — in
 which case render an explicit unavailable state, don't silently simplify.
 
+### Ship it as a beta provider
+
+Every freshly cloned provider goes out wearing the **beta label**, exactly like
+botbooru and datacat. The badge is a provider-contract getter, not hand-written
+markup — set it in `<new>-provider.js`:
+
+```js
+get beta() { return true; }   // shows the beta chip; default is false
+get enableWarning() { return '<Site> is a new, experimental source...'; } // shown when the user enables it
+get disabledByDefault() { return true; }  // optional: off on first run (datacat does this; botbooru does not)
+```
+
+How it renders (no extra UI work needed): `get beta()` is read by
+`modules/providers/provider-registry.js`, which emits `data-beta="true"` on the
+selector `<option>`; the `.provider-beta-badge` CSS chip (`app/library.css`,
+plus the `beta` grid-area in `app/library-mobile.css`) draws it in the selector
+and the provider-order/settings list. Base default lives in
+`modules/providers/provider-interface.js` (`get beta() { return false; }`).
+
+Both reference betas pair the label with an `enableWarning`; datacat also sets
+`disabledByDefault`. Drop `get beta()` back to `false` (and remove the warning)
+only once the provider has proven parity and its custom features are stable —
+that's how it graduates from beta the same way the vanilla providers did.
+
 ## Step 6 — verification gate (before any custom features)
 
 "It works" means, against the **live** site, matching the baseline:
