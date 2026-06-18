@@ -329,6 +329,27 @@ export async function setDatacatYoursSaved(characterId, saved) {
     return dcHelperJson(`${CL_HELPER_PLUGIN_BASE}/dc-yours/${encodeURIComponent(characterId)}`, method);
 }
 
+/**
+ * Fetch a page of the signed-in account's followed creators for one source.
+ * @param {Object} [opts] - see {@link buildDatacatFollowingPath}
+ * @returns {Promise<{ok: boolean, total: number, list: Object[], error?: string}>}
+ */
+export async function fetchDatacatFollowing(opts = {}) {
+    const path = buildDatacatFollowingPath(opts).replace('/api/creators/following', '/dc-following');
+    return dcHelperJson(`${CL_HELPER_PLUGIN_BASE}${path}`);
+}
+
+/**
+ * Follow (POST) or unfollow (DELETE) a creator on the account.
+ * @param {string} creatorId - UUID
+ * @param {boolean} follow
+ * @returns {Promise<{ok: boolean, following?: boolean, error?: string}>}
+ */
+export async function setDatacatFollow(creatorId, follow) {
+    const method = follow ? 'POST' : 'DELETE';
+    return dcHelperJson(`${CL_HELPER_PLUGIN_BASE}/dc-follow/${encodeURIComponent(creatorId)}`, method);
+}
+
 const DATACAT_EXTERNAL_PREINDEX_SOURCES = new Set(['hampter', 'meilisearch', 'saucepan']);
 
 const DATACAT_YOURS_COLLECTABLE_FLAGS = [
@@ -450,6 +471,45 @@ export function buildDatacatYoursCharactersPath({ limit = 80, offset = 0, minTot
     if (cleanTagIds.length > 0) params.set('tagIds', cleanTagIds.join(','));
     params.set('sort', 'added');
     return `/api/characters?${params.toString()}`;
+}
+
+/**
+ * Build the DataCat "creators I follow" list route.
+ * Mirrors the site's own following page: GET /api/creators/following.
+ * @param {Object} [opts]
+ * @param {'janitor'|'saucepan'} [opts.sourceKind='janitor']
+ * @param {number} [opts.limit=50]
+ * @param {number} [opts.offset=0]
+ * @param {string} [opts.sortBy='total_chats']
+ * @param {string} [opts.sortDir='desc']
+ * @returns {string}
+ */
+export function buildDatacatFollowingPath({ sourceKind = 'janitor', limit = 50, offset = 0, sortBy = 'total_chats', sortDir = 'desc' } = {}) {
+    const params = new URLSearchParams();
+    params.set('sourceKind', sourceKind === 'saucepan' ? 'saucepan' : 'janitor');
+    params.set('limit', String(Math.max(1, Number(limit) || 50)));
+    params.set('offset', String(Math.max(0, Number(offset) || 0)));
+    params.set('sortBy', String(sortBy || 'total_chats'));
+    params.set('sortDir', String(sortDir || 'desc'));
+    return `/api/creators/following?${params.toString()}`;
+}
+
+/**
+ * Map a DataCat follow-list row to CL's followed-creator shape.
+ * DataCat rows: { creatorId, sourceKind, userName, ... }; CL expects
+ * { id, name, source } where janitor follows render as the 'datacat' source.
+ * @param {Object|null} row
+ * @returns {{id: string, name: string, source: 'datacat'|'saucepan'}|null}
+ */
+export function mapDatacatFollowRow(row) {
+    if (!row || typeof row !== 'object') return null;
+    const id = row.creatorId || row.id;
+    if (!id) return null;
+    return {
+        id,
+        name: row.userName || row.creatorName || id,
+        source: row.sourceKind === 'saucepan' ? 'saucepan' : 'datacat',
+    };
 }
 
 // ========================================

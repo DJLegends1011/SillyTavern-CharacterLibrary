@@ -32,6 +32,9 @@ import {
     fetchSaucepanCompanionsOfUser,
     fetchDatacatYoursStatus,
     setDatacatYoursSaved,
+    fetchDatacatFollowing,
+    setDatacatFollow,
+    mapDatacatFollowRow,
     isDatacatYoursCollectableHit,
     isDatacatYoursSavedHit,
     JANNY_TAG_MAP,
@@ -126,6 +129,11 @@ let datacatFollowingLoading = false;
 let datacatFollowingSort = 'newest';
 let datacatFollowingDisplayLimit = 60;
 let datacatFollowingFiltered = [];
+// Live per-creator follow state from the account (server truth), keyed
+// `${source}:${id}`. Seeded from creator profiles and the following list; lets
+// the button reflect site state without re-reading the local cache list.
+const datacatFollowStateCache = new Map();
+let datacatFollowSyncPending = false;
 
 let view; // module-scoped BrowseView instance reference (set once in constructor)
 
@@ -1541,6 +1549,10 @@ async function browseCreator(creatorId, opts = {}) {
         const creator = await fetchDatacatCreator(creatorId);
         if (creator) {
             datacatCreatorName = creator.userName || creatorId;
+            // Seed the button from the account's real follow state when synced.
+            if (isDatacatFollowSyncEnabled() && typeof creator.isFollowed === 'boolean') {
+                setFollowState(creatorId, source, creator.isFollowed);
+            }
         } else {
             datacatCreatorName = creatorId;
         }
@@ -2297,26 +2309,96 @@ function saveFollowedCreators() {
     setSetting('datacatFollowedCreators', datacatFollowedCreators);
 }
 
-function isCreatorFollowed(creatorId, source = 'datacat') {
+// Sync is active whenever a DataCat account token is configured. When off, the
+// local list is the source of truth (logged-out / per-device behavior).
+function isDatacatFollowSyncEnabled() {
+    return !!getSetting('datacatAccountToken');
+}
+
+function setFollowState(creatorId, source, followed) {
+    datacatFollowStateCache.set(`${source}:${creatorId}`, followed);
+}
+
+function localHasFollow(creatorId, source) {
     return datacatFollowedCreators.some(c => c.id === creatorId && (c.source || 'datacat') === source);
 }
 
-function followCreator(creatorId, creatorName, source = 'datacat') {
-    if (isCreatorFollowed(creatorId, source)) return;
+function localAddFollow(creatorId, creatorName, source) {
+    if (localHasFollow(creatorId, source)) return;
     datacatFollowedCreators.push({ id: creatorId, name: creatorName || creatorId, source });
     saveFollowedCreators();
-    updateFollowButton(creatorId, source);
-    showToast(`Followed ${creatorName || 'creator'}`, 'success');
 }
 
-function unfollowCreator(creatorId, source = 'datacat') {
+function localRemoveFollow(creatorId, source) {
     const idx = datacatFollowedCreators.findIndex(c => c.id === creatorId && (c.source || 'datacat') === source);
-    if (idx === -1) return;
+    if (idx === -1) return null;
     const name = datacatFollowedCreators[idx].name;
     datacatFollowedCreators.splice(idx, 1);
     saveFollowedCreators();
+    return name;
+}
+
+function isCreatorFollowed(creatorId, source = 'datacat') {
+    const key = `${source}:${creatorId}`;
+    if (datacatFollowStateCache.has(key)) return datacatFollowStateCache.get(key);
+    return localHasFollow(creatorId, source);
+}
+
+async function followCreator(creatorId, creatorName, source = 'datacat') {
+    if (isCreatorFollowed(creatorId, source) || datacatFollowSyncPending) return;
+
+    // Optimistic: update local cache + button immediately, reconcile with server.
+    setFollowState(creatorId, source, true);
+    localAddFollow(creatorId, creatorName, source);
     updateFollowButton(creatorId, source);
-    showToast(`Unfollowed ${name || 'creator'}`, 'info');
+
+    if (!isDatacatFollowSyncEnabled()) {
+        showToast(`Followed ${creatorName || 'creator'}`, 'success');
+        return;
+    }
+
+    datacatFollowSyncPending = true;
+    try {
+        const result = await setDatacatFollow(creatorId, true);
+        if (!result?.ok) throw new Error(result?.error || 'DataCat sync failed');
+        setFollowState(creatorId, source, result.following !== false);
+        showToast(`Followed ${creatorName || 'creator'} on DataCat`, 'success');
+    } catch (err) {
+        setFollowState(creatorId, source, false);
+        localRemoveFollow(creatorId, source);
+        updateFollowButton(creatorId, source);
+        showToast(`Follow failed: ${err.message}`, 'error');
+    } finally {
+        datacatFollowSyncPending = false;
+    }
+}
+
+async function unfollowCreator(creatorId, source = 'datacat') {
+    if (!isCreatorFollowed(creatorId, source) || datacatFollowSyncPending) return;
+
+    const name = localRemoveFollow(creatorId, source) || creatorId;
+    setFollowState(creatorId, source, false);
+    updateFollowButton(creatorId, source);
+
+    if (!isDatacatFollowSyncEnabled()) {
+        showToast(`Unfollowed ${name}`, 'info');
+        return;
+    }
+
+    datacatFollowSyncPending = true;
+    try {
+        const result = await setDatacatFollow(creatorId, false);
+        if (!result?.ok) throw new Error(result?.error || 'DataCat sync failed');
+        setFollowState(creatorId, source, result.following === true);
+        showToast(`Unfollowed ${name} on DataCat`, 'info');
+    } catch (err) {
+        setFollowState(creatorId, source, true);
+        localAddFollow(creatorId, name, source);
+        updateFollowButton(creatorId, source);
+        showToast(`Unfollow failed: ${err.message}`, 'error');
+    } finally {
+        datacatFollowSyncPending = false;
+    }
 }
 
 function updateFollowButton(creatorId, source = datacatCreatorSource) {
@@ -2381,6 +2463,51 @@ async function switchDatacatViewMode(mode) {
     }
 }
 
+// Read the account's full followed-creator list (both sources, paginated),
+// mapped to CL's {id, name, source} shape. `ok` is false only when no source
+// responded, so callers can fall back to the local cache on transient failure.
+async function fetchAllFollowedFromAccount() {
+    const creators = [];
+    let anyOk = false;
+    for (const sourceKind of ['janitor', 'saucepan']) {
+        let offset = 0;
+        const limit = 50;
+        while (true) {
+            const data = await fetchDatacatFollowing({ sourceKind, limit, offset });
+            if (!data?.ok) break;
+            anyOk = true;
+            const list = Array.isArray(data.list) ? data.list : [];
+            for (const row of list) {
+                const mapped = mapDatacatFollowRow(row);
+                if (mapped) creators.push(mapped);
+            }
+            const total = Number(data.total) || 0;
+            offset += limit;
+            if (list.length < limit || offset >= total) break;
+        }
+    }
+    return { ok: anyOk, creators };
+}
+
+// One-time push of any pre-sync local follows up to the account, so existing
+// per-device follows survive the switch to account-backed sync.
+async function migrateLocalFollowsToAccount(accountCreators) {
+    if (getSetting('datacatFollowMigrated')) return;
+    const have = new Set(accountCreators.map(c => `${c.source}:${c.id}`));
+    const localOnly = datacatFollowedCreators.filter(c => !have.has(`${c.source || 'datacat'}:${c.id}`));
+    for (const c of localOnly) {
+        try {
+            const result = await setDatacatFollow(c.id, true);
+            if (result?.ok) {
+                accountCreators.push({ id: c.id, name: c.name || c.id, source: c.source || 'datacat' });
+            }
+        } catch (e) {
+            debugLog('[DatacatFollowing] migration follow failed:', c.id, e.message);
+        }
+    }
+    setSetting('datacatFollowMigrated', true);
+}
+
 async function loadFollowingCharacters(forceRefresh = false) {
     if (datacatFollowingLoading) return;
     datacatFollowingLoading = true;
@@ -2393,6 +2520,20 @@ async function loadFollowingCharacters(forceRefresh = false) {
     }
 
     loadFollowedCreators();
+
+    // When signed in, the account's follow list is the source of truth; mirror
+    // it into the local cache (for logged-out fallback) and rebuild state.
+    if (isDatacatFollowSyncEnabled()) {
+        const { ok, creators } = await fetchAllFollowedFromAccount();
+        if (ok) {
+            await migrateLocalFollowsToAccount(creators);
+            datacatFollowStateCache.clear();
+            for (const c of creators) setFollowState(c.id, c.source, true);
+            datacatFollowedCreators = creators.map(c => ({ id: c.id, name: c.name, source: c.source }));
+            saveFollowedCreators();
+        }
+        // !ok → keep whatever loadFollowedCreators() restored (local fallback).
+    }
 
     if (datacatFollowedCreators.length === 0) {
         renderFollowingEmpty('no_follows');

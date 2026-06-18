@@ -11,9 +11,11 @@ import {
     sanitizeDataCatUser,
 } from '../extras/cl-helper/datacat-utils.js';
 import {
+    buildDatacatFollowingPath,
     buildDatacatYoursCharactersPath,
     isDatacatYoursCollectableHit,
     isDatacatYoursSavedHit,
+    mapDatacatFollowRow,
 } from '../modules/providers/datacat/datacat-api.js';
 
 describe('normalizeDcCredential', () => {
@@ -194,6 +196,47 @@ describe('isDatacatYoursSavedHit', () => {
     it('lets live CL state override stale row flags', () => {
         assert.equal(isDatacatYoursSavedHit({ isCollected: true }, false), false);
         assert.equal(isDatacatYoursSavedHit({ name: 'Saved after click' }, true), true);
+    });
+});
+
+describe('buildDatacatFollowingPath', () => {
+    it('builds the followed-creators list route with defaults', () => {
+        assert.equal(
+            buildDatacatFollowingPath(),
+            '/api/creators/following?sourceKind=janitor&limit=50&offset=0&sortBy=total_chats&sortDir=desc',
+        );
+    });
+
+    it('honors sourceKind, pagination and sort overrides', () => {
+        assert.equal(
+            buildDatacatFollowingPath({ sourceKind: 'saucepan', limit: 24, offset: 48, sortBy: 'followed_at', sortDir: 'asc' }),
+            '/api/creators/following?sourceKind=saucepan&limit=24&offset=48&sortBy=followed_at&sortDir=asc',
+        );
+    });
+});
+
+describe('mapDatacatFollowRow', () => {
+    it('maps a janitor follow row to the CL followed-creator shape', () => {
+        assert.deepEqual(
+            mapDatacatFollowRow({ creatorId: 'a161e947-e372-4565-8657-04a7cda5c385', sourceKind: 'janitor', userName: 'ExTermi' }),
+            { id: 'a161e947-e372-4565-8657-04a7cda5c385', name: 'ExTermi', source: 'datacat' },
+        );
+    });
+
+    it('maps a saucepan follow row to the saucepan source', () => {
+        assert.deepEqual(
+            mapDatacatFollowRow({ creatorId: 'c0ffee00-dead-beef-cafe-000000000000', sourceKind: 'saucepan', userName: 'chefhandle' }),
+            { id: 'c0ffee00-dead-beef-cafe-000000000000', name: 'chefhandle', source: 'saucepan' },
+        );
+    });
+
+    it('falls back to creatorId for the name and rejects rows without an id', () => {
+        assert.deepEqual(
+            mapDatacatFollowRow({ creatorId: 'a161e947-e372-4565-8657-04a7cda5c385', sourceKind: 'janitor' }),
+            { id: 'a161e947-e372-4565-8657-04a7cda5c385', name: 'a161e947-e372-4565-8657-04a7cda5c385', source: 'datacat' },
+        );
+        assert.equal(mapDatacatFollowRow({ userName: 'no id' }), null);
+        assert.equal(mapDatacatFollowRow(null), null);
     });
 });
 

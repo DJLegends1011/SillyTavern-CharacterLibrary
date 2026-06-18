@@ -1404,6 +1404,75 @@ function registerDataCatRoutes(router) {
     router.post('/dc-yours/:characterId', (req, res) => setDcCollected(req, res, true));
     router.delete('/dc-yours/:characterId', (req, res) => setDcCollected(req, res, false));
 
+    // Account-backed Following: mirror the site's /api/creators/following list
+    // and the per-creator follow toggle so CL's Following syncs across devices.
+    router.get('/dc-following', async (req, res) => {
+        const account = requireDcAccount(req, res);
+        if (!account) return;
+
+        const params = new URLSearchParams();
+        params.set('sourceKind', req.query.sourceKind === 'saucepan' ? 'saucepan' : 'janitor');
+        params.set('limit', String(Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 50))));
+        params.set('offset', String(Math.max(0, parseInt(req.query.offset, 10) || 0)));
+        params.set('sortBy', String(req.query.sortBy || 'total_chats'));
+        params.set('sortDir', String(req.query.sortDir || 'desc'));
+
+        try {
+            const response = await fetch(`${DATACAT_BASE}/api/creators/following?${params.toString()}`, {
+                method: 'GET',
+                headers: buildDataCatHeaders({ sessionToken: account.token, deviceToken: dcDeviceToken }),
+            });
+            const data = await readDcJson(response);
+
+            if (response.ok && data?.success) {
+                return res.json({
+                    ok: true,
+                    total: Number(data.total) || 0,
+                    list: Array.isArray(data.list) ? data.list : [],
+                });
+            }
+
+            return res.status(response.status || 502).json({
+                error: data?.reason || data?.error || `DataCat following failed with HTTP ${response.status}`,
+            });
+        } catch (err) {
+            console.error('[cl-helper] DC following error:', err.message);
+            return res.status(502).json({ error: 'Failed to reach DataCat' });
+        }
+    });
+
+    async function setDcFollow(req, res, shouldFollow) {
+        const account = requireDcAccount(req, res);
+        if (!account) return;
+
+        const { creatorId } = req.params;
+        if (!isDataCatCharacterId(creatorId)) {
+            return res.status(400).json({ error: 'Invalid DataCat creator id' });
+        }
+
+        try {
+            const response = await fetch(`${DATACAT_BASE}/api/creators/${encodeURIComponent(creatorId)}/follow`, {
+                method: shouldFollow ? 'POST' : 'DELETE',
+                headers: buildDataCatHeaders({ sessionToken: account.token, deviceToken: dcDeviceToken, json: true }),
+            });
+            const data = await readDcJson(response);
+
+            if (response.ok && data?.success) {
+                return res.json({ ok: true, following: data.isFollowing === true });
+            }
+
+            return res.status(response.status || 502).json({
+                error: data?.reason || data?.error || `DataCat follow failed with HTTP ${response.status}`,
+            });
+        } catch (err) {
+            console.error('[cl-helper] DC follow toggle error:', err.message);
+            return res.status(502).json({ error: 'Failed to reach DataCat' });
+        }
+    }
+
+    router.post('/dc-follow/:creatorId', (req, res) => setDcFollow(req, res, true));
+    router.delete('/dc-follow/:creatorId', (req, res) => setDcFollow(req, res, false));
+
     router.get('/dc-proxy/*', async (req, res) => {
         const active = getDcActiveToken(req, { preferAccount: true });
         if (!active.token) {
