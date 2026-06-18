@@ -2531,8 +2531,10 @@ async function loadFollowingCharacters(forceRefresh = false) {
             for (const c of creators) setFollowState(c.id, c.source, true);
             datacatFollowedCreators = creators.map(c => ({ id: c.id, name: c.name, source: c.source }));
             saveFollowedCreators();
+            debugLog('[DatacatFollowing] account list:', datacatFollowedCreators.length, 'creators (synced)');
+        } else {
+            debugLog('[DatacatFollowing] account fetch failed; using', datacatFollowedCreators.length, 'local creators (fallback)');
         }
-        // !ok → keep whatever loadFollowedCreators() restored (local fallback).
     }
 
     if (datacatFollowedCreators.length === 0) {
