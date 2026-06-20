@@ -15,6 +15,7 @@ import {
     resolveTagNames,
     checkDcPluginAvailable,
     initDcSession,
+    restoreDatacatAccount,
     fetchDatacatCharacter,
     fetchDatacatDownload,
     fetchDatacatCreator,
@@ -4697,6 +4698,20 @@ const datacatBrowseView = new (class DatacatBrowseView extends BrowseView {
                     </div>
                 `;
                 return;
+            }
+
+            // Re-arm the saved DataCat *account* session in cl-helper so account
+            // actions (Yours / follow) work right after startup, the same way
+            // chub/chartavern restore their session on view entry. cl-helper's
+            // in-memory account store is wiped on ST restart; re-pushing the saved
+            // token here restores it. Best-effort and non-blocking -- the browse
+            // grid below uses the anonymous session and doesn't depend on this.
+            if (getSetting('datacatAccountToken')) {
+                restoreDatacatAccount().then(res => {
+                    if (!(res?.ok || res?.valid)) {
+                        debugLog('[Datacat] account session restore on init failed:', res?.reason || res?.error || 'unknown');
+                    }
+                }).catch(() => {});
             }
 
             const savedToken = getSetting('datacatToken') || null;

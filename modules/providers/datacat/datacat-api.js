@@ -308,6 +308,26 @@ export async function restoreDatacatAccount() {
     return dcHelperJson(`${CL_HELPER_PLUGIN_BASE}/dc-auth-set`, 'POST', { accountToken, deviceToken });
 }
 
+/**
+ * Account-scoped cl-helper call with one-shot session recovery.
+ *
+ * The account session lives in cl-helper's in-memory store and is wiped when
+ * the ST server restarts. Account endpoints (yours / follow / following) then
+ * 401 with "No DataCat account session configured" even though the saved
+ * account token still lives in settings. On that 401 we re-push the saved
+ * token via restoreDatacatAccount() once and retry -- mirroring how dcFetch
+ * self-heals the anonymous browse session. If no account token is saved, or
+ * recovery fails, the original 401 is returned untouched for the caller to
+ * surface as an error.
+ */
+async function dcAccountJson(path, method = 'GET', data = null) {
+    const result = await dcHelperJson(path, method, data);
+    if (result?.status !== 401 || !_getSavedAccountToken?.()) return result;
+    const restore = await restoreDatacatAccount();
+    if (!(restore?.ok || restore?.valid)) return result;
+    return dcHelperJson(path, method, data);
+}
+
 export async function loginDatacatAccount(email, password) {
     return dcHelperJson(`${CL_HELPER_PLUGIN_BASE}/dc-auth-login`, 'POST', { email, password });
 }
@@ -321,12 +341,12 @@ export async function logoutDatacatAccount() {
 }
 
 export async function fetchDatacatYoursStatus(characterId) {
-    return dcHelperJson(`${CL_HELPER_PLUGIN_BASE}/dc-yours/${encodeURIComponent(characterId)}/status`);
+    return dcAccountJson(`${CL_HELPER_PLUGIN_BASE}/dc-yours/${encodeURIComponent(characterId)}/status`);
 }
 
 export async function setDatacatYoursSaved(characterId, saved) {
     const method = saved ? 'POST' : 'DELETE';
-    return dcHelperJson(`${CL_HELPER_PLUGIN_BASE}/dc-yours/${encodeURIComponent(characterId)}`, method);
+    return dcAccountJson(`${CL_HELPER_PLUGIN_BASE}/dc-yours/${encodeURIComponent(characterId)}`, method);
 }
 
 /**
@@ -336,7 +356,7 @@ export async function setDatacatYoursSaved(characterId, saved) {
  */
 export async function fetchDatacatFollowing(opts = {}) {
     const path = buildDatacatFollowingPath(opts).replace('/api/creators/following', '/dc-following');
-    return dcHelperJson(`${CL_HELPER_PLUGIN_BASE}${path}`);
+    return dcAccountJson(`${CL_HELPER_PLUGIN_BASE}${path}`);
 }
 
 /**
@@ -347,7 +367,7 @@ export async function fetchDatacatFollowing(opts = {}) {
  */
 export async function setDatacatFollow(creatorId, follow) {
     const method = follow ? 'POST' : 'DELETE';
-    return dcHelperJson(`${CL_HELPER_PLUGIN_BASE}/dc-follow/${encodeURIComponent(creatorId)}`, method);
+    return dcAccountJson(`${CL_HELPER_PLUGIN_BASE}/dc-follow/${encodeURIComponent(creatorId)}`, method);
 }
 
 const DATACAT_EXTERNAL_PREINDEX_SOURCES = new Set(['hampter', 'meilisearch', 'saucepan']);
