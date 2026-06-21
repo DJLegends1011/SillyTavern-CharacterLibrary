@@ -2605,7 +2605,22 @@ https://jannyai.com/characters/uuid_slug
                                             <span id="datacatAccountStatus" class="settings-status-badge inactive"><i class="fa-solid fa-circle"></i> Signed out</span>
                                         </div>
                                     </div>
+                                    <div class="settings-row">
+                                        <label>Email:</label>
+                                        <div class="settings-input-group">
+                                            <input type="email" id="settingsDatacatAccountEmail" class="glass-input" placeholder="you@example.com" autocomplete="username">
+                                        </div>
+                                    </div>
+                                    <div class="settings-row">
+                                        <label>Password:</label>
+                                        <div class="settings-input-group">
+                                            <input type="password" id="settingsDatacatAccountPassword" class="glass-input" placeholder="DataCat password" autocomplete="current-password" data-sensitive="true">
+                                        </div>
+                                    </div>
                                     <div class="settings-row" style="gap: 8px;">
+                                        <button id="datacatAccountLoginBtn" class="settings-action-btn primary">
+                                            <i class="fa-solid fa-right-to-bracket"></i> Login
+                                        </button>
                                         <button id="datacatAccountLogoutBtn" class="settings-action-btn danger" style="display: none;">
                                             <i class="fa-solid fa-right-from-bracket"></i> Logout
                                         </button>
@@ -2638,7 +2653,7 @@ https://jannyai.com/characters/uuid_slug
                                         </label>
                                     </div>
                                     <div class="settings-row">
-                                        <span class="settings-hint">Log in on DataCat, then paste your account session token here to connect. Character Library stores only the returned account session token, never your password or Google credential. Vault and Cart are not part of this branch.</span>
+                                        <span class="settings-hint">Sign in with your DataCat email and password, or paste your account session token. Character Library stores only the returned account session token, never your password. Vault and Cart are not part of this branch.</span>
                                     </div>
                                 </div>
                                 <div class="settings-group">
