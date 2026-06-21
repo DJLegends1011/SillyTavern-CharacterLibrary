@@ -370,7 +370,7 @@ export async function setDatacatFollow(creatorId, follow) {
     return dcAccountJson(`${CL_HELPER_PLUGIN_BASE}/dc-follow/${encodeURIComponent(creatorId)}`, method);
 }
 
-const DATACAT_EXTERNAL_PREINDEX_SOURCES = new Set(['hampter', 'meilisearch', 'saucepan']);
+export const DATACAT_EXTERNAL_PREINDEX_SOURCES = new Set(['hampter', 'meilisearch', 'saucepan']);
 
 const DATACAT_YOURS_COLLECTABLE_FLAGS = [
     'isCollected',

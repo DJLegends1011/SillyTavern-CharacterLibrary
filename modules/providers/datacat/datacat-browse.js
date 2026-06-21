@@ -38,6 +38,7 @@ import {
     mapDatacatFollowRow,
     isDatacatYoursCollectableHit,
     isDatacatYoursSavedHit,
+    DATACAT_EXTERNAL_PREINDEX_SOURCES,
     JANNY_TAG_MAP,
     pickRecoveryVariant,
     createFlareSolverrSession,
@@ -105,6 +106,13 @@ let datacatFilterHideJanitor = false;
 let datacatFilterHideSaucepan = false;
 const datacatYoursStateById = new Map();
 const datacatYoursPendingIds = new Set();
+// External-search rows (Hampter/Meili/Saucepan) carry no DataCat collectability
+// flags, so the listing alone can't tell us whether the character exists on
+// DataCat. We probe /dc-yours/{id}/status lazily (as cards scroll into view) and
+// cache the verdict here: true = exists on DataCat (show ⭐), false = absent (no ⭐),
+// null = probe in flight. `.has(id)` blocks duplicate probes.
+const datacatExternalCollectableById = new Map();
+let datacatYoursProbeObserver = null;
 
 // Fresh endpoint pagination
 let datacatFreshLimit24 = 80;
@@ -351,7 +359,67 @@ function isDatacatYoursFilteredHit(hit) {
 
 function canShowDatacatYoursControl(characterId, hit = null) {
     const id = String(characterId || '').trim();
-    return !!(id && isDatacatYoursSyncEnabled() && isDatacatYoursCollectableHit(hit));
+    if (!id || !isDatacatYoursSyncEnabled()) return false;
+    // Confirmed-present external-search rows take precedence over the listing gate.
+    if (datacatExternalCollectableById.get(id) === true) return true;
+    // _fullCharacter / positive listing flags / non-external public rows.
+    if (isDatacatYoursCollectableHit(hit)) return true;
+    // Unproven (or confirmed-absent) external-search row: no ⭐ until/unless the
+    // lazy probe finds it on DataCat.
+    return false;
+}
+
+function isDatacatExternalSearchHit(hit) {
+    return DATACAT_EXTERNAL_PREINDEX_SOURCES.has(String(hit?._source || '').trim().toLowerCase());
+}
+
+function findDatacatHitById(characterId) {
+    const id = String(characterId || '').trim();
+    if (!id) return null;
+    return datacatCharacters.find(c => String(getCharId(c)) === id)
+        || datacatFollowingCharacters.find(c => String(getCharId(c)) === id)
+        || null;
+}
+
+// Lazily verify whether an external-search character exists on DataCat. On a
+// positive result, cache it, sync the saved state, and reveal the card ⭐.
+// A negative result is cached so the ⭐ stays hidden and we never re-probe.
+function probeDatacatExternalCollectable(characterId, hit = null) {
+    const id = String(characterId || '').trim();
+    if (!id || datacatExternalCollectableById.has(id)) return;
+    if (!isDatacatYoursSyncEnabled() || !isDatacatExternalSearchHit(hit)) return;
+    datacatExternalCollectableById.set(id, null); // in-flight: blocks re-probe, keeps ⭐ hidden
+    fetchDatacatYoursStatus(id).then(result => {
+        if (result?.ok) {
+            datacatExternalCollectableById.set(id, true);
+            setDatacatYoursState(id, result.collected === true);
+            updateDatacatCardYoursControl(id, hit);
+        } else {
+            datacatExternalCollectableById.set(id, false);
+        }
+    }).catch(() => {
+        datacatExternalCollectableById.delete(id); // transient failure: allow a later retry
+    });
+}
+
+// IntersectionObserver: probe external-search cards only as they near the viewport,
+// so we don't fire dozens of /status requests up front (matters on mobile).
+function observeDatacatYoursProbes(grid) {
+    if (!grid || !isDatacatYoursSyncEnabled()) return;
+    if (typeof IntersectionObserver === 'undefined') return;
+    if (!datacatYoursProbeObserver) {
+        datacatYoursProbeObserver = new IntersectionObserver((entries, obs) => {
+            for (const entry of entries) {
+                if (!entry.isIntersecting) continue;
+                obs.unobserve(entry.target);
+                const id = entry.target.dataset.datacatId;
+                probeDatacatExternalCollectable(id, findDatacatHitById(id));
+            }
+        }, { rootMargin: '200px' });
+    }
+    grid.querySelectorAll('.browse-card[data-datacat-probe="1"]').forEach(card => {
+        datacatYoursProbeObserver.observe(card);
+    });
 }
 
 function renderDatacatYoursCardButton(characterId, saved) {
@@ -564,9 +632,15 @@ function createDatacatCard(hit) {
     const yoursBtn = canSyncYours
         ? renderDatacatYoursCardButton(charId, savedToYours)
         : '';
+    // External-search card whose DataCat existence is still unknown: tag it so the
+    // probe observer checks it on scroll (and reveals the ⭐ only if it's on DataCat).
+    const needsYoursProbe = isDatacatYoursSyncEnabled()
+        && isDatacatExternalSearchHit(hit)
+        && !canSyncYours
+        && !datacatExternalCollectableById.has(charId);
 
     return `
-        <div class="${cardClass}" data-datacat-id="${escapeHtml(String(charId))}" ${desc ? `title="${escapeHtml(desc)}"` : ''}>
+        <div class="${cardClass}" data-datacat-id="${escapeHtml(String(charId))}"${needsYoursProbe ? ' data-datacat-probe="1"' : ''} ${desc ? `title="${escapeHtml(desc)}"` : ''}>
             <div class="browse-card-image">
                 <img data-src="${escapeHtml(avatarUrl)}" src="${IMG_PLACEHOLDER}" alt="${escapeHtml(name)}" decoding="async" fetchpriority="low" onerror="this.dataset.failed='1';this.src='/img/ai4.png'">
                 ${nsfwBadge}
@@ -595,7 +669,10 @@ function createDatacatCard(hit) {
 
 function observeNewCards() {
     const grid = document.getElementById('datacatGrid');
-    if (grid) datacatBrowseView.observeImages(grid);
+    if (grid) {
+        datacatBrowseView.observeImages(grid);
+        observeDatacatYoursProbes(grid);
+    }
 }
 
 // ========================================
@@ -2784,11 +2861,13 @@ function renderFollowing(append = false) {
         if (newSlice.length > 0) {
             grid.insertAdjacentHTML('beforeend', newSlice.map(c => createDatacatCard(c)).join(''));
             datacatBrowseView.observeImages(grid);
+            observeDatacatYoursProbes(grid);
         }
     } else {
         const page = sorted.slice(0, datacatFollowingDisplayLimit);
         grid.innerHTML = page.map(c => createDatacatCard(c)).join('');
         datacatBrowseView.observeImages(grid);
+        observeDatacatYoursProbes(grid);
     }
 
     const hasMore = datacatFollowingDisplayLimit < sorted.length;
