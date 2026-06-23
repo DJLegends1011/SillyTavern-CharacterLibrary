@@ -60,7 +60,7 @@ let chubHasMore = true;
 let chubIsLoading = false;
 let chubLoadToken = 0;
 let chubDiscoveryPreset = 'popular_week'; // Combined sort + time preset
-let chubNsfwEnabled = true; // Default to NSFW enabled
+let chubNsfwEnabled = false; // Default to SFW only
 let chubCurrentSearch = '';
 let chubSelectedChar = null;
 let chubToken = null; // URQL_TOKEN from chub.ai localStorage for Authorization Bearer
@@ -913,6 +913,8 @@ class ChubBrowseView extends BrowseView {
 
 
 function initChubView() {
+    chubNsfwEnabled = getSetting('chubNsfw') === true;
+
     // Sync dropdown values with JS state (browser may cache old form values)
     const discoveryPresetEl = document.getElementById('chubDiscoveryPreset');
     const timelineSortEl = document.getElementById('chubTimelineSortHeader');
@@ -1114,6 +1116,7 @@ function initChubView() {
     // NSFW toggle - single button toggle
     on('chubNsfwToggle', 'click', () => {
         chubNsfwEnabled = !chubNsfwEnabled;
+        setSetting('chubNsfw', chubNsfwEnabled);
         updateNsfwToggleState();
         
         // Refresh the appropriate view based on current mode
@@ -1228,7 +1231,7 @@ function initChubView() {
     // Load saved token on init
     loadChubToken();
     
-    // Initialize NSFW toggle state (defaults to enabled)
+    // Initialize NSFW toggle state from persisted preference
     updateNsfwToggleState();
     
     // Start fetching popular tags in the background
@@ -4195,4 +4198,3 @@ window.openChubCharPreview = openChubCharPreview;
 
 const chubBrowseView = new ChubBrowseView();
 export default chubBrowseView;
-

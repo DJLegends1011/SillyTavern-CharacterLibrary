@@ -34,6 +34,7 @@ const {
     cleanupCreatorNotesContainer,
     debounce,
     getProviderExcludeTags,
+    setSetting,
     renderLoadingState,
     renderSkeletonGrid,
 } = CoreAPI;
@@ -54,7 +55,7 @@ let jannyHasMore = true;
 let jannyIsLoading = false;
 let jannyLoadToken = 0;
 let jannyCurrentSearch = '';
-let jannyNsfwEnabled = true;
+let jannyNsfwEnabled = false;
 let jannySortMode = 'newest';
 let jannySelectedChar = null;
 let jannyGridRenderedCount = 0;
@@ -931,6 +932,8 @@ let delegatesInitialized = false;
 let modalEventsAttached = false;
 
 function initJannyView() {
+    jannyNsfwEnabled = getSetting('jannyNsfw') === true;
+
     if (delegatesInitialized) return;
     delegatesInitialized = true;
 
@@ -993,6 +996,7 @@ function initJannyView() {
     // NSFW toggle
     on('jannyNsfwToggle', 'click', () => {
         jannyNsfwEnabled = !jannyNsfwEnabled;
+        setSetting('jannyNsfw', jannyNsfwEnabled);
         updateNsfwToggle();
         jannyCurrentPage = 1;
         loadCharacters(false);
