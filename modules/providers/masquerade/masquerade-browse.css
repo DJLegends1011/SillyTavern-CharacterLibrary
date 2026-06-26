@@ -1,0 +1,5 @@
+/* MasqueradeAI provider polish. Shared browse layout lives in browse-shared.css. */
+
+#masqueradeBrowseSection .browse-card {
+    contain-intrinsic-size: auto 340px;
+}
