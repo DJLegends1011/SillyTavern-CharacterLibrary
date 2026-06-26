@@ -3,6 +3,7 @@
 import { BrowseView } from '../browse-view.js';
 import CoreAPI from '../../core-api.js';
 import { IMG_PLACEHOLDER, formatNumber, fetchWithProxy, BROWSE_PURIFY_CONFIG, skeletonLines, deferRender, deferCall, isMobileViewport } from '../provider-utils.js';
+import { createBookmarkModule } from '../bookmark-module.js';
 import {
     WYVERN_API_BASE,
     WYVERN_SITE_BASE,
@@ -59,6 +60,14 @@ let wyvernCurrentPage = 1;
 let wyvernHasMore = true;
 let wyvernIsLoading = false;
 let wyvernLoadGeneration = 0;
+
+// Invalidate any in-flight loadWyvernCharacters() so its late response can't
+// overwrite the grid (e.g. the Local Backups view), and clear the loading
+// flag so a fresh load can start immediately instead of being dropped.
+function cancelWyvernLoad() {
+    wyvernLoadGeneration++;
+    wyvernIsLoading = false;
+}
 let wyvernCurrentSort = 'popular';
 let wyvernCurrentSearch = '';
 let wyvernSelectedChar = null;
@@ -91,6 +100,82 @@ const WYVERN_DETAIL_CACHE_MAX = 5;
 let wyvernGridRenderedCount = 0;
 
 let view; // module-scoped BrowseView instance reference (set once in constructor)
+
+// ========================================
+// BOOKMARKS (local-only) — shared factory
+// ========================================
+
+const wyvernBookmarks = createBookmarkModule({
+    prefix: 'wyvern',
+    settingsKey: 'wyvernBookmarks',
+    logLabel: '[WyvernBrowse]',
+    getId: (hit) => (hit && hit.id) ? String(hit.id) : '',
+    dataAttrKey: 'wyvernId',
+    gridId: 'wyvernGrid',
+    modalBtnId: 'wyvernCharBookmarkBtn',
+    checkboxId: 'wyvernFilterMyBookmarks',
+    buildSnapshot: (hit) => {
+        const sr = hit.statistics_record || hit.entity_statistics || {};
+        return {
+            id: String(hit.id || ''),
+            name: hit.name || '',
+            tagline: hit.tagline || '',
+            avatar_url: hit.avatar_url || hit.avatarUrl || hit.avatar || '',
+            creator: hit.creator ? {
+                uid: hit.creator.uid || '',
+                username: hit.creator.username || '',
+                displayName: hit.creator.displayName || '',
+                vanityUrl: hit.creator.vanityUrl || '',
+            } : null,
+            tags: Array.isArray(hit.tags) ? hit.tags.slice() : [],
+            rating: hit.rating || '',
+            created_at: hit.created_at || '',
+            statistics_record: {
+                views: sr.views || sr.total_views || hit.views || 0,
+                likes: sr.likes || sr.total_likes || hit.likes || 0,
+                messages: sr.messages || sr.total_messages || hit.messages || 0,
+            },
+            lorebooks: Array.isArray(hit.lorebooks) ? hit.lorebooks.slice() : [],
+            alternate_greetings: Array.isArray(hit.alternate_greetings) ? hit.alternate_greetings.slice() : [],
+        };
+    },
+    sortModes: {
+        votes: (a, b) => {
+            const sa = a.statistics_record || {};
+            const sb = b.statistics_record || {};
+            return (sb.likes || 0) - (sa.likes || 0);
+        },
+        messages: (a, b) => {
+            const sa = a.statistics_record || {};
+            const sb = b.statistics_record || {};
+            return (sb.messages || 0) - (sa.messages || 0);
+        },
+        created_at: (a, b) => {
+            const ta = a.created_at ? new Date(a.created_at).getTime() : 0;
+            const tb = b.created_at ? new Date(b.created_at).getTime() : 0;
+            return tb - ta;
+        },
+    },
+    getSortMode: () => wyvernCurrentSort,
+    getSelectedChar: () => wyvernSelectedChar,
+    resetBookmarkState: (sorted) => {
+        wyvernCharacters = sorted;
+        wyvernHasMore = false;
+        wyvernCurrentPage = 1;
+        wyvernGridRenderedCount = 0;
+    },
+    renderGrid: () => renderWyvernGrid(false),
+    onFilterToggle: (on) => {
+        updateWyvernFiltersButtonState();
+        wyvernCurrentPage = 1;
+        cancelWyvernLoad();
+        if (on) wyvernBookmarks.renderBookmarksView();
+        else {
+            wyvernCharacters = [];
+            loadWyvernCharacters();
+        }
+    },
+});
 
 function getCharStats(char) {
     const sr = char.statistics_record || char.entity_statistics || {};
@@ -346,6 +431,9 @@ class WyvernBrowseView extends BrowseView {
                     <div class="dropdown-section-title">Library:</div>
                     <label class="filter-checkbox"><input type="checkbox" id="wyvernFilterHideOwned"> <i class="fa-solid fa-check"></i> Hide Owned Characters</label>
                     <label class="filter-checkbox"><input type="checkbox" id="wyvernFilterHidePossible"> <i class="fa-solid fa-check" style="color: #f0a500;"></i> Hide Possible Matches</label>
+                    <hr style="margin: 8px 0; border-color: var(--glass-border);">
+                    <div class="dropdown-section-title">Bookmarks:</div>
+                    ${wyvernBookmarks.renderFilterCheckbox()}
                 </div>
             </div>
 
@@ -513,6 +601,7 @@ class WyvernBrowseView extends BrowseView {
                     </div>
                 </div>
                 <div class="modal-controls">
+                    ${wyvernBookmarks.renderModalBtn()}
                     <a id="wyvernOpenInBrowserBtn" href="#" target="_blank" class="action-btn secondary" title="Open on Wyvern">
                         <i class="fa-solid fa-external-link"></i> Open
                     </a>
@@ -871,9 +960,14 @@ function initWyvernView() {
     // Sort change
     on('wyvernSortSelect', 'change', (e) => {
         wyvernCurrentSort = e.target.value;
-        wyvernCharacters = [];
         wyvernCurrentPage = 1;
-        loadWyvernCharacters();
+        cancelWyvernLoad();
+        if (wyvernBookmarks.filterMyBookmarks) {
+            wyvernBookmarks.renderBookmarksView();
+        } else {
+            wyvernCharacters = [];
+            loadWyvernCharacters();
+        }
     });
 
     // Filters dropdown toggle
@@ -916,6 +1010,9 @@ function initWyvernView() {
         else renderWyvernFollowing();
     });
 
+    // Bookmark filter checkbox
+    wyvernBookmarks.attachFilterCheckbox();
+
     // Creator filter
     on('wyvernClearCreatorBtn', 'click', clearWyvernCreatorFilter);
     on('wyvernFollowCreatorBtn', 'click', toggleWyvernFollowCreator);
@@ -929,6 +1026,7 @@ function initWyvernView() {
 
     // Refresh
     on('refreshWyvernBtn', 'click', () => {
+        cancelWyvernLoad();
         wyvernCharacters = [];
         wyvernCurrentPage = 1;
         loadWyvernCharacters(true);
@@ -980,6 +1078,7 @@ function initWyvernView() {
 
         on('wyvernCharClose', 'click', closeWyvernCharPreview);
         on('wyvernDownloadBtn', 'click', () => downloadWyvernCharacter());
+        wyvernBookmarks.attachModalBtn();
 
         const wyvernGalleryGrid = document.getElementById('wyvernCharGalleryGrid');
         if (wyvernGalleryGrid) {
@@ -1518,7 +1617,7 @@ function updateWyvernTagsButtonState() {
 function updateWyvernFiltersButtonState() {
     const btn = document.getElementById('wyvernFiltersBtn');
     if (!btn) return;
-    const count = (wyvernFilterHideOwned ? 1 : 0) + (wyvernFilterHidePossible ? 1 : 0) + (wyvernFilterHasLorebook ? 1 : 0) + (wyvernFilterHasAltGreetings ? 1 : 0);
+    const count = (wyvernFilterHideOwned ? 1 : 0) + (wyvernFilterHidePossible ? 1 : 0) + (wyvernFilterHasLorebook ? 1 : 0) + (wyvernFilterHasAltGreetings ? 1 : 0) + (wyvernBookmarks.filterMyBookmarks ? 1 : 0);
     btn.classList.toggle('has-filters', count > 0);
     btn.innerHTML = count > 0
         ? `<i class="fa-solid fa-sliders"></i> Features (${count})`
@@ -1775,7 +1874,9 @@ async function loadWyvernCharacters(forceRefresh = false) {
 
     } catch (e) {
         console.error('[Wyvern] Load error:', e);
-        if (wyvernCurrentPage === 1) {
+        if (!wyvernDelegatesInitialized || gen !== wyvernLoadGeneration) {
+            // Stale/cancelled load: leave whatever view replaced it alone.
+        } else if (wyvernCurrentPage === 1) {
             grid.innerHTML = `
                 <div class="browse-error">
                     <i class="fa-solid fa-exclamation-triangle"></i>
@@ -1790,7 +1891,7 @@ async function loadWyvernCharacters(forceRefresh = false) {
             showToast('Failed to load more: ' + e.message, 'error');
         }
     } finally {
-        wyvernIsLoading = false;
+        if (gen === wyvernLoadGeneration) wyvernIsLoading = false;
         if (loadMoreBtn) {
             loadMoreBtn.disabled = false;
             loadMoreBtn.innerHTML = '<i class="fa-solid fa-plus"></i> Load More';
@@ -1977,6 +2078,8 @@ function sortWyvernFollowingCharacters(characters) {
 }
 
 function _handleFollowingCardClick(e) {
+    if (wyvernBookmarks.handleGridClick(e, wyvernFollowingCharacters)) return;
+
     const creatorLink = e.target.closest('.browse-card-creator-link');
     if (creatorLink) {
         e.stopPropagation();
@@ -2293,6 +2396,8 @@ function setupWyvernGridDelegates() {
     if (wyvernDelegatesInitialized) return;
 
     const cardClickHandler = (e) => {
+        if (wyvernBookmarks.handleGridClick(e, wyvernCharacters)) return;
+
         if (e.target.closest('.browse-retry-btn')) {
             wyvernCharacters = []; wyvernCurrentPage = 1; wyvernIsLoading = false;
             loadWyvernCharacters(true);
@@ -2382,6 +2487,7 @@ function createWyvernCard(char) {
                 <span class="browse-card-stat" title="Messages"><i class="fa-solid fa-message"></i> ${messages}</span>
                 <span class="browse-card-stat" title="Likes"><i class="fa-solid fa-heart"></i> ${likes}</span>
                 ${dateInfo}
+                ${wyvernBookmarks.renderCardBtn(char)}
             </div>
         </div>
     `;
@@ -2481,6 +2587,7 @@ async function openWyvernCharPreview(char) {
         creatorEl.onclick = (e) => e.preventDefault();
     }
     openInBrowserBtn.href = getCharacterPageUrl(charId);
+    wyvernBookmarks.syncModalState(char);
     const stats = getCharStats(char);
     messagesEl.innerHTML = `<i class="fa-solid fa-message"></i> ${formatNumber(stats.messages)}`;
     messagesEl.title = 'Messages';
