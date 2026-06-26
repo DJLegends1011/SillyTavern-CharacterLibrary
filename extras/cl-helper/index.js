@@ -1726,6 +1726,22 @@ function registerJannyRoutes(router) {
         }
 
         try {
+            // Step 1: Test token directly against Supabase auth
+            if (jannyAccessToken) {
+                const supabaseUrl = 'https://eenzcbluoctduymzksoq.supabase.co';
+                try {
+                    const sbResp = await fetch(`${supabaseUrl}/auth/v1/user`, {
+                        headers: { 'Authorization': `Bearer ${jannyAccessToken}`, 'apikey': jannyAccessToken },
+                    });
+                    const sbBody = await sbResp.text().catch(() => '');
+                    console.log(`[cl-helper][JANNY-DEBUG] Supabase direct /auth/v1/user: ${sbResp.status}`);
+                    console.log(`[cl-helper][JANNY-DEBUG] Supabase body (first 200): ${sbBody.substring(0, 200)}`);
+                } catch (sbErr) {
+                    console.log(`[cl-helper][JANNY-DEBUG] Supabase direct call failed: ${sbErr.message}`);
+                }
+            }
+
+            // Step 2: Test against JannyAI API
             const hdrs = jannyHeaders();
             console.log(`[cl-helper][JANNY-DEBUG] validate Cookie header length: ${hdrs['Cookie']?.length ?? 0}`);
             console.log(`[cl-helper][JANNY-DEBUG] validate has Authorization: ${!!hdrs['Authorization']}`);
