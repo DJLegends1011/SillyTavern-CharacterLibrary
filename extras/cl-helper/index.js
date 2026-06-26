@@ -1726,18 +1726,42 @@ function registerJannyRoutes(router) {
         }
 
         try {
-            // Step 1: Test token directly against Supabase auth
+            // Step 1: Fetch anon key from JannyAI client config, then test token against Supabase
             if (jannyAccessToken) {
-                const supabaseUrl = 'https://eenzcbluoctduymzksoq.supabase.co';
                 try {
-                    const sbResp = await fetch(`${supabaseUrl}/auth/v1/user`, {
-                        headers: { 'Authorization': `Bearer ${jannyAccessToken}`, 'apikey': jannyAccessToken },
+                    let anonKey = null;
+                    const pageResp = await fetch(`${JANNY_BASE}/characters/search`, {
+                        headers: { 'User-Agent': JANNY_UA, 'Accept': 'text/html' },
                     });
-                    const sbBody = await sbResp.text().catch(() => '');
-                    console.log(`[cl-helper][JANNY-DEBUG] Supabase direct /auth/v1/user: ${sbResp.status}`);
-                    console.log(`[cl-helper][JANNY-DEBUG] Supabase body (first 200): ${sbBody.substring(0, 200)}`);
+                    if (pageResp.ok) {
+                        const html = await pageResp.text();
+                        const cfgMatch = html.match(/client-config\.[a-zA-Z0-9_-]+\.js/);
+                        if (cfgMatch) {
+                            const cfgResp = await fetch(`${JANNY_BASE}/_astro/${cfgMatch[0]}`, {
+                                headers: { 'User-Agent': JANNY_UA },
+                            });
+                            if (cfgResp.ok) {
+                                const cfgJs = await cfgResp.text();
+                                // Supabase anon keys are JWTs: eyJ...xxx.eyJ...xxx.xxx
+                                const jwtMatch = cfgJs.match(/"(eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)"/);
+                                if (jwtMatch) anonKey = jwtMatch[1];
+                                console.log(`[cl-helper][JANNY-DEBUG] anon key found: ${anonKey ? 'yes (' + anonKey.length + ' chars)' : 'no'}`);
+                            }
+                        }
+                    }
+                    if (anonKey) {
+                        const supabaseUrl = 'https://eenzcbluoctduymzksoq.supabase.co';
+                        const sbResp = await fetch(`${supabaseUrl}/auth/v1/user`, {
+                            headers: { 'Authorization': `Bearer ${jannyAccessToken}`, 'apikey': anonKey },
+                        });
+                        const sbBody = await sbResp.text().catch(() => '');
+                        console.log(`[cl-helper][JANNY-DEBUG] Supabase /auth/v1/user: ${sbResp.status}`);
+                        console.log(`[cl-helper][JANNY-DEBUG] Supabase body (first 300): ${sbBody.substring(0, 300)}`);
+                    } else {
+                        console.log('[cl-helper][JANNY-DEBUG] could not extract Supabase anon key from client config');
+                    }
                 } catch (sbErr) {
-                    console.log(`[cl-helper][JANNY-DEBUG] Supabase direct call failed: ${sbErr.message}`);
+                    console.log(`[cl-helper][JANNY-DEBUG] Supabase direct test failed: ${sbErr.message}`);
                 }
             }
 
