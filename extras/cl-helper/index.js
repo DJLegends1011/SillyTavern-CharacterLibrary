@@ -1595,20 +1595,42 @@ function registerSaucepanRoutes(router) {
 
 const JANNY_BASE = 'https://jannyai.com';
 const JANNY_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
-const JANNY_COOKIE_NAME = 'sb-eenzcbluoctduymzksoq-auth-token';
-const JANNY_COOKIE_MAX_LENGTH = 8192;
+const JANNY_COOKIE_PREFIX = 'sb-eenzcbluoctduymzksoq-auth-token';
+const JANNY_COOKIE_MAX_LENGTH = 16384;
 
-let jannySessionCookie = null;
+// Supabase splits large JWTs across chunked cookies (.0, .1, etc.)
+// We store the full Cookie header string containing all chunks.
+let jannyCookieString = null;
 
 function jannyHeaders() {
     const h = {
         'User-Agent': JANNY_UA,
         'Accept': 'application/json',
     };
-    if (jannySessionCookie) {
-        h['Cookie'] = `${JANNY_COOKIE_NAME}=${jannySessionCookie}`;
+    if (jannyCookieString) {
+        h['Cookie'] = jannyCookieString;
     }
     return h;
+}
+
+function parseJannyCookieInput(raw) {
+    const trimmed = raw.trim();
+    // If it already looks like a cookie header with chunk suffixes, use as-is
+    if (trimmed.includes(`${JANNY_COOKIE_PREFIX}.0=`)) {
+        // Strip any non-Supabase cookies, keep only auth-token chunks
+        const parts = trimmed.split(/;\s*/).filter(p => p.startsWith(JANNY_COOKIE_PREFIX));
+        if (parts.length === 0) return null;
+        return parts.join('; ');
+    }
+    // Single bare value (non-chunked token) — wrap it
+    if (!trimmed.includes('=') && !trimmed.includes(';')) {
+        return `${JANNY_COOKIE_PREFIX}=${trimmed}`;
+    }
+    // name=value format (single cookie)
+    if (trimmed.startsWith(`${JANNY_COOKIE_PREFIX}=`)) {
+        return trimmed;
+    }
+    return null;
 }
 
 function registerJannyRoutes(router) {
@@ -1618,27 +1640,22 @@ function registerJannyRoutes(router) {
             return res.status(400).json({ error: 'cookie string is required' });
         }
 
-        let value = cookie.trim();
-        // Accept either bare value or full cookie=value format
-        const prefix = `${JANNY_COOKIE_NAME}=`;
-        if (value.startsWith(prefix)) {
-            value = value.slice(prefix.length).trim();
+        if (cookie.length > JANNY_COOKIE_MAX_LENGTH) {
+            return res.status(400).json({ error: 'Cookie value too large' });
         }
 
-        if (value.includes(';') || value.length > JANNY_COOKIE_MAX_LENGTH) {
-            return res.status(400).json({ error: 'Invalid cookie value' });
-        }
-        if (!value) {
-            return res.status(400).json({ error: 'Empty cookie value' });
+        const parsed = parseJannyCookieInput(cookie);
+        if (!parsed) {
+            return res.status(400).json({ error: 'Could not parse cookie. Paste the full cookie header from a jannyai.com request, or both chunk values separated by semicolons.' });
         }
 
-        jannySessionCookie = value;
+        jannyCookieString = parsed;
         console.log('[cl-helper] JannyAI session cookie stored');
         res.json({ ok: true });
     });
 
     router.get('/janny-validate', async (_req, res) => {
-        if (!jannySessionCookie) {
+        if (!jannyCookieString) {
             return res.json({ valid: false, reason: 'no cookie stored' });
         }
 
@@ -1653,7 +1670,7 @@ function registerJannyRoutes(router) {
                 console.log(`[cl-helper] JannyAI validate: ${count} bookmarks`);
                 res.json({ valid: true, bookmarkCount: count });
             } else if (response.status === 401) {
-                jannySessionCookie = null;
+                jannyCookieString = null;
                 res.json({ valid: false, reason: 'cookie expired or invalid' });
             } else {
                 res.json({ valid: false, reason: `HTTP ${response.status}` });
@@ -1665,18 +1682,18 @@ function registerJannyRoutes(router) {
     });
 
     router.get('/janny-session', (_req, res) => {
-        res.json({ active: !!jannySessionCookie });
+        res.json({ active: !!jannyCookieString });
     });
 
     router.post('/janny-logout', (_req, res) => {
-        jannySessionCookie = null;
+        jannyCookieString = null;
         console.log('[cl-helper] JannyAI session cleared');
         res.json({ ok: true });
     });
 
     // GET /janny-bookmarks — list bookmark IDs
     router.get('/janny-bookmarks', async (_req, res) => {
-        if (!jannySessionCookie) {
+        if (!jannyCookieString) {
             return res.status(401).json({ error: 'No JannyAI session' });
         }
         try {
@@ -1696,7 +1713,7 @@ function registerJannyRoutes(router) {
 
     // POST /janny-bookmarks — add bookmarks { characterIDs: string[] }
     router.post('/janny-bookmarks', async (req, res) => {
-        if (!jannySessionCookie) {
+        if (!jannyCookieString) {
             return res.status(401).json({ error: 'No JannyAI session' });
         }
         const { characterIDs } = req.body ?? {};
@@ -1725,7 +1742,7 @@ function registerJannyRoutes(router) {
 
     // DELETE /janny-bookmarks?ids=id1,id2 — remove bookmarks
     router.delete('/janny-bookmarks', async (req, res) => {
-        if (!jannySessionCookie) {
+        if (!jannyCookieString) {
             return res.status(401).json({ error: 'No JannyAI session' });
         }
         const ids = req.query.ids;
@@ -1754,7 +1771,7 @@ function registerJannyRoutes(router) {
 
     // GET /janny-bookmark-chars?ids=id1,id2 — fetch character metadata by IDs
     router.get('/janny-bookmark-chars', async (req, res) => {
-        if (!jannySessionCookie) {
+        if (!jannyCookieString) {
             return res.status(401).json({ error: 'No JannyAI session' });
         }
         const ids = req.query.ids;

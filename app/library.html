@@ -2474,12 +2474,12 @@ https://jannyai.com/characters/uuid_slug
                                     <div class="settings-row">
                                         <label for="settingsJannyCookie">Auth Cookie:</label>
                                         <div class="settings-input-group">
-                                            <textarea id="settingsJannyCookie" class="glass-input" rows="2" placeholder="Paste sb-eenzcbluoctduymzksoq-auth-token value" style="font-family: monospace; font-size: 12px; resize: vertical;" data-sensitive="true" autocomplete="one-time-code"></textarea>
+                                            <textarea id="settingsJannyCookie" class="glass-input" rows="3" placeholder="Paste cookie header from a jannyai.com request (contains .0 and .1 chunks)" style="font-family: monospace; font-size: 12px; resize: vertical;" data-sensitive="true" autocomplete="one-time-code"></textarea>
                                             <button id="validateJannyCookieBtn" class="settings-verify-btn" title="Validate Session">
                                                 <i class="fa-solid fa-check"></i>
                                             </button>
                                         </div>
-                                        <span class="settings-hint">Log in to <a href="https://jannyai.com" target="_blank" rel="noopener">jannyai.com</a> via Google/Discord/email link, then copy the <code>sb-eenzcbluoctduymzksoq-auth-token</code> cookie value from DevTools → Application → Cookies.</span>
+                                        <span class="settings-hint">Log in to <a href="https://jannyai.com" target="_blank" rel="noopener">jannyai.com</a> via Google/Discord/email link, open DevTools → Network, click any request to jannyai.com, and copy the full <code>Cookie</code> request header value. It contains two chunks: <code>sb-…-auth-token.0</code> and <code>sb-…-auth-token.1</code>.</span>
                                     </div>
                                     <div class="settings-row" style="gap: 8px;">
                                         <button id="jannyLogoutBtn" class="settings-action-btn danger" style="display: none;">
