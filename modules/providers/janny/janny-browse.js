@@ -12,7 +12,12 @@ import {
     fetchWithProxy,
     slugify,
     stripHtml,
-    resolveTagNames
+    resolveTagNames,
+    isJannyBookmarkSessionActive,
+    checkJannySession,
+    fetchJannyBookmarks,
+    addJannyBookmarks,
+    removeJannyBookmarks,
 } from './janny-api.js';
 
 const {
@@ -69,6 +74,12 @@ let jannyFilterHidePossible = false;
 /** @type {Set<number>} Active include tag IDs */
 let jannyIncludeTags = new Set();
 let jannyAuthorFilter = null;
+
+// Bookmark sync state
+let jannyBookmarkIds = new Set();
+const jannyBookmarkPendingIds = new Set();
+let jannyFilterOnlyBookmarked = false;
+let jannyBookmarksLoaded = false;
 
 let view; // module-scoped BrowseView instance reference (set once in constructor)
 
@@ -165,6 +176,86 @@ function isCharPossibleMatchObj(h) {
 }
 
 // ========================================
+// BOOKMARK SYNC
+// ========================================
+
+function isJannyBookmarkSyncEnabled() {
+    return isJannyBookmarkSessionActive() && getSetting('jannyBookmarkSync') !== false;
+}
+
+async function loadJannyBookmarks() {
+    if (jannyBookmarksLoaded || !isJannyBookmarkSyncEnabled()) return;
+    try {
+        const ids = await fetchJannyBookmarks();
+        jannyBookmarkIds = new Set(ids);
+        jannyBookmarksLoaded = true;
+    } catch (err) {
+        console.warn('[JannyBrowse] Failed to load bookmarks:', err.message);
+    }
+}
+
+function renderJannyBookmarkCardButton(charId, saved) {
+    return `<button type="button" class="janny-bookmark-btn${saved ? ' saved' : ''}" data-janny-bookmark-id="${escapeHtml(String(charId))}" title="${saved ? 'Bookmarked on JannyAI' : 'Bookmark on JannyAI'}">${saved ? '<i class="fa-solid fa-bookmark"></i>' : '<i class="fa-regular fa-bookmark"></i>'}</button>`;
+}
+
+function setJannyBookmarkState(charId, saved) {
+    const id = String(charId || '').trim();
+    if (!id) return;
+    if (saved) {
+        jannyBookmarkIds.add(id);
+    } else {
+        jannyBookmarkIds.delete(id);
+    }
+    // Update card buttons in grid
+    const grid = document.getElementById('jannyGrid');
+    const card = grid?.querySelector(`[data-janny-id="${id}"]`);
+    const btn = card?.querySelector('.janny-bookmark-btn');
+    if (btn) {
+        btn.classList.toggle('saved', saved);
+        btn.title = saved ? 'Bookmarked on JannyAI' : 'Bookmark on JannyAI';
+        btn.innerHTML = saved ? '<i class="fa-solid fa-bookmark"></i>' : '<i class="fa-regular fa-bookmark"></i>';
+    }
+    // Update modal button
+    const modalBtn = document.getElementById('jannyBookmarkBtn');
+    if (modalBtn?.dataset?.jannyId === id) {
+        modalBtn.classList.toggle('saved', saved);
+        modalBtn.innerHTML = saved ? '<i class="fa-solid fa-bookmark"></i> Bookmarked' : '<i class="fa-regular fa-bookmark"></i> Bookmark';
+        modalBtn.title = saved ? 'Bookmarked on JannyAI' : 'Bookmark on JannyAI';
+    }
+}
+
+async function toggleJannyBookmark(charId) {
+    const id = String(charId || '').trim();
+    if (!id) return;
+    if (!isJannyBookmarkSyncEnabled()) {
+        showToast('Set up JannyAI bookmark sync in Settings to use this feature', 'warning');
+        return;
+    }
+    if (jannyBookmarkPendingIds.has(id)) return;
+
+    const wasSaved = jannyBookmarkIds.has(id);
+    const nextSaved = !wasSaved;
+    jannyBookmarkPendingIds.add(id);
+    setJannyBookmarkState(id, nextSaved);
+    try {
+        if (nextSaved) {
+            await addJannyBookmarks([id]);
+        } else {
+            await removeJannyBookmarks([id]);
+        }
+        showToast(nextSaved ? 'Bookmarked on JannyAI' : 'Removed from JannyAI bookmarks', 'success');
+        if (jannyFilterOnlyBookmarked) {
+            renderGrid(jannyCharacters, false);
+        }
+    } catch (err) {
+        setJannyBookmarkState(id, wasSaved);
+        showToast(`Bookmark sync failed: ${err.message}`, 'error');
+    } finally {
+        jannyBookmarkPendingIds.delete(id);
+    }
+}
+
+// ========================================
 // CARD RENDERING
 // ========================================
 
@@ -253,11 +344,15 @@ function createJannyCard(hit) {
     const dateInfo = createdDate ? `<span class="browse-card-date"><i class="fa-solid fa-clock"></i> ${createdDate}</span>` : '';
 
     const cardClass = inLibrary ? 'browse-card in-library' : possibleMatch ? 'browse-card possible-library' : 'browse-card';
+    const canBookmark = isJannyBookmarkSyncEnabled();
+    const isBookmarked = canBookmark && jannyBookmarkIds.has(charId);
+    const bookmarkBtn = canBookmark ? renderJannyBookmarkCardButton(charId, isBookmarked) : '';
 
     return `
         <div class="${cardClass}" data-janny-id="${escapeHtml(String(charId))}" data-slug="${escapeHtml(slug)}" ${desc ? `title="${escapeHtml(desc)}"` : ''}>
             <div class="browse-card-image">
                 <img data-src="${escapeHtml(avatarUrl)}" src="${IMG_PLACEHOLDER}" alt="${escapeHtml(name)}" decoding="async" fetchpriority="low" onerror="this.dataset.failed='1';this.src='/img/ai4.png'">
+                ${bookmarkBtn}
                 ${badges.length > 0 ? `<div class="browse-feature-badges">${badges.join('')}</div>` : ''}
             </div>
             <div class="browse-card-body">
@@ -297,10 +392,15 @@ function renderGrid(characters, append = false) {
         jannyGridRenderedCount = 0;
     }
 
-    const startIdx = jannyGridRenderedCount;
-    const html = characters.slice(startIdx).map(c => createJannyCard(c)).join('');
+    let filtered = characters;
+    if (jannyFilterOnlyBookmarked) {
+        filtered = filtered.filter(c => jannyBookmarkIds.has(String(c.id || '')));
+    }
+
+    const startIdx = append ? jannyGridRenderedCount : 0;
+    const html = filtered.slice(startIdx).map(c => createJannyCard(c)).join('');
     grid.insertAdjacentHTML('beforeend', html);
-    jannyGridRenderedCount = characters.length;
+    jannyGridRenderedCount = filtered.length;
 
     observeNewCards(startIdx);
     updateLoadMore();
@@ -485,6 +585,21 @@ function openPreviewModal(hit) {
     document.getElementById('jannyCharName').textContent = name;
     document.getElementById('jannyCharCreator').textContent = hit.creatorUsername || hit.creatorId || 'Unknown';
     document.getElementById('jannyOpenInBrowserBtn').href = jannyUrl;
+
+    // Bookmark button
+    const bookmarkBtn = document.getElementById('jannyBookmarkBtn');
+    if (bookmarkBtn) {
+        if (isJannyBookmarkSyncEnabled()) {
+            bookmarkBtn.style.display = '';
+            bookmarkBtn.dataset.jannyId = charId;
+            const saved = jannyBookmarkIds.has(charId);
+            bookmarkBtn.classList.toggle('saved', saved);
+            bookmarkBtn.innerHTML = saved ? '<i class="fa-solid fa-bookmark"></i> Bookmarked' : '<i class="fa-regular fa-bookmark"></i> Bookmark';
+            bookmarkBtn.title = saved ? 'Bookmarked on JannyAI' : 'Bookmark on JannyAI';
+        } else {
+            bookmarkBtn.style.display = 'none';
+        }
+    }
 
     // Stats
     document.getElementById('jannyCharTokens').textContent = tokens;
@@ -920,8 +1035,13 @@ function updateJannyFiltersButton() {
     const btn = document.getElementById('jannyFiltersBtn');
     if (!btn) return;
 
-    const active = jannyShowLowQuality || jannyFilterHideOwned || jannyFilterHidePossible;
+    const active = jannyShowLowQuality || jannyFilterHideOwned || jannyFilterHidePossible || jannyFilterOnlyBookmarked;
     btn.classList.toggle('has-filters', active);
+}
+
+function updateBookmarkFilterVisibility() {
+    const row = document.getElementById('jannyBookmarkFilterRow');
+    if (row) row.style.display = isJannyBookmarkSyncEnabled() ? '' : 'none';
 }
 
 // ========================================
@@ -945,6 +1065,15 @@ function initJannyView() {
     const grid = document.getElementById('jannyGrid');
     if (grid) {
         grid.addEventListener('click', (e) => {
+            // Bookmark button click
+            const bookmarkBtn = e.target.closest('.janny-bookmark-btn');
+            if (bookmarkBtn) {
+                e.stopPropagation();
+                const charId = bookmarkBtn.dataset.jannyBookmarkId;
+                if (charId) toggleJannyBookmark(charId);
+                return;
+            }
+
             const authorLink = e.target.closest('.browse-card-creator-link');
             if (authorLink) {
                 e.stopPropagation();
@@ -1106,6 +1235,13 @@ function initJannyView() {
         loadCharacters(false);
     });
 
+    on('jannyFilterOnlyBookmarked', 'change', () => {
+        const el = document.getElementById('jannyFilterOnlyBookmarked');
+        if (el) jannyFilterOnlyBookmarked = el.checked;
+        updateJannyFiltersButton();
+        renderGrid(jannyCharacters, false);
+    });
+
     // Close dropdowns when clicking outside
     jannyBrowseView._registerDropdownDismiss([
         { dropdownId: 'jannyTagsDropdown', buttonId: 'jannyTagsBtn' },
@@ -1144,6 +1280,10 @@ function initJannyView() {
                 BrowseView.openAvatarViewer(jannyAvatar.src);
             });
         }
+
+        on('jannyBookmarkBtn', 'click', () => {
+            if (jannySelectedChar?.id) toggleJannyBookmark(jannySelectedChar.id);
+        });
 
         on('jannyImportBtn', 'click', () => {
             if (jannySelectedChar) importCharacter(jannySelectedChar);
@@ -1344,6 +1484,11 @@ class JannyBrowseView extends BrowseView {
                     <div class="dropdown-section-title">Library:</div>
                     <label class="filter-checkbox"><input type="checkbox" id="jannyFilterHideOwned"> <i class="fa-solid fa-check"></i> Hide Owned Characters</label>
                     <label class="filter-checkbox"><input type="checkbox" id="jannyFilterHidePossible"> <i class="fa-solid fa-check" style="color: #f0a500;"></i> Hide Possible Matches</label>
+                    <div id="jannyBookmarkFilterRow" style="display: none;">
+                        <hr style="margin: 8px 0; border-color: var(--glass-border);">
+                        <div class="dropdown-section-title">JannyAI Account:</div>
+                        <label class="filter-checkbox"><input type="checkbox" id="jannyFilterOnlyBookmarked"> <i class="fa-solid fa-bookmark"></i> Only Bookmarked</label>
+                    </div>
                 </div>
             </div>
 
@@ -1423,6 +1568,9 @@ class JannyBrowseView extends BrowseView {
                     <a id="jannyOpenInBrowserBtn" href="#" target="_blank" class="action-btn secondary" title="Open on JannyAI">
                         <i class="fa-solid fa-external-link"></i> Open
                     </a>
+                    <button id="jannyBookmarkBtn" class="action-btn secondary" title="Bookmark on JannyAI" style="display: none;">
+                        <i class="fa-regular fa-bookmark"></i> Bookmark
+                    </button>
                     <button id="jannyImportBtn" class="action-btn primary" title="Download to SillyTavern">
                         <i class="fa-solid fa-download"></i> Import
                     </button>
@@ -1504,6 +1652,19 @@ class JannyBrowseView extends BrowseView {
         super.init();
         this.buildLocalLibraryLookup();
         initJannyView();
+        // Lazily check bookmark session and load IDs in background
+        checkJannySession().then(active => {
+            if (active && getSetting('jannyBookmarkSync') !== false) {
+                loadJannyBookmarks().then(() => {
+                    updateBookmarkFilterVisibility();
+                    // Re-render to show bookmark buttons now that IDs are loaded
+                    if (jannyBookmarksLoaded && jannyCharacters.length > 0) {
+                        renderGrid(jannyCharacters, false);
+                    }
+                });
+            }
+            updateBookmarkFilterVisibility();
+        });
         const grid = document.getElementById('jannyGrid');
         if (grid) this.observeImages(grid);
         loadCharacters(false);

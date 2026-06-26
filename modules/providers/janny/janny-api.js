@@ -94,10 +94,103 @@ export async function getSearchToken() {
 // NETWORK & TEXT UTILITIES (shared)
 // ========================================
 
-import { fetchWithProxy } from '../provider-utils.js';
+import { fetchWithProxy, CL_HELPER_PLUGIN_BASE } from '../provider-utils.js';
 export { fetchWithProxy };
 export { slugify, stripHtml } from '../provider-utils.js';
 
 export function resolveTagNames(tagIds) {
     return (tagIds || []).map(id => TAG_MAP[id] || `Tag ${id}`);
+}
+
+// ========================================
+// BOOKMARK SYNC (via cl-helper proxy)
+// ========================================
+
+let _jannyBookmarkSessionActive = false;
+
+function jannyApiRequest(path, method = 'GET', body = null) {
+    const opts = { method, headers: {} };
+    if (body) {
+        opts.headers['Content-Type'] = 'application/json';
+        opts.body = JSON.stringify(body);
+    }
+    return fetch(`${CL_HELPER_PLUGIN_BASE}${path}`, opts);
+}
+
+export async function setJannyBookmarkCookie(apiRequest, cookieString) {
+    try {
+        const resp = await apiRequest(`${CL_HELPER_PLUGIN_BASE}/janny-set-cookie`, 'POST', {
+            cookie: cookieString,
+        });
+        if (!resp.ok) {
+            const text = await resp.text().catch(() => '');
+            return { ok: false, error: `Server returned ${resp.status}: ${text.substring(0, 100)}` };
+        }
+        const data = await resp.json();
+        if (data?.ok) {
+            _jannyBookmarkSessionActive = true;
+            return { ok: true };
+        }
+        return { ok: false, error: data?.error || 'Unknown error' };
+    } catch (err) {
+        return { ok: false, error: err.message };
+    }
+}
+
+export async function validateJannySession(apiRequest) {
+    try {
+        const resp = await apiRequest(`${CL_HELPER_PLUGIN_BASE}/janny-validate`);
+        if (!resp.ok) return { valid: false, reason: 'validation request failed' };
+        const data = await resp.json();
+        _jannyBookmarkSessionActive = data?.valid === true;
+        return data;
+    } catch {
+        _jannyBookmarkSessionActive = false;
+        return { valid: false, reason: 'network error' };
+    }
+}
+
+export async function jannyLogout(apiRequest) {
+    try {
+        await apiRequest(`${CL_HELPER_PLUGIN_BASE}/janny-logout`, 'POST');
+    } catch { /* ignore */ }
+    _jannyBookmarkSessionActive = false;
+}
+
+export async function checkJannySession() {
+    try {
+        const resp = await jannyApiRequest('/janny-session');
+        if (!resp.ok) return false;
+        const data = await resp.json();
+        _jannyBookmarkSessionActive = !!data?.active;
+        return _jannyBookmarkSessionActive;
+    } catch {
+        return false;
+    }
+}
+
+export function isJannyBookmarkSessionActive() {
+    return _jannyBookmarkSessionActive;
+}
+
+export async function fetchJannyBookmarks() {
+    const resp = await jannyApiRequest('/janny-bookmarks');
+    if (!resp.ok) throw new Error(`JannyAI bookmarks failed: ${resp.status}`);
+    const data = await resp.json();
+    return data?.bookmarks || [];
+}
+
+export async function addJannyBookmarks(characterIDs) {
+    const resp = await jannyApiRequest('/janny-bookmarks', 'POST', { characterIDs });
+    if (!resp.ok) throw new Error(`JannyAI add bookmark failed: ${resp.status}`);
+    const data = await resp.json();
+    return data?.bookmarks || [];
+}
+
+export async function removeJannyBookmarks(characterIDs) {
+    const ids = characterIDs.join(',');
+    const resp = await jannyApiRequest(`/janny-bookmarks?ids=${encodeURIComponent(ids)}`, 'DELETE');
+    if (!resp.ok) throw new Error(`JannyAI remove bookmark failed: ${resp.status}`);
+    const data = await resp.json();
+    return data?.bookmarks || [];
 }

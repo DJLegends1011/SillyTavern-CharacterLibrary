@@ -15,7 +15,10 @@ import {
     fetchWithProxy,
     slugify,
     stripHtml,
-    resolveTagNames
+    resolveTagNames,
+    setJannyBookmarkCookie,
+    validateJannySession,
+    jannyLogout as jannyLogoutApi,
 } from './janny-api.js';
 
 let api = null;
@@ -901,4 +904,19 @@ class JannyProvider extends ProviderBase {
 }
 
 const jannyProvider = new JannyProvider();
+
+window.jannyValidateSession = async (cookieString, checkOnly = false) => {
+    if (cookieString && !checkOnly) {
+        const setResp = await setJannyBookmarkCookie(CoreAPI.apiRequest, cookieString);
+        if (!setResp.ok) {
+            return { valid: false, reason: setResp.error || 'Failed to set cookie' };
+        }
+    }
+    return validateJannySession(CoreAPI.apiRequest);
+};
+
+window.jannyLogout = async () => {
+    await jannyLogoutApi(CoreAPI.apiRequest);
+};
+
 export default jannyProvider;

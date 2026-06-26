@@ -503,6 +503,8 @@ const DEFAULT_SETTINGS = {
     botbooruNsfwAccountSynced: false,
     botbooruUseTagWeights: false,
     ctCookie: null,
+    jannyCookie: null,
+    jannyBookmarkSync: true,
     civitaiApiKey: null,
 
     // ---- NSFW Toggles ----
@@ -1584,6 +1586,12 @@ function setupSettingsModal() {
     const ctCookieInput = document.getElementById('settingsCtCookie');
     const ctPluginBanner = document.getElementById('ctPluginBanner');
     const ctSettingsFields = document.getElementById('ctSettingsFields');
+    const jannyCookieInput = document.getElementById('settingsJannyCookie');
+    const jannyPluginBanner = document.getElementById('jannyPluginBanner');
+    const jannyBookmarkFields = document.getElementById('jannyBookmarkFields');
+    const jannySessionStatus = document.getElementById('jannySessionStatus');
+    const jannyBookmarkSyncCheckbox = document.getElementById('jannyBookmarkSyncCheckbox');
+    const jannyLogoutBtn = document.getElementById('jannyLogoutBtn');
     const wyvernEmailInput = document.getElementById('settingsWyvernEmail');
     const wyvernPasswordInput = document.getElementById('settingsWyvernPassword');
     const wyvernRememberCredsCheckbox = document.getElementById('settingsWyvernRememberCredentials');
@@ -2130,6 +2138,8 @@ function setupSettingsModal() {
         if (pygmalionPasswordInput) pygmalionPasswordInput.value = getSetting('pygmalionPassword') || '';
         if (pygmalionRememberCredsCheckbox) pygmalionRememberCredsCheckbox.checked = getSetting('pygmalionRememberCredentials') || false;
         if (ctCookieInput) ctCookieInput.value = getSetting('ctCookie') || '';
+        if (jannyCookieInput) jannyCookieInput.value = getSetting('jannyCookie') || '';
+        if (jannyBookmarkSyncCheckbox) jannyBookmarkSyncCheckbox.checked = getSetting('jannyBookmarkSync') !== false;
         if (wyvernEmailInput) wyvernEmailInput.value = getSetting('wyvernEmail') || '';
         if (wyvernPasswordInput) wyvernPasswordInput.value = getSetting('wyvernPassword') || '';
         if (wyvernRememberCredsCheckbox) wyvernRememberCredsCheckbox.checked = getSetting('wyvernRememberCredentials') || false;
@@ -2626,6 +2636,7 @@ function setupSettingsModal() {
             botbooruPluginBanner, botbooruSettingsFields,
             ctPluginBanner, ctSettingsFields,
             datacatPluginBanner, datacatSettingsFields,
+            jannyPluginBanner, jannyBookmarkFields,
             gridThumbsClHelperBanner, settingsGridThumbClHelperFields,
             galleryThumbsClHelperBanner, galleryThumbsClHelperFields,
         ).then(available => {
@@ -2637,6 +2648,14 @@ function setupSettingsModal() {
                     datacatSessionStatus.className = 'settings-status-badge inactive';
                     datacatSessionStatus.innerHTML = '<i class="fa-solid fa-circle"></i> Checking...';
                     updateDatacatSessionStatus();
+                }
+            }
+            if (jannySessionStatus) {
+                if (!available) {
+                    jannySessionStatus.className = 'settings-status-badge inactive';
+                    jannySessionStatus.innerHTML = '<i class="fa-solid fa-circle"></i> Plugin missing';
+                } else {
+                    updateJannySessionStatus();
                 }
             }
         });
@@ -3184,6 +3203,8 @@ function setupSettingsModal() {
             botbooruUsername: botbooruUsernameInput ? (botbooruUsernameInput.value || null) : null,
             botbooruPassword: botbooruPasswordInput ? (botbooruPasswordInput.value || null) : null,
             ctCookie: ctCookieInput ? (ctCookieInput.value?.trim() || null) : null,
+            jannyCookie: jannyCookieInput ? (jannyCookieInput.value?.trim() || null) : null,
+            jannyBookmarkSync: jannyBookmarkSyncCheckbox ? jannyBookmarkSyncCheckbox.checked : true,
             wyvernEmail: wyvernEmailInput ? (wyvernEmailInput.value || null) : null,
             wyvernPassword: wyvernPasswordInput ? (wyvernPasswordInput.value || null) : null,
             wyvernRememberCredentials: wyvernRememberCredsCheckbox ? wyvernRememberCredsCheckbox.checked : false,
@@ -3358,6 +3379,8 @@ function setupSettingsModal() {
         if (pygmalionPasswordInput) pygmalionPasswordInput.value = '';
         if (pygmalionRememberCredsCheckbox) pygmalionRememberCredsCheckbox.checked = false;
         if (ctCookieInput) ctCookieInput.value = '';
+        if (jannyCookieInput) jannyCookieInput.value = '';
+        if (jannyBookmarkSyncCheckbox) jannyBookmarkSyncCheckbox.checked = DEFAULT_SETTINGS.jannyBookmarkSync;
         if (wyvernEmailInput) wyvernEmailInput.value = '';
         if (wyvernPasswordInput) wyvernPasswordInput.value = '';
         if (wyvernRememberCredsCheckbox) wyvernRememberCredsCheckbox.checked = false;
@@ -3548,6 +3571,93 @@ function setupSettingsModal() {
                 }, 3000);
             }
         };
+    }
+
+    // Session Validation - JannyAI Bookmark Sync
+    function updateJannySessionStatus() {
+        if (!jannySessionStatus) return;
+        if (!window.jannyValidateSession) {
+            jannySessionStatus.className = 'settings-status-badge inactive';
+            jannySessionStatus.innerHTML = '<i class="fa-solid fa-circle"></i> Not connected';
+            if (jannyLogoutBtn) jannyLogoutBtn.style.display = 'none';
+            return;
+        }
+        jannySessionStatus.className = 'settings-status-badge inactive';
+        jannySessionStatus.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Checking...';
+        window.jannyValidateSession(null, true).then(result => {
+            if (result?.valid) {
+                jannySessionStatus.className = 'settings-status-badge active';
+                jannySessionStatus.innerHTML = '<i class="fa-solid fa-circle"></i> Connected';
+                if (jannyLogoutBtn) jannyLogoutBtn.style.display = '';
+            } else {
+                jannySessionStatus.className = 'settings-status-badge inactive';
+                jannySessionStatus.innerHTML = '<i class="fa-solid fa-circle"></i> Not connected';
+                if (jannyLogoutBtn) jannyLogoutBtn.style.display = 'none';
+            }
+        }).catch(() => {
+            jannySessionStatus.className = 'settings-status-badge inactive';
+            jannySessionStatus.innerHTML = '<i class="fa-solid fa-circle"></i> Error';
+            if (jannyLogoutBtn) jannyLogoutBtn.style.display = 'none';
+        });
+    }
+
+    const validateJannyCookieBtn = document.getElementById('validateJannyCookieBtn');
+    if (validateJannyCookieBtn && jannyCookieInput) {
+        validateJannyCookieBtn.onclick = async (e) => {
+            e.preventDefault();
+            validateJannyCookieBtn.classList.remove('success', 'error');
+            const originalHtml = '<i class="fa-solid fa-check"></i>';
+            validateJannyCookieBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
+            validateJannyCookieBtn.disabled = true;
+
+            try {
+                if (!window.jannyValidateSession) {
+                    showToast('JannyAI module not ready', 'error');
+                    throw new Error('Module not ready');
+                }
+                const result = await window.jannyValidateSession(jannyCookieInput.value?.trim() || null);
+                validateJannyCookieBtn.classList.remove('success', 'error');
+
+                if (result.valid) {
+                    showToast('JannyAI session valid! Bookmark sync enabled.', 'success');
+                    validateJannyCookieBtn.classList.add('success');
+                    validateJannyCookieBtn.innerHTML = '<i class="fa-solid fa-check-double"></i>';
+                    jannyCookieInput.value = '';
+                    updateJannySessionStatus();
+                } else {
+                    showToast(`JannyAI session invalid: ${result.reason || 'Unknown error'}`, 'error');
+                    validateJannyCookieBtn.classList.add('error');
+                    validateJannyCookieBtn.innerHTML = '<i class="fa-solid fa-times"></i>';
+                }
+            } catch (err) {
+                if (!validateJannyCookieBtn.classList.contains('error')) {
+                    showToast(`Validation error: ${err.message}`, 'error');
+                    validateJannyCookieBtn.classList.add('error');
+                    validateJannyCookieBtn.innerHTML = '<i class="fa-solid fa-exclamation"></i>';
+                }
+            } finally {
+                validateJannyCookieBtn.disabled = false;
+                setTimeout(() => {
+                    validateJannyCookieBtn.classList.remove('success', 'error');
+                    validateJannyCookieBtn.innerHTML = originalHtml;
+                }, 3000);
+            }
+        };
+    }
+
+    if (jannyLogoutBtn) {
+        jannyLogoutBtn.onclick = async () => {
+            if (!window.jannyLogout) return;
+            await window.jannyLogout();
+            showToast('Logged out from JannyAI bookmark sync', 'info');
+            updateJannySessionStatus();
+        };
+    }
+
+    if (jannyBookmarkSyncCheckbox) {
+        jannyBookmarkSyncCheckbox.addEventListener('change', () => {
+            setSetting('jannyBookmarkSync', jannyBookmarkSyncCheckbox.checked);
+        });
     }
 
     // Session Validation - Pygmalion

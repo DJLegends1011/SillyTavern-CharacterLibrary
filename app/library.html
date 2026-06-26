@@ -2456,6 +2456,43 @@ https://jannyai.com/characters/uuid_slug
                                 <i class="fa-solid fa-chevron-right provider-chevron"></i>
                             </summary>
                             <div class="settings-provider-body">
+                                <div class="cl-helper-banner cl-hidden" id="jannyPluginBanner">
+                                    <i class="fa-solid fa-puzzle-piece"></i>
+                                    <div>
+                                        <strong>cl-helper plugin required</strong>
+                                        <span>Bookmark sync requires the cl-helper server plugin to proxy requests. <a href="#" class="cl-goto-info">Open cl-helper status &rarr;</a></span>
+                                    </div>
+                                </div>
+                                <div class="settings-group" id="jannyBookmarkFields">
+                                    <div class="settings-group-title"><i class="fa-solid fa-bookmark"></i> Bookmark Sync</div>
+                                    <div class="settings-row">
+                                        <label>Status:</label>
+                                        <div class="settings-input-group">
+                                            <span id="jannySessionStatus" class="settings-status-badge inactive"><i class="fa-solid fa-circle"></i> Not connected</span>
+                                        </div>
+                                    </div>
+                                    <div class="settings-row">
+                                        <label for="settingsJannyCookie">Auth Cookie:</label>
+                                        <div class="settings-input-group">
+                                            <textarea id="settingsJannyCookie" class="glass-input" rows="2" placeholder="Paste sb-eenzcbluoctduymzksoq-auth-token value" style="font-family: monospace; font-size: 12px; resize: vertical;" data-sensitive="true" autocomplete="one-time-code"></textarea>
+                                            <button id="validateJannyCookieBtn" class="settings-verify-btn" title="Validate Session">
+                                                <i class="fa-solid fa-check"></i>
+                                            </button>
+                                        </div>
+                                        <span class="settings-hint">Log in to <a href="https://jannyai.com" target="_blank" rel="noopener">jannyai.com</a> via Google/Discord/email link, then copy the <code>sb-eenzcbluoctduymzksoq-auth-token</code> cookie value from DevTools → Application → Cookies.</span>
+                                    </div>
+                                    <div class="settings-row" style="gap: 8px;">
+                                        <button id="jannyLogoutBtn" class="settings-action-btn danger" style="display: none;">
+                                            <i class="fa-solid fa-right-from-bracket"></i> Logout
+                                        </button>
+                                    </div>
+                                    <div class="settings-row">
+                                        <label class="settings-checkbox-label">
+                                            <input type="checkbox" id="jannyBookmarkSyncCheckbox">
+                                            <span>Sync bookmark buttons to JannyAI</span>
+                                        </label>
+                                    </div>
+                                </div>
                                 <div class="settings-group">
                                     <div class="settings-group-title"><i class="fa-solid fa-ban"></i> Exclude Tags</div>
                                     <div class="settings-row">
