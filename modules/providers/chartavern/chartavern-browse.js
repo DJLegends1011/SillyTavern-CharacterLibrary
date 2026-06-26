@@ -54,7 +54,7 @@ let ctTotalPages = 1;
 let ctHasMore = true;
 let ctIsLoading = false;
 let ctCurrentSearch = '';
-let ctNsfwEnabled = true;
+let ctNsfwEnabled = false;
 let ctSortMode = 'most_popular';
 let ctSelectedChar = null;
 let ctGridRenderedCount = 0;
@@ -1526,11 +1526,8 @@ async function saveCookieAndConnect(cookieStr) {
         // Save cookie string to settings
         setSetting('ctCookie', cookieStr);
 
-        if (!ctNsfwEnabled) {
-            ctNsfwEnabled = true;
-            setSetting('ctNsfw', true);
-            updateNsfwToggle();
-        }
+        ctNsfwEnabled = getSetting('ctNsfw') === true;
+        updateNsfwToggle();
 
         if (validation.hasNsfw) {
             showToast('Connected to CharacterTavern — NSFW content available!', 'success');
@@ -1577,7 +1574,6 @@ async function tryCheckSession() {
             debugLog('[CTAuth] Session cookies expired or NSFW unavailable:', validation.reason);
             await ctLogout(apiRequest);
             ctNsfwEnabled = false;
-            setSetting('ctNsfw', false);
             setSetting('ctCookie', null);
             updateNsfwToggle();
             showToast('CharacterTavern session expired — please re-authenticate.', 'warning', 5000);
@@ -1586,8 +1582,7 @@ async function tryCheckSession() {
         }
 
         // Restore NSFW setting if session is still active
-        const savedNsfw = getSetting('ctNsfw');
-        if (savedNsfw) ctNsfwEnabled = true;
+        ctNsfwEnabled = getSetting('ctNsfw') === true;
         updateNsfwToggle();
     } else {
         // No active session in cl-helper - try to restore from saved cookie
@@ -1597,8 +1592,7 @@ async function tryCheckSession() {
             if (result.ok) {
                 const validation = await ctValidateSession(apiRequest);
                 if (validation.valid) {
-                    const savedNsfw = getSetting('ctNsfw');
-                    if (savedNsfw) ctNsfwEnabled = true;
+                    ctNsfwEnabled = getSetting('ctNsfw') === true;
                     updateNsfwToggle();
                     return;
                 }
