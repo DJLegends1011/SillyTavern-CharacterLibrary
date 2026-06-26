@@ -508,6 +508,7 @@ const DEFAULT_SETTINGS = {
     // ---- NSFW Toggles ----
     chubNsfw: false,
     jannyNsfw: false,
+    masqueradeNsfw: false,
     pygmalionNsfw: false,
     wyvernNsfw: false,
     ctNsfw: false,
