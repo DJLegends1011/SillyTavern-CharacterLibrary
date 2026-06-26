@@ -1615,21 +1615,30 @@ function jannyHeaders() {
 
 function parseJannyCookieInput(raw) {
     const trimmed = raw.trim();
-    // If it already looks like a cookie header with chunk suffixes, use as-is
+
+    // Already a semicolon-separated cookie header with chunk suffixes
     if (trimmed.includes(`${JANNY_COOKIE_PREFIX}.0=`)) {
-        // Strip any non-Supabase cookies, keep only auth-token chunks
         const parts = trimmed.split(/;\s*/).filter(p => p.startsWith(JANNY_COOKIE_PREFIX));
         if (parts.length === 0) return null;
         return parts.join('; ');
     }
-    // Single bare value (non-chunked token) — wrap it
-    if (!trimmed.includes('=') && !trimmed.includes(';')) {
+
+    // Two bare values on separate lines → treat as .0 and .1
+    const lines = trimmed.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    if (lines.length === 2 && !lines[0].includes('=') && !lines[1].includes('=')) {
+        return `${JANNY_COOKIE_PREFIX}.0=${lines[0]}; ${JANNY_COOKIE_PREFIX}.1=${lines[1]}`;
+    }
+
+    // Single bare value (non-chunked token) — wrap as non-chunked cookie
+    if (!trimmed.includes('=') && !trimmed.includes(';') && !trimmed.includes('\n')) {
         return `${JANNY_COOKIE_PREFIX}=${trimmed}`;
     }
+
     // name=value format (single cookie)
     if (trimmed.startsWith(`${JANNY_COOKIE_PREFIX}=`)) {
         return trimmed;
     }
+
     return null;
 }
 
