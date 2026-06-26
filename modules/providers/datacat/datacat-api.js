@@ -66,6 +66,9 @@ const DC_PROXY_BASE = `${CL_HELPER_PLUGIN_BASE}/dc-proxy`;
 
 let _apiRequest = null;
 let _getSavedToken = null;
+let _getSavedAccountToken = null;
+let _getSavedDeviceToken = null;
+let _getDatacatClientId = null;
 let _bootstrapInFlight = null;
 
 /**
@@ -81,6 +84,84 @@ export function setApiRequest(fn) { _apiRequest = fn; }
  * the api file to CoreAPI/settings directly. Called once from init().
  */
 export function setSavedTokenGetter(fn) { _getSavedToken = fn; }
+
+export function setSavedAccountTokenGetter(fn) { _getSavedAccountToken = fn; }
+
+export function setSavedDeviceTokenGetter(fn) { _getSavedDeviceToken = fn; }
+
+export function setDatacatClientIdGetter(fn) { _getDatacatClientId = fn; }
+
+export function getDatacatClientId() {
+    const id = _getDatacatClientId?.();
+    if (typeof id !== 'string') return null;
+    const trimmed = id.trim();
+    return trimmed || null;
+}
+
+export function getDatacatClientHeaders() {
+    const id = getDatacatClientId();
+    return id ? { 'X-CL-Datacat-Client': id } : {};
+}
+
+export async function dcHelperRequest(path, method = 'GET', data = null) {
+    const headers = getDatacatClientHeaders();
+    if (_apiRequest) {
+        if (Object.keys(headers).length === 0) {
+            return _apiRequest(path, method, data);
+        }
+        const apiHeaders = {
+            'Content-Type': 'application/json',
+            'X-CSRF-Token': window.getCSRFToken?.() || '',
+            ...headers,
+        };
+        return _apiRequest(path, method, data, { headers: apiHeaders });
+    }
+
+    const config = {
+        method,
+        headers: {
+            'X-CSRF-Token': window.getCSRFToken?.() || '',
+            ...headers,
+        },
+    };
+    if (data != null) {
+        config.headers['Content-Type'] = 'application/json';
+        config.body = JSON.stringify(data);
+    }
+    return fetch(`/api${path}`, config);
+}
+
+export async function dcHelperJson(path, method = 'GET', data = null) {
+    let resp;
+    try {
+        resp = await dcHelperRequest(path, method, data);
+    } catch (err) {
+        return { ok: false, valid: false, error: err?.message || 'network error', reason: 'network error' };
+    }
+
+    let payload = null;
+    let text = '';
+    try {
+        text = await resp.clone().text();
+        if (text) payload = JSON.parse(text);
+    } catch {
+        payload = null;
+    }
+
+    if (resp.ok) {
+        return payload || { ok: true };
+    }
+
+    const message = payload?.error || payload?.reason || payload?.message || text || `request failed (${resp.status})`;
+    return {
+        ...(payload && typeof payload === 'object' ? payload : {}),
+        ok: false,
+        valid: false,
+        status: resp.status,
+        error: message,
+        reason: payload?.reason || message,
+    };
+}
 
 /**
  * Push the saved token (or a fresh anonymous one) into cl-helper. Returns
@@ -111,10 +192,10 @@ async function tryBootstrapSession() {
  */
 async function dcFetch(apiPath) {
     if (!_apiRequest) throw new Error('DataCat: apiRequest not bound (cl-helper required)');
-    let resp = await _apiRequest(`${DC_PROXY_BASE}${apiPath}`);
+    let resp = await dcHelperRequest(`${DC_PROXY_BASE}${apiPath}`);
     if (resp.status === 401 || resp.status === 403) {
         if (await tryBootstrapSession()) {
-            resp = await _apiRequest(`${DC_PROXY_BASE}${apiPath}`);
+            resp = await dcHelperRequest(`${DC_PROXY_BASE}${apiPath}`);
         }
     }
     if (!resp.ok) {
@@ -151,18 +232,13 @@ export async function checkDcPluginAvailable() {
 async function restoreSavedToken(savedToken) {
     if (!savedToken || typeof savedToken !== 'string') return false;
     try {
-        const setResp = _apiRequest
-            ? await _apiRequest(`${CL_HELPER_PLUGIN_BASE}/dc-set-token`, 'POST', { token: savedToken })
-            : await fetch(`/api${CL_HELPER_PLUGIN_BASE}/dc-set-token`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ token: savedToken }),
-            });
+        const deviceToken = _getSavedDeviceToken?.() || null;
+        const body = { token: savedToken };
+        if (deviceToken) body.deviceToken = deviceToken;
+        const setResp = await dcHelperRequest(`${CL_HELPER_PLUGIN_BASE}/dc-set-token`, 'POST', body);
         if (!setResp.ok) return false;
 
-        const valResp = _apiRequest
-            ? await _apiRequest(`${CL_HELPER_PLUGIN_BASE}/dc-validate`)
-            : await fetch(`/api${CL_HELPER_PLUGIN_BASE}/dc-validate`);
+        const valResp = await dcHelperRequest(`${CL_HELPER_PLUGIN_BASE}/dc-validate`);
         if (!valResp.ok) return false;
         const data = await valResp.json();
         return data?.valid === true;
@@ -188,13 +264,7 @@ export async function initDcSession(savedToken, force = false) {
             if (restored) return savedToken;
         }
 
-        const body = force ? JSON.stringify({ force: true }) : undefined;
-        const resp = _apiRequest
-            ? await _apiRequest(`${CL_HELPER_PLUGIN_BASE}/dc-init`, 'POST', force ? { force: true } : undefined)
-            : await fetch(`/api${CL_HELPER_PLUGIN_BASE}/dc-init`, {
-                method: 'POST',
-                ...(force ? { headers: { 'Content-Type': 'application/json' }, body } : {}),
-            });
+        const resp = await dcHelperRequest(`${CL_HELPER_PLUGIN_BASE}/dc-init`, 'POST', force ? { force: true } : null);
         if (!resp.ok) return null;
         const data = await resp.json();
         if (data?.ok && data?.token) return data.token;
@@ -210,9 +280,7 @@ export async function initDcSession(savedToken, force = false) {
  */
 export async function validateDcSession() {
     try {
-        const resp = _apiRequest
-            ? await _apiRequest(`${CL_HELPER_PLUGIN_BASE}/dc-validate`)
-            : await fetch(`/api${CL_HELPER_PLUGIN_BASE}/dc-validate`);
+        const resp = await dcHelperRequest(`${CL_HELPER_PLUGIN_BASE}/dc-validate`);
         if (!resp.ok) return { valid: false, reason: 'request failed' };
         return await resp.json();
     } catch {
@@ -226,13 +294,242 @@ export async function validateDcSession() {
  */
 export async function clearDcSession() {
     try {
-        const resp = _apiRequest
-            ? await _apiRequest(`${CL_HELPER_PLUGIN_BASE}/dc-clear-token`, 'POST')
-            : await fetch(`/api${CL_HELPER_PLUGIN_BASE}/dc-clear-token`, { method: 'POST' });
+        const resp = await dcHelperRequest(`${CL_HELPER_PLUGIN_BASE}/dc-clear-token`, 'POST');
         return resp.ok;
     } catch {
         return false;
     }
+}
+
+export async function restoreDatacatAccount() {
+    const accountToken = _getSavedAccountToken?.() || null;
+    if (!accountToken) return { valid: false, reason: 'no saved account token', user: null };
+    const deviceToken = _getSavedDeviceToken?.() || null;
+    return dcHelperJson(`${CL_HELPER_PLUGIN_BASE}/dc-auth-set`, 'POST', { accountToken, deviceToken });
+}
+
+/**
+ * Account-scoped cl-helper call with one-shot session recovery.
+ *
+ * The account session lives in cl-helper's in-memory store and is wiped when
+ * the ST server restarts. Account endpoints (yours / follow / following) then
+ * 401 with "No DataCat account session configured" even though the saved
+ * account token still lives in settings. On that 401 we re-push the saved
+ * token via restoreDatacatAccount() once and retry -- mirroring how dcFetch
+ * self-heals the anonymous browse session. If no account token is saved, or
+ * recovery fails, the original 401 is returned untouched for the caller to
+ * surface as an error.
+ */
+async function dcAccountJson(path, method = 'GET', data = null) {
+    const result = await dcHelperJson(path, method, data);
+    if (result?.status !== 401 || !_getSavedAccountToken?.()) return result;
+    const restore = await restoreDatacatAccount();
+    if (!(restore?.ok || restore?.valid)) return result;
+    return dcHelperJson(path, method, data);
+}
+
+export async function loginDatacatAccount(email, password) {
+    return dcHelperJson(`${CL_HELPER_PLUGIN_BASE}/dc-auth-login`, 'POST', { email, password });
+}
+
+export async function validateDatacatAccount() {
+    return dcHelperJson(`${CL_HELPER_PLUGIN_BASE}/dc-auth-status`);
+}
+
+export async function logoutDatacatAccount() {
+    return dcHelperJson(`${CL_HELPER_PLUGIN_BASE}/dc-auth-logout`, 'POST');
+}
+
+export async function fetchDatacatYoursStatus(characterId) {
+    return dcAccountJson(`${CL_HELPER_PLUGIN_BASE}/dc-yours/${encodeURIComponent(characterId)}/status`);
+}
+
+export async function setDatacatYoursSaved(characterId, saved) {
+    const method = saved ? 'POST' : 'DELETE';
+    return dcAccountJson(`${CL_HELPER_PLUGIN_BASE}/dc-yours/${encodeURIComponent(characterId)}`, method);
+}
+
+/**
+ * Fetch a page of the signed-in account's followed creators for one source.
+ * @param {Object} [opts] - see {@link buildDatacatFollowingPath}
+ * @returns {Promise<{ok: boolean, total: number, list: Object[], error?: string}>}
+ */
+export async function fetchDatacatFollowing(opts = {}) {
+    const path = buildDatacatFollowingPath(opts).replace('/api/creators/following', '/dc-following');
+    return dcAccountJson(`${CL_HELPER_PLUGIN_BASE}${path}`);
+}
+
+/**
+ * Follow (POST) or unfollow (DELETE) a creator on the account.
+ * @param {string} creatorId - UUID
+ * @param {boolean} follow
+ * @returns {Promise<{ok: boolean, following?: boolean, error?: string}>}
+ */
+export async function setDatacatFollow(creatorId, follow) {
+    const method = follow ? 'POST' : 'DELETE';
+    return dcAccountJson(`${CL_HELPER_PLUGIN_BASE}/dc-follow/${encodeURIComponent(creatorId)}`, method);
+}
+
+export const DATACAT_EXTERNAL_PREINDEX_SOURCES = new Set(['hampter', 'meilisearch', 'saucepan']);
+
+const DATACAT_YOURS_COLLECTABLE_FLAGS = [
+    'isCollected',
+    'viewer_is_collected',
+    'is_collected',
+    'collected',
+    'isOwnedByViewer',
+    'is_owned_by_viewer',
+    'isPublicFeedInDb',
+    'is_public_feed_in_db',
+    'isSystemPublicInDb',
+    'is_system_public_in_db',
+    'isPublicInDb',
+    'is_public_in_db',
+    'isFullyExtractedInDb',
+    'is_fully_extracted_in_db',
+    // Field names actually present on /api/characters/recent-public?summary=1 rows.
+    // DataCat surfaces collectability here via the public-feed / extracted flags,
+    // not the *_in_db names above, so these must count as positive signals.
+    'isPublic',
+    'is_public',
+    'appearOnPublicFeed',
+    'appear_on_public_feed',
+    'isExtractedByYou',
+    'is_extracted_by_you',
+    'hasJannyRecovery',
+    'has_janny_recovery',
+    'isRecoveryPlaceholder',
+    'is_recovery_placeholder',
+];
+
+const DATACAT_YOURS_SAVED_FLAGS = [
+    'isCollected',
+    'viewer_is_collected',
+    'is_collected',
+    'collected',
+];
+
+const DATACAT_YOURS_EXPLICIT_DB_SIGNAL_FLAGS = [
+    'isOwnedByViewer',
+    'is_owned_by_viewer',
+    'isPublicFeedInDb',
+    'is_public_feed_in_db',
+    'isSystemPublicInDb',
+    'is_system_public_in_db',
+    'isPublicInDb',
+    'is_public_in_db',
+    'isFullyExtractedInDb',
+    'is_fully_extracted_in_db',
+    'hasPartialExtraction',
+    'has_partial_extraction',
+    'hasJannyRecovery',
+    'has_janny_recovery',
+    'isRecoveryPlaceholder',
+    'is_recovery_placeholder',
+];
+
+function hasOwnFlag(obj, key) {
+    return Object.prototype.hasOwnProperty.call(obj, key);
+}
+
+/**
+ * DataCat can only collect/save records that exist in its character table.
+ * Creator-profile and external-search rows may have a source UUID before the
+ * DataCat character record has been extracted, so UUID alone is not enough.
+ *
+ * Unknown DataCat-native public rows are treated as collectable to preserve the
+ * existing public feed behavior. Rows with explicit extraction DB flags, or
+ * external pre-index sources, must prove collectability first.
+ *
+ * @param {Object|null} hit
+ * @returns {boolean}
+ */
+export function isDatacatYoursCollectableHit(hit) {
+    if (!hit || typeof hit !== 'object') return false;
+    if (hit._fullCharacter && typeof hit._fullCharacter === 'object') return true;
+    if (hit.character && typeof hit.character === 'object') return true;
+
+    // External pre-index rows (Hampter/Meili/Saucepan) are not DataCat records yet,
+    // so exclude them before checking positive flags in case a future search source
+    // carries a public/extracted flag of its own.
+    const source = String(hit._source || '').trim().toLowerCase();
+    if (DATACAT_EXTERNAL_PREINDEX_SOURCES.has(source)) return false;
+
+    if (DATACAT_YOURS_COLLECTABLE_FLAGS.some(key => hit[key] === true)) return true;
+    if (hit.hasPartialExtraction === true || hit.has_partial_extraction === true) return false;
+
+    const hasExplicitDbSignal = DATACAT_YOURS_EXPLICIT_DB_SIGNAL_FLAGS.some(key => hasOwnFlag(hit, key));
+    if (hasExplicitDbSignal) return false;
+
+    return true;
+}
+
+/**
+ * Resolve whether a row is currently saved in DataCat Yours.
+ *
+ * `savedOverride` lets the CL-side live toggle cache supersede stale listing
+ * data after the user saves or unsaves without a full DataCat reload.
+ *
+ * @param {Object|null} hit
+ * @param {boolean|null} [savedOverride=null]
+ * @returns {boolean}
+ */
+export function isDatacatYoursSavedHit(hit, savedOverride = null) {
+    if (typeof savedOverride === 'boolean') return savedOverride;
+    if (!hit || typeof hit !== 'object') return false;
+    return DATACAT_YOURS_SAVED_FLAGS.some(key => hit[key] === true);
+}
+
+export function buildDatacatYoursCharactersPath({ limit = 80, offset = 0, minTotalTokens = MIN_TOTAL_TOKENS, tagIds = [] } = {}) {
+    const params = new URLSearchParams();
+    params.set('limit', String(Math.max(1, Number(limit) || 80)));
+    params.set('offset', String(Math.max(0, Number(offset) || 0)));
+    if (Number.isFinite(Number(minTotalTokens))) params.set('minTotalTokens', String(Number(minTotalTokens)));
+    const cleanTagIds = Array.isArray(tagIds)
+        ? tagIds.map(id => parseInt(String(id), 10)).filter(id => Number.isFinite(id) && id > 0)
+        : [];
+    if (cleanTagIds.length > 0) params.set('tagIds', cleanTagIds.join(','));
+    params.set('sort', 'added');
+    return `/api/characters?${params.toString()}`;
+}
+
+/**
+ * Build the DataCat "creators I follow" list route.
+ * Mirrors the site's own following page: GET /api/creators/following.
+ * @param {Object} [opts]
+ * @param {'janitor'|'saucepan'} [opts.sourceKind='janitor']
+ * @param {number} [opts.limit=50]
+ * @param {number} [opts.offset=0]
+ * @param {string} [opts.sortBy='total_chats']
+ * @param {string} [opts.sortDir='desc']
+ * @returns {string}
+ */
+export function buildDatacatFollowingPath({ sourceKind = 'janitor', limit = 50, offset = 0, sortBy = 'total_chats', sortDir = 'desc' } = {}) {
+    const params = new URLSearchParams();
+    params.set('sourceKind', sourceKind === 'saucepan' ? 'saucepan' : 'janitor');
+    params.set('limit', String(Math.max(1, Number(limit) || 50)));
+    params.set('offset', String(Math.max(0, Number(offset) || 0)));
+    params.set('sortBy', String(sortBy || 'total_chats'));
+    params.set('sortDir', String(sortDir || 'desc'));
+    return `/api/creators/following?${params.toString()}`;
+}
+
+/**
+ * Map a DataCat follow-list row to CL's followed-creator shape.
+ * DataCat rows: { creatorId, sourceKind, userName, ... }; CL expects
+ * { id, name, source } where janitor follows render as the 'datacat' source.
+ * @param {Object|null} row
+ * @returns {{id: string, name: string, source: 'datacat'|'saucepan'}|null}
+ */
+export function mapDatacatFollowRow(row) {
+    if (!row || typeof row !== 'object') return null;
+    const id = row.creatorId || row.id;
+    if (!id) return null;
+    return {
+        id,
+        name: row.userName || row.creatorName || id,
+        source: row.sourceKind === 'saucepan' ? 'saucepan' : 'datacat',
+    };
 }
 
 // ========================================
@@ -316,6 +613,39 @@ export async function fetchDatacatCreatorCharacters(creatorId, opts = {}) {
         return { total: data.total || 0, list: data.list || [] };
     } catch (e) {
         console.error('[DataCat] fetchDatacatCreatorCharacters failed:', creatorId, e);
+        return null;
+    }
+}
+
+/**
+ * Fetch the signed-in account's DataCat Yours collection.
+ * DataCat's own Yours view uses /api/characters with the account session.
+ * @param {Object} [opts]
+ * @param {number} [opts.limit=80]
+ * @param {number} [opts.offset=0]
+ * @param {number[]} [opts.tagIds]
+ * @param {number} [opts.minTotalTokens=MIN_TOTAL_TOKENS]
+ * @returns {Promise<{totalCount: number, characters: Object[]}|null>}
+ */
+export async function fetchDatacatYoursCharacters(opts = {}) {
+    try {
+        const response = await dcFetch(buildDatacatYoursCharactersPath(opts));
+        if (!response.ok) return null;
+        const data = await response.json();
+        if (data?.success === false) return null;
+        const characters = Array.isArray(data?.characters) ? data.characters : [];
+        return {
+            totalCount: data?.count || data?.totalCount || characters.length,
+            characters: characters.map(character => ({
+                ...character,
+                isCollected: true,
+                viewer_is_collected: true,
+                is_collected: true,
+                collected: true,
+            })),
+        };
+    } catch (e) {
+        console.error('[DataCat] fetchDatacatYoursCharacters failed:', e);
         return null;
     }
 }
@@ -663,12 +993,13 @@ export function buildV2FromDownload(downloadData, character) {
  * @param {Object} [opts]
  * @param {boolean} [opts.publicFeed=true]
  * @param {boolean} [opts.alwaysReextract=false] - force re-extraction even if DataCat already has the character
+ * @param {boolean} [opts.useAccount=true] - use the restored DataCat account session when available
  * @returns {Promise<{success: boolean, queued?: boolean, started?: boolean, queuePosition?: number, requestId?: string, error?: string, errorCode?: string}>}
  */
-export async function submitExtraction(janitorUrl, { publicFeed = true, alwaysReextract = false } = {}) {
+export async function submitExtraction(janitorUrl, { publicFeed = true, alwaysReextract = false, useAccount = true } = {}) {
     if (!_apiRequest) throw new Error('DataCat: apiRequest not bound');
     try {
-        const resp = await _apiRequest(`${CL_HELPER_PLUGIN_BASE}/dc-extract`, 'POST', { url: janitorUrl, publicFeed, alwaysReextract });
+        const resp = await dcHelperRequest(`${CL_HELPER_PLUGIN_BASE}/dc-extract`, 'POST', { url: janitorUrl, publicFeed, alwaysReextract, useAccount });
         if (!resp.ok) {
             const errText = await resp.text();
             console.error('[DataCat] dc-extract error:', resp.status, errText.substring(0, 200));
