@@ -1626,6 +1626,8 @@ function jannyHeaders() {
     const h = {
         'User-Agent': JANNY_UA,
         'Accept': 'application/json',
+        'Origin': JANNY_BASE,
+        'Referer': `${JANNY_BASE}/`,
     };
     if (jannyCookieString) {
         h['Cookie'] = jannyCookieString;
@@ -1694,6 +1696,28 @@ function registerJannyRoutes(router) {
         console.log(`[cl-helper][JANNY-DEBUG] access_token extracted: ${jannyAccessToken ? 'yes (' + jannyAccessToken.length + ' chars)' : 'NO'}`);
         console.log('[cl-helper] JannyAI session cookie stored');
         res.json({ ok: true });
+    });
+
+    // Debug: test access_token directly against Supabase auth
+    router.get('/janny-debug-token', async (_req, res) => {
+        if (!jannyAccessToken) {
+            return res.json({ error: 'no access_token extracted' });
+        }
+        try {
+            const supabaseUrl = 'https://eenzcbluoctduymzksoq.supabase.co';
+            const resp = await fetch(`${supabaseUrl}/auth/v1/user`, {
+                headers: {
+                    'Authorization': `Bearer ${jannyAccessToken}`,
+                    'apikey': jannyAccessToken,
+                },
+            });
+            const body = await resp.text();
+            console.log(`[cl-helper][JANNY-DEBUG] Supabase /auth/v1/user: ${resp.status}`);
+            console.log(`[cl-helper][JANNY-DEBUG] Supabase body: ${body.substring(0, 300)}`);
+            res.json({ status: resp.status, body: body.substring(0, 500) });
+        } catch (err) {
+            res.json({ error: err.message });
+        }
     });
 
     router.get('/janny-validate', async (_req, res) => {
