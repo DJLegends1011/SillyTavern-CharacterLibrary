@@ -449,8 +449,8 @@ Providers with Following support include a **Followed Creators Manager** panel f
 | Gallery Downloads | ✅ | -- | -- | ✅ | ✅ | -- | ✅ |
 | Remote Version History | ✅ | -- | -- | -- | -- | -- | -- |
 | Following / Timeline | ✅ | -- | -- | ✅ | ✅ | ✅ | ✅ |
-| Favorites | ✅ | -- | -- | -- | -- | -- | ✅ |
-| Auth Required | Optional | None | Optional | Optional | Optional | None | Optional (NSFW needs login) |
+| Favorites | ✅ | -- | -- | -- | -- | ✅ | ✅ |
+| Auth Required | Optional | None | Optional | Optional | Optional | Optional | Optional (NSFW needs login) |
 
 <details>
 <summary><h3>ChubAI</h3></summary>
