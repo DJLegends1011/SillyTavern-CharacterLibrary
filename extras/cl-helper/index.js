@@ -1598,27 +1598,27 @@ const JANNY_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (
 const JANNY_COOKIE_PREFIX = 'sb-eenzcbluoctduymzksoq-auth-token';
 const JANNY_COOKIE_MAX_LENGTH = 16384;
 
-// Supabase splits large JWTs across chunked cookies (.0, .1, etc.)
-// We store both the cookie string and the extracted access_token JWT.
 let jannyCookieString = null;
 let jannyAccessToken = null;
+let jannyRefreshToken = null;
 
-function extractAccessToken(cookieStr) {
+function extractSessionTokens(cookieStr) {
     try {
-        // Reconstruct the session JSON from chunked cookie values
         const chunks = cookieStr.split('; ')
             .filter(p => p.startsWith(JANNY_COOKIE_PREFIX))
             .sort()
             .map(p => p.split('=').slice(1).join('='));
         let raw = chunks.join('');
-        // Strip the 'base64-' prefix Supabase SSR adds
         if (raw.startsWith('base64-')) raw = raw.slice(7);
         const json = Buffer.from(raw, 'base64').toString('utf8');
         const session = JSON.parse(json);
-        return session?.access_token || null;
+        return {
+            accessToken: session?.access_token || null,
+            refreshToken: session?.refresh_token || null,
+        };
     } catch (e) {
-        console.warn('[cl-helper] Failed to extract access_token from session cookie:', e.message);
-        return null;
+        console.warn('[cl-helper] Failed to extract tokens from session cookie:', e.message);
+        return { accessToken: null, refreshToken: null };
     }
 }
 
@@ -1630,7 +1630,10 @@ function jannyHeaders() {
         'Referer': `${JANNY_BASE}/`,
     };
     if (jannyCookieString) {
-        h['Cookie'] = jannyCookieString;
+        let cookieHeader = jannyCookieString;
+        if (jannyAccessToken) cookieHeader += `; sb-access-token=${jannyAccessToken}`;
+        if (jannyRefreshToken) cookieHeader += `; sb-refresh-token=${jannyRefreshToken}`;
+        h['Cookie'] = cookieHeader;
     }
     if (jannyAccessToken) {
         h['Authorization'] = `Bearer ${jannyAccessToken}`;
@@ -1692,8 +1695,11 @@ function registerJannyRoutes(router) {
         }
 
         jannyCookieString = parsed;
-        jannyAccessToken = extractAccessToken(parsed);
+        const tokens = extractSessionTokens(parsed);
+        jannyAccessToken = tokens.accessToken;
+        jannyRefreshToken = tokens.refreshToken;
         console.log(`[cl-helper][JANNY-DEBUG] access_token extracted: ${jannyAccessToken ? 'yes (' + jannyAccessToken.length + ' chars)' : 'NO'}`);
+        console.log(`[cl-helper][JANNY-DEBUG] refresh_token extracted: ${jannyRefreshToken ? 'yes' : 'NO'}`);
         console.log('[cl-helper] JannyAI session cookie stored');
         res.json({ ok: true });
     });
@@ -1782,7 +1788,7 @@ function registerJannyRoutes(router) {
             } else if (response.status === 401) {
                 const body = await response.text().catch(() => '');
                 console.log(`[cl-helper][JANNY-DEBUG] 401 body: ${body.substring(0, 200)}`);
-                jannyCookieString = null; jannyAccessToken = null;
+                jannyCookieString = null; jannyAccessToken = null; jannyRefreshToken = null;
                 res.json({ valid: false, reason: 'cookie expired or invalid' });
             } else {
                 const body = await response.text().catch(() => '');
@@ -1800,7 +1806,7 @@ function registerJannyRoutes(router) {
     });
 
     router.post('/janny-logout', (_req, res) => {
-        jannyCookieString = null; jannyAccessToken = null;
+        jannyCookieString = null; jannyAccessToken = null; jannyRefreshToken = null;
         console.log('[cl-helper] JannyAI session cleared');
         res.json({ ok: true });
     });
