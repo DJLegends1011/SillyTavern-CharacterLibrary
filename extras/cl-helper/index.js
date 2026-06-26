@@ -1653,7 +1653,15 @@ function registerJannyRoutes(router) {
             return res.status(400).json({ error: 'Cookie value too large' });
         }
 
+        console.log(`[cl-helper][JANNY-DEBUG] raw cookie length: ${cookie.length}`);
+        console.log(`[cl-helper][JANNY-DEBUG] first 80 chars: ${cookie.substring(0, 80)}`);
+        console.log(`[cl-helper][JANNY-DEBUG] has newlines: ${cookie.includes('\n')}, has semicolons: ${cookie.includes(';')}, has .0=: ${cookie.includes('.0=')}`);
+
         const parsed = parseJannyCookieInput(cookie);
+        console.log(`[cl-helper][JANNY-DEBUG] parsed result: ${parsed ? parsed.substring(0, 120) + '...' : 'NULL'}`);
+        console.log(`[cl-helper][JANNY-DEBUG] parsed length: ${parsed?.length ?? 0}`);
+        console.log(`[cl-helper][JANNY-DEBUG] has chunk .0: ${parsed?.includes('.0=') ?? false}, has chunk .1: ${parsed?.includes('.1=') ?? false}`);
+
         if (!parsed) {
             return res.status(400).json({ error: 'Could not parse cookie. Paste the full cookie header from a jannyai.com request, or both chunk values separated by semicolons.' });
         }
@@ -1669,19 +1677,27 @@ function registerJannyRoutes(router) {
         }
 
         try {
+            const hdrs = jannyHeaders();
+            console.log(`[cl-helper][JANNY-DEBUG] validate Cookie header length: ${hdrs['Cookie']?.length ?? 0}`);
+            console.log(`[cl-helper][JANNY-DEBUG] validate Cookie first 120: ${hdrs['Cookie']?.substring(0, 120)}`);
             const response = await fetch(`${JANNY_BASE}/api/bookmark`, {
-                headers: jannyHeaders(),
+                headers: hdrs,
             });
 
+            console.log(`[cl-helper][JANNY-DEBUG] jannyai.com /api/bookmark responded: ${response.status}`);
             if (response.ok) {
                 const data = await response.json();
                 const count = Array.isArray(data?.bookmarks) ? data.bookmarks.length : 0;
                 console.log(`[cl-helper] JannyAI validate: ${count} bookmarks`);
                 res.json({ valid: true, bookmarkCount: count });
             } else if (response.status === 401) {
+                const body = await response.text().catch(() => '');
+                console.log(`[cl-helper][JANNY-DEBUG] 401 body: ${body.substring(0, 200)}`);
                 jannyCookieString = null;
                 res.json({ valid: false, reason: 'cookie expired or invalid' });
             } else {
+                const body = await response.text().catch(() => '');
+                console.log(`[cl-helper][JANNY-DEBUG] ${response.status} body: ${body.substring(0, 200)}`);
                 res.json({ valid: false, reason: `HTTP ${response.status}` });
             }
         } catch (err) {
