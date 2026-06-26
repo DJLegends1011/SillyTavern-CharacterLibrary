@@ -127,11 +127,9 @@ async function peekImageDimensions(filePath) {
     }
 }
 
-let _cacheDir = null;
 let _Jimp = null;
 let _imagesDir = null;
 let _charactersDir = null;
-let _avatarThumbDir = null;
 let _thumbsReady = false;
 let _thumbActive = 0;
 let _thumbQueue = [];
@@ -192,6 +190,20 @@ function resolveCharactersDir() {
     return null;
 }
 
+// resolve() to absolute: a relative DATA_ROOT (eg. ./data) fails the routes' absolute-path startsWith guard and 403s
+function imagesDirForReq(req) {
+    const dir = req.user?.directories?.userImages || _imagesDir;
+    return dir ? resolve(dir) : null;
+}
+function charactersDirForReq(req) {
+    const dir = req.user?.directories?.characters || _charactersDir;
+    return dir ? resolve(dir) : null;
+}
+function avatarThumbDirForReq(req) {
+    const charactersDir = charactersDirForReq(req);
+    return charactersDir ? join(charactersDir, '..', 'cl_avatar_thumbs') : null;
+}
+
 async function initImageLib() {
     const stModules = join(process.cwd(), 'node_modules');
     const stImport = async (pkg) => {
@@ -232,6 +244,11 @@ function registerThumbnailRoutes(router) {
         const { folder, file } = req.params;
         const size = Math.min(Math.max(parseInt(req.query.s) || 384, 64), THUMB_MAX_SIZE);
 
+        const imagesDir = imagesDirForReq(req);
+        if (!imagesDir) {
+            return res.status(503).json({ error: 'Thumbnails not available' });
+        }
+
         // Block path separators only; benign filenames can legitimately contain ".." (eg. ellipsis).
         // The resolve + startsWith check below catches any traversal that survives this.
         if (!folder || !file
@@ -244,8 +261,8 @@ function registerThumbnailRoutes(router) {
             return res.status(400).json({ error: 'Unsupported file type' });
         }
 
-        const originalPath = resolve(_imagesDir, folder, file);
-        if (!originalPath.startsWith(_imagesDir + sep)) {
+        const originalPath = resolve(imagesDir, folder, file);
+        if (!originalPath.startsWith(imagesDir + sep)) {
             return res.status(403).json({ error: 'Access denied' });
         }
 
@@ -268,7 +285,7 @@ function registerThumbnailRoutes(router) {
             return res.status(413).json({ error: 'Image dimensions too large' });
         }
 
-        const cacheFolder = join(_cacheDir, folder);
+        const cacheFolder = join(imagesDir, '..', 'cl_thumbs', folder);
         const cachePath = join(cacheFolder, `${file}_${size}.jpg`);
 
         try {
@@ -301,7 +318,8 @@ function registerThumbnailRoutes(router) {
     });
 
     router.post('/gallery-thumb-cleanup/:folder', (req, res) => {
-        if (!_cacheDir) {
+        const imagesDir = imagesDirForReq(req);
+        if (!imagesDir) {
             return res.status(503).json({ error: 'Thumbnails not available' });
         }
 
@@ -310,8 +328,9 @@ function registerThumbnailRoutes(router) {
             return res.status(400).json({ error: 'Invalid folder' });
         }
 
-        const cacheFolder = resolve(_cacheDir, folder);
-        if (!cacheFolder.startsWith(_cacheDir + sep)) {
+        const cacheDir = join(imagesDir, '..', 'cl_thumbs');
+        const cacheFolder = resolve(cacheDir, folder);
+        if (!cacheFolder.startsWith(cacheDir + sep)) {
             return res.status(403).json({ error: 'Access denied' });
         }
 
@@ -334,7 +353,8 @@ function registerThumbnailRoutes(router) {
     // for retina-DPR mobile grids; we serve a larger one (default 512w) with
     // our own jimp pipeline + on-disk cache.
     router.get('/avatar-thumb/:file', async (req, res) => {
-        if (!_Jimp || !_charactersDir || !_avatarThumbDir) {
+        const charactersDir = charactersDirForReq(req);
+        if (!_Jimp || !charactersDir) {
             return res.status(503).json({ error: 'Avatar thumbnails not available' });
         }
 
@@ -348,8 +368,8 @@ function registerThumbnailRoutes(router) {
             return res.status(400).json({ error: 'Unsupported file type' });
         }
 
-        const originalPath = resolve(_charactersDir, file);
-        if (!originalPath.startsWith(_charactersDir + sep)) {
+        const originalPath = resolve(charactersDir, file);
+        if (!originalPath.startsWith(charactersDir + sep)) {
             return res.status(403).json({ error: 'Access denied' });
         }
 
@@ -364,7 +384,8 @@ function registerThumbnailRoutes(router) {
             return res.status(413).json({ error: 'Image too large' });
         }
 
-        const cachePath = join(_avatarThumbDir, `${file}_${size}.jpg`);
+        const avatarThumbDir = avatarThumbDirForReq(req);
+        const cachePath = join(avatarThumbDir, `${file}_${size}.jpg`);
 
         try {
             const cacheStat = await stat(cachePath);
@@ -383,7 +404,7 @@ function registerThumbnailRoutes(router) {
             const buffer = await image.getBuffer('image/jpeg', { quality: THUMB_QUALITY, jpegColorSpace: 'ycbcr' });
             _thumbRelease();
 
-            mkdirSync(_avatarThumbDir, { recursive: true });
+            mkdirSync(avatarThumbDir, { recursive: true });
             writeFile(cachePath, buffer).catch(() => {});
 
             res.set('Content-Type', 'image/jpeg');
@@ -397,16 +418,17 @@ function registerThumbnailRoutes(router) {
     });
 
     router.get('/avatar-thumb-stats', async (req, res) => {
-        if (!_avatarThumbDir) {
+        const avatarThumbDir = avatarThumbDirForReq(req);
+        if (!avatarThumbDir) {
             return res.json({ count: 0, bytes: 0, available: false });
         }
         try {
-            if (!existsSync(_avatarThumbDir)) return res.json({ count: 0, bytes: 0, available: true });
-            const entries = readdirSync(_avatarThumbDir);
+            if (!existsSync(avatarThumbDir)) return res.json({ count: 0, bytes: 0, available: true });
+            const entries = readdirSync(avatarThumbDir);
             let bytes = 0;
             for (const name of entries) {
                 try {
-                    const s = await stat(join(_avatarThumbDir, name));
+                    const s = await stat(join(avatarThumbDir, name));
                     if (s.isFile()) bytes += s.size;
                 } catch { /* skip */ }
             }
@@ -418,14 +440,15 @@ function registerThumbnailRoutes(router) {
     });
 
     router.post('/avatar-thumb-cleanup', (req, res) => {
-        if (!_avatarThumbDir) {
+        const avatarThumbDir = avatarThumbDirForReq(req);
+        if (!avatarThumbDir) {
             return res.status(503).json({ error: 'Avatar thumbnails not available' });
         }
         try {
             let deleted = 0;
-            if (existsSync(_avatarThumbDir)) {
-                deleted = readdirSync(_avatarThumbDir).length;
-                rmSync(_avatarThumbDir, { recursive: true, force: true });
+            if (existsSync(avatarThumbDir)) {
+                deleted = readdirSync(avatarThumbDir).length;
+                rmSync(avatarThumbDir, { recursive: true, force: true });
                 console.log(`[cl-helper] Purged avatar thumb cache (${deleted} files)`);
             }
             res.json({ ok: true, deleted });
@@ -439,7 +462,9 @@ function registerThumbnailRoutes(router) {
     // for progress. Sequential + setImmediate yield between each thumb keeps ST's
     // event loop responsive (jimp's PNG decode is synchronous on the main thread).
     router.post('/avatar-thumb-populate', async (req, res) => {
-        if (!_Jimp || !_charactersDir || !_avatarThumbDir) {
+        const charactersDir = charactersDirForReq(req);
+        const avatarThumbDir = avatarThumbDirForReq(req);
+        if (!_Jimp || !charactersDir || !avatarThumbDir) {
             return res.status(503).json({ error: 'Avatar thumbnails not available' });
         }
         if (_populateJob && _populateJob.running) {
@@ -449,13 +474,13 @@ function registerThumbnailRoutes(router) {
 
         let files;
         try {
-            files = readdirSync(_charactersDir).filter(f => /\.png$/i.test(f));
+            files = readdirSync(charactersDir).filter(f => /\.png$/i.test(f));
         } catch (err) {
             return res.status(500).json({ error: 'Failed to read characters directory' });
         }
 
-        mkdirSync(_avatarThumbDir, { recursive: true });
-        runAvatarPopulateJob(size, files).catch(err => {
+        mkdirSync(avatarThumbDir, { recursive: true });
+        runAvatarPopulateJob(size, files, charactersDir, avatarThumbDir).catch(err => {
             console.error('[cl-helper] populate job crashed:', err.message);
             if (_populateJob) { _populateJob.running = false; _populateJob.finishedAt = Date.now(); }
         });
@@ -469,7 +494,7 @@ function registerThumbnailRoutes(router) {
 
 let _populateJob = null;
 
-async function runAvatarPopulateJob(size, files) {
+async function runAvatarPopulateJob(size, files, charactersDir, avatarThumbDir) {
     _populateJob = {
         running: true,
         total: files.length,
@@ -483,8 +508,8 @@ async function runAvatarPopulateJob(size, files) {
     };
 
     for (const file of files) {
-        const originalPath = resolve(_charactersDir, file);
-        const cachePath = join(_avatarThumbDir, `${file}_${size}.jpg`);
+        const originalPath = resolve(charactersDir, file);
+        const cachePath = join(avatarThumbDir, `${file}_${size}.jpg`);
 
         try {
             const origStat = await stat(originalPath);
@@ -578,6 +603,70 @@ function registerPygmalionRoutes(router) {
 // =============================================================================
 
 const BOTBOORU_AUTH_URL = 'https://botbooru.com/auth/token';
+const BOTBOORU_BASE = 'https://botbooru.com';
+
+// Allow-list for the botbooru proxy; hostname is pinned to botbooru.com separately.
+const BOTBOORU_ALLOWED_PATHS = [
+    /^\/posts(\/|$)/,
+    /^\/post\/\d+/,
+    /^\/tags\//,
+    /^\/api\/users\//,
+    /^\/auth\/me(\/|$)/,
+    /^\/interactions\//,
+    /^\/download\/(png|json)\//,
+    /^\/images\//,
+    /^\/mini-gallery\//,
+];
+
+async function handleBotbooruProxy(req, res) {
+    const bearer = req.headers['x-cl-botbooru-auth'];
+    if (bearer !== undefined && (typeof bearer !== 'string' || bearer.length > 4096)) {
+        return res.status(400).json({ error: 'Invalid auth header' });
+    }
+
+    const targetPath = '/' + (req.params[0] || '');
+    const normalizedPath = new URL(targetPath, BOTBOORU_BASE).pathname;
+    if (!BOTBOORU_ALLOWED_PATHS.some(re => re.test(normalizedPath))) {
+        console.warn(`[cl-helper] Botbooru proxy blocked: ${normalizedPath}`);
+        return res.status(403).json({ error: 'Proxy path not allowed' });
+    }
+
+    const targetUrl = new URL(targetPath, BOTBOORU_BASE);
+    targetUrl.search = new URL(req.url, 'http://localhost').search;
+    if (targetUrl.hostname !== 'botbooru.com') {
+        return res.status(403).json({ error: 'Proxy target must be botbooru.com' });
+    }
+
+    const headers = { Accept: 'application/json' };
+    if (bearer) headers['Authorization'] = bearer;
+    // Only forward a body when the client actually sent one, so bodyless POSTs
+    // (favorite toggle, follow) match the direct path exactly.
+    const hasBody = ['POST', 'PUT', 'PATCH'].includes(req.method)
+        && req.body && typeof req.body === 'object' && Object.keys(req.body).length > 0;
+    if (hasBody) headers['Content-Type'] = 'application/json';
+
+    try {
+        const response = await fetch(targetUrl.toString(), {
+            method: req.method,
+            headers,
+            body: hasBody ? JSON.stringify(req.body) : undefined,
+            redirect: 'follow',
+        });
+
+        res.status(response.status);
+        const contentType = response.headers.get('content-type') || '';
+        if (contentType) res.set('Content-Type', contentType);
+        if (response.status === 204) return res.end();
+        if (contentType.includes('application/json') || contentType.startsWith('text/')) {
+            res.send(await response.text());
+        } else {
+            res.send(Buffer.from(await response.arrayBuffer()));
+        }
+    } catch (err) {
+        console.error('[cl-helper] Botbooru proxy error:', err.message);
+        res.status(502).json({ error: 'Failed to reach Botbooru' });
+    }
+}
 
 function registerBotbooruRoutes(router) {
     /**
@@ -620,6 +709,12 @@ function registerBotbooruRoutes(router) {
             res.status(502).json({ error: 'Failed to reach Botbooru auth server' });
         }
     });
+
+    // Authed botbooru proxy: injects the user's Bearer server-side to dodge ST's basic-auth gate.
+    router.get('/botbooru-proxy/*', handleBotbooruProxy);
+    router.post('/botbooru-proxy/*', handleBotbooruProxy);
+    router.patch('/botbooru-proxy/*', handleBotbooruProxy);
+    router.delete('/botbooru-proxy/*', handleBotbooruProxy);
 }
 
 // =============================================================================
@@ -2176,6 +2271,7 @@ async function findBundledClHelperDirs(userExtDir) {
 
 export async function init(router) {
     router.get('/health', (req, res) => {
+        const auth = req.headers.authorization;
         res.json({
             ok: true,
             version: _runningVersion,
@@ -2183,6 +2279,7 @@ export async function init(router) {
             linked: _isLinkedInstall,
             installPath: __dirname,
             admin: !!req.user?.profile?.admin,
+            basicAuth: typeof auth === 'string' && auth.startsWith('Basic '),
         });
     });
 
@@ -2296,7 +2393,6 @@ export async function init(router) {
     _imagesDir = resolveImagesDir();
     _charactersDir = resolveCharactersDir();
     if (_imagesDir) {
-        _cacheDir = join(_imagesDir, '..', 'cl_thumbs');
         const ok = await initImageLib();
         _thumbsReady = ok;
         if (ok) {
@@ -2308,7 +2404,6 @@ export async function init(router) {
         console.log('[cl-helper] Gallery thumbnails disabled (images directory not found)');
     }
     if (_charactersDir && _thumbsReady) {
-        _avatarThumbDir = join(_charactersDir, '..', 'cl_avatar_thumbs');
         console.log(`[cl-helper] Avatar thumbnails enabled (characters: ${_charactersDir})`);
     } else if (!_charactersDir) {
         console.log('[cl-helper] Avatar thumbnails disabled (characters directory not found)');

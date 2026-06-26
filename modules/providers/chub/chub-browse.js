@@ -60,7 +60,7 @@ let chubHasMore = true;
 let chubIsLoading = false;
 let chubLoadToken = 0;
 let chubDiscoveryPreset = 'popular_week'; // Combined sort + time preset
-let chubNsfwEnabled = true; // Default to NSFW enabled
+let chubNsfwEnabled = false; // Default to SFW only
 let chubCurrentSearch = '';
 let chubSelectedChar = null;
 let chubToken = null; // URQL_TOKEN from chub.ai localStorage for Authorization Bearer
@@ -913,6 +913,8 @@ class ChubBrowseView extends BrowseView {
 
 
 function initChubView() {
+    chubNsfwEnabled = getSetting('chubNsfw') === true;
+
     // Sync dropdown values with JS state (browser may cache old form values)
     const discoveryPresetEl = document.getElementById('chubDiscoveryPreset');
     const timelineSortEl = document.getElementById('chubTimelineSortHeader');
@@ -1114,6 +1116,7 @@ function initChubView() {
     // NSFW toggle - single button toggle
     on('chubNsfwToggle', 'click', () => {
         chubNsfwEnabled = !chubNsfwEnabled;
+        setSetting('chubNsfw', chubNsfwEnabled);
         updateNsfwToggleState();
         
         // Refresh the appropriate view based on current mode
@@ -1228,7 +1231,7 @@ function initChubView() {
     // Load saved token on init
     loadChubToken();
     
-    // Initialize NSFW toggle state (defaults to enabled)
+    // Initialize NSFW toggle state from persisted preference
     updateNsfwToggleState();
     
     // Start fetching popular tags in the background
@@ -3642,6 +3645,12 @@ async function openChubCharPreview(char) {
 
         setChubCreatorNotes(node.description || char.description || char.tagline);
 
+        // Search caps topics at 15; the full-metadata detail has them all, so upgrade the tag list.
+        if (tagsEl && node.topics?.length) {
+            tagsEl.innerHTML = node.topics.map(t => `<span class="browse-tag">${escapeHtml(t)}</span>`).join('');
+            requestAnimationFrame(() => applyChubTagsClamp(tagsEl));
+        }
+
         // ChubAI quirk: def.personality is the main character definition, not a personality field.
         const firstMsg = def.first_message || def.first_mes;
 
@@ -3785,6 +3794,7 @@ async function openChubCharPreview(char) {
                     // Only keep fields actually used in applyDetailData.
                     const stripped = {
                         description: node.description,
+                        topics: node.topics,
                         definition: node.definition ? {
                             personality: node.definition.personality,
                             scenario: node.definition.scenario,
