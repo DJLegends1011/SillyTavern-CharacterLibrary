@@ -9,6 +9,9 @@ import {
     setDatacatYoursSaved,
     setDatacatFollow,
     fetchDatacatFollowing,
+    fetchDatacatFolders,
+    setDatacatFolderMembership,
+    createDatacatFolder,
 } from '../modules/providers/datacat/datacat-api.js';
 
 // Minimal Response-like stub matching what dcHelperJson consumes:
@@ -28,9 +31,9 @@ function makeResp(status, bodyObj) {
 // responses per path. Returns the recorded calls array.
 function installApiRequest(handler) {
     const calls = [];
-    setApiRequest(async (path, method = 'GET') => {
-        calls.push({ path, method });
-        return handler(path, method, calls);
+    setApiRequest(async (path, method = 'GET', data = null, options = null) => {
+        calls.push({ path, method, data, options });
+        return handler(path, method, calls, data, options);
     });
     return calls;
 }
@@ -86,7 +89,68 @@ describe('DataCat account-scoped lazy session recovery', () => {
         assert.match(calls[0].path, /\/dc-follow\//);
     });
 
-    it('surfaces the original 401 when recovery itself fails', async () => {
+
+    it('restores and retries folder list requests after a 401', async () => {
+        setSavedAccountTokenGetter(() => 'acct-token');
+        let restored = false;
+        const calls = installApiRequest((path) => {
+            if (path.includes('/dc-auth-set')) {
+                restored = true;
+                return makeResp(200, { ok: true, valid: true });
+            }
+            if (path.includes('/dc-folders')) {
+                return restored
+                    ? makeResp(200, { ok: true, folders: [{ id: 12, title: 'Favorites' }] })
+                    : makeResp(401, { error: 'No DataCat account session configured' });
+            }
+            return makeResp(404, { error: 'unexpected path' });
+        });
+
+        const result = await fetchDatacatFolders();
+
+        assert.equal(result.ok, true);
+        assert.equal(result.folders.length, 1);
+        assert.equal(calls.length, 3);
+        assert.match(calls[0].path, /\/dc-folders/);
+        assert.match(calls[1].path, /\/dc-auth-set/);
+        assert.match(calls[2].path, /\/dc-folders/);
+    });
+
+    it('calls folder membership routes with PUT and DELETE', async () => {
+        setSavedAccountTokenGetter(() => 'acct-token');
+        const calls = installApiRequest((path) => {
+            if (path.includes('/dc-folders/12/items/abc12345')) {
+                return makeResp(200, { ok: true, folderId: 12, characterId: 'abc12345' });
+            }
+            return makeResp(404, { error: 'unexpected path' });
+        });
+
+        const added = await setDatacatFolderMembership(12, 'abc12345', true);
+        const removed = await setDatacatFolderMembership(12, 'abc12345', false);
+
+        assert.equal(added.ok, true);
+        assert.equal(removed.ok, true);
+        assert.equal(calls[0].method, 'PUT');
+        assert.equal(calls[1].method, 'DELETE');
+        assert.match(calls[0].path, /\/dc-folders\/12\/items\/abc12345/);
+    });
+
+    it('normalizes create folder request bodies', async () => {
+        setSavedAccountTokenGetter(() => 'acct-token');
+        const calls = installApiRequest((path, method) => {
+            if (path.includes('/dc-folders') && method === 'POST') {
+                return makeResp(200, { ok: true, folder: { id: 12, title: 'Favorites' } });
+            }
+            return makeResp(404, { error: 'unexpected path' });
+        });
+
+        const result = await createDatacatFolder({ title: '  Favorites  ', description: '  test  ' });
+
+        assert.equal(result.ok, true);
+        assert.equal(calls.length, 1);
+        assert.equal(calls[0].method, 'POST');
+        assert.deepEqual(calls[0].data, { title: 'Favorites', description: 'test' });
+    });    it('surfaces the original 401 when recovery itself fails', async () => {
         setSavedAccountTokenGetter(() => 'acct-token');
         const calls = installApiRequest((path) => {
             if (path.includes('/dc-auth-set')) {

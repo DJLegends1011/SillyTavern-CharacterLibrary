@@ -17,6 +17,7 @@ import {
     buildDataCatHeaders,
     chooseDataCatToken,
     isDataCatCharacterId,
+    isDataCatFolderId,
     normalizeDcCredential,
     normalizeOptionalDcCredential,
     sanitizeDataCatUser,
@@ -1434,6 +1435,210 @@ function registerDataCatRoutes(router) {
         }
     });
 
+    function getDcQueryStringValue(query, key) {
+        const value = query?.[key];
+        if (Array.isArray(value)) return value[0];
+        return value;
+    }
+
+    function appendDcIntegerParam(params, key, value, { min = 0, max = 1000000 } = {}) {
+        const raw = getDcQueryStringValue({ [key]: value }, key);
+        if (raw === undefined || raw === null || raw === '') return;
+        const parsed = parseInt(String(raw), 10);
+        if (!Number.isFinite(parsed)) return;
+        params.set(key, String(Math.min(max, Math.max(min, parsed))));
+    }
+
+    function normalizeDcIntegerList(value) {
+        const raw = Array.isArray(value) ? value.join(',') : String(value ?? '');
+        return raw
+            .split(',')
+            .map(part => parseInt(String(part).trim(), 10))
+            .filter(id => Number.isFinite(id) && id > 0);
+    }
+
+    function appendDcIntegerListParam(params, key, value) {
+        const ids = normalizeDcIntegerList(value);
+        if (ids.length > 0) params.set(key, ids.join(','));
+    }
+
+    function normalizeDcFolderPayload(body = {}) {
+        if (!body || typeof body !== 'object') return null;
+        const title = String(body.title ?? '').trim().replace(/\s+/g, ' ');
+        if (!title || title.length > 120) return null;
+        const description = String(body.description ?? '').trim();
+        if (description.length > 500) return null;
+        return { title, description };
+    }
+
+    function normalizeDcFolderQueryId(value) {
+        const raw = getDcQueryStringValue({ folderId: value }, 'folderId');
+        if (raw === undefined || raw === null || raw === '') return null;
+        return isDataCatFolderId(raw) ? String(parseInt(String(raw), 10)) : false;
+    }
+
+    function buildDcFoldersSearchParams(query = {}) {
+        const params = new URLSearchParams();
+        appendDcIntegerParam(params, 'minTotalTokens', getDcQueryStringValue(query, 'minTotalTokens'));
+        appendDcIntegerListParam(params, 'activeTagIds', getDcQueryStringValue(query, 'activeTagIds'));
+        appendDcIntegerListParam(params, 'blockedTagIds', getDcQueryStringValue(query, 'blockedTagIds'));
+        return params;
+    }
+
+    function buildDcFolderCharactersSearchParams(query = {}) {
+        const params = new URLSearchParams();
+        appendDcIntegerParam(params, 'limit', getDcQueryStringValue(query, 'limit'), { min: 1, max: 200 });
+        appendDcIntegerParam(params, 'offset', getDcQueryStringValue(query, 'offset'), { min: 0, max: 1000000 });
+        appendDcIntegerParam(params, 'minTotalTokens', getDcQueryStringValue(query, 'minTotalTokens'));
+        appendDcIntegerListParam(params, 'tagIds', getDcQueryStringValue(query, 'tagIds'));
+        appendDcIntegerListParam(params, 'blockedTagIds', getDcQueryStringValue(query, 'blockedTagIds'));
+
+        const mainOnly = String(getDcQueryStringValue(query, 'mainOnly') || '').trim() === '1';
+        if (mainOnly) {
+            params.set('mainOnly', '1');
+        } else {
+            const folderId = normalizeDcFolderQueryId(getDcQueryStringValue(query, 'folderId'));
+            if (folderId === false) return null;
+            if (folderId) params.set('folderId', folderId);
+        }
+
+        const search = String(getDcQueryStringValue(query, 'search') || '').trim();
+        if (search) params.set('search', search.slice(0, 200));
+        const sort = String(getDcQueryStringValue(query, 'sort') || 'added').trim();
+        if (sort) params.set('sort', sort.slice(0, 80));
+        return params;
+    }
+
+    async function fetchDcAccountEndpoint(account, path, { method = 'GET', body = null, json = false } = {}) {
+        const options = {
+            method,
+            headers: buildDataCatHeaders({ sessionToken: account.token, deviceToken: dcDeviceToken, json }),
+        };
+        if (body != null) {
+            options.body = JSON.stringify(body);
+        }
+        const response = await fetch(`${DATACAT_BASE}${path}`, options);
+        const data = await readDcJson(response);
+        return { response, data };
+    }
+
+    router.get('/dc-folders', async (req, res) => {
+        const account = requireDcAccount(req, res);
+        if (!account) return;
+
+        const params = buildDcFoldersSearchParams(req.query);
+        const query = params.toString();
+        try {
+            const { response, data } = await fetchDcAccountEndpoint(account, `/api/user-folders${query ? `?${query}` : ''}`);
+            if (response.ok && data?.success) return res.json({ ...data, ok: true });
+            return res.status(response.status || 502).json({
+                error: data?.reason || data?.error || `DataCat folders failed with HTTP ${response.status}`,
+            });
+        } catch (err) {
+            console.error('[cl-helper] DC folders list error:', err.message);
+            return res.status(502).json({ error: 'Failed to reach DataCat' });
+        }
+    });
+
+    router.post('/dc-folders', async (req, res) => {
+        const account = requireDcAccount(req, res);
+        if (!account) return;
+        const body = normalizeDcFolderPayload(req.body);
+        if (!body) return res.status(400).json({ error: 'Valid folder title is required' });
+
+        try {
+            const { response, data } = await fetchDcAccountEndpoint(account, '/api/user-folders', { method: 'POST', body, json: true });
+            if (response.ok && data?.success) return res.json({ ...data, ok: true });
+            return res.status(response.status || 502).json({
+                error: data?.reason || data?.error || `DataCat folder create failed with HTTP ${response.status}`,
+            });
+        } catch (err) {
+            console.error('[cl-helper] DC folder create error:', err.message);
+            return res.status(502).json({ error: 'Failed to reach DataCat' });
+        }
+    });
+
+    router.patch('/dc-folders/:folderId', async (req, res) => {
+        const account = requireDcAccount(req, res);
+        if (!account) return;
+        const { folderId } = req.params;
+        if (!isDataCatFolderId(folderId)) return res.status(400).json({ error: 'Invalid DataCat folder id' });
+        const body = normalizeDcFolderPayload(req.body);
+        if (!body) return res.status(400).json({ error: 'Valid folder title is required' });
+
+        try {
+            const { response, data } = await fetchDcAccountEndpoint(account, `/api/user-folders/${encodeURIComponent(String(parseInt(folderId, 10)))}`, { method: 'PATCH', body, json: true });
+            if (response.ok && data?.success) return res.json({ ...data, ok: true });
+            return res.status(response.status || 502).json({
+                error: data?.reason || data?.error || `DataCat folder update failed with HTTP ${response.status}`,
+            });
+        } catch (err) {
+            console.error('[cl-helper] DC folder update error:', err.message);
+            return res.status(502).json({ error: 'Failed to reach DataCat' });
+        }
+    });
+
+    router.delete('/dc-folders/:folderId', async (req, res) => {
+        const account = requireDcAccount(req, res);
+        if (!account) return;
+        const { folderId } = req.params;
+        if (!isDataCatFolderId(folderId)) return res.status(400).json({ error: 'Invalid DataCat folder id' });
+
+        try {
+            const { response, data } = await fetchDcAccountEndpoint(account, `/api/user-folders/${encodeURIComponent(String(parseInt(folderId, 10)))}`, { method: 'DELETE' });
+            if (response.ok && data?.success) return res.json({ ...data, ok: true });
+            return res.status(response.status || 502).json({
+                error: data?.reason || data?.error || `DataCat folder delete failed with HTTP ${response.status}`,
+            });
+        } catch (err) {
+            console.error('[cl-helper] DC folder delete error:', err.message);
+            return res.status(502).json({ error: 'Failed to reach DataCat' });
+        }
+    });
+
+    async function setDcFolderMembership(req, res, shouldAdd) {
+        const account = requireDcAccount(req, res);
+        if (!account) return;
+        const { folderId, characterId } = req.params;
+        if (!isDataCatFolderId(folderId)) return res.status(400).json({ error: 'Invalid DataCat folder id' });
+        if (!isDataCatCharacterId(characterId)) return res.status(400).json({ error: 'Invalid DataCat character id' });
+
+        try {
+            const path = `/api/user-folders/${encodeURIComponent(String(parseInt(folderId, 10)))}/items/${encodeURIComponent(characterId)}`;
+            const { response, data } = await fetchDcAccountEndpoint(account, path, { method: shouldAdd ? 'PUT' : 'DELETE' });
+            if (response.ok && data?.success) {
+                return res.json({ ...data, ok: true, folderId: parseInt(folderId, 10), characterId });
+            }
+            return res.status(response.status || 502).json({
+                error: data?.reason || data?.error || `DataCat folder membership failed with HTTP ${response.status}`,
+            });
+        } catch (err) {
+            console.error('[cl-helper] DC folder membership error:', err.message);
+            return res.status(502).json({ error: 'Failed to reach DataCat' });
+        }
+    }
+
+    router.put('/dc-folders/:folderId/items/:characterId', (req, res) => setDcFolderMembership(req, res, true));
+    router.delete('/dc-folders/:folderId/items/:characterId', (req, res) => setDcFolderMembership(req, res, false));
+
+    router.get('/dc-folder-characters', async (req, res) => {
+        const account = requireDcAccount(req, res);
+        if (!account) return;
+        const params = buildDcFolderCharactersSearchParams(req.query);
+        if (!params) return res.status(400).json({ error: 'Invalid DataCat folder id' });
+        const query = params.toString();
+
+        try {
+            const { response, data } = await fetchDcAccountEndpoint(account, `/api/characters${query ? `?${query}` : ''}`);
+            if (response.ok && data?.success !== false) return res.json({ ...data, ok: true });
+            return res.status(response.status || 502).json({
+                error: data?.reason || data?.error || `DataCat folder characters failed with HTTP ${response.status}`,
+            });
+        } catch (err) {
+            console.error('[cl-helper] DC folder characters error:', err.message);
+            return res.status(502).json({ error: 'Failed to reach DataCat' });
+        }
+    });
     router.get('/dc-yours/:characterId/status', async (req, res) => {
         const account = requireDcAccount(req, res);
         if (!account) return;

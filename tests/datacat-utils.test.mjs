@@ -6,16 +6,22 @@ import {
     buildDataCatAccountIdentifyHeaders,
     chooseDataCatToken,
     isDataCatCharacterId,
+    isDataCatFolderId,
     normalizeDcCredential,
     normalizeOptionalDcCredential,
     sanitizeDataCatUser,
 } from '../extras/cl-helper/datacat-utils.js';
 import {
+    buildDatacatFolderCharactersPath,
+    buildDatacatFolderItemPath,
+    buildDatacatFoldersPath,
     buildDatacatFollowingPath,
     buildDatacatYoursCharactersPath,
     isDatacatYoursCollectableHit,
     isDatacatYoursSavedHit,
     mapDatacatFollowRow,
+    normalizeDatacatFolderId,
+    normalizeDatacatFolderPayload,
 } from '../modules/providers/datacat/datacat-api.js';
 
 describe('normalizeDcCredential', () => {
@@ -251,5 +257,55 @@ describe('buildDatacatYoursCharactersPath', () => {
             }),
             '/api/characters?limit=80&offset=160&minTotalTokens=889&tagIds=5%2C9&sort=added',
         );
+    });
+});
+describe('DataCat folder helpers', () => {
+    it('normalizes folder identifiers, including the Main sentinel', () => {
+        assert.equal(normalizeDatacatFolderId('main'), 'main');
+        assert.equal(normalizeDatacatFolderId(-1), 'main');
+        assert.equal(normalizeDatacatFolderId(12), 12);
+        assert.equal(normalizeDatacatFolderId(' 12 '), 12);
+        assert.equal(normalizeDatacatFolderId('all'), null);
+        assert.equal(normalizeDatacatFolderId('bad'), null);
+    });
+
+    it('builds the folder list route with allow-listed filters', () => {
+        assert.equal(
+            buildDatacatFoldersPath({
+                minTotalTokens: 889,
+                activeTagIds: [5, 'bad', 7],
+                blockedTagIds: [9],
+            }),
+            '/dc-folders?minTotalTokens=889&activeTagIds=5%2C7&blockedTagIds=9',
+        );
+    });
+
+    it('builds folder character list routes for Main and custom folders', () => {
+        assert.equal(
+            buildDatacatFolderCharactersPath({ folderId: 'main', limit: 20, offset: 40 }),
+            '/dc-folder-characters?limit=20&offset=40&minTotalTokens=889&mainOnly=1&sort=added',
+        );
+        assert.equal(
+            buildDatacatFolderCharactersPath({ folderId: 12, search: 'maid bot', sort: 'chat_count', tagIds: [1, 2], blockedTagIds: [3] }),
+            '/dc-folder-characters?limit=80&offset=0&minTotalTokens=889&tagIds=1%2C2&blockedTagIds=3&folderId=12&search=maid+bot&sort=chat_count',
+        );
+    });
+
+    it('builds folder item routes with sanitized ids', () => {
+        assert.equal(
+            buildDatacatFolderItemPath(12, ' abc12345 '),
+            '/dc-folders/12/items/abc12345',
+        );
+        assert.equal(buildDatacatFolderItemPath('main', 'abc12345'), null);
+        assert.equal(buildDatacatFolderItemPath(12, '../bad'), null);
+    });
+
+    it('normalizes folder create/update payloads', () => {
+        assert.deepEqual(
+            normalizeDatacatFolderPayload({ title: '  Favorites  ', description: '  test folder  ' }),
+            { title: 'Favorites', description: 'test folder' },
+        );
+        assert.equal(normalizeDatacatFolderPayload({ title: '   ' }), null);
+        assert.equal(normalizeDatacatFolderPayload({ title: 'x'.repeat(121) }), null);
     });
 });

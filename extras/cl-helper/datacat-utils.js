@@ -24,6 +24,15 @@ export function isDataCatCharacterId(value) {
         && !normalized.includes('--'));
 }
 
+export function isDataCatFolderId(value) {
+    if (typeof value === 'number') {
+        return Number.isInteger(value) && value > 0;
+    }
+    const normalized = normalizeDcCredential(value, { maxLength: 20 });
+    if (!normalized || !/^\d+$/.test(normalized)) return false;
+    const id = Number(normalized);
+    return Number.isSafeInteger(id) && id > 0;
+}
 export function chooseDataCatToken({
     accountToken = null,
     anonymousToken = null,

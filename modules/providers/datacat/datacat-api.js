@@ -370,6 +370,122 @@ export async function setDatacatFollow(creatorId, follow) {
     return dcAccountJson(`${CL_HELPER_PLUGIN_BASE}/dc-follow/${encodeURIComponent(creatorId)}`, method);
 }
 
+export const DATACAT_MAIN_FOLDER_ID = 'main';
+
+function normalizePositiveInteger(value) {
+    if (typeof value === 'number') return Number.isInteger(value) && value > 0 ? value : null;
+    const text = String(value ?? '').trim();
+    if (!/^\d+$/.test(text)) return null;
+    const id = Number(text);
+    return Number.isSafeInteger(id) && id > 0 ? id : null;
+}
+
+function normalizeDatacatIdList(values) {
+    const list = Array.isArray(values) ? values : String(values ?? '').split(',');
+    return list
+        .map(value => normalizePositiveInteger(value))
+        .filter(id => Number.isInteger(id) && id > 0);
+}
+
+function normalizeDatacatCharacterId(value) {
+    const id = String(value ?? '').trim();
+    return /^[a-f0-9][a-f0-9-]{6,62}[a-f0-9]$/i.test(id) && !id.includes('--') ? id : null;
+}
+
+export function normalizeDatacatFolderId(value) {
+    const text = String(value ?? '').trim().toLowerCase();
+    if (!text || text === 'all') return null;
+    if (text === DATACAT_MAIN_FOLDER_ID || text === '-1') return DATACAT_MAIN_FOLDER_ID;
+    return normalizePositiveInteger(value);
+}
+
+export function normalizeDatacatFolderPayload(payload = {}) {
+    if (!payload || typeof payload !== 'object') return null;
+    const title = String(payload.title ?? '').trim().replace(/\s+/g, ' ');
+    if (!title || title.length > 120) return null;
+    const description = String(payload.description ?? '').trim();
+    if (description.length > 500) return null;
+    return { title, description };
+}
+
+export function buildDatacatFoldersPath({ minTotalTokens = null, activeTagIds = [], blockedTagIds = [] } = {}) {
+    const params = new URLSearchParams();
+    if (Number.isFinite(Number(minTotalTokens))) params.set('minTotalTokens', String(Number(minTotalTokens)));
+    const active = normalizeDatacatIdList(activeTagIds);
+    const blocked = normalizeDatacatIdList(blockedTagIds);
+    if (active.length > 0) params.set('activeTagIds', active.join(','));
+    if (blocked.length > 0) params.set('blockedTagIds', blocked.join(','));
+    const query = params.toString();
+    return `/dc-folders${query ? `?${query}` : ''}`;
+}
+
+export function buildDatacatFolderCharactersPath({
+    folderId = null,
+    limit = 80,
+    offset = 0,
+    minTotalTokens = MIN_TOTAL_TOKENS,
+    tagIds = [],
+    blockedTagIds = [],
+    search = '',
+    sort = 'added',
+} = {}) {
+    const params = new URLSearchParams();
+    params.set('limit', String(Math.max(1, Number(limit) || 80)));
+    params.set('offset', String(Math.max(0, Number(offset) || 0)));
+    if (Number.isFinite(Number(minTotalTokens))) params.set('minTotalTokens', String(Number(minTotalTokens)));
+    const tags = normalizeDatacatIdList(tagIds);
+    const blocked = normalizeDatacatIdList(blockedTagIds);
+    if (tags.length > 0) params.set('tagIds', tags.join(','));
+    if (blocked.length > 0) params.set('blockedTagIds', blocked.join(','));
+    const folder = normalizeDatacatFolderId(folderId);
+    if (folder === DATACAT_MAIN_FOLDER_ID) params.set('mainOnly', '1');
+    else if (Number.isInteger(folder) && folder > 0) params.set('folderId', String(folder));
+    const cleanSearch = String(search || '').trim();
+    if (cleanSearch) params.set('search', cleanSearch);
+    params.set('sort', String(sort || 'added'));
+    return `/dc-folder-characters?${params.toString()}`;
+}
+
+export function buildDatacatFolderItemPath(folderId, characterId) {
+    const folder = normalizeDatacatFolderId(folderId);
+    const character = normalizeDatacatCharacterId(characterId);
+    if (!Number.isInteger(folder) || folder <= 0 || !character) return null;
+    return `/dc-folders/${encodeURIComponent(String(folder))}/items/${encodeURIComponent(character)}`;
+}
+
+export async function fetchDatacatFolders(opts = {}) {
+    return dcAccountJson(`${CL_HELPER_PLUGIN_BASE}${buildDatacatFoldersPath(opts)}`);
+}
+
+export async function createDatacatFolder(payload = {}) {
+    const body = normalizeDatacatFolderPayload(payload);
+    if (!body) return { ok: false, error: 'Folder title is required' };
+    return dcAccountJson(`${CL_HELPER_PLUGIN_BASE}/dc-folders`, 'POST', body);
+}
+
+export async function updateDatacatFolder(folderId, payload = {}) {
+    const folder = normalizeDatacatFolderId(folderId);
+    const body = normalizeDatacatFolderPayload(payload);
+    if (!Number.isInteger(folder) || folder <= 0) return { ok: false, error: 'Invalid DataCat folder id' };
+    if (!body) return { ok: false, error: 'Folder title is required' };
+    return dcAccountJson(`${CL_HELPER_PLUGIN_BASE}/dc-folders/${encodeURIComponent(String(folder))}`, 'PATCH', body);
+}
+
+export async function deleteDatacatFolder(folderId) {
+    const folder = normalizeDatacatFolderId(folderId);
+    if (!Number.isInteger(folder) || folder <= 0) return { ok: false, error: 'Invalid DataCat folder id' };
+    return dcAccountJson(`${CL_HELPER_PLUGIN_BASE}/dc-folders/${encodeURIComponent(String(folder))}`, 'DELETE');
+}
+
+export async function setDatacatFolderMembership(folderId, characterId, member) {
+    const path = buildDatacatFolderItemPath(folderId, characterId);
+    if (!path) return { ok: false, error: 'Invalid DataCat folder or character id' };
+    return dcAccountJson(`${CL_HELPER_PLUGIN_BASE}${path}`, member ? 'PUT' : 'DELETE');
+}
+
+export async function fetchDatacatFolderCharacters(opts = {}) {
+    return dcAccountJson(`${CL_HELPER_PLUGIN_BASE}${buildDatacatFolderCharactersPath(opts)}`);
+}
 export const DATACAT_EXTERNAL_PREINDEX_SOURCES = new Set(['hampter', 'meilisearch', 'saucepan']);
 
 const DATACAT_YOURS_COLLECTABLE_FLAGS = [
