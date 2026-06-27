@@ -167,6 +167,53 @@ function normalizeAvatar(rawAvatar) {
     return { avatar, avatarUrl: '' };
 }
 
+function bookmarkIdFromRecord(raw) {
+    if (raw == null) return '';
+    if (typeof raw === 'string' || typeof raw === 'number') return String(raw).trim();
+    if (typeof raw !== 'object') return '';
+
+    const nested = raw.character || raw.characterData || raw.bot || raw.card || {};
+    const value = raw.characterID
+        ?? raw.characterId
+        ?? raw.character_id
+        ?? raw.characterUUID
+        ?? raw.characterUuid
+        ?? raw.character_uuid
+        ?? nested.id
+        ?? nested.characterID
+        ?? nested.characterId
+        ?? nested.character_id
+        ?? raw.id
+        ?? raw.uuid;
+    return value != null ? String(value).trim() : '';
+}
+
+export function normalizeJannyBookmarkIds(data) {
+    const payload = Array.isArray(data) ? data
+        : Array.isArray(data?.bookmarks) ? data.bookmarks
+        : Array.isArray(data?.bookmarkIDs) ? data.bookmarkIDs
+        : Array.isArray(data?.bookmarkIds) ? data.bookmarkIds
+        : Array.isArray(data?.bookmark_ids) ? data.bookmark_ids
+        : Array.isArray(data?.characterIDs) ? data.characterIDs
+        : Array.isArray(data?.characterIds) ? data.characterIds
+        : Array.isArray(data?.character_ids) ? data.character_ids
+        : Array.isArray(data?.characters) ? data.characters
+        : Array.isArray(data?.data) ? data.data
+        : Array.isArray(data?.items) ? data.items
+        : Array.isArray(data?.results) ? data.results
+        : [];
+
+    const seen = new Set();
+    const ids = [];
+    for (const item of payload) {
+        const id = bookmarkIdFromRecord(item);
+        if (!id || seen.has(id)) continue;
+        seen.add(id);
+        ids.push(id);
+    }
+    return ids;
+}
+
 export function normalizeJannyBookmarkCharacter(raw) {
     const char = raw?.character || raw || {};
     const rawId = char.id ?? char.characterId ?? char.characterID ?? char.uuid;
@@ -249,7 +296,7 @@ export async function fetchJannyBookmarks() {
     const resp = await jannyApiRequest('/janny-bookmarks');
     if (!resp.ok) throw new Error(`JannyAI bookmarks failed: ${resp.status}`);
     const data = await resp.json();
-    return data?.bookmarks || [];
+    return normalizeJannyBookmarkIds(data);
 }
 
 export async function fetchJannyBookmarkCharacters(characterIDs) {

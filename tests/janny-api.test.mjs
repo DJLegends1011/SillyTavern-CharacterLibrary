@@ -91,3 +91,38 @@ test('fetchJannyBookmarkCharacters loads and normalizes bookmark character metad
         createdAtStamp: 1782475200,
     }]);
 });
+
+test('fetchJannyBookmarks normalizes IDs from Janny bookmark records', async () => {
+    installBrowserStubs({
+        apiRequest: async () => new Response(JSON.stringify({
+            bookmarks: [
+                'plain-id',
+                { characterID: 'upper-id' },
+                { characterId: 'camel-id' },
+                { character_id: 'snake-id' },
+                { character: { id: 'nested-id' } },
+                { id: 'fallback-id' },
+                { id: '' },
+                null,
+            ],
+        }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+        }),
+    });
+    global.fetch = async () => {
+        throw new Error('raw fetch should not be used when app apiRequest is available');
+    };
+
+    const { fetchJannyBookmarks } = await importJannyApi();
+    const ids = await fetchJannyBookmarks();
+
+    assert.deepEqual(ids, [
+        'plain-id',
+        'upper-id',
+        'camel-id',
+        'snake-id',
+        'nested-id',
+        'fallback-id',
+    ]);
+});
