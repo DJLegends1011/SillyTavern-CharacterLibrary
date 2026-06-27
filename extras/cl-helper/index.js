@@ -2019,6 +2019,257 @@ function registerSaucepanRoutes(router) {
 }
 
 // =============================================================================
+// JannyAI: bookmark sync proxy (Supabase cookie auth)
+// =============================================================================
+
+const JANNY_BASE = 'https://jannyai.com';
+const JANNY_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+const JANNY_COOKIE_PREFIX = 'sb-eenzcbluoctduymzksoq-auth-token';
+const JANNY_COOKIE_MAX_LENGTH = 16384;
+
+let jannyCookieString = null;
+let jannyAccessToken = null;
+let jannyRefreshToken = null;
+
+function extractSessionTokens(cookieStr) {
+    try {
+        const chunks = cookieStr.split('; ')
+            .filter(p => p.startsWith(JANNY_COOKIE_PREFIX))
+            .sort()
+            .map(p => p.split('=').slice(1).join('='));
+        let raw = chunks.join('');
+        if (raw.startsWith('base64-')) raw = raw.slice(7);
+        const json = Buffer.from(raw, 'base64').toString('utf8');
+        const session = JSON.parse(json);
+        return {
+            accessToken: session?.access_token || null,
+            refreshToken: session?.refresh_token || null,
+        };
+    } catch (e) {
+        console.warn('[cl-helper] Failed to extract tokens from session cookie:', e.message);
+        return { accessToken: null, refreshToken: null };
+    }
+}
+
+function jannyHeaders() {
+    const h = {
+        'User-Agent': JANNY_UA,
+        'Accept': 'application/json',
+        'Origin': JANNY_BASE,
+        'Referer': `${JANNY_BASE}/`,
+    };
+    if (jannyCookieString) {
+        let cookieHeader = jannyCookieString;
+        if (jannyAccessToken) cookieHeader += `; sb-access-token=${jannyAccessToken}`;
+        if (jannyRefreshToken) cookieHeader += `; sb-refresh-token=${jannyRefreshToken}`;
+        h['Cookie'] = cookieHeader;
+    }
+    if (jannyAccessToken) {
+        h['Authorization'] = `Bearer ${jannyAccessToken}`;
+    }
+    return h;
+}
+
+function parseJannyCookieInput(raw) {
+    const trimmed = raw.trim();
+
+    // Already a semicolon-separated cookie header with chunk suffixes
+    if (trimmed.includes(`${JANNY_COOKIE_PREFIX}.0=`)) {
+        const parts = trimmed.split(/;\s*/).filter(p => p.startsWith(JANNY_COOKIE_PREFIX));
+        if (parts.length === 0) return null;
+        return parts.join('; ');
+    }
+
+    // Two bare values on separate lines → treat as .0 and .1
+    const lines = trimmed.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    if (lines.length === 2 && !lines[0].includes('=') && !lines[1].includes('=')) {
+        return `${JANNY_COOKIE_PREFIX}.0=${lines[0]}; ${JANNY_COOKIE_PREFIX}.1=${lines[1]}`;
+    }
+
+    // Single bare value (non-chunked token) — wrap as non-chunked cookie
+    if (!trimmed.includes('=') && !trimmed.includes(';') && !trimmed.includes('\n')) {
+        return `${JANNY_COOKIE_PREFIX}=${trimmed}`;
+    }
+
+    // name=value format (single cookie)
+    if (trimmed.startsWith(`${JANNY_COOKIE_PREFIX}=`)) {
+        return trimmed;
+    }
+
+    return null;
+}
+
+function registerJannyRoutes(router) {
+    router.post('/janny-set-cookie', (req, res) => {
+        const { cookie } = req.body ?? {};
+        if (!cookie || typeof cookie !== 'string' || !cookie.trim()) {
+            return res.status(400).json({ error: 'cookie string is required' });
+        }
+
+        if (cookie.length > JANNY_COOKIE_MAX_LENGTH) {
+            return res.status(400).json({ error: 'Cookie value too large' });
+        }
+
+        const parsed = parseJannyCookieInput(cookie);
+
+        if (!parsed) {
+            return res.status(400).json({ error: 'Could not parse cookie. Paste the full cookie header from a jannyai.com request, or both chunk values separated by semicolons.' });
+        }
+
+        jannyCookieString = parsed;
+        const tokens = extractSessionTokens(parsed);
+        jannyAccessToken = tokens.accessToken;
+        jannyRefreshToken = tokens.refreshToken;
+        console.log('[cl-helper] JannyAI session cookie stored');
+        res.json({ ok: true });
+    });
+
+    router.get('/janny-validate', async (_req, res) => {
+        if (!jannyCookieString) {
+            return res.json({ valid: false, reason: 'no cookie stored' });
+        }
+
+        try {
+            const response = await fetch(`${JANNY_BASE}/api/bookmark`, {
+                headers: jannyHeaders(),
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                const count = Array.isArray(data?.bookmarks) ? data.bookmarks.length : 0;
+                console.log(`[cl-helper] JannyAI validate: ${count} bookmarks`);
+                res.json({ valid: true, bookmarkCount: count });
+            } else if (response.status === 401) {
+                jannyCookieString = null; jannyAccessToken = null; jannyRefreshToken = null;
+                res.json({ valid: false, reason: 'cookie expired or invalid' });
+            } else {
+                console.warn(`[cl-helper] JannyAI validate failed: HTTP ${response.status}`);
+                res.json({ valid: false, reason: `HTTP ${response.status}` });
+            }
+        } catch (err) {
+            console.error('[cl-helper] JannyAI validate error:', err.message);
+            res.json({ valid: false, reason: err.message });
+        }
+    });
+
+    router.get('/janny-session', (_req, res) => {
+        res.json({ active: !!jannyCookieString });
+    });
+
+    router.post('/janny-logout', (_req, res) => {
+        jannyCookieString = null; jannyAccessToken = null; jannyRefreshToken = null;
+        console.log('[cl-helper] JannyAI session cleared');
+        res.json({ ok: true });
+    });
+
+    // GET /janny-bookmarks — list bookmark IDs
+    router.get('/janny-bookmarks', async (_req, res) => {
+        if (!jannyCookieString) {
+            return res.status(401).json({ error: 'No JannyAI session' });
+        }
+        try {
+            const response = await fetch(`${JANNY_BASE}/api/bookmark`, {
+                headers: jannyHeaders(),
+            });
+            if (!response.ok) {
+                return res.status(response.status).json({ error: `JannyAI returned ${response.status}` });
+            }
+            const data = await response.json();
+            res.json(data);
+        } catch (err) {
+            console.error('[cl-helper] JannyAI bookmarks GET error:', err.message);
+            res.status(502).json({ error: 'Failed to reach JannyAI' });
+        }
+    });
+
+    // POST /janny-bookmarks — add bookmarks { characterIDs: string[] }
+    router.post('/janny-bookmarks', async (req, res) => {
+        if (!jannyCookieString) {
+            return res.status(401).json({ error: 'No JannyAI session' });
+        }
+        const { characterIDs } = req.body ?? {};
+        if (!Array.isArray(characterIDs) || characterIDs.length === 0) {
+            return res.status(400).json({ error: 'characterIDs array is required' });
+        }
+        if (characterIDs.length > 200 || characterIDs.some(id => typeof id !== 'string' || id.length > 64)) {
+            return res.status(400).json({ error: 'Invalid characterIDs' });
+        }
+        try {
+            const response = await fetch(`${JANNY_BASE}/api/bookmark`, {
+                method: 'POST',
+                headers: { ...jannyHeaders(), 'Content-Type': 'application/json' },
+                body: JSON.stringify({ characterIDs }),
+            });
+            if (!response.ok) {
+                return res.status(response.status).json({ error: `JannyAI returned ${response.status}` });
+            }
+            const data = await response.json();
+            res.json(data);
+        } catch (err) {
+            console.error('[cl-helper] JannyAI bookmarks POST error:', err.message);
+            res.status(502).json({ error: 'Failed to reach JannyAI' });
+        }
+    });
+
+    // DELETE /janny-bookmarks?ids=id1,id2 — remove bookmarks
+    router.delete('/janny-bookmarks', async (req, res) => {
+        if (!jannyCookieString) {
+            return res.status(401).json({ error: 'No JannyAI session' });
+        }
+        const ids = req.query.ids;
+        if (!ids || typeof ids !== 'string') {
+            return res.status(400).json({ error: 'ids query parameter is required' });
+        }
+        const idList = ids.split(',').filter(Boolean);
+        if (idList.length === 0 || idList.length > 200 || idList.some(id => id.length > 64)) {
+            return res.status(400).json({ error: 'Invalid ids' });
+        }
+        try {
+            const response = await fetch(`${JANNY_BASE}/api/bookmark?ids=${encodeURIComponent(ids)}`, {
+                method: 'DELETE',
+                headers: jannyHeaders(),
+            });
+            if (!response.ok) {
+                return res.status(response.status).json({ error: `JannyAI returned ${response.status}` });
+            }
+            const data = await response.json();
+            res.json(data);
+        } catch (err) {
+            console.error('[cl-helper] JannyAI bookmarks DELETE error:', err.message);
+            res.status(502).json({ error: 'Failed to reach JannyAI' });
+        }
+    });
+
+    // GET /janny-bookmark-chars?ids=id1,id2 — fetch character metadata by IDs
+    router.get('/janny-bookmark-chars', async (req, res) => {
+        if (!jannyCookieString) {
+            return res.status(401).json({ error: 'No JannyAI session' });
+        }
+        const ids = req.query.ids;
+        if (!ids || typeof ids !== 'string') {
+            return res.status(400).json({ error: 'ids query parameter is required' });
+        }
+        const idList = ids.split(',').filter(Boolean);
+        if (idList.length === 0 || idList.length > 200 || idList.some(id => id.length > 64)) {
+            return res.status(400).json({ error: 'Invalid ids' });
+        }
+        try {
+            const response = await fetch(`${JANNY_BASE}/api/get-characters?ids=${encodeURIComponent(ids)}`, {
+                headers: jannyHeaders(),
+            });
+            if (!response.ok) {
+                return res.status(response.status).json({ error: `JannyAI returned ${response.status}` });
+            }
+            const data = await response.json();
+            res.json(data);
+        } catch (err) {
+            console.error('[cl-helper] JannyAI bookmark chars error:', err.message);
+            res.status(502).json({ error: 'Failed to reach JannyAI' });
+        }
+    });
+}
+
+// =============================================================================
 // Dropbox: GET-only proxy for public folder/file share page HTML
 // =============================================================================
 //
@@ -2382,6 +2633,7 @@ export async function init(router) {
     registerImgchestRoutes(router);
     registerCivitaiRoutes(router);
     registerSaucepanRoutes(router);
+    registerJannyRoutes(router);
     registerDropboxRoutes(router);
     registerFlareSolverrRoutes(router);
 

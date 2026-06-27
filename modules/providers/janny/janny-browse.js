@@ -13,7 +13,13 @@ import {
     fetchWithProxy,
     slugify,
     stripHtml,
-    resolveTagNames
+    resolveTagNames,
+    isJannyBookmarkSessionActive,
+    checkJannySession,
+    fetchJannyBookmarks,
+    fetchJannyBookmarkCharacters,
+    addJannyBookmarks,
+    removeJannyBookmarks,
 } from './janny-api.js';
 
 const {
@@ -44,6 +50,7 @@ const {
 // CONSTANTS
 // ========================================
 
+const JANNY_PAGE_SIZE = 80;
 
 
 // ========================================
@@ -70,6 +77,12 @@ let jannyFilterHidePossible = false;
 /** @type {Set<number>} Active include tag IDs */
 let jannyIncludeTags = new Set();
 let jannyAuthorFilter = null;
+
+// Bookmark sync state
+let jannyBookmarkIds = new Set();
+const jannyBookmarkPendingIds = new Set();
+let jannyFilterOnlyBookmarked = false;
+let jannyBookmarksLoaded = false;
 
 let view; // module-scoped BrowseView instance reference (set once in constructor)
 
@@ -216,6 +229,139 @@ function isCharPossibleMatchObj(h) {
 }
 
 // ========================================
+// BOOKMARK SYNC
+// ========================================
+
+function isJannyBookmarkSyncEnabled() {
+    return isJannyBookmarkSessionActive() && getSetting('jannyBookmarkSync') !== false;
+}
+
+async function loadJannyBookmarks(force = false) {
+    if ((jannyBookmarksLoaded && !force) || !isJannyBookmarkSyncEnabled()) return;
+    try {
+        const ids = await fetchJannyBookmarks();
+        jannyBookmarkIds = new Set((ids || []).map(id => String(id || '').trim()).filter(Boolean));
+        jannyBookmarksLoaded = true;
+    } catch (err) {
+        console.warn('[JannyBrowse] Failed to load bookmarks:', err.message);
+    }
+}
+
+function getJannyBookmarkIdList() {
+    return [...jannyBookmarkIds].map(id => String(id || '').trim()).filter(Boolean);
+}
+
+function jannyMatchesActiveSearch(hit) {
+    const query = (jannyAuthorFilter || jannyCurrentSearch || '').toLowerCase().trim();
+    if (!query) return true;
+
+    const creator = (hit.creatorUsername || hit.creatorName || '').toLowerCase();
+    if (jannyAuthorFilter) return creator.includes(query);
+
+    const name = (hit.name || '').toLowerCase();
+    const desc = stripHtml(hit.description || hit.tagline || '').toLowerCase();
+    const tags = resolveTagNames(hit.tagIds).map(t => t.toLowerCase());
+    return name.includes(query) || creator.includes(query) || desc.includes(query) || tags.some(t => t.includes(query));
+}
+
+function applyJannyClientFilters(hits, { includeServerFilters = false } = {}) {
+    let filtered = hits || [];
+
+    if (includeServerFilters) {
+        filtered = filtered.filter(h => jannyMatchesActiveSearch(h));
+        filtered = filtered.filter(h => (h.totalToken || 0) >= jannyMinTokens && (h.totalToken || 0) <= jannyMaxTokens);
+        if (!jannyNsfwEnabled) filtered = filtered.filter(h => h.isNsfw !== true);
+        if (!jannyShowLowQuality) filtered = filtered.filter(h => h.isLowQuality !== true);
+        if (jannyIncludeTags.size > 0) {
+            filtered = filtered.filter(h => {
+                const ids = new Set((h.tagIds || []).map(id => Number(id)));
+                return [...jannyIncludeTags].every(id => ids.has(Number(id)));
+            });
+        }
+    }
+
+    const persistentExclude = getProviderExcludeTags('janny');
+    if (persistentExclude.length > 0) {
+        const lowerExclude = persistentExclude.map(t => t.toLowerCase());
+        filtered = filtered.filter(h => {
+            const names = resolveTagNames(h.tagIds).map(n => n.toLowerCase());
+            return !lowerExclude.some(et => names.includes(et));
+        });
+    }
+
+    if (jannyFilterHideOwned) filtered = filtered.filter(h => !isCharInLocalLibrary(h));
+    if (jannyFilterHidePossible) filtered = filtered.filter(h => !isCharPossibleMatchObj(h));
+
+    return filtered;
+}
+
+function hasJannyPostSearchFilters() {
+    return jannyFilterHideOwned || jannyFilterHidePossible || getProviderExcludeTags('janny').length > 0;
+}
+
+function renderJannyBookmarkCardButton(charId, saved) {
+    return `<button type="button" class="janny-account-bookmark-btn${saved ? ' saved' : ''}" data-janny-bookmark-id="${escapeHtml(String(charId))}" title="${saved ? 'Bookmarked on JannyAI' : 'Bookmark on JannyAI'}">${saved ? '<i class="fa-solid fa-bookmark"></i>' : '<i class="fa-regular fa-bookmark"></i>'}</button>`;
+}
+
+function setJannyBookmarkState(charId, saved) {
+    const id = String(charId || '').trim();
+    if (!id) return;
+    if (saved) {
+        jannyBookmarkIds.add(id);
+    } else {
+        jannyBookmarkIds.delete(id);
+    }
+    // Update card buttons in grid
+    const grid = document.getElementById('jannyGrid');
+    const card = grid?.querySelector(`[data-janny-id="${id}"]`);
+    const btn = card?.querySelector('.janny-account-bookmark-btn');
+    if (btn) {
+        btn.classList.toggle('saved', saved);
+        btn.title = saved ? 'Bookmarked on JannyAI' : 'Bookmark on JannyAI';
+        btn.innerHTML = saved ? '<i class="fa-solid fa-bookmark"></i>' : '<i class="fa-regular fa-bookmark"></i>';
+    }
+    // Update modal button
+    const modalBtn = document.getElementById('jannyBookmarkBtn');
+    if (modalBtn?.dataset?.jannyId === id) {
+        modalBtn.classList.toggle('saved', saved);
+        modalBtn.innerHTML = saved ? '<i class="fa-solid fa-bookmark"></i> Bookmarked' : '<i class="fa-regular fa-bookmark"></i> Bookmark';
+        modalBtn.title = saved ? 'Bookmarked on JannyAI' : 'Bookmark on JannyAI';
+    }
+}
+
+async function toggleJannyBookmark(charId) {
+    const id = String(charId || '').trim();
+    if (!id) return;
+    if (!isJannyBookmarkSyncEnabled()) {
+        showToast('Set up JannyAI bookmark sync in Settings to use this feature', 'warning');
+        return;
+    }
+    if (jannyBookmarkPendingIds.has(id)) return;
+
+    const wasSaved = jannyBookmarkIds.has(id);
+    const nextSaved = !wasSaved;
+    jannyBookmarkPendingIds.add(id);
+    setJannyBookmarkState(id, nextSaved);
+    try {
+        if (nextSaved) {
+            await addJannyBookmarks([id]);
+        } else {
+            await removeJannyBookmarks([id]);
+        }
+        showToast(nextSaved ? 'Bookmarked on JannyAI' : 'Removed from JannyAI bookmarks', 'success');
+        if (jannyFilterOnlyBookmarked) {
+            jannyCurrentPage = 1;
+            loadCharacters(false);
+        }
+    } catch (err) {
+        setJannyBookmarkState(id, wasSaved);
+        showToast(`Bookmark sync failed: ${err.message}`, 'error');
+    } finally {
+        jannyBookmarkPendingIds.delete(id);
+    }
+}
+
+// ========================================
 // CARD RENDERING
 // ========================================
 
@@ -282,7 +428,7 @@ function applyTagsClamp(tagsEl) {
 function createJannyCard(hit) {
     const name = hit.name || 'Unknown';
     const desc = stripHtml(hit.description) || '';
-    const avatarUrl = hit.avatar ? `${JANNY_IMAGE_BASE}${hit.avatar}` : '/img/ai4.png';
+    const avatarUrl = hit.avatarUrl || (hit.avatar ? `${JANNY_IMAGE_BASE}${hit.avatar}` : '/img/ai4.png');
     const tags = resolveTagNames(hit.tagIds).slice(0, 3);
     const tokens = formatNumber(hit.totalToken || 0);
     const charId = hit.id || '';
@@ -304,12 +450,16 @@ function createJannyCard(hit) {
     const dateInfo = createdDate ? `<span class="browse-card-date"><i class="fa-solid fa-clock"></i> ${createdDate}</span>` : '';
 
     const cardClass = inLibrary ? 'browse-card in-library' : possibleMatch ? 'browse-card possible-library' : 'browse-card';
-    const bookmarkBtn = jannyBookmarks.renderCardBtn(hit);
+    const localBookmarkBtn = jannyBookmarks.renderCardBtn(hit);
+    const canBookmark = isJannyBookmarkSyncEnabled();
+    const isBookmarked = canBookmark && jannyBookmarkIds.has(charId);
+    const accountBookmarkBtn = canBookmark ? renderJannyBookmarkCardButton(charId, isBookmarked) : '';
 
     return `
         <div class="${cardClass}" data-janny-id="${escapeHtml(String(charId))}" data-slug="${escapeHtml(slug)}" ${desc ? `title="${escapeHtml(desc)}"` : ''}>
             <div class="browse-card-image">
                 <img data-src="${escapeHtml(avatarUrl)}" src="${IMG_PLACEHOLDER}" alt="${escapeHtml(name)}" decoding="async" fetchpriority="low" onerror="this.dataset.failed='1';this.src='/img/ai4.png'">
+                ${accountBookmarkBtn}
                 ${badges.length > 0 ? `<div class="browse-feature-badges">${badges.join('')}</div>` : ''}
             </div>
             <div class="browse-card-body">
@@ -322,7 +472,7 @@ function createJannyCard(hit) {
             <div class="browse-card-footer">
                 <span class="browse-card-stat" title="Tokens"><i class="fa-solid fa-font"></i> ${tokens}</span>
                 ${dateInfo}
-                ${bookmarkBtn}
+                ${localBookmarkBtn}
             </div>
         </div>
     `;
@@ -350,23 +500,82 @@ function renderGrid(characters, append = false) {
         jannyGridRenderedCount = 0;
     }
 
-    const startIdx = jannyGridRenderedCount;
-    const html = characters.slice(startIdx).map(c => createJannyCard(c)).join('');
+    let filtered = characters;
+    if (jannyFilterOnlyBookmarked) {
+        filtered = filtered.filter(c => jannyBookmarkIds.has(String(c.id || '')));
+    }
+
+    const startIdx = append ? jannyGridRenderedCount : 0;
+    const html = filtered.slice(startIdx).map(c => createJannyCard(c)).join('');
     grid.insertAdjacentHTML('beforeend', html);
-    jannyGridRenderedCount = characters.length;
+    jannyGridRenderedCount = filtered.length;
 
     observeNewCards(startIdx);
     updateLoadMore();
 }
 
 function updateLoadMore() {
-    jannyBrowseView.updateLoadMoreVisibility('jannyLoadMore', jannyHasMore, jannyCharacters.length > 0);
+    const hasItems = jannyCharacters.length > 0 || (jannyFilterOnlyBookmarked && jannyBookmarkIds.size > 0);
+    jannyBrowseView.updateLoadMoreVisibility('jannyLoadMore', jannyHasMore, hasItems);
 }
 
 // ========================================
 // SEARCH / LOAD
 // ========================================
 
+async function loadJannyBookmarkedCharacters(append = false, loadToken = 0, grid = null) {
+    if (!isJannyBookmarkSyncEnabled()) {
+        jannyCharacters = [];
+        jannyHasMore = false;
+        renderGrid(jannyCharacters, false);
+        if (grid) {
+            grid.innerHTML = `
+                <div style="grid-column: 1 / -1; padding: 40px; text-align: center; color: var(--text-muted);">
+                    <i class="fa-solid fa-bookmark" style="font-size: 2rem; opacity: 0.5;"></i>
+                    <p style="margin-top: 12px; font-weight: 600;">JannyAI bookmark sync is not connected</p>
+                    <p style="margin-top: 8px; font-size: 0.9em;">Connect bookmark sync in Settings to view your JannyAI bookmarks.</p>
+                </div>
+            `;
+        }
+        return;
+    }
+
+    await loadJannyBookmarks();
+    if (loadToken && loadToken !== jannyLoadToken) return;
+    if (!delegatesInitialized) return;
+
+    const allIds = getJannyBookmarkIdList();
+    const start = Math.max(0, (jannyCurrentPage - 1) * JANNY_PAGE_SIZE);
+    const pageIds = allIds.slice(start, start + JANNY_PAGE_SIZE);
+    let hits = pageIds.length > 0 ? await fetchJannyBookmarkCharacters(pageIds) : [];
+    if (loadToken && loadToken !== jannyLoadToken) return;
+    if (!delegatesInitialized) return;
+
+    hits = applyJannyClientFilters(hits, { includeServerFilters: true });
+
+    if (append) {
+        const existingIds = new Set(jannyCharacters.map(c => String(c.id || '')));
+        jannyCharacters = jannyCharacters.concat(hits.filter(h => !existingIds.has(String(h.id || ''))));
+    } else {
+        jannyCharacters = hits;
+    }
+
+    jannyHasMore = start + JANNY_PAGE_SIZE < allIds.length;
+    renderGrid(jannyCharacters, append);
+
+    if (!append && jannyCharacters.length === 0 && grid) {
+        const hasBookmarks = allIds.length > 0;
+        grid.innerHTML = `
+            <div style="grid-column: 1 / -1; padding: 40px; text-align: center; color: var(--text-muted);">
+                <i class="fa-solid fa-bookmark" style="font-size: 2rem; opacity: 0.5;"></i>
+                <p style="margin-top: 12px; font-weight: 600;">${hasBookmarks ? 'No bookmarked JannyAI characters match these filters' : 'No JannyAI bookmarks yet'}</p>
+                <p style="margin-top: 8px; font-size: 0.9em;">${hasBookmarks ? 'Try clearing search, tag, or library filters.' : 'Bookmarks you save on JannyAI will appear here.'}</p>
+            </div>
+        `;
+    }
+
+    debugLog('[JannyBrowse] Loaded bookmarked characters', hits.length, 'page', jannyCurrentPage, 'of', Math.ceil(allIds.length / JANNY_PAGE_SIZE) || 1);
+}
 async function loadCharacters(append = false) {
     if (append && jannyIsLoading) return;
     const thisToken = ++jannyLoadToken;
@@ -385,11 +594,16 @@ async function loadCharacters(append = false) {
     }
 
     try {
+        if (jannyFilterOnlyBookmarked) {
+            await loadJannyBookmarkedCharacters(append, thisToken, grid);
+            return;
+        }
+
         const effectiveSearch = jannyAuthorFilter || jannyCurrentSearch;
         const data = await searchJanny({
             search: effectiveSearch,
             page: jannyCurrentPage,
-            limit: 80,
+            limit: JANNY_PAGE_SIZE,
             sort: jannySortMode
         });
 
@@ -399,50 +613,25 @@ async function loadCharacters(append = false) {
         const result = data?.results?.[0];
         let hits = result?.hits || [];
         const totalPages = result?.totalPages || 1;
-
-        // Client-side: persistent exclude tags from settings
-        const jannyPersistentExclude = getProviderExcludeTags('janny');
-        if (jannyPersistentExclude.length > 0) {
-            const lowerExclude = jannyPersistentExclude.map(t => t.toLowerCase());
-            hits = hits.filter(h => {
-                const names = resolveTagNames(h.tagIds).map(n => n.toLowerCase());
-                return !lowerExclude.some(et => names.includes(et));
-            });
-        }
-
-        // Client-side: hide owned / possible match characters
-        if (jannyFilterHideOwned) {
-            hits = hits.filter(h => !isCharInLocalLibrary(h));
-        }
-        if (jannyFilterHidePossible) {
-            hits = hits.filter(h => !isCharPossibleMatchObj(h));
-        }
+        hits = applyJannyClientFilters(hits);
 
         // Auto-fetch when client-side filters remove too many results
-        const hasClientFilters = jannyFilterHideOwned || jannyFilterHidePossible || jannyPersistentExclude.length > 0;
+        const hasClientFilters = hasJannyPostSearchFilters();
         if (hasClientFilters && jannyCurrentPage < totalPages) {
             let autoFetches = 0;
-            while (hits.length < 80 && jannyCurrentPage < totalPages && autoFetches < 3 && delegatesInitialized) {
+            while (hits.length < JANNY_PAGE_SIZE && jannyCurrentPage < totalPages && autoFetches < 3 && delegatesInitialized) {
                 autoFetches++;
                 jannyCurrentPage++;
                 const moreData = await searchJanny({
                     search: effectiveSearch,
                     page: jannyCurrentPage,
-                    limit: 80,
+                    limit: JANNY_PAGE_SIZE,
                     sort: jannySortMode
                 });
                 if (thisToken !== jannyLoadToken || !delegatesInitialized) return;
                 const moreResult = moreData?.results?.[0];
                 let moreHits = moreResult?.hits || [];
-                if (jannyPersistentExclude.length > 0) {
-                    const lowerExclude = jannyPersistentExclude.map(t => t.toLowerCase());
-                    moreHits = moreHits.filter(h => {
-                        const names = resolveTagNames(h.tagIds).map(n => n.toLowerCase());
-                        return !lowerExclude.some(et => names.includes(et));
-                    });
-                }
-                if (jannyFilterHideOwned) moreHits = moreHits.filter(h => !isCharInLocalLibrary(h));
-                if (jannyFilterHidePossible) moreHits = moreHits.filter(h => !isCharPossibleMatchObj(h));
+                moreHits = applyJannyClientFilters(moreHits);
                 hits = hits.concat(moreHits);
             }
             if (autoFetches > 0) {
@@ -538,6 +727,21 @@ function openPreviewModal(hit) {
     document.getElementById('jannyCharName').textContent = name;
     document.getElementById('jannyCharCreator').textContent = hit.creatorUsername || hit.creatorId || 'Unknown';
     document.getElementById('jannyOpenInBrowserBtn').href = jannyUrl;
+
+    // Bookmark button
+    const bookmarkBtn = document.getElementById('jannyBookmarkBtn');
+    if (bookmarkBtn) {
+        if (isJannyBookmarkSyncEnabled()) {
+            bookmarkBtn.style.display = '';
+            bookmarkBtn.dataset.jannyId = charId;
+            const saved = jannyBookmarkIds.has(charId);
+            bookmarkBtn.classList.toggle('saved', saved);
+            bookmarkBtn.innerHTML = saved ? '<i class="fa-solid fa-bookmark"></i> Bookmarked' : '<i class="fa-regular fa-bookmark"></i> Bookmark';
+            bookmarkBtn.title = saved ? 'Bookmarked on JannyAI' : 'Bookmark on JannyAI';
+        } else {
+            bookmarkBtn.style.display = 'none';
+        }
+    }
 
     // Stats
     document.getElementById('jannyCharTokens').textContent = tokens;
@@ -976,8 +1180,13 @@ function updateJannyFiltersButton() {
     const btn = document.getElementById('jannyFiltersBtn');
     if (!btn) return;
 
-    const active = jannyShowLowQuality || jannyFilterHideOwned || jannyFilterHidePossible || jannyBookmarks.filterMyBookmarks;
+    const active = jannyShowLowQuality || jannyFilterHideOwned || jannyFilterHidePossible || jannyBookmarks.filterMyBookmarks || jannyFilterOnlyBookmarked;
     btn.classList.toggle('has-filters', active);
+}
+
+function updateBookmarkFilterVisibility() {
+    const row = document.getElementById('jannyBookmarkFilterRow');
+    if (row) row.style.display = isJannyBookmarkSyncEnabled() ? '' : 'none';
 }
 
 // ========================================
@@ -1001,6 +1210,15 @@ function initJannyView() {
     const grid = document.getElementById('jannyGrid');
     if (grid) {
         grid.addEventListener('click', (e) => {
+            // JannyAI account bookmark button click
+            const accountBookmarkBtn = e.target.closest('.janny-account-bookmark-btn');
+            if (accountBookmarkBtn) {
+                e.stopPropagation();
+                const charId = accountBookmarkBtn.dataset.jannyBookmarkId;
+                if (charId) toggleJannyBookmark(charId);
+                return;
+            }
+
             if (jannyBookmarks.handleGridClick(e, jannyCharacters)) return;
 
             const authorLink = e.target.closest('.browse-card-creator-link');
@@ -1083,6 +1301,7 @@ function initJannyView() {
     on('jannyClearAuthorBtn', 'click', () => clearAuthorFilter());
 
     on('jannyRefreshBtn', 'click', () => {
+        if (jannyFilterOnlyBookmarked) jannyBookmarksLoaded = false;
         jannyCurrentPage = 1;
         loadCharacters(false);
     });
@@ -1170,6 +1389,14 @@ function initJannyView() {
 
     jannyBookmarks.attachFilterCheckbox();
 
+    on('jannyFilterOnlyBookmarked', 'change', () => {
+        const el = document.getElementById('jannyFilterOnlyBookmarked');
+        if (el) jannyFilterOnlyBookmarked = el.checked;
+        updateJannyFiltersButton();
+        jannyCurrentPage = 1;
+        loadCharacters(false);
+    });
+
     // Close dropdowns when clicking outside
     jannyBrowseView._registerDropdownDismiss([
         { dropdownId: 'jannyTagsDropdown', buttonId: 'jannyTagsBtn' },
@@ -1208,6 +1435,10 @@ function initJannyView() {
                 BrowseView.openAvatarViewer(jannyAvatar.src);
             });
         }
+
+        on('jannyBookmarkBtn', 'click', () => {
+            if (jannySelectedChar?.id) toggleJannyBookmark(jannySelectedChar.id);
+        });
 
         on('jannyImportBtn', 'click', () => {
             if (jannySelectedChar) importCharacter(jannySelectedChar);
@@ -1413,6 +1644,11 @@ class JannyBrowseView extends BrowseView {
                     <hr style="margin: 8px 0; border-color: var(--glass-border);">
                     <div class="dropdown-section-title">Bookmarks:</div>
                     ${jannyBookmarks.renderFilterCheckbox()}
+                    <div id="jannyBookmarkFilterRow" style="display: none;">
+                        <hr style="margin: 8px 0; border-color: var(--glass-border);">
+                        <div class="dropdown-section-title">JannyAI Account:</div>
+                        <label class="filter-checkbox"><input type="checkbox" id="jannyFilterOnlyBookmarked"> <i class="fa-solid fa-bookmark"></i> Only Bookmarked</label>
+                    </div>
                 </div>
             </div>
 
@@ -1493,6 +1729,9 @@ class JannyBrowseView extends BrowseView {
                     <a id="jannyOpenInBrowserBtn" href="#" target="_blank" class="action-btn secondary" title="Open on JannyAI">
                         <i class="fa-solid fa-external-link"></i> Open
                     </a>
+                    <button id="jannyBookmarkBtn" class="action-btn secondary" title="Bookmark on JannyAI" style="display: none;">
+                        <i class="fa-regular fa-bookmark"></i> Bookmark
+                    </button>
                     <button id="jannyImportBtn" class="action-btn primary" title="Download to SillyTavern">
                         <i class="fa-solid fa-download"></i> Import
                     </button>
@@ -1574,6 +1813,19 @@ class JannyBrowseView extends BrowseView {
         super.init();
         this.buildLocalLibraryLookup();
         initJannyView();
+        // Lazily check bookmark session and load IDs in background
+        checkJannySession().then(active => {
+            if (active && getSetting('jannyBookmarkSync') !== false) {
+                loadJannyBookmarks().then(() => {
+                    updateBookmarkFilterVisibility();
+                    // Re-render to show bookmark buttons now that IDs are loaded
+                    if (jannyBookmarksLoaded && jannyCharacters.length > 0) {
+                        renderGrid(jannyCharacters, false);
+                    }
+                });
+            }
+            updateBookmarkFilterVisibility();
+        });
         const grid = document.getElementById('jannyGrid');
         if (grid) this.observeImages(grid);
         if (jannyBookmarks.filterMyBookmarks) {

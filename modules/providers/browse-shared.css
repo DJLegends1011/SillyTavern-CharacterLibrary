@@ -2094,6 +2094,34 @@ body.collapse-all-browse-sections
     box-shadow: 0 0 8px rgba(var(--accent-rgb), 0.08);
 }
 
+/* JannyAI account bookmark button on browse cards */
+.janny-account-bookmark-btn {
+    position: absolute;
+    bottom: 8px;
+    right: 8px;
+    z-index: 3;
+    width: 30px;
+    height: 30px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 999px;
+    background: rgba(0, 0, 0, 0.58);
+    color: rgba(255, 255, 255, 0.85);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: transform 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+
+.janny-account-bookmark-btn:hover {
+    transform: scale(1.05);
+    background: rgba(0, 0, 0, 0.78);
+}
+
+.janny-account-bookmark-btn.saved {
+    color: var(--cl-favorite-gold, #ffd43b);
+}
+
 /* Mobile overrides */
 @media screen and (max-width: 768px) {
 
