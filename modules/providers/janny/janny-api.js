@@ -109,12 +109,84 @@ export function resolveTagNames(tagIds) {
 let _jannyBookmarkSessionActive = false;
 
 function jannyApiRequest(path, method = 'GET', body = null) {
+    const endpoint = `${CL_HELPER_PLUGIN_BASE}${path}`;
+    if (typeof window !== 'undefined' && typeof window.apiRequest === 'function') {
+        return window.apiRequest(endpoint, method, body);
+    }
+
     const opts = { method, headers: {} };
+    const csrfToken = typeof window !== 'undefined' && typeof window.getCSRFToken === 'function'
+        ? window.getCSRFToken()
+        : '';
+    if (csrfToken) opts.headers['X-CSRF-Token'] = csrfToken;
     if (body) {
         opts.headers['Content-Type'] = 'application/json';
         opts.body = JSON.stringify(body);
     }
-    return fetch(`${CL_HELPER_PLUGIN_BASE}${path}`, opts);
+    return fetch(endpoint, opts);
+}
+
+function asArrayPayload(data) {
+    if (Array.isArray(data)) return data;
+    if (Array.isArray(data?.characters)) return data.characters;
+    if (Array.isArray(data?.data)) return data.data;
+    if (Array.isArray(data?.items)) return data.items;
+    if (Array.isArray(data?.results)) return data.results;
+    return [];
+}
+
+function normalizeTagIds(char) {
+    const rawTags = Array.isArray(char?.tagIds) ? char.tagIds
+        : Array.isArray(char?.tags) ? char.tags
+        : [];
+    return rawTags
+        .map(tag => {
+            if (tag && typeof tag === 'object') return Number(tag.id ?? tag.tagId ?? tag.tag_id);
+            return Number(tag);
+        })
+        .filter(Number.isFinite);
+}
+
+function normalizeTimestamp(value, fallbackDate) {
+    const stamp = Number(value);
+    if (Number.isFinite(stamp) && stamp > 0) return stamp;
+    if (!fallbackDate) return 0;
+    const parsed = Date.parse(fallbackDate);
+    return Number.isFinite(parsed) ? Math.floor(parsed / 1000) : 0;
+}
+
+function normalizeAvatar(rawAvatar) {
+    const avatar = String(rawAvatar || '').trim();
+    if (!avatar) return { avatar: '', avatarUrl: '' };
+    if (avatar.startsWith(JANNY_IMAGE_BASE)) {
+        return { avatar: avatar.slice(JANNY_IMAGE_BASE.length), avatarUrl: '' };
+    }
+    if (/^https?:\/\//i.test(avatar)) {
+        return { avatar: '', avatarUrl: avatar };
+    }
+    return { avatar, avatarUrl: '' };
+}
+
+export function normalizeJannyBookmarkCharacter(raw) {
+    const char = raw?.character || raw || {};
+    const rawId = char.id ?? char.characterId ?? char.characterID ?? char.uuid;
+    const createdAt = char.createdAt || char.created_at || '';
+    const avatarData = normalizeAvatar(char.avatar || char.avatarUrl || char.imageUrl || char.image);
+    const normalized = {
+        id: rawId != null ? String(rawId) : '',
+        name: char.name || char.title || 'Unknown',
+        avatar: avatarData.avatar,
+        avatarUrl: avatarData.avatarUrl,
+        description: char.description || char.tagline || '',
+        tagIds: normalizeTagIds(char),
+        totalToken: Number(char.totalToken ?? char.totalTokens ?? char.tokenCount ?? char.nTokens ?? char.n_tokens ?? 0) || 0,
+        creatorUsername: char.creatorUsername || char.creatorName || char.creator?.username || char.creator?.name || '',
+        createdAt,
+        createdAtStamp: normalizeTimestamp(char.createdAtStamp ?? char.created_at_stamp, createdAt),
+    };
+    if (typeof char.isLowQuality === 'boolean') normalized.isLowQuality = char.isLowQuality;
+    if (typeof char.isNsfw === 'boolean') normalized.isNsfw = char.isNsfw;
+    return normalized;
 }
 
 export async function setJannyBookmarkCookie(apiRequest, cookieString) {
@@ -178,6 +250,15 @@ export async function fetchJannyBookmarks() {
     if (!resp.ok) throw new Error(`JannyAI bookmarks failed: ${resp.status}`);
     const data = await resp.json();
     return data?.bookmarks || [];
+}
+
+export async function fetchJannyBookmarkCharacters(characterIDs) {
+    const ids = (characterIDs || []).map(id => String(id || '').trim()).filter(Boolean);
+    if (ids.length === 0) return [];
+    const resp = await jannyApiRequest(`/janny-bookmark-chars?ids=${encodeURIComponent(ids.join(','))}`);
+    if (!resp.ok) throw new Error(`JannyAI bookmark characters failed: ${resp.status}`);
+    const data = await resp.json();
+    return asArrayPayload(data).map(normalizeJannyBookmarkCharacter).filter(c => c.id);
 }
 
 export async function addJannyBookmarks(characterIDs) {

@@ -16,6 +16,7 @@ import {
     isJannyBookmarkSessionActive,
     checkJannySession,
     fetchJannyBookmarks,
+    fetchJannyBookmarkCharacters,
     addJannyBookmarks,
     removeJannyBookmarks,
 } from './janny-api.js';
@@ -48,6 +49,7 @@ const {
 // CONSTANTS
 // ========================================
 
+const JANNY_PAGE_SIZE = 80;
 
 
 // ========================================
@@ -183,17 +185,68 @@ function isJannyBookmarkSyncEnabled() {
     return isJannyBookmarkSessionActive() && getSetting('jannyBookmarkSync') !== false;
 }
 
-async function loadJannyBookmarks() {
-    if (jannyBookmarksLoaded || !isJannyBookmarkSyncEnabled()) return;
+async function loadJannyBookmarks(force = false) {
+    if ((jannyBookmarksLoaded && !force) || !isJannyBookmarkSyncEnabled()) return;
     try {
         const ids = await fetchJannyBookmarks();
-        jannyBookmarkIds = new Set(ids);
+        jannyBookmarkIds = new Set((ids || []).map(id => String(id || '').trim()).filter(Boolean));
         jannyBookmarksLoaded = true;
     } catch (err) {
         console.warn('[JannyBrowse] Failed to load bookmarks:', err.message);
     }
 }
 
+function getJannyBookmarkIdList() {
+    return [...jannyBookmarkIds].map(id => String(id || '').trim()).filter(Boolean);
+}
+
+function jannyMatchesActiveSearch(hit) {
+    const query = (jannyAuthorFilter || jannyCurrentSearch || '').toLowerCase().trim();
+    if (!query) return true;
+
+    const creator = (hit.creatorUsername || hit.creatorName || '').toLowerCase();
+    if (jannyAuthorFilter) return creator.includes(query);
+
+    const name = (hit.name || '').toLowerCase();
+    const desc = stripHtml(hit.description || hit.tagline || '').toLowerCase();
+    const tags = resolveTagNames(hit.tagIds).map(t => t.toLowerCase());
+    return name.includes(query) || creator.includes(query) || desc.includes(query) || tags.some(t => t.includes(query));
+}
+
+function applyJannyClientFilters(hits, { includeServerFilters = false } = {}) {
+    let filtered = hits || [];
+
+    if (includeServerFilters) {
+        filtered = filtered.filter(h => jannyMatchesActiveSearch(h));
+        filtered = filtered.filter(h => (h.totalToken || 0) >= jannyMinTokens && (h.totalToken || 0) <= jannyMaxTokens);
+        if (!jannyNsfwEnabled) filtered = filtered.filter(h => h.isNsfw !== true);
+        if (!jannyShowLowQuality) filtered = filtered.filter(h => h.isLowQuality !== true);
+        if (jannyIncludeTags.size > 0) {
+            filtered = filtered.filter(h => {
+                const ids = new Set((h.tagIds || []).map(id => Number(id)));
+                return [...jannyIncludeTags].every(id => ids.has(Number(id)));
+            });
+        }
+    }
+
+    const persistentExclude = getProviderExcludeTags('janny');
+    if (persistentExclude.length > 0) {
+        const lowerExclude = persistentExclude.map(t => t.toLowerCase());
+        filtered = filtered.filter(h => {
+            const names = resolveTagNames(h.tagIds).map(n => n.toLowerCase());
+            return !lowerExclude.some(et => names.includes(et));
+        });
+    }
+
+    if (jannyFilterHideOwned) filtered = filtered.filter(h => !isCharInLocalLibrary(h));
+    if (jannyFilterHidePossible) filtered = filtered.filter(h => !isCharPossibleMatchObj(h));
+
+    return filtered;
+}
+
+function hasJannyPostSearchFilters() {
+    return jannyFilterHideOwned || jannyFilterHidePossible || getProviderExcludeTags('janny').length > 0;
+}
 function renderJannyBookmarkCardButton(charId, saved) {
     return `<button type="button" class="janny-bookmark-btn${saved ? ' saved' : ''}" data-janny-bookmark-id="${escapeHtml(String(charId))}" title="${saved ? 'Bookmarked on JannyAI' : 'Bookmark on JannyAI'}">${saved ? '<i class="fa-solid fa-bookmark"></i>' : '<i class="fa-regular fa-bookmark"></i>'}</button>`;
 }
@@ -245,7 +298,8 @@ async function toggleJannyBookmark(charId) {
         }
         showToast(nextSaved ? 'Bookmarked on JannyAI' : 'Removed from JannyAI bookmarks', 'success');
         if (jannyFilterOnlyBookmarked) {
-            renderGrid(jannyCharacters, false);
+            jannyCurrentPage = 1;
+            loadCharacters(false);
         }
     } catch (err) {
         setJannyBookmarkState(id, wasSaved);
@@ -322,7 +376,7 @@ function applyTagsClamp(tagsEl) {
 function createJannyCard(hit) {
     const name = hit.name || 'Unknown';
     const desc = stripHtml(hit.description) || '';
-    const avatarUrl = hit.avatar ? `${JANNY_IMAGE_BASE}${hit.avatar}` : '/img/ai4.png';
+    const avatarUrl = hit.avatarUrl || (hit.avatar ? `${JANNY_IMAGE_BASE}${hit.avatar}` : '/img/ai4.png');
     const tags = resolveTagNames(hit.tagIds).slice(0, 3);
     const tokens = formatNumber(hit.totalToken || 0);
     const charId = hit.id || '';
@@ -407,13 +461,67 @@ function renderGrid(characters, append = false) {
 }
 
 function updateLoadMore() {
-    jannyBrowseView.updateLoadMoreVisibility('jannyLoadMore', jannyHasMore, jannyCharacters.length > 0);
+    const hasItems = jannyCharacters.length > 0 || (jannyFilterOnlyBookmarked && jannyBookmarkIds.size > 0);
+    jannyBrowseView.updateLoadMoreVisibility('jannyLoadMore', jannyHasMore, hasItems);
 }
 
 // ========================================
 // SEARCH / LOAD
 // ========================================
 
+async function loadJannyBookmarkedCharacters(append = false, loadToken = 0, grid = null) {
+    if (!isJannyBookmarkSyncEnabled()) {
+        jannyCharacters = [];
+        jannyHasMore = false;
+        renderGrid(jannyCharacters, false);
+        if (grid) {
+            grid.innerHTML = `
+                <div style="grid-column: 1 / -1; padding: 40px; text-align: center; color: var(--text-muted);">
+                    <i class="fa-solid fa-bookmark" style="font-size: 2rem; opacity: 0.5;"></i>
+                    <p style="margin-top: 12px; font-weight: 600;">JannyAI bookmark sync is not connected</p>
+                    <p style="margin-top: 8px; font-size: 0.9em;">Connect bookmark sync in Settings to view your JannyAI bookmarks.</p>
+                </div>
+            `;
+        }
+        return;
+    }
+
+    await loadJannyBookmarks();
+    if (loadToken && loadToken !== jannyLoadToken) return;
+    if (!delegatesInitialized) return;
+
+    const allIds = getJannyBookmarkIdList();
+    const start = Math.max(0, (jannyCurrentPage - 1) * JANNY_PAGE_SIZE);
+    const pageIds = allIds.slice(start, start + JANNY_PAGE_SIZE);
+    let hits = pageIds.length > 0 ? await fetchJannyBookmarkCharacters(pageIds) : [];
+    if (loadToken && loadToken !== jannyLoadToken) return;
+    if (!delegatesInitialized) return;
+
+    hits = applyJannyClientFilters(hits, { includeServerFilters: true });
+
+    if (append) {
+        const existingIds = new Set(jannyCharacters.map(c => String(c.id || '')));
+        jannyCharacters = jannyCharacters.concat(hits.filter(h => !existingIds.has(String(h.id || ''))));
+    } else {
+        jannyCharacters = hits;
+    }
+
+    jannyHasMore = start + JANNY_PAGE_SIZE < allIds.length;
+    renderGrid(jannyCharacters, append);
+
+    if (!append && jannyCharacters.length === 0 && grid) {
+        const hasBookmarks = allIds.length > 0;
+        grid.innerHTML = `
+            <div style="grid-column: 1 / -1; padding: 40px; text-align: center; color: var(--text-muted);">
+                <i class="fa-solid fa-bookmark" style="font-size: 2rem; opacity: 0.5;"></i>
+                <p style="margin-top: 12px; font-weight: 600;">${hasBookmarks ? 'No bookmarked JannyAI characters match these filters' : 'No JannyAI bookmarks yet'}</p>
+                <p style="margin-top: 8px; font-size: 0.9em;">${hasBookmarks ? 'Try clearing search, tag, or library filters.' : 'Bookmarks you save on JannyAI will appear here.'}</p>
+            </div>
+        `;
+    }
+
+    debugLog('[JannyBrowse] Loaded bookmarked characters', hits.length, 'page', jannyCurrentPage, 'of', Math.ceil(allIds.length / JANNY_PAGE_SIZE) || 1);
+}
 async function loadCharacters(append = false) {
     if (append && jannyIsLoading) return;
     const thisToken = ++jannyLoadToken;
@@ -432,11 +540,16 @@ async function loadCharacters(append = false) {
     }
 
     try {
+        if (jannyFilterOnlyBookmarked) {
+            await loadJannyBookmarkedCharacters(append, thisToken, grid);
+            return;
+        }
+
         const effectiveSearch = jannyAuthorFilter || jannyCurrentSearch;
         const data = await searchJanny({
             search: effectiveSearch,
             page: jannyCurrentPage,
-            limit: 80,
+            limit: JANNY_PAGE_SIZE,
             sort: jannySortMode
         });
 
@@ -446,27 +559,10 @@ async function loadCharacters(append = false) {
         const result = data?.results?.[0];
         let hits = result?.hits || [];
         const totalPages = result?.totalPages || 1;
-
-        // Client-side: persistent exclude tags from settings
-        const jannyPersistentExclude = getProviderExcludeTags('janny');
-        if (jannyPersistentExclude.length > 0) {
-            const lowerExclude = jannyPersistentExclude.map(t => t.toLowerCase());
-            hits = hits.filter(h => {
-                const names = resolveTagNames(h.tagIds).map(n => n.toLowerCase());
-                return !lowerExclude.some(et => names.includes(et));
-            });
-        }
-
-        // Client-side: hide owned / possible match characters
-        if (jannyFilterHideOwned) {
-            hits = hits.filter(h => !isCharInLocalLibrary(h));
-        }
-        if (jannyFilterHidePossible) {
-            hits = hits.filter(h => !isCharPossibleMatchObj(h));
-        }
+        hits = applyJannyClientFilters(hits);
 
         // Auto-fetch when client-side filters remove too many results
-        const hasClientFilters = jannyFilterHideOwned || jannyFilterHidePossible || jannyPersistentExclude.length > 0;
+        const hasClientFilters = hasJannyPostSearchFilters();
         if (hasClientFilters && jannyCurrentPage < totalPages) {
             let autoFetches = 0;
             while (hits.length < 80 && jannyCurrentPage < totalPages && autoFetches < 3 && delegatesInitialized) {
@@ -475,21 +571,13 @@ async function loadCharacters(append = false) {
                 const moreData = await searchJanny({
                     search: effectiveSearch,
                     page: jannyCurrentPage,
-                    limit: 80,
+                    limit: JANNY_PAGE_SIZE,
                     sort: jannySortMode
                 });
                 if (thisToken !== jannyLoadToken || !delegatesInitialized) return;
                 const moreResult = moreData?.results?.[0];
                 let moreHits = moreResult?.hits || [];
-                if (jannyPersistentExclude.length > 0) {
-                    const lowerExclude = jannyPersistentExclude.map(t => t.toLowerCase());
-                    moreHits = moreHits.filter(h => {
-                        const names = resolveTagNames(h.tagIds).map(n => n.toLowerCase());
-                        return !lowerExclude.some(et => names.includes(et));
-                    });
-                }
-                if (jannyFilterHideOwned) moreHits = moreHits.filter(h => !isCharInLocalLibrary(h));
-                if (jannyFilterHidePossible) moreHits = moreHits.filter(h => !isCharPossibleMatchObj(h));
+                moreHits = applyJannyClientFilters(moreHits);
                 hits = hits.concat(moreHits);
             }
             if (autoFetches > 0) {
@@ -1150,6 +1238,7 @@ function initJannyView() {
     on('jannyClearAuthorBtn', 'click', () => clearAuthorFilter());
 
     on('jannyRefreshBtn', 'click', () => {
+        if (jannyFilterOnlyBookmarked) jannyBookmarksLoaded = false;
         jannyCurrentPage = 1;
         loadCharacters(false);
     });
@@ -1239,7 +1328,8 @@ function initJannyView() {
         const el = document.getElementById('jannyFilterOnlyBookmarked');
         if (el) jannyFilterOnlyBookmarked = el.checked;
         updateJannyFiltersButton();
-        renderGrid(jannyCharacters, false);
+        jannyCurrentPage = 1;
+        loadCharacters(false);
     });
 
     // Close dropdowns when clicking outside
