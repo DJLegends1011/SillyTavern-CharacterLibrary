@@ -1,0 +1,70 @@
+/* ============================================
+   JannyAI Browse CSS
+   Account connect box (toolbar) + login modal extras.
+   Structural modal/form styles (.browse-login-modal, .browse-login-form,
+   .pyg-auth-status, .pyg-plugin-status, etc.) are shared across providers
+   and already loaded via browse-shared.css / pygmalion-browse.css.
+   ============================================ */
+
+.janny-account-box { display: inline-flex; align-items: center; }
+
+.janny-account-btn { display: inline-flex; align-items: center; gap: 6px; }
+
+.janny-account-box.connected .janny-account-btn {
+    color: var(--cl-success-bright, #4caf50);
+    border-color: rgba(var(--cl-success-bright-rgb), 0.4);
+}
+
+.janny-account-box.expired .janny-account-btn {
+    color: var(--cl-warning-bright-darker, #d9822b);
+    border-color: rgba(var(--cl-warning-bright-rgb), 0.4);
+}
+
+.janny-account-box.helper-missing .janny-account-btn {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.janny-login-disabled {
+    opacity: 0.5;
+    pointer-events: none;
+}
+
+.janny-cookie-instructions {
+    margin-top: 10px;
+}
+
+.janny-cookie-instructions details {
+    background: rgba(255, 255, 255, 0.03);
+    padding: 10px;
+    border-radius: var(--radius-lg);
+}
+
+.janny-cookie-instructions summary {
+    cursor: pointer;
+    color: var(--accent);
+    font-size: var(--font-md);
+    user-select: none;
+}
+
+.janny-cookie-instructions ol {
+    margin: 8px 0 4px 20px;
+    padding: 0;
+    font-size: var(--font-md);
+    color: var(--text-secondary, #aaa);
+    line-height: 1.7;
+}
+
+.janny-cookie-instructions code {
+    background: rgba(255, 255, 255, 0.08);
+    padding: 1px 5px;
+    border-radius: var(--radius-xs);
+    font-size: var(--font-md);
+}
+
+.janny-cookie-note {
+    margin-top: 6px;
+    font-size: var(--font-sm);
+    color: var(--text-muted);
+    font-style: italic;
+}

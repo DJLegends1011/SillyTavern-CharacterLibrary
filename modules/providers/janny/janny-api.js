@@ -23,7 +23,10 @@ let _getSetting = () => undefined;
 const _bookmarkIds = new Set();
 
 export function configureJannyAccount(deps = {}) {
-    _apiRequest = deps.apiRequest || null;
+    // Merge-safe: a caller passing only one binding (eg. browse init passing
+    // just {getSetting}) must not null out a binding set by another caller
+    // (eg. the provider's {apiRequest}). Only overwrite keys actually present.
+    if ('apiRequest' in deps) _apiRequest = deps.apiRequest || null;
     if (typeof deps.getSetting === 'function') _getSetting = deps.getSetting;
 }
 

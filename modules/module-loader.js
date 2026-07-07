@@ -14,7 +14,7 @@ import CoreAPI from './core-api.js';
 // CSS LOADER
 // ========================================
 
-const MODULE_CSS_VERSION = 76;
+const MODULE_CSS_VERSION = 77;
 
 function loadModuleCSS(path) {
     return new Promise((resolve) => {
@@ -376,6 +376,7 @@ async function initModuleSystem() {
     // during character grid rendering (link indicators, taglines, etc.)
     loadModuleCSS('./providers/browse-shared.css');
     loadModuleCSS('./providers/chub/chub-browse.css');
+    loadModuleCSS('./providers/janny/janny-browse.css');
     loadModuleCSS('./providers/chartavern/chartavern-browse.css');
     loadModuleCSS('./providers/pygmalion/pygmalion-browse.css');
     loadModuleCSS('./providers/wyvern/wyvern-browse.css');

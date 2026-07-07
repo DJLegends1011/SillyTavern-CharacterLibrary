@@ -12,7 +12,12 @@ import {
     fetchWithProxy,
     slugify,
     stripHtml,
-    resolveTagNames
+    resolveTagNames,
+    configureJannyAccount,
+    connectJanny,
+    jannyAuthStatus,
+    disconnectJanny,
+    jannyHelperAvailable,
 } from './janny-api.js';
 
 const {
@@ -71,6 +76,11 @@ let jannyIncludeTags = new Set();
 let jannyAuthorFilter = null;
 
 let view; // module-scoped BrowseView instance reference (set once in constructor)
+
+// Account (cl-helper cookie session) state
+let jannyConnected = false;
+let jannyHelperOk = false;
+let jannyAccountBusy = false;
 
 // ========================================
 // SEARCH API
@@ -1157,9 +1167,43 @@ function initJannyView() {
             });
         }
 
+        // ── Login modal events ──
+        on('jannyLoginClose', 'click', () => closeJannyLoginModal());
+
+        on('jannySaveCookieBtn', 'click', () => {
+            const cookieInput = document.getElementById('jannyCookieInput');
+            const cookieStr = cookieInput?.value?.trim();
+            if (!cookieStr) {
+                showToast('Please paste your session cookie value', 'warning');
+                return;
+            }
+            saveJannyCookieAndConnect(cookieStr);
+        });
+
+        on('jannyLogoutBtn', 'click', () => jannyLogoutAction());
+
+        // Enter key on cookie field
+        on('jannyCookieInput', 'keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                document.getElementById('jannySaveCookieBtn')?.click();
+            }
+        });
+
+        const jannyLoginOverlay = document.getElementById('jannyLoginModal');
+        if (jannyLoginOverlay) {
+            jannyLoginOverlay.addEventListener('click', (e) => {
+                if (e.target === jannyLoginOverlay) closeJannyLoginModal();
+            });
+        }
+
         window.registerOverlay?.({ id: 'jannyCharModal', tier: 7, close: () => closePreviewModal() });
         window.registerOverlay?.({ id: 'jannyAuthorBanner', tier: 9, close: () => clearAuthorFilter() });
+        window.registerOverlay?.({ id: 'jannyLoginModal', tier: 6, close: () => closeJannyLoginModal() });
     }
+
+    on('jannyConnectBtn', 'click', () => openJannyLoginModal());
+    renderJannyAccountState();
 }
 
 function doSearch() {
@@ -1239,6 +1283,139 @@ function updateNsfwToggle() {
         btn.innerHTML = '<i class="fa-solid fa-shield-halved"></i> <span>SFW Only</span>';
         btn.title = 'Showing SFW only - click to include NSFW';
     }
+}
+
+// ========================================
+// AUTH - JANNYAI COOKIE SESSION VIA CL-HELPER
+// ========================================
+
+/** Refresh the toolbar connect box (helper-missing / signed-out / expired / connected). */
+async function renderJannyAccountState() {
+    const box = document.getElementById('jannyAccountBox');
+    const label = document.getElementById('jannyConnectLabel');
+    if (!box || !label) return;
+
+    box.classList.remove('connected', 'expired', 'helper-missing');
+
+    jannyHelperOk = await jannyHelperAvailable();
+    if (!jannyHelperOk) {
+        box.classList.add('helper-missing');
+        label.textContent = 'JannyAI sync unavailable';
+        box.title = 'cl-helper plugin not installed — bookmark sync unavailable';
+        jannyConnected = false;
+        return;
+    }
+
+    const status = await jannyAuthStatus();
+    jannyConnected = !!status.connected;
+
+    if (jannyConnected) {
+        box.classList.add('connected');
+        label.textContent = `JannyAI: ${status.bookmarkCount ?? 0} bookmarked`;
+        box.title = 'Connected to JannyAI — click to manage';
+    } else if (status.reason === 'session expired or rejected') {
+        box.classList.add('expired');
+        label.textContent = 'JannyAI session expired';
+        box.title = 'Your JannyAI session expired — click to reconnect';
+    } else {
+        label.textContent = 'Connect JannyAI';
+        box.title = 'Connect your JannyAI account to sync bookmarks';
+    }
+}
+
+async function openJannyLoginModal() {
+    await renderJannyAccountState();
+    updateJannyLoginUI();
+
+    // Pre-fill cookie field from saved setting, mirroring CT's restore-on-reopen UX
+    const cookieInput = document.getElementById('jannyCookieInput');
+    if (cookieInput && !jannyConnected) {
+        const saved = getSetting('jannyCookie');
+        if (saved) cookieInput.value = saved;
+    }
+
+    const modal = document.getElementById('jannyLoginModal');
+    if (modal) modal.classList.remove('hidden');
+}
+
+function closeJannyLoginModal() {
+    const modal = document.getElementById('jannyLoginModal');
+    if (modal) modal.classList.add('hidden');
+}
+
+function updateJannyLoginUI() {
+    const pluginOk = document.getElementById('jannyPluginStatusOk');
+    const pluginMissing = document.getElementById('jannyPluginStatusMissing');
+    const cookieForm = document.getElementById('jannyCookieForm');
+    const saveBtn = document.getElementById('jannySaveCookieBtn');
+
+    if (pluginOk) pluginOk.style.display = jannyHelperOk ? '' : 'none';
+    if (pluginMissing) pluginMissing.style.display = jannyHelperOk ? 'none' : '';
+    if (cookieForm) cookieForm.classList.toggle('janny-login-disabled', !jannyHelperOk);
+    if (saveBtn) saveBtn.disabled = !jannyHelperOk || jannyAccountBusy;
+
+    if (saveBtn) {
+        saveBtn.innerHTML = jannyAccountBusy
+            ? '<i class="fa-solid fa-spinner fa-spin"></i> Connecting...'
+            : '<i class="fa-solid fa-plug"></i> Save & Connect';
+    }
+
+    // Session status
+    const statusArea = document.getElementById('jannySessionStatus');
+    if (statusArea) {
+        if (jannyConnected) {
+            statusArea.innerHTML = '<i class="fa-solid fa-check-circle" style="color: var(--cl-success-bright);"></i> <strong>Connected</strong>, bookmarks will sync';
+            statusArea.style.display = '';
+        } else {
+            statusArea.style.display = 'none';
+        }
+    }
+
+    // Show/hide cookie input vs logout
+    const logoutBtn = document.getElementById('jannyLogoutBtn');
+    const cookieFields = document.getElementById('jannyCookieFields');
+    if (logoutBtn) logoutBtn.style.display = jannyConnected ? '' : 'none';
+    if (saveBtn) saveBtn.style.display = jannyConnected ? 'none' : '';
+    if (cookieFields) cookieFields.style.display = jannyConnected ? 'none' : '';
+}
+
+async function saveJannyCookieAndConnect(cookieStr) {
+    if (jannyAccountBusy) return;
+
+    jannyAccountBusy = true;
+    updateJannyLoginUI();
+
+    try {
+        const result = await connectJanny(cookieStr);
+        if (!result.ok) {
+            showToast(`JannyAI connect failed: ${result.error || 'unknown error'}`, 'error');
+            return;
+        }
+
+        setSetting('jannyCookie', cookieStr);
+        showToast(`Connected to JannyAI (${result.bookmarkCount ?? 0} bookmarks)`, 'success');
+        closeJannyLoginModal();
+    } catch (err) {
+        console.error('[JannyAuth] Cookie save error:', err);
+        showToast(`Connection error: ${err.message}`, 'error');
+    } finally {
+        jannyAccountBusy = false;
+        await renderJannyAccountState();
+        updateJannyLoginUI();
+    }
+}
+
+async function jannyLogoutAction() {
+    await disconnectJanny();
+    setSetting('jannyCookie', null);
+
+    const cookieInput = document.getElementById('jannyCookieInput');
+    if (cookieInput) cookieInput.value = '';
+
+    showToast('Disconnected from JannyAI', 'info');
+
+    await renderJannyAccountState();
+    updateJannyLoginUI();
 }
 
 // ========================================
@@ -1352,6 +1529,13 @@ class JannyBrowseView extends BrowseView {
             <button id="jannyNsfwToggle" class="glass-btn nsfw-toggle" title="Toggle NSFW content">
                 <i class="fa-solid fa-shield-halved"></i> <span>SFW Only</span>
             </button>
+
+            <!-- Account (cl-helper cookie session) -->
+            <div id="jannyAccountBox" class="janny-account-box">
+                <button id="jannyConnectBtn" class="glass-btn janny-account-btn" title="Connect your JannyAI account to sync bookmarks">
+                    <i class="fa-regular fa-bookmark"></i> <span id="jannyConnectLabel">Connect JannyAI</span>
+                </button>
+            </div>
 
             <!-- Refresh -->
             <button id="jannyRefreshBtn" class="glass-btn icon-only" title="Refresh">
@@ -1487,6 +1671,73 @@ class JannyBrowseView extends BrowseView {
                 </div>
             </div>
         </div>
+    </div>
+    <div id="jannyLoginModal" class="modal-overlay hidden">
+        <div class="modal-glass browse-login-modal">
+            <div class="modal-header">
+                <h2><i class="fa-regular fa-bookmark"></i> JannyAI Account</h2>
+                <button class="close-btn" id="jannyLoginClose">&times;</button>
+            </div>
+            <div class="browse-login-body">
+                <p class="browse-login-info">
+                    <i class="fa-solid fa-check-circle" style="color: var(--cl-success-bright);"></i>
+                    <strong>Browsing and importing public characters works without connecting an account!</strong>
+                </p>
+                <p class="browse-login-info">
+                    <i class="fa-regular fa-bookmark" style="color: var(--accent);"></i>
+                    <strong>Optional:</strong> Connect your JannyAI session cookie to sync your bookmarked characters.
+                </p>
+
+                <!-- Session status -->
+                <div id="jannySessionStatus" class="pyg-auth-status" style="display:none;"></div>
+
+                <!-- Cookie form (requires cl-helper plugin) -->
+                <div class="pyg-login-section">
+                    <div class="pyg-plugin-status">
+                        <span id="jannyPluginStatusOk" style="display:none;">
+                            <i class="fa-solid fa-plug-circle-check" style="color: var(--cl-success-bright);"></i> cl-helper plugin detected
+                        </span>
+                        <span id="jannyPluginStatusMissing" style="display:none;">
+                            <i class="fa-solid fa-plug-circle-xmark" style="color: var(--cl-warning-bright-darker);"></i>
+                            cl-helper plugin not found — see <a href="https://github.com/Sillyanonymous/SillyTavern-CharacterLibrary#cl-helper-plugin-not-detected" target="_blank" style="color: var(--accent);">setup instructions</a>
+                        </span>
+                    </div>
+
+                    <div id="jannyCookieForm" class="browse-login-form">
+                        <div id="jannyCookieFields">
+                            <div class="form-group">
+                                <label for="jannyCookieInput">Cookie String</label>
+                                <textarea id="jannyCookieInput" class="glass-input" rows="2" placeholder="Paste your session cookie value here" style="font-family: monospace; font-size: 12px; resize: vertical;"></textarea>
+                            </div>
+                            <div class="janny-cookie-instructions">
+                                <details>
+                                    <summary><i class="fa-solid fa-circle-question"></i> How to get your session cookie</summary>
+                                    <ol>
+                                        <li>Log in to <a href="https://jannyai.com" target="_blank">jannyai.com</a> in your browser</li>
+                                        <li>Open DevTools (<code>F12</code>) → <strong>Application</strong> tab → <strong>Cookies</strong></li>
+                                        <li>Copy the full cookie header (or just the session cookie) for <code>jannyai.com</code></li>
+                                        <li>Paste it here</li>
+                                    </ol>
+                                    <p class="janny-cookie-note"><i class="fa-solid fa-clock"></i> Sessions can expire. You'll need to re-paste when it does.</p>
+                                </details>
+                            </div>
+                        </div>
+
+                        <div class="browse-login-actions" style="margin-top: 12px;">
+                            <button id="jannySaveCookieBtn" class="action-btn primary">
+                                <i class="fa-solid fa-plug"></i> Save &amp; Connect
+                            </button>
+                            <button id="jannyLogoutBtn" class="action-btn danger" style="display:none;">
+                                <i class="fa-solid fa-plug-circle-xmark"></i> Disconnect
+                            </button>
+                            <a href="https://jannyai.com" target="_blank" class="action-btn secondary">
+                                <i class="fa-solid fa-external-link"></i> JannyAI
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>`;
     }
 
@@ -1503,6 +1754,9 @@ class JannyBrowseView extends BrowseView {
 
     init() {
         super.init();
+        // Merge-safe: only sets getSetting, leaves apiRequest (bound by the
+        // provider's init()) untouched. Safe to call every activation.
+        configureJannyAccount({ getSetting });
         this.buildLocalLibraryLookup();
         initJannyView();
         const grid = document.getElementById('jannyGrid');
