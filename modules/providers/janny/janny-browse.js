@@ -1327,12 +1327,9 @@ async function openJannyLoginModal() {
     await renderJannyAccountState();
     updateJannyLoginUI();
 
-    // Pre-fill cookie field from saved setting, mirroring CT's restore-on-reopen UX
+    // Cookie is never persisted anywhere - the textarea always starts empty.
     const cookieInput = document.getElementById('jannyCookieInput');
-    if (cookieInput && !jannyConnected) {
-        const saved = getSetting('jannyCookie');
-        if (saved) cookieInput.value = saved;
-    }
+    if (cookieInput) cookieInput.value = '';
 
     const modal = document.getElementById('jannyLoginModal');
     if (modal) modal.classList.remove('hidden');
@@ -1392,11 +1389,10 @@ async function saveJannyCookieAndConnect(cookieStr) {
             return;
         }
 
-        setSetting('jannyCookie', cookieStr);
         showToast(`Connected to JannyAI (${result.bookmarkCount ?? 0} bookmarks)`, 'success');
         closeJannyLoginModal();
     } catch (err) {
-        console.error('[JannyAuth] Cookie save error:', err);
+        console.error('[JannyAuth] Cookie save error:', err.message);
         showToast(`Connection error: ${err.message}`, 'error');
     } finally {
         jannyAccountBusy = false;
@@ -1407,7 +1403,6 @@ async function saveJannyCookieAndConnect(cookieStr) {
 
 async function jannyLogoutAction() {
     await disconnectJanny();
-    setSetting('jannyCookie', null);
 
     const cookieInput = document.getElementById('jannyCookieInput');
     if (cookieInput) cookieInput.value = '';
