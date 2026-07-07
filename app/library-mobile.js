@@ -3827,8 +3827,12 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
             // it with .browse-fav-toggle. Read the toggle's own icon to decide
             // whether it's a "favorite" (heart) or "bookmark" toggle so wording
             // stays correct per-provider without hardcoding a provider name here.
+            // Skip toggles the provider itself hid (e.g. JannyAI hides
+            // #jannyCharBookmarkBtn via inline style when not connected) - otherwise
+            // mobile would list a "Bookmark" action that just toasts "Connect
+            // JannyAI first" when tapped.
             const favBtn = controls.closest('.browse-char-modal')?.querySelector('.browse-fav-toggle');
-            if (favBtn) {
+            if (favBtn && favBtn.style.display !== 'none') {
                 const faved = favBtn.classList.contains('favorited');
                 const isBookmark = !!favBtn.querySelector('i.fa-bookmark');
                 const glyph = isBookmark ? 'fa-bookmark' : 'fa-heart';

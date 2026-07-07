@@ -345,6 +345,14 @@ function updateLoadMore() {
 
 async function loadCharacters(append = false) {
     if (append && jannyIsLoading) return;
+
+    // loadCharacters() always fetches/renders MeiliSearch results, never bookmarks
+    // (see loadJannyBookmarksView() for that path). If "My Bookmarks" was left
+    // checked from a prior view, clear it here so the UI never claims "My
+    // Bookmarks" while showing generic search results. State-only - does not
+    // itself trigger another load.
+    resetJannyBookmarksFilter();
+
     const thisToken = ++jannyLoadToken;
     jannyIsLoading = true;
 
