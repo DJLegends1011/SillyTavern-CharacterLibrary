@@ -886,6 +886,136 @@ function registerCharacterTavernRoutes(router) {
 }
 
 // =============================================================================
+// JannyAI: cookie session + bookmark API proxy (account sync Phase A)
+// =============================================================================
+
+const JANNY_BASE = 'https://jannyai.com';
+
+// In-memory session store (persists until logout or server restart).
+let jyCookie = null;     // raw Cookie header value handed off from the browser
+let jyUserAgent = null;  // the browser UA that cf_clearance was issued for
+
+// JannyAI API paths the proxy is allowed to forward.
+const JANNY_ALLOWED_PATHS = [
+    /^\/api\/bookmark$/,
+    /^\/api\/get-characters$/,
+];
+
+function jyHeaders(extra = {}) {
+    const headers = {
+        'User-Agent': jyUserAgent || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Firefox/152.0',
+        'Accept': 'application/json',
+        ...extra,
+    };
+    if (jyCookie) headers['Cookie'] = jyCookie;
+    return headers;
+}
+
+async function handleJannyProxy(req, res) {
+    const targetPath = '/' + (req.params[0] || '');
+    const normalizedPath = new URL(targetPath, JANNY_BASE).pathname;
+    if (!JANNY_ALLOWED_PATHS.some(re => re.test(normalizedPath))) {
+        console.warn(`[cl-helper] JannyAI proxy blocked: ${normalizedPath}`);
+        return res.status(403).json({ error: 'Proxy path not allowed' });
+    }
+    const targetUrl = new URL(targetPath, JANNY_BASE);
+    targetUrl.search = new URL(req.url, 'http://localhost').search;
+    if (targetUrl.hostname !== 'jannyai.com') {
+        return res.status(403).json({ error: 'Proxy target must be jannyai.com' });
+    }
+    if (!jyCookie) return res.status(401).json({ error: 'Not connected to JannyAI' });
+
+    // JannyAI's save endpoint expects the JSON body as text/plain (it dodges
+    // CORS preflight that way); replay it identically.
+    const hasBody = ['POST', 'PUT', 'PATCH'].includes(req.method)
+        && req.body && typeof req.body === 'object' && Object.keys(req.body).length > 0;
+    const headers = jyHeaders(hasBody ? { 'Content-Type': 'text/plain;charset=UTF-8' } : {});
+
+    try {
+        const response = await fetch(targetUrl.toString(), {
+            method: req.method,
+            headers,
+            body: hasBody ? JSON.stringify(req.body) : undefined,
+            redirect: 'follow',
+        });
+        res.status(response.status);
+        const contentType = response.headers.get('content-type') || '';
+        if (contentType) res.set('Content-Type', contentType);
+        if (response.status === 204) return res.end();
+        if (contentType.includes('application/json') || contentType.startsWith('text/')) {
+            res.send(await response.text());
+        } else {
+            res.send(Buffer.from(await response.arrayBuffer()));
+        }
+    } catch (err) {
+        console.error('[cl-helper] JannyAI proxy error:', err.message);
+        res.status(502).json({ error: 'Failed to reach JannyAI' });
+    }
+}
+
+function registerJannyRoutes(router) {
+    /**
+     * POST /jy-set-cookie
+     * Body: { cookie: "<full cookie header>", userAgent?: "<navigator.userAgent>" }
+     * Stores the browser session cookie(s) (session + cf_clearance) and UA for
+     * server-side replay. Rejects newline/oversized input.
+     */
+    router.post('/jy-set-cookie', (req, res) => {
+        const { cookie, userAgent } = req.body ?? {};
+        if (!cookie || typeof cookie !== 'string' || !cookie.trim()) {
+            return res.status(400).json({ error: 'cookie string is required' });
+        }
+        const value = cookie.trim();
+        if (/[\r\n]/.test(value) || value.length > 8192) {
+            return res.status(400).json({ error: 'Invalid cookie value' });
+        }
+        jyCookie = value;
+        jyUserAgent = (typeof userAgent === 'string' && userAgent.length <= 512) ? userAgent : null;
+        console.log('[cl-helper] JannyAI session cookie stored');
+        res.json({ ok: true });
+    });
+
+    /**
+     * GET /jy-validate
+     * Test request to /api/bookmark with stored cookie. Returns saved count.
+     */
+    router.get('/jy-validate', async (_req, res) => {
+        if (!jyCookie) return res.json({ valid: false, reason: 'no cookie stored' });
+        try {
+            const response = await fetch(`${JANNY_BASE}/api/bookmark`, { headers: jyHeaders() });
+            const ct = response.headers.get('content-type') || '';
+            if (response.ok && ct.includes('application/json')) {
+                const data = await response.json();
+                const ids = Array.isArray(data) ? data : (data?.characterIds || data?.ids || []);
+                return res.json({ valid: true, bookmarkCount: Array.isArray(ids) ? ids.length : 0 });
+            }
+            if (response.status === 401 || response.status === 403) {
+                jyCookie = null; jyUserAgent = null;
+                return res.json({ valid: false, reason: 'session expired or rejected' });
+            }
+            return res.json({ valid: false, reason: `HTTP ${response.status}` });
+        } catch (err) {
+            console.error('[cl-helper] JannyAI validate error:', err.message);
+            res.json({ valid: false, reason: err.message });
+        }
+    });
+
+    router.post('/jy-logout', (_req, res) => {
+        jyCookie = null; jyUserAgent = null;
+        console.log('[cl-helper] JannyAI session cleared');
+        res.json({ ok: true });
+    });
+
+    router.get('/jy-session', (_req, res) => {
+        res.json({ active: !!jyCookie });
+    });
+
+    router.get('/jy-proxy/*', handleJannyProxy);
+    router.post('/jy-proxy/*', handleJannyProxy);
+    router.delete('/jy-proxy/*', handleJannyProxy);
+}
+
+// =============================================================================
 // DataCat: token session + extraction + read-only API proxy
 // =============================================================================
 
@@ -1949,6 +2079,7 @@ export async function init(router) {
     registerPygmalionRoutes(router);
     registerBotbooruRoutes(router);
     registerCharacterTavernRoutes(router);
+    registerJannyRoutes(router);
     registerDataCatRoutes(router);
     registerImgchestRoutes(router);
     registerCivitaiRoutes(router);
