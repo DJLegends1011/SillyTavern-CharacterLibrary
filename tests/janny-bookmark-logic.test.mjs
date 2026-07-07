@@ -13,6 +13,7 @@ test('default cap is 220', () => {
 
 test('capForSettings falls back to default and clamps', () => {
     assert.equal(capForSettings(() => undefined), 220);
+    assert.equal(capForSettings(() => null), 220);
     assert.equal(capForSettings(() => 300), 300);
     assert.equal(capForSettings(() => 0), 1);
 });

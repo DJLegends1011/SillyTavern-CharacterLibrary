@@ -7,8 +7,11 @@ export const JANNY_BOOKMARK_CAP_DEFAULT = 220;
 export function capForSettings(getSetting) {
     const raw = getSetting?.('jannyBookmarkCap');
 
-    // If not set (undefined), use default
-    if (raw === undefined) {
+    // Not set: undefined (key absent) or null (this codebase's "cleared"
+    // sentinel — see setSetting('datacatToken', null) / ('civitaiApiKey', null)
+    // in app/library.js). Both round-trip through JSON-persisted settings,
+    // so both must fall back to the default rather than clamping to 1.
+    if (raw == null) {
         return JANNY_BOOKMARK_CAP_DEFAULT;
     }
 

@@ -12,6 +12,24 @@ export const JANNY_IMAGE_BASE = 'https://image.jannyai.com/bot-avatars/';
 export const JANNY_SITE_BASE = 'https://jannyai.com';
 export const JANNY_FALLBACK_TOKEN = '88a6463b66e04fb07ba87ee3db06af337f492ce511d93df6e2d2968cb2ff2b30';
 
+import { CL_HELPER_PLUGIN_BASE } from '../provider-utils.js';
+import { canAddBookmarks, reconcileBookmarkSet, capForSettings } from './janny-bookmark-logic.js';
+
+const JANNY_PROXY_BASE = `${CL_HELPER_PLUGIN_BASE}/jy-proxy`;
+const GET_CHARACTERS_CHUNK = 100; // ids per get-characters request (URL-length safe)
+
+let _apiRequest = null;
+let _getSetting = () => undefined;
+const _bookmarkIds = new Set();
+
+export function configureJannyAccount(deps = {}) {
+    _apiRequest = deps.apiRequest || null;
+    if (typeof deps.getSetting === 'function') _getSetting = deps.getSetting;
+}
+
+export function getJannyBookmarkIds() { return _bookmarkIds; }
+export function jannyBookmarkCap() { return capForSettings(_getSetting); }
+
 // Tag ID → name mapping (JannyAI uses numeric IDs internally)
 export const TAG_MAP = {
     1: 'Male', 2: 'Female', 3: 'Non-binary', 4: 'Celebrity', 5: 'OC',
@@ -100,4 +118,106 @@ export { slugify, stripHtml } from '../provider-utils.js';
 
 export function resolveTagNames(tagIds) {
     return (tagIds || []).map(id => TAG_MAP[id] || `Tag ${id}`);
+}
+
+// ========================================
+// ACCOUNT (cl-helper session: cookie, validate, logout)
+// ========================================
+
+export async function jannyHelperAvailable() {
+    if (!_apiRequest) return false;
+    try {
+        const resp = await _apiRequest(`${CL_HELPER_PLUGIN_BASE}/health`);
+        return !!resp && (resp.ok === true || resp.status === 200 || resp.status === undefined);
+    } catch { return false; }
+}
+
+export async function connectJanny(cookie) {
+    if (!_apiRequest) return { ok: false, error: 'cl-helper plugin not available' };
+    try {
+        await _apiRequest(`${CL_HELPER_PLUGIN_BASE}/jy-set-cookie`, 'POST', {
+            cookie,
+            userAgent: (typeof navigator !== 'undefined' ? navigator.userAgent : ''),
+        });
+        const status = await jannyAuthStatus();
+        if (status.connected) {
+            await refreshJannyBookmarkIds();
+            return { ok: true, bookmarkCount: status.bookmarkCount };
+        }
+        return { ok: false, error: status.reason || 'Session did not validate' };
+    } catch (e) {
+        return { ok: false, error: e.message };
+    }
+}
+
+export async function jannyAuthStatus() {
+    if (!_apiRequest) return { connected: false, reason: 'no cl-helper' };
+    try {
+        const resp = await _apiRequest(`${CL_HELPER_PLUGIN_BASE}/jy-validate`);
+        const data = typeof resp?.json === 'function' ? await resp.json() : resp;
+        return { connected: !!data?.valid, bookmarkCount: data?.bookmarkCount, reason: data?.reason };
+    } catch (e) {
+        return { connected: false, reason: e.message };
+    }
+}
+
+export async function disconnectJanny() {
+    _bookmarkIds.clear();
+    if (!_apiRequest) return;
+    try { await _apiRequest(`${CL_HELPER_PLUGIN_BASE}/jy-logout`, 'POST'); } catch { /* ignore */ }
+}
+
+// ========================================
+// BOOKMARKS (fetch / toggle with cap enforcement / batch character fetch)
+// ========================================
+
+export async function refreshJannyBookmarkIds() {
+    _bookmarkIds.clear();
+    if (!_apiRequest) return _bookmarkIds;
+    try {
+        const resp = await _apiRequest(`${JANNY_PROXY_BASE}/api/bookmark`);
+        const data = typeof resp?.json === 'function' ? await resp.json() : resp;
+        const ids = Array.isArray(data) ? data : (data?.characterIds || data?.ids || []);
+        for (const id of ids) _bookmarkIds.add(typeof id === 'string' ? id : id?.id);
+    } catch (e) {
+        console.warn('[JannyAPI] refresh bookmarks failed:', e.message);
+    }
+    return _bookmarkIds;
+}
+
+/** Add or remove one bookmark, enforcing the cap on add. */
+export async function toggleJannyBookmark(id, add) {
+    if (!_apiRequest) return { ok: false, error: 'cl-helper plugin not available' };
+    if (add) {
+        const guard = canAddBookmarks(_bookmarkIds.size, 1, jannyBookmarkCap());
+        if (!guard.ok) return { ok: false, error: guard.reason };
+    }
+    try {
+        if (add) {
+            await _apiRequest(`${JANNY_PROXY_BASE}/api/bookmark`, 'POST', { characterIds: [id] });
+        } else {
+            await _apiRequest(`${JANNY_PROXY_BASE}/api/bookmark?ids=${encodeURIComponent(id)}`, 'DELETE');
+        }
+        reconcileBookmarkSet(_bookmarkIds, [id], add);
+        return { ok: true };
+    } catch (e) {
+        return { ok: false, error: e.message };
+    }
+}
+
+export async function fetchJannyBookmarkCharacters(ids) {
+    const out = [];
+    if (!_apiRequest || !ids?.length) return out;
+    for (let i = 0; i < ids.length; i += GET_CHARACTERS_CHUNK) {
+        const chunk = ids.slice(i, i + GET_CHARACTERS_CHUNK);
+        try {
+            const resp = await _apiRequest(`${JANNY_PROXY_BASE}/api/get-characters?ids=${chunk.map(encodeURIComponent).join(',')}`);
+            const data = typeof resp?.json === 'function' ? await resp.json() : resp;
+            const list = Array.isArray(data) ? data : (data?.characters || data?.results || []);
+            out.push(...list);
+        } catch (e) {
+            console.warn('[JannyAPI] get-characters chunk failed:', e.message);
+        }
+    }
+    return out;
 }
