@@ -90,9 +90,14 @@ function isCharInLocalLibrary(char) {
     return false;
 }
 
+function getPossibleMatchTierObj(char) {
+    if (isCharInLocalLibrary(char)) return null;
+    const creatorName = char.creator_name || char.creatorUsername || char.username || char.author || '';
+    return view.getPossibleMatchTier(char.name || '', creatorName);
+}
+
 function isCharPossibleMatchObj(char) {
-    if (isCharInLocalLibrary(char)) return false;
-    return view.isCharPossibleMatch(char.name || '', '');
+    return !!getPossibleMatchTierObj(char)?.show;
 }
 
 function normalizeTagName(tag) {
@@ -220,14 +225,15 @@ function createMasqueradeCard(char) {
     const avatarUrl = getAvatarUrl(char);
     const tags = (char.tags || []).slice(0, 3);
     const inLibrary = isCharInLocalLibrary(char);
-    const possibleMatch = !inLibrary && isCharPossibleMatchObj(char);
+    const possibleTier = inLibrary ? null : getPossibleMatchTierObj(char);
+    const possibleMatch = !!possibleTier?.show;
     const cardClass = inLibrary ? 'browse-card in-library' : possibleMatch ? 'browse-card possible-library' : 'browse-card';
 
     const badges = [];
     if (inLibrary) {
         badges.push('<span class="browse-feature-badge in-library" title="In Your Library"><i class="fa-solid fa-check"></i></span>');
     } else if (possibleMatch) {
-        badges.push('<span class="browse-feature-badge possible-library" title="Possible Match in Library"><i class="fa-solid fa-check"></i></span>');
+        badges.push(`<span class="browse-feature-badge possible-library pl-${possibleTier.tier}" title="${possibleTier.tooltip}"><i class="fa-solid fa-check"></i></span>`);
     }
     if (char.is_nsfw) badges.push('<span class="browse-feature-badge nsfw" title="NSFW"><i class="fa-solid fa-eye-slash"></i></span>');
     if (char.is_amplified) badges.push('<span class="browse-feature-badge" title="Amplified"><i class="fa-solid fa-bolt"></i></span>');
