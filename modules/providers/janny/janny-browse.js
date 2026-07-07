@@ -21,6 +21,7 @@ import {
     toggleJannyBookmark,
     getJannyBookmarkIds,
     refreshJannyBookmarkIds,
+    fetchJannyBookmarkCharacters,
 } from './janny-api.js';
 
 const {
@@ -74,6 +75,7 @@ let jannyMinTokens = 29;
 let jannyMaxTokens = 100000;
 let jannyFilterHideOwned = false;
 let jannyFilterHidePossible = false;
+let jannyFilterBookmarks = false;
 /** @type {Set<number>} Active include tag IDs */
 let jannyIncludeTags = new Set();
 let jannyAuthorFilter = null;
@@ -241,10 +243,23 @@ function applyTagsClamp(tagsEl) {
     }
 }
 
+/**
+ * Resolve a hit/record's `avatar` field to a displayable URL. Normally this is a
+ * JANNY_IMAGE_BASE-relative path fragment (the shape MeiliSearch hits and the
+ * page-scrape "character" object both use), but bookmark records sourced from
+ * `/api/get-characters` (see fetchJannyBookmarkCharacters()) haven't been
+ * confirmed live yet — guard against that endpoint instead returning an
+ * already-fully-qualified URL so we don't double-prefix it.
+ */
+function jannyAvatarUrl(avatar) {
+    if (!avatar) return '/img/ai4.png';
+    return /^https?:\/\//i.test(avatar) ? avatar : `${JANNY_IMAGE_BASE}${avatar}`;
+}
+
 function createJannyCard(hit) {
     const name = hit.name || 'Unknown';
     const desc = stripHtml(hit.description) || '';
-    const avatarUrl = hit.avatar ? `${JANNY_IMAGE_BASE}${hit.avatar}` : '/img/ai4.png';
+    const avatarUrl = jannyAvatarUrl(hit.avatar);
     const tags = resolveTagNames(hit.tagIds).slice(0, 3);
     const tokens = formatNumber(hit.totalToken || 0);
     const charId = hit.id || '';
@@ -463,6 +478,124 @@ async function loadCharacters(append = false) {
 }
 
 // ========================================
+// MY BOOKMARKS DATA-SOURCE VIEW
+// ========================================
+
+/**
+ * Normalize a `/api/get-characters` record (see fetchJannyBookmarkCharacters() in
+ * janny-api.js) into the same field shape MeiliSearch hits use, so bookmarked
+ * characters render through the identical createJannyCard()/openPreviewModal()
+ * pipeline as search results.
+ *
+ * Evidence for the field names below (id, name, avatar, tagIds, totalToken,
+ * description, creatorId/creatorUsername, createdAt/createdAtStamp): the same
+ * vocabulary is used for JannyAI's MeiliSearch hits (searchJanny()) AND for the
+ * "character" object scraped from the Astro island props on the character detail
+ * page (fetchCharacterDetails() in janny-provider.js:310-358) - a completely
+ * different JannyAI data path that independently uses identical field names for
+ * id/name/avatar/tagIds/totalToken/description. That's strong evidence this is
+ * the canonical JannyAI Character record shape, which /api/get-characters (a real
+ * JannyAI backend endpoint, not MeiliSearch) most likely also returns.
+ *
+ * The one field NOT reliably present on that canonical record is
+ * `creatorUsername`: the page-scrape path has to derive it separately by
+ * regexing "Creator: @username" out of the rendered HTML (janny-provider.js:342-349),
+ * implying the backend record itself may carry only `creatorId`. Bookmarked
+ * cards may therefore show a blank creator line until confirmed live - flagged
+ * as a PENDING item in task-6-report.md rather than guessed at further here.
+ *
+ * Field-name fallbacks below mirror the defensive alt-id handling already in
+ * this file (see jannyCharId() ~line 690, which anticipates `characterId`/`uuid`
+ * as possible alternates to `id` for bookmark-sourced records).
+ */
+function normalizeBookmarkChar(raw) {
+    if (!raw || typeof raw !== 'object') return raw;
+
+    return {
+        ...raw,
+        id: raw.id ?? raw.characterId ?? raw.uuid ?? null,
+        name: raw.name || raw.title || 'Unknown',
+        avatar: raw.avatar ?? raw.avatarUrl ?? raw.image ?? '',
+        description: raw.description ?? raw.bio ?? '',
+        tagIds: Array.isArray(raw.tagIds) ? raw.tagIds : [],
+        totalToken: raw.totalToken ?? raw.tokenCount ?? raw.total_tokens ?? 0,
+        creatorUsername: raw.creatorUsername || raw.creatorName || raw.username || '',
+        creatorId: raw.creatorId ?? null,
+        createdAt: raw.createdAt ?? null,
+        createdAtStamp: raw.createdAtStamp ?? null,
+    };
+}
+
+/**
+ * Load the user's JannyAI bookmarks as the grid's data source (replacing the
+ * MeiliSearch search results). Per Task 6 resolution #5, the bookmark cap
+ * (~220) is small enough that fetchJannyBookmarkCharacters() batching + a
+ * single renderGrid(chars, false) call is sufficient - no load-more slicing.
+ */
+async function loadJannyBookmarksView() {
+    const thisToken = ++jannyLoadToken;
+    jannyIsLoading = true;
+
+    const grid = document.getElementById('jannyGrid');
+    if (grid) renderSkeletonGrid(grid);
+
+    try {
+        await refreshJannyBookmarkIds();
+        if (thisToken !== jannyLoadToken || !delegatesInitialized) return;
+
+        const ids = [...getJannyBookmarkIds()];
+        const rawChars = await fetchJannyBookmarkCharacters(ids);
+        if (thisToken !== jannyLoadToken || !delegatesInitialized) return;
+
+        jannyCharacters = rawChars.map(normalizeBookmarkChar);
+        jannyHasMore = false;
+
+        renderGrid(jannyCharacters, false);
+
+        if (jannyCharacters.length === 0 && grid) {
+            grid.innerHTML = `
+                <div style="grid-column: 1 / -1; padding: 40px; text-align: center; color: var(--text-muted);">
+                    <i class="fa-solid fa-bookmark" style="font-size: 2rem; opacity: 0.5;"></i>
+                    <p style="margin-top: 12px; font-weight: 600;">No bookmarks yet</p>
+                    <p style="margin-top: 8px; font-size: 0.9em;">Bookmark characters on JannyAI to see them here.</p>
+                </div>
+            `;
+        }
+
+        debugLog('[JannyBrowse] Loaded', jannyCharacters.length, 'bookmarked characters');
+    } catch (err) {
+        if (thisToken !== jannyLoadToken) return;
+        console.error('[JannyBrowse] Bookmarks load error:', err);
+        showToast(`Failed to load JannyAI bookmarks: ${err.message}`, 'error');
+        if (grid) {
+            grid.innerHTML = `
+                <div style="grid-column: 1 / -1; padding: 40px; text-align: center; color: var(--text-muted);">
+                    <i class="fa-solid fa-exclamation-triangle" style="font-size: 2rem; color: var(--cl-error-bright);"></i>
+                    <p style="margin-top: 12px;">Could not load bookmarks: ${escapeHtml(err.message)}</p>
+                    <button class="glass-btn" style="margin-top: 12px;" id="jannyBookmarksRetryBtn">
+                        <i class="fa-solid fa-redo"></i> Retry
+                    </button>
+                </div>
+            `;
+            const retryBtn = document.getElementById('jannyBookmarksRetryBtn');
+            if (retryBtn) retryBtn.addEventListener('click', () => loadJannyBookmarksView());
+        }
+    } finally {
+        if (thisToken === jannyLoadToken) jannyIsLoading = false;
+    }
+}
+
+/** Turn the "My Bookmarks" filter back off (checkbox + state), without reloading. */
+function resetJannyBookmarksFilter() {
+    if (!jannyFilterBookmarks) return false;
+    jannyFilterBookmarks = false;
+    const cb = document.getElementById('jannyFilterBookmarks');
+    if (cb) cb.checked = false;
+    updateJannyFiltersButton();
+    return true;
+}
+
+// ========================================
 // PREVIEW MODAL
 // ========================================
 
@@ -478,7 +611,7 @@ function openPreviewModal(hit) {
 
     const name = hit.name || 'Unknown';
     const creatorNotes = stripHtml(hit.description) || '';
-    const avatarUrl = hit.avatar ? `${JANNY_IMAGE_BASE}${hit.avatar}` : '/img/ai4.png';
+    const avatarUrl = jannyAvatarUrl(hit.avatar);
     const tags = resolveTagNames(hit.tagIds);
     const tokens = formatNumber(hit.totalToken || 0);
     const charId = hit.id || '';
@@ -979,7 +1112,7 @@ function updateJannyFiltersButton() {
     const btn = document.getElementById('jannyFiltersBtn');
     if (!btn) return;
 
-    const active = jannyShowLowQuality || jannyFilterHideOwned || jannyFilterHidePossible;
+    const active = jannyShowLowQuality || jannyFilterHideOwned || jannyFilterHidePossible || jannyFilterBookmarks;
     btn.classList.toggle('has-filters', active);
 }
 
@@ -1163,6 +1296,23 @@ function initJannyView() {
         updateJannyFiltersButton();
         jannyCurrentPage = 1;
         loadCharacters(false);
+    });
+
+    on('jannyFilterBookmarks', 'change', (e) => {
+        const checked = e.target.checked;
+        if (checked && !jannyConnected) {
+            showToast('Connect JannyAI to view your bookmarks', 'warning');
+            e.target.checked = false;
+            jannyFilterBookmarks = false;
+            return;
+        }
+        jannyFilterBookmarks = checked;
+        updateJannyFiltersButton();
+        if (jannyFilterBookmarks) {
+            loadJannyBookmarksView();
+        } else {
+            doSearch();
+        }
     });
 
     // Close dropdowns when clicking outside
@@ -1468,6 +1618,11 @@ async function jannyLogoutAction() {
 
     await renderJannyAccountState();
     updateJannyLoginUI();
+
+    // "My Bookmarks" is a data source that requires a connected session - if it
+    // was active, fall back to normal search rather than leaving a stale
+    // now-unreachable bookmarks grid on screen.
+    if (resetJannyBookmarksFilter()) doSearch();
 }
 
 // ========================================
@@ -1570,6 +1725,9 @@ class JannyBrowseView extends BrowseView {
                 <div id="jannyFiltersDropdown" class="dropdown-menu browse-features-dropdown hidden" style="width: 240px;">
                     <div class="dropdown-section-title">Content:</div>
                     <label class="filter-checkbox"><input type="checkbox" id="jannyFilterLowQuality"> <i class="fa-solid fa-filter-circle-xmark"></i> Show Low-Quality</label>
+                    <hr style="margin: 8px 0; border-color: var(--glass-border);">
+                    <div class="dropdown-section-title">Personal <span style="font-size: 0.8em; opacity: 0.6;">(requires JannyAI connection)</span>:</div>
+                    <label class="filter-checkbox"><input type="checkbox" id="jannyFilterBookmarks"> <i class="fa-solid fa-bookmark"></i> My Bookmarks</label>
                     <hr style="margin: 8px 0; border-color: var(--glass-border);">
                     <div class="dropdown-section-title">Library:</div>
                     <label class="filter-checkbox"><input type="checkbox" id="jannyFilterHideOwned"> <i class="fa-solid fa-check"></i> Hide Owned Characters</label>

@@ -513,6 +513,9 @@ const DEFAULT_SETTINGS = {
     ctNsfw: false,
     datacatNsfw: false,
 
+    // ---- JannyAI Account Sync ----
+    jannyBookmarkCap: 220,
+
     // ---- Search & Sort ----
     defaultSort: 'name_asc',
     defaultFilterPreset: '',
