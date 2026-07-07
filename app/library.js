@@ -530,6 +530,9 @@ const DEFAULT_SETTINGS = {
     // ---- Duplicate Detection ----
     duplicateMinScore: 35,
 
+    // ---- Online / Browse ----
+    possibleMatchMinScore: 65,
+
     // ---- Gallery & Media ----
     includeProviderGallery: true,
     includeLorebook: false,
@@ -1597,6 +1600,8 @@ function setupSettingsModal() {
     const datacatSessionStatus = document.getElementById('datacatSessionStatus');
     const minScoreSlider = document.getElementById('settingsMinScore');
     const minScoreValue = document.getElementById('minScoreValue');
+    const possibleMatchScoreSlider = document.getElementById('settingsPossibleMatchScore');
+    const possibleMatchScoreValue = document.getElementById('possibleMatchScoreValue');
     const importDirectDownloadsCheckbox = document.getElementById('settingsImportDirectDownloads');
     
     // Search defaults
@@ -2648,6 +2653,13 @@ function setupSettingsModal() {
         const minScore = getSetting('duplicateMinScore') || 35;
         minScoreSlider.value = minScore;
         minScoreValue.textContent = parseInt(minScore) >= 120 ? 'Exact' : minScore;
+
+        if (possibleMatchScoreSlider) {
+            const pmScore = Number(getSetting('possibleMatchMinScore'));
+            const pmVal = Number.isFinite(pmScore) ? pmScore : 65;
+            possibleMatchScoreSlider.value = pmVal;
+            if (possibleMatchScoreValue) possibleMatchScoreValue.textContent = String(pmVal);
+        }
         if (importDirectDownloadsCheckbox) {
             importDirectDownloadsCheckbox.checked = getSetting('importDirectDownloads') === true;
         }
@@ -2967,6 +2979,11 @@ function setupSettingsModal() {
     minScoreSlider.oninput = () => {
         minScoreValue.textContent = formatMinScore(minScoreSlider.value);
     };
+    if (possibleMatchScoreSlider) {
+        possibleMatchScoreSlider.oninput = () => {
+            if (possibleMatchScoreValue) possibleMatchScoreValue.textContent = possibleMatchScoreSlider.value;
+        };
+    }
     
     // Live preview highlight color
     if (highlightColorInput) {
@@ -3195,6 +3212,7 @@ function setupSettingsModal() {
             wyvernPassword: wyvernPasswordInput ? (wyvernPasswordInput.value || null) : null,
             wyvernRememberCredentials: wyvernRememberCredsCheckbox ? wyvernRememberCredsCheckbox.checked : false,
             duplicateMinScore: parseInt(minScoreSlider.value),
+            possibleMatchMinScore: possibleMatchScoreSlider ? parseInt(possibleMatchScoreSlider.value) : 65,
             importDirectDownloads: importDirectDownloadsCheckbox ? importDirectDownloadsCheckbox.checked : false,
             searchInName: searchNameCheckbox.checked,
             searchInListingName: searchListingNameCheckbox ? searchListingNameCheckbox.checked : true,
@@ -3327,6 +3345,8 @@ function setupSettingsModal() {
         if (currentView === 'online') {
             activateOnlineProvider(lastOnlineProviderId);
         }
+        // Re-grade possible-match badges so a changed sensitivity threshold shows immediately.
+        window.ProviderRegistry?.refreshActiveBrowseBadges?.();
     };
     
     // Save settings
@@ -3371,6 +3391,10 @@ function setupSettingsModal() {
         if (wyvernRememberCredsCheckbox) wyvernRememberCredsCheckbox.checked = false;
         minScoreSlider.value = DEFAULT_SETTINGS.duplicateMinScore;
         minScoreValue.textContent = String(DEFAULT_SETTINGS.duplicateMinScore);
+        if (possibleMatchScoreSlider) {
+            possibleMatchScoreSlider.value = DEFAULT_SETTINGS.possibleMatchMinScore;
+            if (possibleMatchScoreValue) possibleMatchScoreValue.textContent = String(DEFAULT_SETTINGS.possibleMatchMinScore);
+        }
         if (importDirectDownloadsCheckbox) {
             importDirectDownloadsCheckbox.checked = DEFAULT_SETTINGS.importDirectDownloads;
         }
@@ -6328,6 +6352,23 @@ async function getCharacterGalleryInfo(char) {
         debugLog('[Gallery] Error getting gallery info:', e);
         return { folder: folderName, files: [], count: 0 };
     }
+}
+
+// Extensions the gallery viewer can display. Audio + everything else is excluded; the gallery tab lists audio in its own section.
+const GALLERY_IMAGE_RE = /\.(png|jpg|jpeg|webp|gif|bmp)$/i;
+const GALLERY_VIDEO_RE = /\.(mp4|webm|mov|avi|mkv|m4v)$/i;
+
+// Shape a raw gallery file listing into the {name, url, type} list openGalleryViewerWithImages wants, matching what the gallery tab feeds it. Drops audio/non-media; type drives img-vs-video render.
+function buildGalleryViewerMedia(files, folderName) {
+    const media = [];
+    for (const f of (files || [])) {
+        const name = (typeof f === 'string') ? f : f?.name;
+        if (!name) continue;
+        const type = GALLERY_IMAGE_RE.test(name) ? 'image' : GALLERY_VIDEO_RE.test(name) ? 'video' : null;
+        if (!type) continue;
+        media.push({ name, url: `/user/images/${encodeURIComponent(folderName)}/${encodeURIComponent(name)}`, type });
+    }
+    return media;
 }
 
 /**
@@ -9342,11 +9383,11 @@ function renderGalleryImages(files, folderName) {
         const fileName = (typeof file === 'string') ? file : file.name;
         if (!fileName) return;
         
-        if (fileName.match(/\.(png|jpg|jpeg|webp|gif|bmp)$/i)) {
+        if (GALLERY_IMAGE_RE.test(fileName)) {
             imageFiles.push(fileName);
-        } else if (fileName.match(/\.(mp4|webm|mov|avi|mkv|m4v)$/i)) {
+        } else if (GALLERY_VIDEO_RE.test(fileName)) {
             videoFiles.push(fileName);
-        } else if (fileName.match(/\.(mp3|wav|ogg|m4a|flac|aac)$/i)) {
+        } else if (/\.(mp3|wav|ogg|m4a|flac|aac)$/i.test(fileName)) {
             audioFiles.push(fileName);
         }
     });
@@ -25295,10 +25336,11 @@ async function viewDupCharGallery(el) {
             return;
         }
 
-        const images = info.files.map(fileName => ({
-            name: fileName,
-            url: `/user/images/${encodeURIComponent(info.folder)}/${encodeURIComponent(fileName)}`
-        }));
+        const images = buildGalleryViewerMedia(info.files, info.folder);
+        if (!images.length) {
+            showToast('No viewable media found', 'info');
+            return;
+        }
 
         if (window.openGalleryViewerWithImages) {
             window.openGalleryViewerWithImages(images, 0, char.name || 'Gallery', info.folder);
@@ -25312,19 +25354,15 @@ async function viewDupCharGallery(el) {
 }
 
 
-// Detail-modal hero avatar -> gallery viewer, avatar is image 0 and the chars gallery images are appended as prev/next.
+// Detail-modal hero avatar -> gallery viewer; avatar is image 0, then the char's viewable gallery media (images + videos, no audio) via the shared builder so it matches the gallery tab.
 async function openAvatarInGalleryViewer(char) {
     if (!char || !window.openGalleryViewerWithImages) return;
-    const images = [{ name: char.name || 'Avatar', url: getCharacterAvatarUrl(char.avatar) }];
+    const images = [{ name: char.name || 'Avatar', url: getCharacterAvatarUrl(char.avatar), type: 'image' }];
     let folder = null;
     try {
         const info = await getCharacterGalleryInfo(char);
         folder = info.folder || null;
-        if (info.files?.length) {
-            for (const f of info.files) {
-                images.push({ name: f, url: `/user/images/${encodeURIComponent(info.folder)}/${encodeURIComponent(f)}` });
-            }
-        }
+        images.push(...buildGalleryViewerMedia(info.files, info.folder));
     } catch (e) {
         debugLog('[AvatarViewer] gallery fetch failed, showing avatar only:', e);
     }

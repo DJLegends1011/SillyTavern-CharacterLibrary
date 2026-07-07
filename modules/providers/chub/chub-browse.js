@@ -3265,7 +3265,8 @@ function createChubCard(char, isTimeline = false) {
     const avatarUrl = char.avatar_url || (fullPath ? `https://avatars.charhub.io/avatars/${fullPath}/avatar.webp` : '/img/ai4.png');
 
     const inLibrary = isCharInLocalLibrary(char);
-    const possibleMatch = !inLibrary && view.isCharPossibleMatch(char.name || '', creatorName);
+    const possibleTier = inLibrary ? null : view.getPossibleMatchTier(char.name || '', creatorName);
+    const possibleMatch = !!possibleTier?.show;
 
     const tags = (char.topics || []).slice(0, 3);
     
@@ -3274,7 +3275,7 @@ function createChubCard(char, isTimeline = false) {
     if (inLibrary) {
         badges.push('<span class="browse-feature-badge in-library" title="In Your Library"><i class="fa-solid fa-check"></i></span>');
     } else if (possibleMatch) {
-        badges.push('<span class="browse-feature-badge possible-library" title="Possible Match in Library"><i class="fa-solid fa-check"></i></span>');
+        badges.push(`<span class="browse-feature-badge possible-library pl-${possibleTier.tier}" title="${possibleTier.tooltip}"><i class="fa-solid fa-check"></i></span>`);
     }
     if (char.hasGallery) {
         badges.push('<span class="browse-feature-badge gallery" title="Has Gallery"><i class="fa-solid fa-images"></i></span>');
@@ -3465,7 +3466,8 @@ async function openChubCharPreview(char) {
     const avatarUrl = char.avatar_url || (fullPath ? `https://avatars.charhub.io/avatars/${fullPath}/avatar.webp` : '/img/ai4.png');
     const creatorName = fullPath.split('/')[0] || 'Unknown';
     const inLibrary = isCharInLocalLibrary(char);
-    const possibleMatch = !inLibrary && view.isCharPossibleMatch(char.name || '', creatorName);
+    const possibleTier = inLibrary ? null : view.getPossibleMatchTier(char.name || '', creatorName);
+    const possibleMatch = !!possibleTier?.show;
     
     avatarImg.src = avatarUrl;
     avatarImg.onerror = () => { avatarImg.src = '/img/ai4.png'; };

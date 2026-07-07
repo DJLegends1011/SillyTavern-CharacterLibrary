@@ -178,13 +178,14 @@ function createCtCard(hit) {
     const tokens = formatNumber(hit.totalTokens || 0);
     const author = hit.author || hit.path?.split('/')[0] || '';
     const inLibrary = isCharInLocalLibrary(hit);
-    const possibleMatch = !inLibrary && view.isCharPossibleMatch(hit.name || '', author);
+    const possibleTier = inLibrary ? null : view.getPossibleMatchTier(hit.name || '', author);
+    const possibleMatch = !!possibleTier?.show;
 
     const badges = [];
     if (inLibrary) {
         badges.push('<span class="browse-feature-badge in-library" title="In Your Library"><i class="fa-solid fa-check"></i></span>');
     } else if (possibleMatch) {
-        badges.push('<span class="browse-feature-badge possible-library" title="Possible Match in Library"><i class="fa-solid fa-check"></i></span>');
+        badges.push(`<span class="browse-feature-badge possible-library pl-${possibleTier.tier}" title="${possibleTier.tooltip}"><i class="fa-solid fa-check"></i></span>`);
     }
     if (hit.hasLorebook) {
         badges.push('<span class="browse-feature-badge" title="Has Lorebook"><i class="fa-solid fa-book"></i></span>');
@@ -413,7 +414,8 @@ function openPreviewModal(hit) {
     const avatarUrl = hit.path ? getAvatarUrl(hit.path) : '/img/ai4.png';
     const ctUrl = hit.path ? getCharacterPageUrl(hit.path) : '#';
     const inLibrary = isCharInLocalLibrary(hit);
-    const possibleMatch = !inLibrary && view.isCharPossibleMatch(hit.name || '', author);
+    const possibleTier = inLibrary ? null : view.getPossibleMatchTier(hit.name || '', author);
+    const possibleMatch = !!possibleTier?.show;
 
     let charDef = '';
 

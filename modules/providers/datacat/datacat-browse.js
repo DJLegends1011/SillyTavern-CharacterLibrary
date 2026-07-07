@@ -320,7 +320,8 @@ function createDatacatCard(hit) {
     const charId = getCharId(hit);
     const creatorName = getCreatorName(hit);
     const inLibrary = isCharInLocalLibrary(hit);
-    const possibleMatch = !inLibrary && view.isCharPossibleMatch(hit.name || '', creatorName);
+    const possibleTier = inLibrary ? null : view.getPossibleMatchTier(hit.name || '', creatorName);
+    const possibleMatch = !!possibleTier?.show;
 
     // Tags are only present on creator endpoint items, not recent-public
     const tags = resolveTagNames(hit.tags || []).slice(0, 3);
@@ -329,7 +330,7 @@ function createDatacatCard(hit) {
     if (inLibrary) {
         badges.push('<span class="browse-feature-badge in-library" title="In Your Library"><i class="fa-solid fa-check"></i></span>');
     } else if (possibleMatch) {
-        badges.push('<span class="browse-feature-badge possible-library" title="Possible Match in Library"><i class="fa-solid fa-check"></i></span>');
+        badges.push(`<span class="browse-feature-badge possible-library pl-${possibleTier.tier}" title="${possibleTier.tooltip}"><i class="fa-solid fa-check"></i></span>`);
     }
 
     const sourceBadges = [];
@@ -2471,7 +2472,8 @@ function openPreviewModal(hit) {
     const tags = resolveTagNames(hit.tags || []);
     const creatorName = getCreatorName(hit) || 'Unknown';
     const inLibrary = isCharInLocalLibrary(hit);
-    const possibleMatch = !inLibrary && view.isCharPossibleMatch(hit.name || '', creatorName);
+    const possibleTier = inLibrary ? null : view.getPossibleMatchTier(hit.name || '', creatorName);
+    const possibleMatch = !!possibleTier?.show;
 
     const chatCount = getChatCount(hit);
     const msgCount = getMsgCount(hit);
