@@ -27,6 +27,8 @@ COLOR TOKENS (override on :root to retheme the whole app):
   --glass-border         Border for glass surfaces (rgba(255, 255, 255, 0.1)).
   --card-bg              Background for character grid cards (rgba(40, 40, 40, 0.4)).
   --cl-favorite-gold     Gold accent for favorite indicators and the favorite-button hover treatment (#ffd700). Has a matching --cl-favorite-gold-rgb (255, 215, 0) for rgba() tints.
+  --cl-in-library        Cyan "in your library" badge on Online browse cards (#00bcd4, companion --cl-in-library-rgb 0, 188, 212). Semantic category color, deliberately outside the status tiers so an accent retheme keeps its meaning.
+  --cl-possible-match    Amber "possible match in library" badge on Online browse cards (#f0a500, companion --cl-possible-match-rgb 240, 165, 0). The icon alpha grades by confidence tier over this token (.possible-library.pl-high 1.0 / base .pl-med 0.72 / .pl-low 0.5). NOTE the dark badge background is a HARDCODED rgba(0,0,0,0.7) shared by all .browse-feature-badge and does NOT follow this token; only the glyph color does.
 
 --cl-* MODULE-DIALOG TOKEN FAMILY (surface + text only; the accent is unified into the core --accent chain, there is no separate --cl-accent anymore):
   --cl-border            General-purpose border token for module dialogs. Used for internal dividers, panel outlines, dashed borders across batch-tagging, card-updates, character-versions, context-menu, playlists. NOT used by .cl-btn: the base button is borderless, and the DEFAULT glass button style adds its own hardcoded 1px rgba(255,255,255,0.08) border that follows neither this token nor the accent (target :root[data-btn-style="glass"] .cl-btn to restyle it).

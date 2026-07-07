@@ -282,14 +282,18 @@ function isPostInLocalLibrary(post) {
 }
 
 function isPostPossibleMatch(post) {
-    if (isPostInLocalLibrary(post)) return false;
+    return !!postPossibleTier(post)?.show;
+}
+
+function postPossibleTier(post) {
+    if (isPostInLocalLibrary(post)) return null;
     // The Writer tag is the creator credit; the resolved uploader name is the
     // fallback signal. With NO creator signal, a name-only match would flag
     // half the catalog (generic character names), so skip the badge instead.
     const creator = getBotbooruWriterTag(post)
         || (post.uploader_id != null ? bbUploaderNames.get(String(post.uploader_id)) : '') || '';
-    if (!creator) return false;
-    return view.isCharPossibleMatch(post.character_name || '', creator);
+    if (!creator) return null;
+    return view.getPossibleMatchTier(post.character_name || '', creator);
 }
 
 function markBotbooruCardAsImported(id) {
@@ -2532,7 +2536,8 @@ function createBotbooruCard(post) {
     const creatorName = writerTag || (bodyUploaderId ? (bbUploaderNames.get(bodyUploaderId) || '') : '');
 
     const inLibrary = isPostInLocalLibrary(post);
-    const possibleMatch = !inLibrary && isPostPossibleMatch(post);
+    const possibleTier = inLibrary ? null : postPossibleTier(post);
+    const possibleMatch = !!possibleTier?.show;
 
     // General/Scenario tags read best on cards; Meta/Language entries are mostly
     // noise. Uploads/favorites payloads carry string tags (category null after
@@ -2548,7 +2553,7 @@ function createBotbooruCard(post) {
     if (inLibrary) {
         badges.push('<span class="browse-feature-badge in-library" title="In Your Library"><i class="fa-solid fa-check"></i></span>');
     } else if (possibleMatch) {
-        badges.push('<span class="browse-feature-badge possible-library" title="Possible Match in Library"><i class="fa-solid fa-check"></i></span>');
+        badges.push(`<span class="browse-feature-badge possible-library pl-${possibleTier.tier}" title="${possibleTier.tooltip}"><i class="fa-solid fa-check"></i></span>`);
     }
     if (post.is_fork) {
         badges.push('<span class="browse-feature-badge" title="Fork of another card"><i class="fa-solid fa-code-fork"></i></span>');
@@ -2701,7 +2706,8 @@ async function openBotbooruCharPreview(post) {
     const name = post.character_name || 'Unknown';
     const avatarUrl = post.filename ? getBotbooruPreviewUrl(post.filename, post.card_image_revision) : '/img/ai4.png';
     const inLibrary = isPostInLocalLibrary(post);
-    const possibleMatch = !inLibrary && isPostPossibleMatch(post);
+    const possibleTier = inLibrary ? null : postPossibleTier(post);
+    const possibleMatch = !!possibleTier?.show;
 
     avatarImg.src = avatarUrl;
     // Full-size source for the avatar viewers (desktop handler + the mobile

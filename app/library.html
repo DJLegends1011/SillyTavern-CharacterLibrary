@@ -6,7 +6,7 @@
     <meta name="color-scheme" content="dark">
     <meta name="referrer" content="no-referrer">
     <title>SillyTavern Character Library</title>
-    <link rel="stylesheet" href="library.css?v=103">
+    <link rel="stylesheet" href="library.css?v=104">
     <link rel="stylesheet" href="library-mobile.css?v=33" media="screen and (max-width: 768px)">
     <!-- Noto Sans from SillyTavern's bundled webfonts -->
     <link rel="stylesheet" href="/webfonts/NotoSans/stylesheet.css">
@@ -1481,6 +1481,7 @@ https://jannyai.com/characters/uuid_slug
                                 <li>Toggle NSFW content visibility per provider</li>
                                 <li><strong>Infinite scroll</strong> automatically loads more results as you scroll down (toggleable per provider in Settings)</li>
                                 <li>Cards already in your library are marked with an <strong>"In Library"</strong> badge</li>
+                                <li>Cards that look like a character you already have get a <strong>"Possible Match"</strong> badge, even across providers. It triggers on a matching name and creator, or on a distinctive name reposted under a different handle (a common case: the same card reuploaded to another site). The badge brightens with confidence (faint = name-only hunch, bright = near-certain). Tune how readily it appears with the <strong>Possible Match sensitivity</strong> slider in Settings → Online, or hide flagged cards with each provider's "Hide possible matches" filter. It is a hint, not a block; the import screen still runs a full content comparison to catch true duplicates the badge can't see from name alone.</li>
                                 <li>Click a card to preview the full character details and gallery images, then import with one click</li>
                                 <li>Set <strong>Collapse all browse preview sections by default</strong> in Settings → General → Character Details to start each preview with all sections collapsed except creator's notes (cleaner view for large cards)</li>
                                 <li>Some providers support login for additional features (favorites, following lists)</li>
@@ -2348,6 +2349,20 @@ https://jannyai.com/characters/uuid_slug
                             </div>
                         </div>
 
+                        <!-- Possible Match Detection -->
+                        <div class="settings-group">
+                            <div class="settings-group-title"><i class="fa-solid fa-clone"></i> Possible Match Detection</div>
+                            <p class="settings-hint" style="margin-bottom: 12px;">Online cards that look like a character already in your library get a "Possible Match" badge whose brightness reflects confidence.</p>
+                            <div class="settings-row">
+                                <label for="settingsPossibleMatchScore">Sensitivity:</label>
+                                <div class="settings-slider-group">
+                                    <input type="range" id="settingsPossibleMatchScore" min="0" max="100" step="5" value="65">
+                                    <span id="possibleMatchScoreValue">65</span>
+                                </div>
+                                <span class="settings-hint">Lower = more flags (looser); higher = stricter. Each provider's "Hide possible matches" filter removes flagged cards from the grid entirely.</span>
+                            </div>
+                        </div>
+
                         <!-- ChubAI provider settings -->
                         <details class="settings-provider-section">
                             <summary>
@@ -3050,7 +3065,7 @@ https://jannyai.com/characters/uuid_slug
                         <div class="settings-group">
                             <div class="settings-group-title"><i class="fa-solid fa-info-circle"></i> Version Info</div>
                             <div class="settings-row">
-                                <span class="settings-hint" style="font-family: monospace;">Character Library v6.4.1</span>
+                                <span class="settings-hint" style="font-family: monospace;">Character Library v6.4.2</span>
                             </div>
                         </div>
 
@@ -3206,7 +3221,7 @@ https://jannyai.com/characters/uuid_slug
     <div id="toastContainer" class="toast-container"></div>
 
     <!-- Scripts -->
-    <script src="library.js?v=191"></script>
+    <script src="library.js?v=192"></script>
     <script type="module" src="../modules/module-loader.js?v=43"></script>
     <script src="library-mobile.js?v=21"></script>
 </body>
