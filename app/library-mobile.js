@@ -3822,15 +3822,23 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
                 menu.appendChild(item);
             });
 
-            // The favorite heart lives in the header meta line, which is hidden on
-            // mobile; providers that support favoriting mark it with .browse-fav-toggle
+            // The favorite/bookmark toggle lives in the header meta line or modal
+            // controls, which are hidden on mobile; providers that support it mark
+            // it with .browse-fav-toggle. Read the toggle's own icon to decide
+            // whether it's a "favorite" (heart) or "bookmark" toggle so wording
+            // stays correct per-provider without hardcoding a provider name here.
             const favBtn = controls.closest('.browse-char-modal')?.querySelector('.browse-fav-toggle');
             if (favBtn) {
                 const faved = favBtn.classList.contains('favorited');
+                const isBookmark = !!favBtn.querySelector('i.fa-bookmark');
+                const glyph = isBookmark ? 'fa-bookmark' : 'fa-heart';
+                const label = isBookmark
+                    ? (faved ? 'Remove bookmark' : 'Bookmark')
+                    : (faved ? 'Unfavorite' : 'Favorite');
                 const item = document.createElement('button');
                 item.type = 'button';
                 item.className = 'mobile-more-actions-item';
-                item.innerHTML = `<i class="fa-${faved ? 'solid' : 'regular'} fa-heart"></i> ${faved ? 'Unfavorite' : 'Favorite'}`;
+                item.innerHTML = `<i class="fa-${faved ? 'solid' : 'regular'} ${glyph}"></i> ${label}`;
                 item.addEventListener('click', (ev) => {
                     ev.stopPropagation();
                     closeMenu();

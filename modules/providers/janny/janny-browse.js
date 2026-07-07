@@ -18,6 +18,9 @@ import {
     jannyAuthStatus,
     disconnectJanny,
     jannyHelperAvailable,
+    toggleJannyBookmark,
+    getJannyBookmarkIds,
+    refreshJannyBookmarkIds,
 } from './janny-api.js';
 
 const {
@@ -550,6 +553,8 @@ function openPreviewModal(hit) {
     }
     importBtn.disabled = false;
 
+    updateJannyBookmarkButton(hit);
+
     modal.classList.remove('hidden');
     const charBody = modal.querySelector('.browse-char-body');
     if (charBody) charBody.scrollTop = 0;
@@ -676,6 +681,49 @@ function cleanupJannyCharModal() {
     }
     const notesEl = document.getElementById('jannyCharCreatorNotes');
     if (notesEl) cleanupCreatorNotesContainer(notesEl);
+}
+
+// ========================================
+// BOOKMARK BUTTON (character modal)
+// ========================================
+
+/** JannyAI character id - same UUID namespace the /api/bookmark endpoint returns. */
+function jannyCharId(char) {
+    return char?.id || char?.characterId || char?.uuid || null;
+}
+
+/** Sync the bookmark toggle's icon/label/visibility to the given character's saved state. */
+function updateJannyBookmarkButton(char) {
+    const btn = document.getElementById('jannyCharBookmarkBtn');
+    const label = document.getElementById('jannyCharBookmarkLabel');
+    if (!btn) return;
+    const id = jannyCharId(char);
+    const saved = !!id && getJannyBookmarkIds().has(id);
+    btn.classList.toggle('favorited', saved);
+    const icon = btn.querySelector('i');
+    if (icon) icon.className = saved ? 'fa-solid fa-bookmark' : 'fa-regular fa-bookmark';
+    if (label) label.textContent = saved ? 'Remove bookmark' : 'Bookmark';
+    btn.title = saved ? 'Remove bookmark on JannyAI' : 'Bookmark on JannyAI';
+    btn.style.display = jannyConnected ? '' : 'none';
+}
+
+/** Toggle the bookmark state of the currently open JannyAI character modal's character. */
+async function toggleJannyCharBookmark() {
+    if (!jannyConnected) { showToast('Connect JannyAI first', 'info'); return; }
+    const char = jannySelectedChar; // the modal's open-character variable (set in openPreviewModal)
+    const id = jannyCharId(char);
+    if (!id) return;
+    const btn = document.getElementById('jannyCharBookmarkBtn');
+    const wasSaved = getJannyBookmarkIds().has(id);
+    btn?.classList.add('loading');
+    const result = await toggleJannyBookmark(id, !wasSaved);
+    btn?.classList.remove('loading');
+    if (!result.ok) {
+        showToast(result.error || 'JannyAI bookmark failed', 'error');
+    } else {
+        showToast(wasSaved ? 'Removed bookmark' : 'Bookmarked on JannyAI', 'success');
+    }
+    updateJannyBookmarkButton(char);
 }
 
 function closePreviewModal() {
@@ -1160,6 +1208,8 @@ function initJannyView() {
             if (jannySelectedChar) importCharacter(jannySelectedChar);
         });
 
+        on('jannyCharBookmarkBtn', 'click', () => toggleJannyCharBookmark());
+
         const modalOverlay = document.getElementById('jannyCharModal');
         if (modalOverlay) {
             modalOverlay.addEventListener('click', (e) => {
@@ -1313,6 +1363,10 @@ async function renderJannyAccountState() {
         box.classList.add('connected');
         label.textContent = `JannyAI: ${status.bookmarkCount ?? 0} bookmarked`;
         box.title = 'Connected to JannyAI — click to manage';
+        // Populate the local bookmark id set (eg. on page load with an already-valid
+        // session) so the character modal's bookmark button reflects saved state
+        // without requiring a fresh connect action.
+        if (getJannyBookmarkIds().size === 0) await refreshJannyBookmarkIds();
     } else if (status.reason === 'session expired or rejected') {
         box.classList.add('expired');
         label.textContent = 'JannyAI session expired';
@@ -1321,6 +1375,9 @@ async function renderJannyAccountState() {
         label.textContent = 'Connect JannyAI';
         box.title = 'Connect your JannyAI account to sync bookmarks';
     }
+
+    // Keep an already-open character modal's bookmark button in sync (eg. after connect/disconnect).
+    if (jannySelectedChar) updateJannyBookmarkButton(jannySelectedChar);
 }
 
 async function openJannyLoginModal() {
@@ -1606,6 +1663,9 @@ class JannyBrowseView extends BrowseView {
                     <button id="jannyImportBtn" class="action-btn primary" title="Download to SillyTavern">
                         <i class="fa-solid fa-download"></i> Import
                     </button>
+                    <span id="jannyCharBookmarkBtn" class="janny-bookmark-btn-inline browse-fav-toggle"
+                          title="Bookmark on JannyAI"><i class="fa-regular fa-bookmark"></i>
+                        <span id="jannyCharBookmarkLabel">Bookmark</span></span>
                     <button class="close-btn" id="jannyCharClose">&times;</button>
                 </div>
             </div>

@@ -68,3 +68,7 @@
     color: var(--text-muted);
     font-style: italic;
 }
+
+.janny-bookmark-btn-inline { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.janny-bookmark-btn-inline.favorited { color: var(--active, #4caf50); }
+.janny-bookmark-btn-inline.loading { opacity: 0.5; pointer-events: none; }
