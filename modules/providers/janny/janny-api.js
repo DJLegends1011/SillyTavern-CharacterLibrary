@@ -128,7 +128,7 @@ export async function jannyHelperAvailable() {
     if (!_apiRequest) return false;
     try {
         const resp = await _apiRequest(`${CL_HELPER_PLUGIN_BASE}/health`);
-        return !!resp && (resp.ok === true || resp.status === 200 || resp.status === undefined);
+        return resp?.ok === true;
     } catch { return false; }
 }
 
@@ -154,7 +154,8 @@ export async function jannyAuthStatus() {
     if (!_apiRequest) return { connected: false, reason: 'no cl-helper' };
     try {
         const resp = await _apiRequest(`${CL_HELPER_PLUGIN_BASE}/jy-validate`);
-        const data = typeof resp?.json === 'function' ? await resp.json() : resp;
+        if (!resp?.ok) return { connected: false, reason: `HTTP ${resp?.status}` };
+        const data = await resp.json().catch(() => ({}));
         return { connected: !!data?.valid, bookmarkCount: data?.bookmarkCount, reason: data?.reason };
     } catch (e) {
         return { connected: false, reason: e.message };
@@ -176,7 +177,11 @@ export async function refreshJannyBookmarkIds() {
     if (!_apiRequest) return _bookmarkIds;
     try {
         const resp = await _apiRequest(`${JANNY_PROXY_BASE}/api/bookmark`);
-        const data = typeof resp?.json === 'function' ? await resp.json() : resp;
+        if (!resp?.ok) {
+            console.warn('[JannyAPI] refresh bookmarks failed: HTTP', resp?.status);
+            return _bookmarkIds;
+        }
+        const data = await resp.json().catch(() => ({}));
         const ids = Array.isArray(data) ? data : (data?.characterIds || data?.ids || []);
         for (const id of ids) _bookmarkIds.add(typeof id === 'string' ? id : id?.id);
     } catch (e) {
@@ -193,10 +198,15 @@ export async function toggleJannyBookmark(id, add) {
         if (!guard.ok) return { ok: false, error: guard.reason };
     }
     try {
+        let resp;
         if (add) {
-            await _apiRequest(`${JANNY_PROXY_BASE}/api/bookmark`, 'POST', { characterIds: [id] });
+            resp = await _apiRequest(`${JANNY_PROXY_BASE}/api/bookmark`, 'POST', { characterIds: [id] });
         } else {
-            await _apiRequest(`${JANNY_PROXY_BASE}/api/bookmark?ids=${encodeURIComponent(id)}`, 'DELETE');
+            resp = await _apiRequest(`${JANNY_PROXY_BASE}/api/bookmark?ids=${encodeURIComponent(id)}`, 'DELETE');
+        }
+        if (!resp?.ok) {
+            const detail = await resp?.text?.().catch(() => '');
+            return { ok: false, error: detail || `HTTP ${resp?.status}` };
         }
         reconcileBookmarkSet(_bookmarkIds, [id], add);
         return { ok: true };
@@ -212,7 +222,11 @@ export async function fetchJannyBookmarkCharacters(ids) {
         const chunk = ids.slice(i, i + GET_CHARACTERS_CHUNK);
         try {
             const resp = await _apiRequest(`${JANNY_PROXY_BASE}/api/get-characters?ids=${chunk.map(encodeURIComponent).join(',')}`);
-            const data = typeof resp?.json === 'function' ? await resp.json() : resp;
+            if (!resp?.ok) {
+                console.warn('[JannyAPI] get-characters chunk failed: HTTP', resp?.status);
+                continue;
+            }
+            const data = await resp.json().catch(() => ({}));
             const list = Array.isArray(data) ? data : (data?.characters || data?.results || []);
             out.push(...list);
         } catch (e) {
