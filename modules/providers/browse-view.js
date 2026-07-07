@@ -14,6 +14,21 @@ const _sharedBaseLookup = {
     gen: -1,
 };
 let _baseLookupGen = 0;
+// getPossibleMatchScore reads only the shared base, so a name|creator score is identical for every
+// provider. Memo the SCORE cross-provider (threshold-independent, so the sensitivity slider re-reads
+// it for free); cleared when the base gen advances or a char is added incrementally.
+const _possibleMatchMemo = new Map();
+let _possibleMatchMemoGen = -1;
+
+// Possible-match scoring: 0-100. The sensitivity slider (possibleMatchMinScore) sets the show cutoff;
+// the tier bands are fixed so a card reads the same intensity regardless ofthe chosen cutoff.
+const POSSIBLE_MATCH_DEFAULT_MIN_SCORE = 65;
+const POSSIBLE_MATCH_TIER_HIGH = 85;
+const POSSIBLE_MATCH_TIER_MED = 65;
+function getPossibleMatchMinScore() {
+    const n = Number(CoreAPI.getSetting('possibleMatchMinScore'));
+    return Number.isFinite(n) ? n : POSSIBLE_MATCH_DEFAULT_MIN_SCORE;
+}
 
 /** Mark the shared base stale so the next build recomputes it. O(1). */
 export function invalidateSharedBaseLookup() {
@@ -257,6 +272,9 @@ export class BrowseView {
      */
     addCharToLookup(char) {
         if (!char) return;
+        // A new local char can create fresh possible-matches; the incremental path below doesn't bump
+        // the gen, so drop the memo here or stale "not a match" verdicts would survive the import.
+        _possibleMatchMemo.clear();
         if (this._lookup.byNameAndCreator !== _sharedBaseLookup.byNameAndCreator
             || _sharedBaseLookup.gen !== _baseLookupGen) {
             // This view is not on the current shared base; rebuild fresh from the live list
@@ -291,35 +309,88 @@ export class BrowseView {
      * @returns {boolean}
      */
     isCharPossibleMatch(name, creator) {
+        return this.getPossibleMatchScore(name, creator) >= getPossibleMatchMinScore();
+    }
+
+    /**
+     * Cross-provider memoized possible-match score (0-100). Threshold-independent, so the
+     * sensitivity slider re-reads it without recomputing.
+     */
+    getPossibleMatchScore(name, creator) {
+        if (_possibleMatchMemoGen !== _baseLookupGen) {
+            _possibleMatchMemo.clear();
+            _possibleMatchMemoGen = _baseLookupGen;
+        }
+        const key = `${(name || '').toLowerCase().trim()}|${(creator || '').toLowerCase().trim()}`;
+        let score = _possibleMatchMemo.get(key);
+        if (score === undefined) {
+            score = this._computePossibleMatchScore(name, creator);
+            _possibleMatchMemo.set(key, score);
+        }
+        return score;
+    }
+
+    /**
+     * Graded badge data for a browse card: whether to show it, the intensity tier, the tooltip.
+     * @returns {{show: boolean, tier: string, tooltip: string}}
+     */
+    getPossibleMatchTier(name, creator) {
+        const score = this.getPossibleMatchScore(name, creator);
+        if (score < getPossibleMatchMinScore()) return { show: false, tier: '', tooltip: '' };
+        if (score >= POSSIBLE_MATCH_TIER_HIGH) return { show: true, tier: 'high', tooltip: 'Very likely in your library' };
+        if (score >= POSSIBLE_MATCH_TIER_MED) return { show: true, tier: 'med', tooltip: 'Likely the same character' };
+        return { show: true, tier: 'low', tooltip: 'Possible match (same name)' };
+    }
+
+    _computePossibleMatchScore(name, creator) {
         const browseCreator = (creator || '').toLowerCase().trim();
         const variants = this._nameVariants(name);
+        let best = 0;
 
+        // Exact normalized-name match: base 60, full 95 when the creator agrees (or none to disagree).
         for (const variant of variants) {
             const creatorSet = this._lookup.byNormalizedName.get(variant);
             if (!creatorSet) continue;
-
-            if (!browseCreator || creatorSet.size === 0) return true;
-
+            if (!browseCreator || creatorSet.size === 0) { best = Math.max(best, 95); continue; }
+            let creatorHit = false;
             for (const libCreator of creatorSet) {
-                if (this._isCreatorMatch(browseCreator, libCreator)) return true;
+                if (this._isCreatorMatch(browseCreator, libCreator)) { creatorHit = true; break; }
             }
+            best = Math.max(best, creatorHit ? 95 : 60 + this._distinctiveBonus(variant, creatorSet));
         }
+        if (best >= 95) return best;
 
-        // Prefix fallback: check all browse variants against all library names
+        // Prefix fallback: weaker name signal (base 35), eg. "scar" against "scar - the dark king".
         for (const variant of variants) {
             if (variant.length < 4) continue;
             for (const [libName, creatorSet] of this._lookup.byNormalizedName) {
                 if (libName.length < 4) continue;
-                if (this._isNamePrefixMatch(variant, libName)) {
-                    if (!browseCreator || creatorSet.size === 0) return true;
-                    for (const libCreator of creatorSet) {
-                        if (this._isCreatorMatch(browseCreator, libCreator)) return true;
-                    }
+                if (!this._isNamePrefixMatch(variant, libName)) continue;
+                if (!browseCreator || creatorSet.size === 0) { best = Math.max(best, 70); continue; }
+                let creatorHit = false;
+                for (const libCreator of creatorSet) {
+                    if (this._isCreatorMatch(browseCreator, libCreator)) { creatorHit = true; break; }
                 }
+                best = Math.max(best, creatorHit ? 70 : 35 + Math.round(this._distinctiveBonus(variant, creatorSet) * 0.5));
             }
         }
+        return best;
+    }
 
-        return false;
+    /**
+     * Bonus (0-30) for an exact-name match whose creator does NOT agree: longer, more-worded names
+     * are likelier a genuine cross-handle repost; a name the library already holds under 3+ creators
+     * is demonstrably common and gets damped back down.
+     */
+    _distinctiveBonus(normName, creatorSet) {
+        const clamp01 = (x) => (x < 0 ? 0 : x > 1 ? 1 : x);
+        const lenScore = clamp01((normName.length - 12) / 20) * 20;
+        let words = 0;
+        for (const w of normName.split(' ')) if (w.length >= 2) words++;
+        const wordScore = clamp01((words - 1) / 4) * 10;
+        const rarity = creatorSet.size >= 3 ? 25 : 0;
+        const bonus = lenScore + wordScore - rarity;
+        return bonus < 0 ? 0 : bonus > 30 ? 30 : bonus;
     }
 
     /**
@@ -425,13 +496,19 @@ export class BrowseView {
                 }
             }
 
-            for (const card of grid.querySelectorAll('.browse-card:not(.in-library):not(.possible-library)')) {
+            for (const card of grid.querySelectorAll('.browse-card:not(.in-library)')) {
                 const name = card.querySelector('.browse-card-name')?.textContent || '';
                 const creatorEl = card.querySelector('.browse-card-creator-link');
                 const creator = creatorEl?.dataset.author || creatorEl?.dataset.creatorName || '';
-                if (!this.isCharPossibleMatch(name, creator)) continue;
-                card.classList.add('possible-library');
+                const tier = this.getPossibleMatchTier(name, creator);
                 let badgesEl = card.querySelector(BOTTOM_BADGES_SEL);
+                const existing = badgesEl?.querySelector('.possible-library');
+                if (!tier.show) {
+                    card.classList.remove('possible-library');
+                    existing?.remove();
+                    continue;
+                }
+                card.classList.add('possible-library');
                 if (!badgesEl) {
                     const imgWrap = card.querySelector('.browse-card-image');
                     if (imgWrap) {
@@ -439,8 +516,12 @@ export class BrowseView {
                         badgesEl = imgWrap.querySelector(BOTTOM_BADGES_SEL);
                     }
                 }
-                if (badgesEl && !badgesEl.querySelector('.possible-library')) {
-                    badgesEl.insertAdjacentHTML('afterbegin', '<span class="browse-feature-badge possible-library" title="Possible Match in Library"><i class="fa-solid fa-check"></i></span>');
+                if (!badgesEl) continue;
+                if (existing) {
+                    existing.className = `browse-feature-badge possible-library pl-${tier.tier}`;
+                    existing.title = tier.tooltip;
+                } else {
+                    badgesEl.insertAdjacentHTML('afterbegin', `<span class="browse-feature-badge possible-library pl-${tier.tier}" title="${tier.tooltip}"><i class="fa-solid fa-check"></i></span>`);
                 }
             }
         }

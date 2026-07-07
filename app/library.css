@@ -11630,6 +11630,12 @@ html.cl-initial-loading .mobile-fab {
     /* Favorite-star gold. Universal idiom; deliberately outside the status tiers. */
     --cl-favorite-gold: #ffd700;
     --cl-favorite-gold-rgb: 255, 215, 0;
+    /* Online browse-grid match badges. Semantic category colors (cyan = owned, amber = possible),
+       deliberately outside the status tiers so an accent retheme leaves their meaning intact. */
+    --cl-in-library: #00bcd4;
+    --cl-in-library-rgb: 0, 188, 212;
+    --cl-possible-match: #f0a500;
+    --cl-possible-match-rgb: 240, 165, 0;
     /* Modal scrim tiers by overlay depth. Heavy for full-screen primary modals
        (char detail, creator, confirm). Standard for module dialogs over an
        app surface. Light for nested overlays on top of an already-modal layer. */

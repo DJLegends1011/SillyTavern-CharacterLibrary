@@ -2340,7 +2340,8 @@ function createWyvernCard(char) {
     const avatarUrl = getAvatarUrl(char);
 
     const inLibrary = isCharInLocalLibrary(char);
-    const possibleMatch = !inLibrary && view.isCharPossibleMatch(char.name || '', creatorName);
+    const possibleTier = inLibrary ? null : view.getPossibleMatchTier(char.name || '', creatorName);
+    const possibleMatch = !!possibleTier?.show;
 
     const tags = (char.tags || []).slice(0, 3);
 
@@ -2348,7 +2349,7 @@ function createWyvernCard(char) {
     if (inLibrary) {
         badges.push('<span class="browse-feature-badge in-library" title="In Your Library"><i class="fa-solid fa-check"></i></span>');
     } else if (possibleMatch) {
-        badges.push('<span class="browse-feature-badge possible-library" title="Possible Match in Library"><i class="fa-solid fa-check"></i></span>');
+        badges.push(`<span class="browse-feature-badge possible-library pl-${possibleTier.tier}" title="${possibleTier.tooltip}"><i class="fa-solid fa-check"></i></span>`);
     }
     if (char.lorebooks?.length > 0) {
         badges.push('<span class="browse-feature-badge" title="Has Lorebook"><i class="fa-solid fa-book"></i></span>');
@@ -2461,7 +2462,8 @@ async function openWyvernCharPreview(char) {
     const avatarUrl = getAvatarUrl(char);
     const creatorName = char.creator?.displayName || char.creator?.username || 'Unknown';
     const inLibrary = isCharInLocalLibrary(char);
-    const possibleMatch = !inLibrary && view.isCharPossibleMatch(char.name || '', creatorName);
+    const possibleTier = inLibrary ? null : view.getPossibleMatchTier(char.name || '', creatorName);
+    const possibleMatch = !!possibleTier?.show;
 
     avatarImg.src = avatarUrl;
     avatarImg.onerror = () => { avatarImg.src = '/img/ai4.png'; };
