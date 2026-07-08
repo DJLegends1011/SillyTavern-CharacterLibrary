@@ -1319,12 +1319,12 @@ function updateNsfwToggle() {
 // ========================================
 
 function jannyAccountOptions() {
-    return { flareSolverrUrl: (getSetting('datacatFlareSolverrUrl') || '').trim() };
+    return {};
 }
 
 function describeJannyAccountError(err) {
     if (err?.cloudflare) {
-        return 'Cloudflare challenged the helper request. Refresh the Janny Cookie header, paste the matching User-Agent, and configure FlareSolverr if direct helper requests still 403.';
+        return 'Cloudflare challenged direct helper requests. Refresh the Janny Cookie header from a normal JannyAI tab; if it still 403s, JannyAI is rejecting non-browser helper sync.';
     }
     return err?.message || String(err || 'unknown error');
 }
@@ -1810,7 +1810,7 @@ class JannyBrowseView extends BrowseView {
                 <div class="browse-author-banner">
                     <div class="browse-author-banner-content">
                         <i class="fa-solid fa-user-lock"></i>
-                        <span><strong>Janny Account Sync</strong> <span class="browse-author-banner-hint">Bookmarks and collections use cl-helper. Cloudflare may require FlareSolverr.</span></span>
+                        <span><strong>Janny Account Sync</strong> <span class="browse-author-banner-hint">Bookmarks and collections use cl-helper. <a href="${JANNY_SITE_BASE}/collections" target="_blank" rel="noopener noreferrer">Open JannyAI</a> in a normal tab to login or copy cookies.</span></span>
                     </div>
                     <div class="browse-author-banner-actions">
                         <span id="jannyAccountStatus" class="settings-status-badge inactive"><i class="fa-solid fa-circle"></i> Checking...</span>

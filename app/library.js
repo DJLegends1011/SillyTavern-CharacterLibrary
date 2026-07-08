@@ -2153,11 +2153,7 @@ function setupSettingsModal() {
     }
 
     function buildJannySettingsValidateEndpoint() {
-        const params = new URLSearchParams();
-        const flareUrl = (getSetting('datacatFlareSolverrUrl') || '').trim();
-        if (flareUrl) params.set('flareUrl', flareUrl);
-        const query = params.toString();
-        return `/plugins/cl-helper/janny-validate${query ? `?${query}` : ''}`;
+        return '/plugins/cl-helper/janny-validate';
     }
 
     async function readJannySettingsValidateResult() {
@@ -2175,7 +2171,7 @@ function setupSettingsModal() {
             const session = await readJannySettingsAccountJson('/plugins/cl-helper/janny-session');
             if (!session.active) {
                 setJannySettingsAccountStatus('inactive', 'Not connected');
-                setJannySettingsAccountHint('Paste a logged-in jannyai.com Cookie header, then click Save Cookie.');
+                setJannySettingsAccountHint('Paste a logged-in jannyai.com Cookie header, then click Save Cookie. Use the JannyAI link above to open a normal tab for login or cookie copying.');
                 return { active: false, valid: false };
             }
 
@@ -2193,7 +2189,7 @@ function setupSettingsModal() {
             }
             if (result.cloudflare) {
                 setJannySettingsAccountStatus('inactive', 'Cloudflare challenged', 'fa-solid fa-cloud');
-                setJannySettingsAccountHint('Refresh your Cookie header and configure FlareSolverr under DataCat if Cloudflare keeps blocking helper requests.');
+                setJannySettingsAccountHint('Cloudflare is blocking direct helper requests. Refresh the Cookie header from a normal JannyAI tab; if it still fails, JannyAI is rejecting non-browser helper sync.');
                 return { active: true, valid: false, cloudflare: true };
             }
             setJannySettingsAccountStatus('inactive', 'Cookie rejected', 'fa-solid fa-circle-xmark');

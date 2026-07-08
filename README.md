@@ -507,7 +507,7 @@ JannyAI protects account endpoints with Cloudflare and uses HttpOnly cookies, so
 3. Copy the full `Cookie` request header for a logged-in JannyAI request
 4. Open Settings > Online > JannyAI, paste the cookie header under **JannyAI Account Sync**, and validate. The JanitorAI browse toolbar also has an **Account** shortcut for the same cl-helper session.
 
-If JannyAI starts challenging the helper, paste the matching `User-Agent` request header and configure a [FlareSolverr](https://github.com/FlareSolverr/FlareSolverr) endpoint in Settings > Online > DataCat. Character Library reuses that setting for JannyAI account sync warmups. Bookmark adds are guarded at JannyAI's current 220-bookmark UI limit; if your account is already full, remove one bookmark before adding another.
+If JannyAI starts challenging the helper, refresh the `Cookie` and matching `User-Agent` headers from a normal JannyAI browser tab and validate again. If it still reports a Cloudflare challenge, JannyAI is rejecting non-browser helper requests; Character Library will show that cleanly instead of dumping the challenge body. Bookmark adds are guarded at JannyAI's current 220-bookmark UI limit; if your account is already full, remove one bookmark before adding another.
 
 </details>
 

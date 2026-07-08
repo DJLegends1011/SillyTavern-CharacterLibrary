@@ -13,6 +13,7 @@ test('JannyAI settings expose account sync controls', () => {
         'jannySettingsSaveCookieBtn',
         'jannySettingsValidateBtn',
         'jannySettingsClearSessionBtn',
+        'jannySettingsOpenJannyLink',
         'jannySettingsAccountHint',
     ];
 
@@ -22,6 +23,7 @@ test('JannyAI settings expose account sync controls', () => {
 
     assert.match(html, /JannyAI Account Sync/);
     assert.match(html, /Cookie header/);
+    assert.match(html, /id="jannySettingsOpenJannyLink"[^>]+href="https:\/\/jannyai\.com\/collections"/);
 });
 
 test('JannyAI settings account controls are wired to cl-helper routes', () => {
@@ -41,7 +43,13 @@ test('JannyAI settings account controls are wired to cl-helper routes', () => {
     }
 });
 
-test('JannyAI settings validation passes the configured FlareSolverr URL', () => {
-    assert.match(js, /function buildJannySettingsValidateEndpoint[\s\S]*datacatFlareSolverrUrl[\s\S]*flareUrl/);
+test('JannyAI settings validation does not depend on DataCat FlareSolverr', () => {
+    const validateFn = js.match(/function buildJannySettingsValidateEndpoint\(\) \{[\s\S]*?\n    \}/)?.[0] || '';
+    assert.match(validateFn, /janny-validate/);
+    assert.doesNotMatch(validateFn, /datacatFlareSolverrUrl/);
     assert.match(js, /apiRequest\(buildJannySettingsValidateEndpoint\(\)\)/);
+});
+test('JannyAI settings do not use the experimental local browser helper routes', () => {
+    assert.doesNotMatch(js, /janny-browser-(start|status|stop)/);
+    assert.doesNotMatch(html, /Open Browser Login|Check Browser/);
 });
