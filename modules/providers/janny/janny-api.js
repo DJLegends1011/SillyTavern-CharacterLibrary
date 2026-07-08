@@ -213,11 +213,19 @@ function toIdArray(ids) {
     return [...new Set((Array.isArray(ids) ? ids : [ids]).map(String).filter(Boolean))];
 }
 
+// /api/bookmark returns [{ characterId, createdAt }], not bare id strings,
+// so pull the id out of each entry (tolerating a plain-string shape too).
+function bookmarkEntryId(entry) {
+    if (typeof entry === 'string') return entry;
+    if (entry && typeof entry === 'object') return entry.characterId || entry.character_id || entry.id || '';
+    return '';
+}
+
 export async function fetchJannyBookmarks(options = {}) {
     try {
         const data = await jannyAccountProxy('GET', '/api/bookmark', undefined, options);
         const bookmarks = data.json?.bookmarks || data.bookmarks || [];
-        return Array.isArray(bookmarks) ? bookmarks.map(String) : [];
+        return Array.isArray(bookmarks) ? bookmarks.map(bookmarkEntryId).filter(Boolean) : [];
     } catch (err) {
         if (!err.cloudflare) throw err;
         const data = await jannyAccountProxy('GET', '/bookmark', undefined, options);
