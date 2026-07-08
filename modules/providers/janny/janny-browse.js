@@ -14,8 +14,6 @@ import {
     stripHtml,
     resolveTagNames,
     checkJannyPluginAvailable,
-    setJannySessionCookie,
-    clearJannySession,
     getJannySessionStatus,
     validateJannySession,
     fetchJannyBookmarks,
@@ -90,6 +88,7 @@ const JANNY_BOOKMARK_UI_LIMIT = 220;
 let jannyBookmarkIds = new Set();
 let jannyBookmarksLoaded = false;
 let jannyBookmarkTotalCount = null;
+let jannyBookmarkLimitToastShown = false;
 let jannyAccountStatus = { plugin: false, active: false, valid: false, cloudflare: false, reason: '' };
 let jannyCollections = [];
 let jannyCollectionsLoaded = false;
@@ -1067,15 +1066,12 @@ function initJannyView() {
         jannyCurrentPage = 1;
         loadCharacters(false);
     });
-    on('jannyAccountBtn', 'click', (e) => {
+    on('jannyAccountStatusBtn', 'click', (e) => {
         e.stopPropagation();
-        toggleJannyAccountPanel();
+        document.getElementById('gallerySettingsBtn')?.click();
     });
     on('jannyCollectionsBtn', 'click', () => switchJannyCollectionsPanel(true));
     on('jannyBackToBrowseBtn', 'click', () => switchJannyCollectionsPanel(false));
-    on('jannySaveCookieBtn', 'click', () => saveJannyAccountCookieFromPanel());
-    on('jannyValidateBtn', 'click', () => refreshJannyAccountStatus({ validate: true }));
-    on('jannyClearSessionBtn', 'click', () => clearJannyAccountCookieFromPanel());
     on('jannyReloadCollectionsBtn', 'click', () => { jannyCollectionsLoaded = false; loadJannyCollections(true); });
     on('jannyCreateCollectionBtn', 'click', () => createCollectionFromPanel());
     on('jannyNewCollectionName', 'keydown', (e) => {
@@ -1086,12 +1082,7 @@ function initJannyView() {
     if (collectionsList) {
         collectionsList.addEventListener('click', (e) => {
             const openBtn = e.target.closest('.janny-open-collection');
-            if (openBtn) {
-                openJannyCollection(openBtn.dataset.collectionId);
-                return;
-            }
-            const addBtn = e.target.closest('.janny-add-current-to-collection');
-            if (addBtn) addSelectedJannyToCollection(addBtn.dataset.collectionId);
+            if (openBtn) openJannyCollection(openBtn.dataset.collectionId);
         });
     }
 
@@ -1355,10 +1346,10 @@ function normalizeJannyCollectionCharacter(item) {
 }
 
 async function refreshJannyAccountStatus({ validate = false, quiet = false } = {}) {
-    const statusEl = document.getElementById('jannyAccountStatus');
-    if (statusEl && !quiet) {
-        statusEl.className = 'settings-status-badge inactive';
-        statusEl.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Checking...';
+    const statusBtn = document.getElementById('jannyAccountStatusBtn');
+    if (statusBtn && !quiet) {
+        statusBtn.className = 'glass-btn settings-status-badge inactive';
+        statusBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Checking...';
     }
 
     const plugin = await checkJannyPluginAvailable();
@@ -1384,30 +1375,30 @@ async function refreshJannyAccountStatus({ validate = false, quiet = false } = {
 }
 
 function updateJannyAccountStatusUI() {
-    const statusEl = document.getElementById('jannyAccountStatus');
-    const topBtn = document.getElementById('jannyAccountBtn');
-    if (topBtn) topBtn.classList.toggle('active', !!jannyAccountStatus.active);
-    if (!statusEl) return;
+    const btn = document.getElementById('jannyAccountStatusBtn');
+    if (!btn) return;
 
     if (!jannyAccountStatus.plugin) {
-        statusEl.className = 'settings-status-badge inactive';
-        statusEl.innerHTML = '<i class="fa-solid fa-circle"></i> Plugin missing';
+        btn.className = 'glass-btn settings-status-badge inactive';
+        btn.innerHTML = '<i class="fa-solid fa-circle"></i> Not connected';
+        btn.title = 'cl-helper plugin not available — click to open Settings';
     } else if (jannyAccountStatus.valid) {
-        statusEl.className = 'settings-status-badge active';
-        statusEl.innerHTML = '<i class="fa-solid fa-circle-check"></i> Valid';
+        btn.className = 'glass-btn settings-status-badge active';
+        btn.innerHTML = '<i class="fa-solid fa-circle-check"></i> Connected';
+        btn.title = 'Janny account connected — click to open Settings';
     } else if (jannyAccountStatus.cloudflare) {
-        statusEl.className = 'settings-status-badge inactive';
-        statusEl.innerHTML = '<i class="fa-solid fa-cloud"></i> Cloudflare challenged';
+        btn.className = 'glass-btn settings-status-badge inactive';
+        btn.innerHTML = '<i class="fa-solid fa-cloud"></i> Cloudflare';
+        btn.title = jannyAccountStatus.reason || 'Cloudflare challenged the request — click to open Settings';
     } else if (jannyAccountStatus.active) {
-        statusEl.className = 'settings-status-badge active';
-        statusEl.innerHTML = '<i class="fa-solid fa-circle"></i> Cookie stored';
+        btn.className = 'glass-btn settings-status-badge active';
+        btn.innerHTML = '<i class="fa-solid fa-circle"></i> Connected';
+        btn.title = 'Janny account connected — click to open Settings';
     } else {
-        statusEl.className = 'settings-status-badge inactive';
-        statusEl.innerHTML = '<i class="fa-solid fa-circle"></i> Not connected';
+        btn.className = 'glass-btn settings-status-badge inactive';
+        btn.innerHTML = '<i class="fa-solid fa-circle"></i> Not connected';
+        btn.title = jannyAccountStatus.reason || 'Connect your Janny account — click to open Settings';
     }
-
-    const hint = document.getElementById('jannyAccountHint');
-    if (hint) hint.textContent = jannyAccountStatus.reason || '';
 }
 
 async function ensureJannyAccountReady() {
@@ -1419,8 +1410,7 @@ async function ensureJannyAccountReady() {
         return false;
     }
     if (!jannyAccountStatus.active) {
-        showToast('Paste your Janny Cookie header in the Account panel first', 'warning', 5000);
-        toggleJannyAccountPanel(true);
+        showToast('Connect your JannyAI account in Settings → Online → JannyAI', 'warning', 5000);
         return false;
     }
     return true;
@@ -1444,14 +1434,14 @@ function updateJannyBookmarkButton() {
     const isBookmarked = jannyBookmarkIds.has(id);
     const atLimit = !isBookmarked && (jannyBookmarkTotalCount || jannyBookmarkIds.size) >= JANNY_BOOKMARK_UI_LIMIT;
     btn.disabled = false;
-    btn.classList.toggle('primary', !isBookmarked && !atLimit);
-    btn.classList.toggle('secondary', isBookmarked || atLimit);
+    btn.classList.toggle('primary', !isBookmarked);
+    btn.classList.toggle('secondary', isBookmarked);
     btn.title = atLimit
-        ? 'Janny bookmark UI is at its max. Remove one on Janny first, or use collections.'
+        ? `Janny bookmark UI is at its max (${JANNY_BOOKMARK_UI_LIMIT}). Remove one on Janny first, or use collections.`
         : (isBookmarked ? 'Remove from Janny bookmarks' : 'Save to Janny bookmarks');
     btn.innerHTML = isBookmarked
         ? '<i class="fa-solid fa-bookmark"></i> Bookmarked'
-        : (atLimit ? '<i class="fa-solid fa-triangle-exclamation"></i> Bookmark Full' : '<i class="fa-regular fa-bookmark"></i> Bookmark');
+        : '<i class="fa-regular fa-bookmark"></i> Bookmark';
 }
 
 async function toggleSelectedJannyBookmark() {
@@ -1470,7 +1460,10 @@ async function toggleSelectedJannyBookmark() {
             showToast('Removed from Janny bookmarks', 'success');
         } else {
             if ((jannyBookmarkTotalCount || jannyBookmarkIds.size) >= JANNY_BOOKMARK_UI_LIMIT) {
-                showToast('Janny bookmarks are at the UI max. Remove one first to avoid breaking the bookmark page.', 'warning', 7000);
+                if (!jannyBookmarkLimitToastShown) {
+                    jannyBookmarkLimitToastShown = true;
+                    showToast(`Janny bookmarks are at the UI max (${JANNY_BOOKMARK_UI_LIMIT}). Remove one first, or use collections instead.`, 'warning', 7000);
+                }
                 return;
             }
             await addJannyBookmarks([id], jannyAccountOptions());
@@ -1483,44 +1476,6 @@ async function toggleSelectedJannyBookmark() {
     } finally {
         updateJannyBookmarkButton();
     }
-}
-
-function toggleJannyAccountPanel(force) {
-    const panel = document.getElementById('jannyAccountPanel');
-    if (!panel) return;
-    const show = force == null ? panel.classList.contains('hidden') : !!force;
-    panel.classList.toggle('hidden', !show);
-    if (show) refreshJannyAccountStatus({ validate: false, quiet: true });
-}
-
-async function saveJannyAccountCookieFromPanel() {
-    const cookie = document.getElementById('jannyCookieInput')?.value || '';
-    const userAgent = document.getElementById('jannyUserAgentInput')?.value || navigator.userAgent || '';
-    if (!cookie.trim()) {
-        showToast('Paste a Janny Cookie header first', 'warning');
-        return;
-    }
-    try {
-        await setJannySessionCookie(cookie, userAgent);
-        jannyBookmarksLoaded = false;
-        jannyCollectionsLoaded = false;
-        showToast('Janny account cookie saved', 'success');
-        await refreshJannyAccountStatus({ validate: true });
-    } catch (err) {
-        showToast(`Could not save Janny cookie: ${err.message}`, 'error', 7000);
-    }
-}
-
-async function clearJannyAccountCookieFromPanel() {
-    await clearJannySession();
-    jannyBookmarkIds.clear();
-    jannyBookmarksLoaded = false;
-    jannyCollections = [];
-    jannyCollectionsLoaded = false;
-    await refreshJannyAccountStatus({ validate: false });
-    renderJannyCollectionsList();
-    updateJannyBookmarkButton();
-    showToast('Janny account session cleared', 'info');
 }
 
 async function loadJannyCollections(force = false) {
@@ -1559,7 +1514,6 @@ function renderJannyCollectionsList() {
             </div>
             <div class="browse-author-banner-actions">
                 <button class="glass-btn janny-open-collection" data-collection-id="${escapeHtml(c.id)}"><i class="fa-solid fa-folder-open"></i> Open</button>
-                <button class="glass-btn janny-add-current-to-collection" data-collection-id="${escapeHtml(c.id)}"><i class="fa-solid fa-plus"></i> Add Current</button>
             </div>
         </div>
     `).join('');
@@ -1623,13 +1577,8 @@ async function addSelectedJannyToCollection(collectionId) {
     }
     if (!await ensureJannyAccountReady()) return;
     try {
-        if (!jannyBookmarksLoaded) await loadJannyBookmarks(false);
-        if (!jannyBookmarkIds.has(id)) {
-            showToast('Bookmark the card first, then add it to a collection.', 'warning', 5000);
-            return;
-        }
         await addJannyCharacterToCollection(collectionId, id, jannyAccountOptions());
-        showToast('Added bookmarked card to Janny collection', 'success');
+        showToast('Added to collection', 'success');
         if (jannyActiveCollection?.id === collectionId) openJannyCollection(collectionId);
     } catch (err) {
         showToast(`Could not add to collection: ${describeJannyAccountError(err)}`, 'error', 8000);
@@ -1639,21 +1588,32 @@ async function addSelectedJannyToCollection(collectionId) {
 async function createCollectionFromPanel() {
     const nameEl = document.getElementById('jannyNewCollectionName');
     const descEl = document.getElementById('jannyNewCollectionDescription');
+    const privateEl = document.getElementById('jannyNewCollectionPrivate');
+    const errorEl = document.getElementById('jannyCreateCollectionError');
     const name = (nameEl?.value || '').trim();
+
+    if (errorEl) { errorEl.classList.add('hidden'); errorEl.innerHTML = ''; }
+
     if (!name) {
         showToast('Name the collection first', 'warning');
         return;
     }
     if (!await ensureJannyAccountReady()) return;
     try {
-        await createJannyCollection({ name, description: descEl?.value || '', isPrivate: true }, jannyAccountOptions());
+        const isPrivate = privateEl ? !!privateEl.checked : true;
+        await createJannyCollection({ name, description: descEl?.value || '', isPrivate }, jannyAccountOptions());
         if (nameEl) nameEl.value = '';
         if (descEl) descEl.value = '';
         jannyCollectionsLoaded = false;
         await loadJannyCollections(true);
         showToast('Janny collection created', 'success');
     } catch (err) {
-        showToast(`Create collection failed: ${describeJannyAccountError(err)}`, 'error', 8000);
+        if (errorEl) {
+            errorEl.classList.remove('hidden');
+            errorEl.innerHTML = `Couldn't create the collection here (${escapeHtml(describeJannyAccountError(err))}). <a href="${JANNY_SITE_BASE}/collections/new" target="_blank" rel="noopener noreferrer">Create it on JannyAI</a> instead.`;
+        } else {
+            showToast(`Create collection failed: ${describeJannyAccountError(err)}`, 'error', 8000);
+        }
     }
 }
 
@@ -1718,7 +1678,8 @@ class JannyBrowseView extends BrowseView {
             tags: 'jannyTagsBtn',
             filters: 'jannyFiltersBtn',
             nsfw: 'jannyNsfwToggle',
-            refresh: 'jannyRefreshBtn'
+            refresh: 'jannyRefreshBtn',
+            collections: 'jannyCollectionsBtn'
         };
     }
 
@@ -1788,9 +1749,9 @@ class JannyBrowseView extends BrowseView {
             <button id="jannyNsfwToggle" class="glass-btn nsfw-toggle" title="Toggle NSFW content">
                 <i class="fa-solid fa-shield-halved"></i> <span>SFW Only</span>
             </button>
-            <!-- Account sync -->
-            <button id="jannyAccountBtn" class="glass-btn" title="Janny account sync">
-                <i class="fa-solid fa-user-lock"></i> <span>Account</span>
+            <!-- Account status (opens Settings) -->
+            <button id="jannyAccountStatusBtn" class="glass-btn settings-status-badge inactive" title="Janny account status — click to open Settings">
+                <i class="fa-solid fa-circle"></i> Checking...
             </button>
             <button id="jannyCollectionsBtn" class="glass-btn" title="Browse your Janny collections">
                 <i class="fa-solid fa-layer-group"></i> <span>Collections</span>
@@ -1806,28 +1767,6 @@ class JannyBrowseView extends BrowseView {
 
     renderView() {
         return `
-            <div id="jannyAccountPanel" class="browse-section hidden" style="margin-bottom: 12px;">
-                <div class="browse-author-banner">
-                    <div class="browse-author-banner-content">
-                        <i class="fa-solid fa-user-lock"></i>
-                        <span><strong>Janny Account Sync</strong> <span class="browse-author-banner-hint">Bookmarks and collections use cl-helper. <a href="${JANNY_SITE_BASE}/collections" target="_blank" rel="noopener noreferrer">Open JannyAI</a> in a normal tab to login or copy cookies.</span></span>
-                    </div>
-                    <div class="browse-author-banner-actions">
-                        <span id="jannyAccountStatus" class="settings-status-badge inactive"><i class="fa-solid fa-circle"></i> Checking...</span>
-                        <button id="jannyValidateBtn" class="glass-btn"><i class="fa-solid fa-shield"></i> Validate</button>
-                        <button id="jannyClearSessionBtn" class="glass-btn"><i class="fa-solid fa-right-from-bracket"></i> Clear</button>
-                    </div>
-                </div>
-                <div class="browse-search-bar" style="align-items: stretch; flex-direction: column; gap: 8px;">
-                    <textarea id="jannyCookieInput" class="glass-input" rows="3" placeholder="Paste the Cookie header from a logged-in jannyai.com request..." autocomplete="off" data-sensitive="true"></textarea>
-                    <input id="jannyUserAgentInput" class="glass-input" placeholder="Optional User-Agent (defaults to this browser)" autocomplete="off">
-                    <div class="browse-author-banner-actions" style="justify-content: flex-start;">
-                        <button id="jannySaveCookieBtn" class="action-btn primary"><i class="fa-solid fa-floppy-disk"></i> Save Cookie</button>
-                        <span id="jannyAccountHint" class="browse-author-banner-hint"></span>
-                    </div>
-                </div>
-            </div>
-
             <div id="jannyCollectionsSection" class="browse-section hidden">
                 <div class="browse-author-banner">
                     <div class="browse-author-banner-content">
@@ -1842,12 +1781,16 @@ class JannyBrowseView extends BrowseView {
                 <div class="browse-search-bar" style="align-items: stretch; flex-direction: column; gap: 8px;">
                     <div class="browse-search-input-wrapper">
                         <i class="fa-solid fa-plus"></i>
-                        <input type="search" id="jannyNewCollectionName" placeholder="New private collection name..." autocomplete="one-time-code">
+                        <input type="search" id="jannyNewCollectionName" placeholder="New collection name..." autocomplete="one-time-code">
                         <button id="jannyCreateCollectionBtn" class="browse-search-submit" title="Create collection">
                             <i class="fa-solid fa-arrow-right"></i>
                         </button>
                     </div>
                     <input type="search" id="jannyNewCollectionDescription" class="glass-input" placeholder="Optional description" autocomplete="one-time-code">
+                    <label class="browse-author-banner-hint" style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
+                        <input type="checkbox" id="jannyNewCollectionPrivate" checked> <i class="fa-solid fa-lock"></i> Private collection
+                    </label>
+                    <div id="jannyCreateCollectionError" class="browse-author-banner-hint hidden" style="color: var(--cl-error-bright);"></div>
                 </div>
                 <div id="jannyCollectionsList"></div>
                 <div class="browse-author-banner" id="jannyActiveCollectionBanner" style="margin-top: 12px;">
@@ -1943,16 +1886,16 @@ class JannyBrowseView extends BrowseView {
                     <div class="browse-char-tags" id="jannyCharTags"></div>
                 </div>
 
-                <!-- Account collections -->
+                <!-- Collections -->
                 <div class="browse-char-section" id="jannyCharAccountSection">
-                    <h3 class="browse-section-title" data-section="jannyCharAccount" data-label="Janny Account" data-icon="fa-solid fa-layer-group" title="Click to expand">
-                        <i class="fa-solid fa-layer-group"></i> Janny Account
+                    <h3 class="browse-section-title" data-section="jannyCharAccount" data-label="Collections" data-icon="fa-solid fa-layer-group" title="Click to expand">
+                        <i class="fa-solid fa-layer-group"></i> Collections
                     </h3>
                     <div class="browse-search-bar" style="padding: 0; gap: 8px;">
                         <select id="jannyCollectionSelect" class="glass-select" title="Choose collection">
                             <option value="">Choose collection...</option>
                         </select>
-                        <button id="jannyAddToCollectionBtn" class="glass-btn"><i class="fa-solid fa-plus"></i> Add bookmarked card</button>
+                        <button id="jannyAddToCollectionBtn" class="glass-btn"><i class="fa-solid fa-plus"></i> Add to collection</button>
                     </div>
                 </div>
 

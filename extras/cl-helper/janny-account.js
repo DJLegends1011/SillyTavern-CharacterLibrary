@@ -173,13 +173,24 @@ export function isAllowedJannyAccountRequest(method, path) {
         return false;
     }
 
-    // Best-effort support for create collection. If Janny changes this endpoint,
-    // the helper will still fail closed for every unrelated account API.
-    if (pathname === '/api/collections' && verb === 'POST') {
+    // Collection create/edit/delete are server-rendered Astro form POSTs
+    // (application/x-www-form-urlencoded, 302 redirect on success), not JSON APIs.
+    if (verb === 'POST' && JANNY_COLLECTION_FORM_PATHS.includes(pathname)) {
         return params.size === 0;
     }
 
     return false;
+}
+
+export const JANNY_COLLECTION_FORM_PATHS = [
+    '/collections/form/add-collection',
+    '/collections/form/edit-collection',
+    '/collections/form/delete-collection',
+];
+
+export function isJannyCollectionFormPath(path) {
+    const parsed = parseAccountPath(path);
+    return !!parsed && JANNY_COLLECTION_FORM_PATHS.includes(parsed.pathname);
 }
 
 export function buildJannyAccountUrl(path) {

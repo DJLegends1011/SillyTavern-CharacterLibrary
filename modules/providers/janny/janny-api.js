@@ -276,6 +276,18 @@ export async function removeJannyCharacterFromCollection(collectionId, character
 }
 
 export async function createJannyCollection({ name, description = '', isPrivate = true } = {}, options = {}) {
-    const data = await jannyAccountProxy('POST', '/api/collections', { name, description, isPrivate }, options);
-    return data.json || data;
+    // JannyAI has no JSON create API; it's a server-rendered form POST that
+    // answers 302 -> /collections/<id>_<slug>/edit. cl-helper form-encodes the
+    // body and surfaces that Location as `location`.
+    const body = { name, description, isPrivate: isPrivate ? 'yes' : 'no' };
+    let data;
+    try {
+        data = await jannyAccountProxy('POST', '/collections/form/add-collection', body, options);
+    } catch (err) {
+        if (err.status === 404 && !err.cloudflare) err.unsupported = true;
+        throw err;
+    }
+    const location = data.location || '';
+    const idMatch = location.match(/\/collections\/([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})/i);
+    return { success: true, id: idMatch ? idMatch[1] : null, location };
 }

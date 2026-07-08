@@ -5,6 +5,7 @@ import {
     buildFlareSolverrJannyRequest,
     detectJannyCloudflareChallenge,
     isAllowedJannyAccountRequest,
+    isJannyCollectionFormPath,
     jannyFamilyOrder,
     parseJannyBookmarkPage,
     sanitizeJannyCookieHeader,
@@ -86,6 +87,22 @@ test('isAllowedJannyAccountRequest allows only account sync endpoints', () => {
     assert.equal(isAllowedJannyAccountRequest('POST', '/api/collections/../../../characters'), false);
     assert.equal(isAllowedJannyAccountRequest('PUT', '/api/bookmark'), false);
     assert.equal(isAllowedJannyAccountRequest('GET', 'https://evil.example/api/bookmark'), false);
+});
+
+test('isAllowedJannyAccountRequest allows collection form POSTs but not the dead JSON create route', () => {
+    assert.equal(isAllowedJannyAccountRequest('POST', '/collections/form/add-collection'), true);
+    assert.equal(isAllowedJannyAccountRequest('POST', '/collections/form/edit-collection'), true);
+    assert.equal(isAllowedJannyAccountRequest('POST', '/collections/form/delete-collection'), true);
+    assert.equal(isAllowedJannyAccountRequest('GET', '/collections/form/add-collection'), false);
+    assert.equal(isAllowedJannyAccountRequest('POST', '/api/collections'), false);
+    assert.equal(isAllowedJannyAccountRequest('POST', '/collections/form/add-collection?x=1'), false);
+});
+
+test('isJannyCollectionFormPath recognizes only the form endpoints', () => {
+    assert.equal(isJannyCollectionFormPath('/collections/form/add-collection'), true);
+    assert.equal(isJannyCollectionFormPath('/collections/form/delete-collection'), true);
+    assert.equal(isJannyCollectionFormPath('/api/collections/mine'), false);
+    assert.equal(isJannyCollectionFormPath('https://evil.example/collections/form/add-collection'), false);
 });
 
 test('parseJannyBookmarkPage extracts count and unique character links', () => {

@@ -19,6 +19,7 @@ import {
     cookiesFromSetCookieHeader,
     detectJannyCloudflareChallenge,
     isAllowedJannyAccountRequest,
+    isJannyCollectionFormPath,
     jannyFamilyOrder,
     mergeCookieHeaders,
     sanitizeJannyCookieHeader,
@@ -960,12 +961,24 @@ function sanitizeJannyActionBody(method, path, body) {
         return { characterId };
     }
 
-    if (parsed.pathname === '/api/collections') {
+    if (parsed.pathname === '/collections/form/add-collection' || parsed.pathname === '/collections/form/edit-collection') {
         const name = typeof payload.name === 'string' ? payload.name.trim() : '';
         if (!name || name.length > 80) return null;
         const description = typeof payload.description === 'string' ? payload.description.trim().slice(0, 500) : '';
-        const isPrivate = payload.isPrivate !== false;
-        return { name, description, isPrivate };
+        const isPrivate = payload.isPrivate === 'no' || payload.isPrivate === false ? 'no' : 'yes';
+        const fields = { name, isPrivate, description };
+        if (parsed.pathname === '/collections/form/edit-collection') {
+            const id = typeof payload.id === 'string' ? payload.id.trim() : '';
+            if (!JANNY_UUID_RE.test(id)) return null;
+            fields.id = id;
+        }
+        return fields;
+    }
+
+    if (parsed.pathname === '/collections/form/delete-collection') {
+        const id = typeof payload.id === 'string' ? payload.id.trim() : '';
+        if (!JANNY_UUID_RE.test(id)) return null;
+        return { id };
     }
 
     return null;
@@ -1075,17 +1088,27 @@ async function fetchJannyAccountOnce({ method = 'GET', path = '/', body = undefi
     };
     if (cookieHeader) headers.Cookie = cookieHeader;
 
+    // Collection form endpoints are HTML form POSTs that answer with a 302
+    // redirect on success; everything else uses JSON (Astro actions read a
+    // text/plain body). Follow redirects for JSON, but capture them manually
+    // for forms so the success Location isn't traded for a heavy edit page.
+    const isForm = isJannyCollectionFormPath(path);
     let bodyStr;
     if (body !== undefined) {
-        headers['Content-Type'] = 'text/plain;charset=UTF-8';
-        bodyStr = JSON.stringify(body);
+        if (isForm) {
+            headers['Content-Type'] = 'application/x-www-form-urlencoded';
+            bodyStr = new URLSearchParams(body).toString();
+        } else {
+            headers['Content-Type'] = 'text/plain;charset=UTF-8';
+            bodyStr = JSON.stringify(body);
+        }
     }
 
     const response = await fetch(targetUrl, {
         method: verb,
         headers,
         body: bodyStr,
-        redirect: 'follow',
+        redirect: isForm ? 'manual' : 'follow',
         dispatcher,
     });
 
@@ -1096,6 +1119,22 @@ async function fetchJannyAccountOnce({ method = 'GET', path = '/', body = undefi
 
     const contentType = response.headers.get('content-type') || '';
     const headerObj = headersToObject(response.headers);
+
+    // A 3xx from a form POST means the mutation succeeded; the Location points
+    // at the resulting collection. No body to read, and never a challenge.
+    if (isForm && response.status >= 300 && response.status < 400) {
+        try { await response.body?.cancel?.(); } catch {}
+        return {
+            ok: true,
+            status: response.status,
+            contentType,
+            cloudflare: false,
+            body: '',
+            headers: headerObj,
+            location: headerObj.location || response.headers.get('location') || '',
+        };
+    }
+
     let cloudflare = detectJannyCloudflareChallenge({ status: response.status, headers: headerObj, body: '' });
     let text = '';
     if (!cloudflare) {
@@ -1255,9 +1294,13 @@ function registerJannyAccountRoutes(router) {
                 status: result.status,
                 contentType: result.contentType,
                 cloudflare: result.cloudflare,
+                ...(result.location ? { location: result.location } : {}),
                 ...summary,
             };
-            const status = result.cloudflare ? 403 : (result.status || 200);
+            // Map the upstream outcome onto our own HTTP status: challenges are
+            // 403, a successful form 302 collapses to 200, other failures keep
+            // their status so the client can distinguish 404 (unsupported).
+            const status = result.cloudflare ? 403 : (result.ok ? 200 : (result.status || 502));
             res.status(status).json(payload);
         } catch (err) {
             console.error('[cl-helper] JannyAI proxy error:', err.message);

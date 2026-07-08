@@ -2953,6 +2953,11 @@
     #onlineView .browse-search-bar {
         display: none !important;
     }
+    /* JannyAI collections panel renders in #onlineView (not .filters-wrapper), so its
+       "create collection" row shares the .browse-search-bar class - re-show just that one. */
+    #onlineView #jannyCollectionsSection .browse-search-bar {
+        display: flex !important;
+    }
     /* Per-provider filter chrome hidden on mobile (covered by Filters sheet, ie. createSettingsButton) */
     #onlineFilterArea.mobile-reparented #onlineFilterContent {
         display: none !important;
@@ -3588,6 +3593,51 @@
     /* Help nav - icon-only on phones */
     .help-nav-item span { display: none !important; }
     .help-nav-item i { font-size: var(--font-base) !important; margin: 0 !important; }
+
+    /* ---- JannyAI collections panel (Collections entry reachable via mobile settings
+       sheet chip; renders in #onlineView, not the hidden .filters-wrapper) ---- */
+    #jannyCollectionsSection .browse-search-bar {
+        padding: var(--space-sm-md);
+    }
+    /* Header ("Browse" / "Reload") and per-collection ("Open" / "Add Current") action
+       rows: wrap + fill so buttons get full-width touch targets instead of squeezing
+       side-by-side at ~380px. */
+    #jannyCollectionsSection .browse-author-banner-actions {
+        flex-wrap: wrap;
+        width: 100%;
+    }
+    #jannyCollectionsSection .browse-author-banner-actions .glass-btn {
+        flex: 1 1 auto;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: var(--touch-target-min);
+    }
+    #jannyCollectionsSection .browse-author-banner-content {
+        min-width: 0;
+    }
+    #jannyCollectionsSection .browse-author-banner-content span {
+        white-space: normal;
+    }
+
+    /* ---- JannyAI card-modal "Add to collection" row (#jannyCharAccountSection) ----
+       Stack the collection <select> above the "Add" button and force both full-width;
+       relying on flex stretch defaults for <select> is inconsistent across browsers. */
+    #jannyCharAccountSection .browse-search-bar {
+        flex-direction: column;
+        align-items: stretch;
+        gap: var(--space-sm);
+    }
+    #jannyCharAccountSection #jannyCollectionSelect,
+    #jannyCharAccountSection #jannyAddToCollectionBtn {
+        width: 100%;
+    }
+    #jannyCharAccountSection #jannyAddToCollectionBtn {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: var(--touch-target-min);
+    }
 
 }
 
