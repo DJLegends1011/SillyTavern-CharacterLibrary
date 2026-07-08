@@ -15,7 +15,8 @@ import {
     fetchWithProxy,
     slugify,
     stripHtml,
-    resolveTagNames
+    resolveTagNames,
+    setJannyApiRequest
 } from './janny-api.js';
 
 let api = null;
@@ -425,6 +426,7 @@ class JannyProvider extends ProviderBase {
     async init(coreAPI) {
         super.init(coreAPI);
         api = coreAPI;
+        setJannyApiRequest(coreAPI.apiRequest);
     }
 
     // ── View ────────────────────────────────────────────────
