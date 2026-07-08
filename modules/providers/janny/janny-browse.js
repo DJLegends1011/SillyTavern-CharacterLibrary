@@ -77,6 +77,7 @@ let jannyMinTokens = 29;
 let jannyMaxTokens = 100000;
 let jannyFilterHideOwned = false;
 let jannyFilterHidePossible = false;
+let jannyFilterOnlyBookmarked = false;
 /** @type {Set<number>} Active include tag IDs */
 let jannyIncludeTags = new Set();
 let jannyAuthorFilter = null;
@@ -356,6 +357,11 @@ async function loadCharacters(append = false) {
     }
 
     try {
+        if (jannyFilterOnlyBookmarked) {
+            await loadBookmarkedIntoGrid(thisToken);
+            return;
+        }
+
         const effectiveSearch = jannyAuthorFilter || jannyCurrentSearch;
         const data = await searchJanny({
             search: effectiveSearch,
@@ -470,6 +476,44 @@ async function loadCharacters(append = false) {
             }
         }
     }
+}
+
+// Renders the account's bookmarked characters instead of search results while
+// the "Only Bookmarked" feature filter is active. Details come from
+// /api/get-characters in batches (the ids query string is length-capped).
+async function loadBookmarkedIntoGrid(thisToken) {
+    const grid = document.getElementById('jannyGrid');
+    const ids = [...await loadJannyBookmarks(true)];
+    let chars = [];
+    for (let i = 0; i < ids.length; i += 50) {
+        const batch = await fetchJannyCharactersByIds(ids.slice(i, i + 50), jannyAccountOptions());
+        if (thisToken !== jannyLoadToken || !delegatesInitialized) return;
+        chars = chars.concat(batch.map(normalizeJannyCollectionCharacter).filter(Boolean));
+    }
+
+    const query = (jannyAuthorFilter || jannyCurrentSearch || '').trim().toLowerCase();
+    if (query) {
+        chars = chars.filter(c => (c.name || '').toLowerCase().includes(query)
+            || (c.description || '').toLowerCase().includes(query)
+            || (c.creatorUsername || '').toLowerCase().includes(query));
+    }
+    if (jannyFilterHideOwned) chars = chars.filter(h => !isCharInLocalLibrary(h));
+    if (jannyFilterHidePossible) chars = chars.filter(h => !isCharPossibleMatchObj(h));
+
+    jannyCharacters = chars;
+    jannyHasMore = false;
+    renderGrid(jannyCharacters, false);
+
+    if (jannyCharacters.length === 0 && grid) {
+        grid.innerHTML = `
+            <div style="grid-column: 1 / -1; padding: 40px; text-align: center; color: var(--text-muted);">
+                <i class="fa-regular fa-bookmark" style="font-size: 2rem; opacity: 0.5;"></i>
+                <p style="margin-top: 12px; font-weight: 600;">${query ? 'No bookmarks match your search' : 'No Janny bookmarks yet'}</p>
+                <p style="margin-top: 8px; font-size: 0.9em;">${query ? 'Clear the search to see all bookmarked cards.' : 'Bookmark cards from their preview to see them here.'}</p>
+            </div>
+        `;
+    }
+    debugLog('[JannyBrowse] Loaded', jannyCharacters.length, 'bookmarked characters');
 }
 
 // ========================================
@@ -945,7 +989,7 @@ function updateJannyFiltersButton() {
     const btn = document.getElementById('jannyFiltersBtn');
     if (!btn) return;
 
-    const active = jannyShowLowQuality || jannyFilterHideOwned || jannyFilterHidePossible;
+    const active = jannyShowLowQuality || jannyFilterHideOwned || jannyFilterHidePossible || jannyFilterOnlyBookmarked;
     btn.classList.toggle('has-filters', active);
 }
 
@@ -1066,10 +1110,6 @@ function initJannyView() {
         jannyCurrentPage = 1;
         loadCharacters(false);
     });
-    on('jannyAccountStatusBtn', 'click', (e) => {
-        e.stopPropagation();
-        document.getElementById('gallerySettingsBtn')?.click();
-    });
     on('jannyCollectionsBtn', 'click', () => switchJannyCollectionsPanel(true));
     on('jannyBackToBrowseBtn', 'click', () => switchJannyCollectionsPanel(false));
     on('jannyReloadCollectionsBtn', 'click', () => { jannyCollectionsLoaded = false; loadJannyCollections(true); });
@@ -1162,6 +1202,19 @@ function initJannyView() {
     on('jannyFilterHidePossible', 'change', () => {
         const el = document.getElementById('jannyFilterHidePossible');
         if (el) jannyFilterHidePossible = el.checked;
+        updateJannyFiltersButton();
+        jannyCurrentPage = 1;
+        loadCharacters(false);
+    });
+
+    on('jannyFilterOnlyBookmarked', 'change', async () => {
+        const el = document.getElementById('jannyFilterOnlyBookmarked');
+        if (!el) return;
+        if (el.checked && !await ensureJannyAccountReady()) {
+            el.checked = false;
+            return;
+        }
+        jannyFilterOnlyBookmarked = el.checked;
         updateJannyFiltersButton();
         jannyCurrentPage = 1;
         loadCharacters(false);
@@ -1345,65 +1398,34 @@ function normalizeJannyCollectionCharacter(item) {
     };
 }
 
-async function refreshJannyAccountStatus({ validate = false, quiet = false } = {}) {
-    const statusBtn = document.getElementById('jannyAccountStatusBtn');
-    if (statusBtn && !quiet) {
-        statusBtn.className = 'glass-btn settings-status-badge inactive';
-        statusBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Checking...';
-    }
-
+// Tracks account readiness for gating (ensureJannyAccountReady) only. There is
+// no browse-view status indicator — cookie/login state is shown in Settings,
+// matching every other provider.
+async function refreshJannyAccountStatus({ validate = false } = {}) {
     const plugin = await checkJannyPluginAvailable();
     if (!plugin) {
         jannyAccountStatus = { plugin: false, active: false, valid: false, cloudflare: false, reason: 'cl-helper plugin not available' };
-    } else {
-        const session = await getJannySessionStatus();
-        jannyAccountStatus = { plugin: true, active: !!session?.active, valid: false, cloudflare: false, reason: session?.active ? '' : 'No JannyAI cookie stored' };
-        if (validate && session?.active) {
-            const result = await validateJannySession(jannyAccountOptions());
-            jannyAccountStatus = {
-                plugin: true,
-                active: true,
-                valid: !!result?.valid,
-                cloudflare: !!result?.cloudflare,
-                reason: result?.reason || '',
-            };
-        }
+        return jannyAccountStatus;
     }
 
-    updateJannyAccountStatusUI();
+    const session = await getJannySessionStatus();
+    jannyAccountStatus = { plugin: true, active: !!session?.active, valid: false, cloudflare: false, reason: session?.active ? '' : 'No JannyAI cookie stored' };
+    if (validate && session?.active) {
+        const result = await validateJannySession(jannyAccountOptions());
+        jannyAccountStatus = {
+            plugin: true,
+            active: true,
+            valid: !!result?.valid,
+            cloudflare: !!result?.cloudflare,
+            reason: result?.reason || '',
+        };
+    }
     return jannyAccountStatus;
-}
-
-function updateJannyAccountStatusUI() {
-    const btn = document.getElementById('jannyAccountStatusBtn');
-    if (!btn) return;
-
-    if (!jannyAccountStatus.plugin) {
-        btn.className = 'glass-btn settings-status-badge inactive';
-        btn.innerHTML = '<i class="fa-solid fa-circle"></i> Not connected';
-        btn.title = 'cl-helper plugin not available — click to open Settings';
-    } else if (jannyAccountStatus.valid) {
-        btn.className = 'glass-btn settings-status-badge active';
-        btn.innerHTML = '<i class="fa-solid fa-circle-check"></i> Connected';
-        btn.title = 'Janny account connected — click to open Settings';
-    } else if (jannyAccountStatus.cloudflare) {
-        btn.className = 'glass-btn settings-status-badge inactive';
-        btn.innerHTML = '<i class="fa-solid fa-cloud"></i> Cloudflare';
-        btn.title = jannyAccountStatus.reason || 'Cloudflare challenged the request — click to open Settings';
-    } else if (jannyAccountStatus.active) {
-        btn.className = 'glass-btn settings-status-badge active';
-        btn.innerHTML = '<i class="fa-solid fa-circle"></i> Connected';
-        btn.title = 'Janny account connected — click to open Settings';
-    } else {
-        btn.className = 'glass-btn settings-status-badge inactive';
-        btn.innerHTML = '<i class="fa-solid fa-circle"></i> Not connected';
-        btn.title = jannyAccountStatus.reason || 'Connect your Janny account — click to open Settings';
-    }
 }
 
 async function ensureJannyAccountReady() {
     if (!jannyAccountStatus.plugin || !jannyAccountStatus.active) {
-        await refreshJannyAccountStatus({ validate: false, quiet: true });
+        await refreshJannyAccountStatus({ validate: false });
     }
     if (!jannyAccountStatus.plugin) {
         showToast('Install cl-helper to use Janny account sync', 'warning');
@@ -1742,16 +1764,15 @@ class JannyBrowseView extends BrowseView {
                     <div class="dropdown-section-title">Library:</div>
                     <label class="filter-checkbox"><input type="checkbox" id="jannyFilterHideOwned"> <i class="fa-solid fa-check"></i> Hide Owned Characters</label>
                     <label class="filter-checkbox"><input type="checkbox" id="jannyFilterHidePossible"> <i class="fa-solid fa-check" style="color: #f0a500;"></i> Hide Possible Matches</label>
+                    <hr style="margin: 8px 0; border-color: var(--glass-border);">
+                    <div class="dropdown-section-title">Account:</div>
+                    <label class="filter-checkbox"><input type="checkbox" id="jannyFilterOnlyBookmarked"> <i class="fa-solid fa-bookmark"></i> Only Bookmarked</label>
                 </div>
             </div>
 
             <!-- NSFW toggle -->
             <button id="jannyNsfwToggle" class="glass-btn nsfw-toggle" title="Toggle NSFW content">
                 <i class="fa-solid fa-shield-halved"></i> <span>SFW Only</span>
-            </button>
-            <!-- Account status (opens Settings) -->
-            <button id="jannyAccountStatusBtn" class="glass-btn settings-status-badge inactive" title="Janny account status — click to open Settings">
-                <i class="fa-solid fa-circle"></i> Checking...
             </button>
             <button id="jannyCollectionsBtn" class="glass-btn" title="Browse your Janny collections">
                 <i class="fa-solid fa-layer-group"></i> <span>Collections</span>
@@ -1962,7 +1983,7 @@ class JannyBrowseView extends BrowseView {
         const grid = document.getElementById('jannyGrid');
         if (grid) this.observeImages(grid);
         loadCharacters(false);
-        refreshJannyAccountStatus({ validate: false, quiet: true });
+        refreshJannyAccountStatus({ validate: false });
     }
 
     getSearchInputId(mode) {
