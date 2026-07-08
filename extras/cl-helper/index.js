@@ -19,6 +19,7 @@ import {
     cookiesFromSetCookieHeader,
     detectJannyCloudflareChallenge,
     isAllowedJannyAccountRequest,
+    jannyFamilyOrder,
     mergeCookieHeaders,
     sanitizeJannyCookieHeader,
     sanitizeJannyUserAgent,
@@ -1006,7 +1007,61 @@ async function warmJannyFlareSession({ flareUrl, sessionId = '', path = '/bookma
     return data;
 }
 
+// cf_clearance is bound to the IP that solved the Cloudflare challenge — on
+// dual-stack networks that is usually the browser's IPv6 address — while
+// SillyTavern sets dns.setDefaultResultOrder('ipv4first') for the whole
+// process. Dial JannyAI with an explicit address family and remember the one
+// Cloudflare accepts. Requires undici (Node's built-in fetch dispatcher); if
+// unavailable, fall back to the process default resolution order.
+let jannyPreferredFamily = null;
+const jannyFamilyAgents = new Map();
+
+function jannyAgentForFamily(family) {
+    if (jannyFamilyAgents.has(family)) return jannyFamilyAgents.get(family);
+    let agent = null;
+    try {
+        // Node initializes the global dispatcher lazily on the first fetch call.
+        if (!globalThis[Symbol.for('undici.globalDispatcher.1')]) {
+            void fetch('data:,').catch(() => {});
+        }
+        const dispatcher = globalThis[Symbol.for('undici.globalDispatcher.1')];
+        const Agent = dispatcher?.constructor;
+        if (typeof Agent === 'function') agent = new Agent({ connect: { family } });
+    } catch { /* fall back to default fetch behavior */ }
+    jannyFamilyAgents.set(family, agent);
+    return agent;
+}
+
 async function fetchJannyAccountDirect({ method = 'GET', path = '/', body = undefined } = {}) {
+    const families = jannyAgentForFamily(6) ? jannyFamilyOrder(jannyPreferredFamily) : [null];
+    let lastResult = null;
+    let lastError = null;
+
+    for (const family of families) {
+        let result;
+        try {
+            result = await fetchJannyAccountOnce({
+                method, path, body,
+                dispatcher: family ? jannyAgentForFamily(family) : undefined,
+            });
+        } catch (err) {
+            lastError = err; // e.g. no IPv6 route on this network — try the next family
+            continue;
+        }
+        // A challenged request never reached JannyAI's backend, so retrying it
+        // (even a POST) on the other address family is safe.
+        if (!result.cloudflare) {
+            if (family) jannyPreferredFamily = family;
+            return result;
+        }
+        lastResult = result;
+    }
+
+    if (lastResult) return lastResult;
+    throw lastError ?? new Error('JannyAI request failed');
+}
+
+async function fetchJannyAccountOnce({ method = 'GET', path = '/', body = undefined, dispatcher = undefined } = {}) {
     const verb = String(method || 'GET').toUpperCase();
     const targetUrl = buildJannyAccountUrl(path);
     const cookieHeader = jannyCombinedCookieHeader();
@@ -1031,6 +1086,7 @@ async function fetchJannyAccountDirect({ method = 'GET', path = '/', body = unde
         headers,
         body: bodyStr,
         redirect: 'follow',
+        dispatcher,
     });
 
     const setCookie = cookiesFromSetCookieHeader(response.headers.get('set-cookie'));
@@ -1066,6 +1122,7 @@ function registerJannyAccountRoutes(router) {
 
         jannySessionCookies = sanitized.header;
         jannyCloudflareCookies = null;
+        jannyPreferredFamily = null;
         jannySessionUserAgent = sanitizeJannyUserAgent(userAgent || JANNY_DEFAULT_UA);
         console.log(`[cl-helper] JannyAI session cookie stored (${sanitized.cookies.length} cookie(s))`);
         res.json({ ok: true, cookieCount: sanitized.cookies.length });
@@ -1074,6 +1131,7 @@ function registerJannyAccountRoutes(router) {
     router.post('/janny-clear-session', (_req, res) => {
         jannySessionCookies = null;
         jannyCloudflareCookies = null;
+        jannyPreferredFamily = null;
         jannySessionUserAgent = JANNY_DEFAULT_UA;
         console.log('[cl-helper] JannyAI session cleared');
         res.json({ ok: true });

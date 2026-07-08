@@ -5,6 +5,7 @@ import {
     buildFlareSolverrJannyRequest,
     detectJannyCloudflareChallenge,
     isAllowedJannyAccountRequest,
+    jannyFamilyOrder,
     parseJannyBookmarkPage,
     sanitizeJannyCookieHeader,
     summarizeJannyResponseForClient,
@@ -47,6 +48,27 @@ test('detectJannyCloudflareChallenge catches status, headers, and challenge body
         headers: { 'content-type': 'application/json' },
         body: '{"bookmarks":[]}',
     }), false);
+});
+
+test('detectJannyCloudflareChallenge ignores the JS-detection script Cloudflare injects into legit pages', () => {
+    assert.equal(detectJannyCloudflareChallenge({
+        status: 200,
+        headers: { 'content-type': 'text/html' },
+        body: '<h1>Saved Characters (2)</h1><script src="/cdn-cgi/challenge-platform/h/b/scripts/jsd/80a697ecdece/main.js"></script>',
+    }), false);
+
+    assert.equal(detectJannyCloudflareChallenge({
+        status: 403,
+        headers: { 'server': 'nginx' },
+        body: '<script src="/cdn-cgi/challenge-platform/h/g/orchestrate/chl_page/v1"></script>',
+    }), true);
+});
+
+test('jannyFamilyOrder prefers the last working family and defaults to IPv6 first', () => {
+    assert.deepEqual(jannyFamilyOrder(), [6, 4]);
+    assert.deepEqual(jannyFamilyOrder(null), [6, 4]);
+    assert.deepEqual(jannyFamilyOrder(6), [6, 4]);
+    assert.deepEqual(jannyFamilyOrder(4), [4, 6]);
 });
 
 test('isAllowedJannyAccountRequest allows only account sync endpoints', () => {

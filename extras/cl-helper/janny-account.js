@@ -61,11 +61,32 @@ export function detectJannyCloudflareChallenge({ status = 0, headers = {}, body 
     const lower = text.toLowerCase();
 
     if (status === 403 && server.includes('cloudflare')) return true;
-    return lower.includes('just a moment')
-        || lower.includes('/cdn-cgi/challenge-platform/')
-        || lower.includes('cf-chl-')
-        || lower.includes('cf_chl_')
-        || lower.includes('challenge-platform');
+
+    // Markers that only ever appear on an actual challenge page.
+    if (lower.includes('<title>just a moment') || lower.includes('cf-chl-') || lower.includes('window._cf_chl_opt')) {
+        return true;
+    }
+
+    // Cloudflare injects its JS-detection script (/cdn-cgi/challenge-platform/...)
+    // into legitimate 2xx pages, so challenge asset paths and looser phrases only
+    // count as a challenge on error statuses.
+    if (status >= 400) {
+        return lower.includes('just a moment')
+            || lower.includes('cf_chl_')
+            || lower.includes('/cdn-cgi/challenge-platform/')
+            || lower.includes('challenge-platform');
+    }
+    return false;
+}
+
+// cf_clearance is bound to the IP that solved the challenge — typically the
+// browser's IPv6 on dual-stack networks — while SillyTavern forces
+// dns.setDefaultResultOrder('ipv4first') process-wide. Callers probe both
+// address families in this order and remember the one Cloudflare accepts.
+export function jannyFamilyOrder(preferred = null) {
+    if (preferred === 4) return [4, 6];
+    if (preferred === 6) return [6, 4];
+    return [6, 4];
 }
 
 export function parseJannyBookmarkPage(html) {
