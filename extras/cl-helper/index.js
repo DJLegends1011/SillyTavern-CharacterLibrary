@@ -1136,10 +1136,12 @@ async function fetchJannyAccountOnce({ method = 'GET', path = '/', body = undefi
     }
 
     let cloudflare = detectJannyCloudflareChallenge({ status: response.status, headers: headerObj, body: '' });
+    console.log(`[JannyProvider Debug] Response status: ${response.status}, cloudflare (pre-body): ${cloudflare}`);
     let text = '';
     if (!cloudflare) {
         text = await response.text();
         cloudflare = detectJannyCloudflareChallenge({ status: response.status, headers: headerObj, body: text });
+        console.log(`[JannyProvider Debug] cloudflare (post-body): ${cloudflare}`);
     } else {
         try { await response.body?.cancel?.(); } catch {}
     }
