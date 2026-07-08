@@ -7,6 +7,7 @@ import {
     isAllowedJannyAccountRequest,
     parseJannyBookmarkPage,
     sanitizeJannyCookieHeader,
+    summarizeJannyResponseForClient,
 } from '../extras/cl-helper/janny-account.js';
 
 test('sanitizeJannyCookieHeader accepts a full Cookie header without leaking shape', () => {
@@ -103,4 +104,18 @@ test('buildFlareSolverrJannyRequest pins target, cookies, user agent, and sessio
         { name: 'session', value: 'abc' },
         { name: 'cf_clearance', value: 'clear' },
     ]);
+});
+
+test('summarizeJannyResponseForClient hides raw Cloudflare challenge bodies', () => {
+    const rawChallengeBody = '\u0000\u0001\u0002'.repeat(2048) + '<title>Just a moment...</title>';
+    const summary = summarizeJannyResponseForClient({
+        status: 403,
+        contentType: 'application/octet-stream',
+        cloudflare: true,
+        body: rawChallengeBody,
+    });
+
+    assert.deepEqual(summary, { error: 'Cloudflare challenge', cloudflare: true });
+    assert.equal(Object.hasOwn(summary, 'text'), false);
+    assert.equal(Object.hasOwn(summary, 'html'), false);
 });

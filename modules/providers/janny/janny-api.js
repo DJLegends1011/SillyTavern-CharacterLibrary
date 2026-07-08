@@ -157,11 +157,27 @@ export async function getJannySessionStatus() {
     }
 }
 
-export async function validateJannySession() {
+function jannyValidatePath(options = {}) {
+    const params = new URLSearchParams();
+    const flareUrl = options.flareSolverrUrl || options.flareUrl || '';
+    if (flareUrl) params.set('flareUrl', flareUrl);
+    if (options.flareSessionId) params.set('flareSessionId', options.flareSessionId);
+    const query = params.toString();
+    return `${CL_HELPER_PLUGIN_BASE}/janny-validate${query ? `?${query}` : ''}`;
+}
+
+export async function validateJannySession(options = {}) {
     try {
-        const resp = await helperRequest(`${CL_HELPER_PLUGIN_BASE}/janny-validate`);
-        if (!resp.ok) return { valid: false, reason: `HTTP ${resp.status}` };
-        return resp.json();
+        const resp = await helperRequest(jannyValidatePath(options));
+        const payload = await resp.json().catch(() => null);
+        if (!resp.ok) {
+            return {
+                valid: false,
+                cloudflare: !!payload?.cloudflare,
+                reason: payload?.reason || payload?.error || `HTTP ${resp.status}`,
+            };
+        }
+        return payload || { valid: false, reason: 'empty response' };
     } catch (err) {
         return { valid: false, reason: err.message };
     }

@@ -2472,6 +2472,35 @@ https://jannyai.com/characters/uuid_slug
                             </summary>
                             <div class="settings-provider-body">
                                 <div class="settings-group">
+                                    <div class="settings-group-title"><i class="fa-solid fa-user-lock"></i> JannyAI Account Sync</div>
+                                    <div class="settings-row">
+                                        <span class="settings-hint">Paste the full Cookie header from a logged-in jannyai.com request. The cookie is stored only in cl-helper memory and is cleared when the server restarts.</span>
+                                    </div>
+                                    <div class="settings-row">
+                                        <label for="jannySettingsCookieInput">Cookie header:</label>
+                                        <textarea id="jannySettingsCookieInput" class="glass-input" rows="3" placeholder="Cookie: session=...; cf_clearance=..." autocomplete="off" data-sensitive="true"></textarea>
+                                    </div>
+                                    <div class="settings-row">
+                                        <label for="jannySettingsUserAgentInput">User-Agent:</label>
+                                        <input id="jannySettingsUserAgentInput" class="glass-input" type="text" placeholder="Recommended; use the same request as the cookie" autocomplete="off">
+                                    </div>
+                                    <div class="settings-row" style="gap: 8px; flex-wrap: wrap;">
+                                        <button id="jannySettingsSaveCookieBtn" class="settings-action-btn">
+                                            <i class="fa-solid fa-floppy-disk"></i> Save Cookie
+                                        </button>
+                                        <button id="jannySettingsValidateBtn" class="settings-action-btn">
+                                            <i class="fa-solid fa-shield"></i> Validate
+                                        </button>
+                                        <button id="jannySettingsClearSessionBtn" class="settings-action-btn danger">
+                                            <i class="fa-solid fa-trash-can"></i> Clear Session
+                                        </button>
+                                        <span id="jannySettingsAccountStatus" class="settings-status-badge inactive"><i class="fa-solid fa-circle"></i> Not connected</span>
+                                    </div>
+                                    <div class="settings-row">
+                                        <span id="jannySettingsAccountHint" class="settings-hint">Bookmarks and collections require the cl-helper plugin. Cloudflare challenges may need the matching User-Agent and the FlareSolverr URL under DataCat.</span>
+                                    </div>
+                                </div>
+                                <div class="settings-group">
                                     <div class="settings-group-title"><i class="fa-solid fa-ban"></i> Exclude Tags</div>
                                     <div class="settings-row">
                                         <div class="provider-exclude-tags-container">

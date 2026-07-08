@@ -212,7 +212,11 @@ export function cookiesFromSetCookieHeader(setCookieHeader) {
     return parts.length ? parts.join('; ') : null;
 }
 
-export function summarizeJannyResponseForClient({ status, contentType, body }) {
+export function summarizeJannyResponseForClient({ status, contentType, body, cloudflare = false } = {}) {
+    if (cloudflare || detectJannyCloudflareChallenge({ status, body })) {
+        return { error: 'Cloudflare challenge', cloudflare: true };
+    }
+
     const type = contentType || 'application/octet-stream';
     if (type.includes('application/json')) {
         try { return { json: JSON.parse(body || 'null') }; } catch { /* fall through */ }

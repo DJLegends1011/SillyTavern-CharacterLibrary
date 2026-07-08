@@ -505,9 +505,9 @@ JannyAI protects account endpoints with Cloudflare and uses HttpOnly cookies, so
 1. Install/update the [cl-helper plugin](#cl-helper-plugin-not-detected) and restart SillyTavern
 2. Log into [jannyai.com](https://jannyai.com) in a browser
 3. Copy the full `Cookie` request header for a logged-in JannyAI request
-4. Open JanitorAI in Character Library, click **Account**, paste the cookie header, and validate
+4. Open Settings > Online > JannyAI, paste the cookie header under **JannyAI Account Sync**, and validate. The JanitorAI browse toolbar also has an **Account** shortcut for the same cl-helper session.
 
-If JannyAI starts challenging the helper, configure a [FlareSolverr](https://github.com/FlareSolverr/FlareSolverr) endpoint in Settings > Online > DataCat. Character Library reuses that setting for JannyAI account sync warmups. Bookmark adds are guarded at JannyAI's current 220-bookmark UI limit; if your account is already full, remove one bookmark before adding another.
+If JannyAI starts challenging the helper, paste the matching `User-Agent` request header and configure a [FlareSolverr](https://github.com/FlareSolverr/FlareSolverr) endpoint in Settings > Online > DataCat. Character Library reuses that setting for JannyAI account sync warmups. Bookmark adds are guarded at JannyAI's current 220-bookmark UI limit; if your account is already full, remove one bookmark before adding another.
 
 </details>
 

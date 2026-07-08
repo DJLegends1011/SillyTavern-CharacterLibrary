@@ -1324,7 +1324,7 @@ function jannyAccountOptions() {
 
 function describeJannyAccountError(err) {
     if (err?.cloudflare) {
-        return 'Cloudflare challenged the helper request. Add/refresh a Janny Cookie header and configure FlareSolverr if direct helper requests still 403.';
+        return 'Cloudflare challenged the helper request. Refresh the Janny Cookie header, paste the matching User-Agent, and configure FlareSolverr if direct helper requests still 403.';
     }
     return err?.message || String(err || 'unknown error');
 }
@@ -1368,7 +1368,7 @@ async function refreshJannyAccountStatus({ validate = false, quiet = false } = {
         const session = await getJannySessionStatus();
         jannyAccountStatus = { plugin: true, active: !!session?.active, valid: false, cloudflare: false, reason: session?.active ? '' : 'No JannyAI cookie stored' };
         if (validate && session?.active) {
-            const result = await validateJannySession();
+            const result = await validateJannySession(jannyAccountOptions());
             jannyAccountStatus = {
                 plugin: true,
                 active: true,

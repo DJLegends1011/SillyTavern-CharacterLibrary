@@ -1039,9 +1039,15 @@ async function fetchJannyAccountDirect({ method = 'GET', path = '/', body = unde
     }
 
     const contentType = response.headers.get('content-type') || '';
-    const text = await response.text();
     const headerObj = headersToObject(response.headers);
-    const cloudflare = detectJannyCloudflareChallenge({ status: response.status, headers: headerObj, body: text });
+    let cloudflare = detectJannyCloudflareChallenge({ status: response.status, headers: headerObj, body: '' });
+    let text = '';
+    if (!cloudflare) {
+        text = await response.text();
+        cloudflare = detectJannyCloudflareChallenge({ status: response.status, headers: headerObj, body: text });
+    } else {
+        try { await response.body?.cancel?.(); } catch {}
+    }
     return {
         ok: response.ok && !cloudflare,
         status: response.status,
@@ -1083,12 +1089,45 @@ function registerJannyAccountRoutes(router) {
         });
     });
 
-    router.get('/janny-validate', async (_req, res) => {
+    router.get('/janny-validate', async (req, res) => {
         if (!jannySessionCookies) {
             return res.json({ valid: false, reason: 'no JannyAI cookies stored' });
         }
+
+        const flareUrl = typeof req.query?.flareUrl === 'string' ? req.query.flareUrl.trim() : '';
+        const flareSessionId = typeof req.query?.flareSessionId === 'string' ? req.query.flareSessionId.trim() : '';
+
         try {
-            const result = await fetchJannyAccountDirect({ method: 'GET', path: '/api/collections/mine' });
+            let result = null;
+            if (flareUrl) {
+                try {
+                    const flarePayload = await warmJannyFlareSession({
+                        flareUrl,
+                        sessionId: flareSessionId,
+                        path: '/api/collections/mine',
+                    });
+                    if (flarePayload?.solution?.response) {
+                        const bodyText = cleanFlareResponseBody(flarePayload.solution.response);
+                        result = {
+                            ok: (flarePayload.solution.status || 200) < 400,
+                            status: flarePayload.solution.status || 200,
+                            contentType: bodyText.trim().startsWith('{') ? 'application/json' : 'text/html; charset=utf-8',
+                            cloudflare: detectJannyCloudflareChallenge({
+                                status: flarePayload.solution.status || 200,
+                                headers: {},
+                                body: bodyText,
+                            }),
+                            body: bodyText,
+                        };
+                    }
+                } catch (err) {
+                    return res.status(err.status || 502).json({ valid: false, cloudflare: true, reason: err.message });
+                }
+            }
+
+            if (!result) {
+                result = await fetchJannyAccountDirect({ method: 'GET', path: '/api/collections/mine' });
+            }
             if (result.cloudflare) {
                 return res.json({ valid: false, cloudflare: true, reason: 'Cloudflare challenge' });
             }

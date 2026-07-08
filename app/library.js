@@ -1596,6 +1596,13 @@ function setupSettingsModal() {
     const datacatPluginBanner = document.getElementById('datacatPluginBanner');
     const datacatSettingsFields = document.getElementById('datacatSettingsFields');
     const datacatSessionStatus = document.getElementById('datacatSessionStatus');
+    const jannySettingsCookieInput = document.getElementById('jannySettingsCookieInput');
+    const jannySettingsUserAgentInput = document.getElementById('jannySettingsUserAgentInput');
+    const jannySettingsSaveCookieBtn = document.getElementById('jannySettingsSaveCookieBtn');
+    const jannySettingsValidateBtn = document.getElementById('jannySettingsValidateBtn');
+    const jannySettingsClearSessionBtn = document.getElementById('jannySettingsClearSessionBtn');
+    const jannySettingsAccountStatus = document.getElementById('jannySettingsAccountStatus');
+    const jannySettingsAccountHint = document.getElementById('jannySettingsAccountHint');
     const minScoreSlider = document.getElementById('settingsMinScore');
     const minScoreValue = document.getElementById('minScoreValue');
     const possibleMatchScoreSlider = document.getElementById('settingsPossibleMatchScore');
@@ -2125,6 +2132,135 @@ function setupSettingsModal() {
         });
     }
 
+    function setJannySettingsAccountStatus(kind, label, icon = 'fa-solid fa-circle') {
+        if (!jannySettingsAccountStatus) return;
+        jannySettingsAccountStatus.className = `settings-status-badge ${kind === 'active' ? 'active' : 'inactive'}`;
+        jannySettingsAccountStatus.innerHTML = `<i class="${icon}"></i> ${escapeHtml(label)}`;
+    }
+
+    function setJannySettingsAccountHint(message) {
+        if (jannySettingsAccountHint) jannySettingsAccountHint.textContent = message || '';
+    }
+
+    async function parseJannySettingsAccountResponse(resp) {
+        const payload = await resp.json().catch(() => null);
+        if (!resp.ok) throw new Error(payload?.error || `HTTP ${resp.status}`);
+        return payload || {};
+    }
+
+    async function readJannySettingsAccountJson(endpoint, method = 'GET', data = null) {
+        return parseJannySettingsAccountResponse(await apiRequest(endpoint, method, data));
+    }
+
+    function buildJannySettingsValidateEndpoint() {
+        const params = new URLSearchParams();
+        const flareUrl = (getSetting('datacatFlareSolverrUrl') || '').trim();
+        if (flareUrl) params.set('flareUrl', flareUrl);
+        const query = params.toString();
+        return `/plugins/cl-helper/janny-validate${query ? `?${query}` : ''}`;
+    }
+
+    async function readJannySettingsValidateResult() {
+        const resp = await apiRequest(buildJannySettingsValidateEndpoint());
+        const payload = await resp.json().catch(() => null);
+        if (!resp.ok && payload) return payload;
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        return payload || {};
+    }
+
+    async function updateJannySettingsAccountStatus({ validate = false, quiet = false } = {}) {
+        if (!jannySettingsAccountStatus) return { active: false, valid: false };
+        if (!quiet) setJannySettingsAccountStatus('inactive', 'Checking...', 'fa-solid fa-spinner fa-spin');
+        try {
+            const session = await readJannySettingsAccountJson('/plugins/cl-helper/janny-session');
+            if (!session.active) {
+                setJannySettingsAccountStatus('inactive', 'Not connected');
+                setJannySettingsAccountHint('Paste a logged-in jannyai.com Cookie header, then click Save Cookie.');
+                return { active: false, valid: false };
+            }
+
+            if (!validate) {
+                setJannySettingsAccountStatus('active', `Cookie stored (${session.cookieCount || 0})`);
+                setJannySettingsAccountHint('Click Validate to test bookmarks and collections access.');
+                return { active: true, valid: false };
+            }
+
+            const result = await readJannySettingsValidateResult();
+            if (result.valid) {
+                setJannySettingsAccountStatus('active', 'Valid', 'fa-solid fa-circle-check');
+                setJannySettingsAccountHint('JannyAI bookmarks and collections are ready.');
+                return { active: true, valid: true };
+            }
+            if (result.cloudflare) {
+                setJannySettingsAccountStatus('inactive', 'Cloudflare challenged', 'fa-solid fa-cloud');
+                setJannySettingsAccountHint('Refresh your Cookie header and configure FlareSolverr under DataCat if Cloudflare keeps blocking helper requests.');
+                return { active: true, valid: false, cloudflare: true };
+            }
+            setJannySettingsAccountStatus('inactive', 'Cookie rejected', 'fa-solid fa-circle-xmark');
+            setJannySettingsAccountHint(result.reason || 'JannyAI did not accept the stored cookie.');
+            return { active: true, valid: false };
+        } catch (err) {
+            setJannySettingsAccountStatus('inactive', 'Plugin unavailable', 'fa-solid fa-circle-xmark');
+            setJannySettingsAccountHint(`cl-helper Janny route unavailable: ${err.message}`);
+            return { active: false, valid: false, error: err };
+        }
+    }
+
+    async function saveJannySettingsAccountCookie() {
+        const cookie = (jannySettingsCookieInput?.value || '').trim();
+        if (!cookie) {
+            showToast('Paste a JannyAI Cookie header first', 'warning');
+            return;
+        }
+        const userAgent = (jannySettingsUserAgentInput?.value || navigator.userAgent || '').trim();
+        if (jannySettingsSaveCookieBtn) jannySettingsSaveCookieBtn.disabled = true;
+        try {
+            await parseJannySettingsAccountResponse(await apiRequest('/plugins/cl-helper/janny-set-cookie', 'POST', { cookie, userAgent }));
+            showToast('JannyAI cookie saved to cl-helper', 'success');
+            await updateJannySettingsAccountStatus({ validate: true });
+        } catch (err) {
+            showToast(`Could not save JannyAI cookie: ${err.message}`, 'error', 7000);
+            setJannySettingsAccountHint(err.message);
+        } finally {
+            if (jannySettingsSaveCookieBtn) jannySettingsSaveCookieBtn.disabled = false;
+        }
+    }
+
+    async function validateJannySettingsAccount() {
+        if (jannySettingsValidateBtn) jannySettingsValidateBtn.disabled = true;
+        const result = await updateJannySettingsAccountStatus({ validate: true });
+        if (result.valid) showToast('JannyAI account session is valid', 'success');
+        else if (result.cloudflare) showToast('Cloudflare challenged the JannyAI helper request', 'warning', 7000);
+        else showToast('JannyAI account session is not valid yet', 'warning');
+        if (jannySettingsValidateBtn) jannySettingsValidateBtn.disabled = false;
+    }
+
+    async function clearJannySettingsAccountCookie() {
+        if (jannySettingsClearSessionBtn) jannySettingsClearSessionBtn.disabled = true;
+        try {
+            await parseJannySettingsAccountResponse(await apiRequest('/plugins/cl-helper/janny-clear-session', 'POST', {}));
+            if (jannySettingsCookieInput) jannySettingsCookieInput.value = '';
+            showToast('JannyAI account session cleared', 'info');
+            await updateJannySettingsAccountStatus({ validate: false });
+        } catch (err) {
+            showToast(`Could not clear JannyAI session: ${err.message}`, 'error', 7000);
+        } finally {
+            if (jannySettingsClearSessionBtn) jannySettingsClearSessionBtn.disabled = false;
+        }
+    }
+
+    jannySettingsSaveCookieBtn?.addEventListener('click', (e) => {
+        e.preventDefault();
+        saveJannySettingsAccountCookie();
+    });
+    jannySettingsValidateBtn?.addEventListener('click', (e) => {
+        e.preventDefault();
+        validateJannySettingsAccount();
+    });
+    jannySettingsClearSessionBtn?.addEventListener('click', (e) => {
+        e.preventDefault();
+        clearJannySettingsAccountCookie();
+    });
     // Open modal
     settingsBtn.onclick = () => {
         chubTokenInput.value = getSetting('chubToken') || '';
@@ -2139,6 +2275,8 @@ function setupSettingsModal() {
         if (wyvernPasswordInput) wyvernPasswordInput.value = getSetting('wyvernPassword') || '';
         if (wyvernRememberCredsCheckbox) wyvernRememberCredsCheckbox.checked = getSetting('wyvernRememberCredentials') || false;
         if (datacatTokenInput) datacatTokenInput.value = getSetting('datacatToken') || '';
+        if (jannySettingsUserAgentInput && !jannySettingsUserAgentInput.value) jannySettingsUserAgentInput.value = navigator.userAgent || '';
+        updateJannySettingsAccountStatus({ quiet: true });
         const civitaiApiKeyInput = document.getElementById('settingsCivitaiApiKey');
         if (civitaiApiKeyInput) civitaiApiKeyInput.value = getSetting('civitaiApiKey') || '';
         const datacatPublicFeedCheckbox = document.getElementById('datacatPublicFeedCheckbox');
