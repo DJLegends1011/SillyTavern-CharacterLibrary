@@ -493,6 +493,8 @@ const DEFAULT_SETTINGS = {
     datacatPublicFeed: false,
     datacatReextractOnUpdate: false,
     datacatFlareSolverrUrl: '',
+    jannyCookie: null,
+    jannyUserAgent: null,
     botbooruToken: null,
     botbooruUsername: null,
     botbooruPassword: null,
@@ -2212,7 +2214,11 @@ function setupSettingsModal() {
         if (jannySettingsSaveCookieBtn) jannySettingsSaveCookieBtn.disabled = true;
         try {
             await parseJannySettingsAccountResponse(await apiRequest('/plugins/cl-helper/janny-set-cookie', 'POST', { cookie, userAgent }));
-            showToast('JannyAI cookie saved to cl-helper', 'success');
+            // Persist so the session survives a server restart (cl-helper only
+            // holds it in memory); janny-browse re-pushes it on load.
+            setSetting('jannyCookie', cookie);
+            setSetting('jannyUserAgent', userAgent || null);
+            showToast('JannyAI cookie saved', 'success');
             await updateJannySettingsAccountStatus({ validate: true });
         } catch (err) {
             showToast(`Could not save JannyAI cookie: ${err.message}`, 'error', 7000);
@@ -2235,6 +2241,8 @@ function setupSettingsModal() {
         if (jannySettingsClearSessionBtn) jannySettingsClearSessionBtn.disabled = true;
         try {
             await parseJannySettingsAccountResponse(await apiRequest('/plugins/cl-helper/janny-clear-session', 'POST', {}));
+            setSetting('jannyCookie', null);
+            setSetting('jannyUserAgent', null);
             if (jannySettingsCookieInput) jannySettingsCookieInput.value = '';
             showToast('JannyAI account session cleared', 'info');
             await updateJannySettingsAccountStatus({ validate: false });
@@ -2271,7 +2279,8 @@ function setupSettingsModal() {
         if (wyvernPasswordInput) wyvernPasswordInput.value = getSetting('wyvernPassword') || '';
         if (wyvernRememberCredsCheckbox) wyvernRememberCredsCheckbox.checked = getSetting('wyvernRememberCredentials') || false;
         if (datacatTokenInput) datacatTokenInput.value = getSetting('datacatToken') || '';
-        if (jannySettingsUserAgentInput && !jannySettingsUserAgentInput.value) jannySettingsUserAgentInput.value = navigator.userAgent || '';
+        if (jannySettingsCookieInput) jannySettingsCookieInput.value = getSetting('jannyCookie') || '';
+        if (jannySettingsUserAgentInput) jannySettingsUserAgentInput.value = getSetting('jannyUserAgent') || navigator.userAgent || '';
         updateJannySettingsAccountStatus({ quiet: true });
         const civitaiApiKeyInput = document.getElementById('settingsCivitaiApiKey');
         if (civitaiApiKeyInput) civitaiApiKeyInput.value = getSetting('civitaiApiKey') || '';
@@ -3636,6 +3645,8 @@ function setupSettingsModal() {
             wyvernUid: preserveWyv ? getSetting('wyvernUid') : null,
             datacatToken: getSetting('datacatToken') || null,
             ctCookie: getSetting('ctCookie') || null,
+            jannyCookie: getSetting('jannyCookie') || null,
+            jannyUserAgent: getSetting('jannyUserAgent') || null,
         });
         
         const searchName = document.getElementById('searchName');

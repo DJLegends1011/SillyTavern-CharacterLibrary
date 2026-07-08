@@ -15,6 +15,7 @@ import {
     resolveTagNames,
     checkJannyPluginAvailable,
     getJannySessionStatus,
+    setJannySessionCookie,
     validateJannySession,
     fetchJannyBookmarks,
     addJannyBookmarks,
@@ -1398,6 +1399,23 @@ function normalizeJannyCollectionCharacter(item) {
     };
 }
 
+// The cookie is persisted in extension settings (like every other provider's
+// credentials). cl-helper only holds it in memory, so on load — after a server
+// restart wiped that memory — re-push the saved cookie so the session survives.
+async function restoreJannySessionFromSettings() {
+    const savedCookie = getSetting('jannyCookie');
+    if (!savedCookie) return;
+    try {
+        if (!await checkJannyPluginAvailable()) return;
+        const session = await getJannySessionStatus();
+        if (session?.active) return; // cl-helper still has it
+        await setJannySessionCookie(savedCookie, getSetting('jannyUserAgent') || '');
+        debugLog('[JannyBrowse] Restored saved account cookie into cl-helper');
+    } catch (err) {
+        debugLog('[JannyBrowse] Could not restore saved Janny cookie:', err.message);
+    }
+}
+
 // Tracks account readiness for gating (ensureJannyAccountReady) only. There is
 // no browse-view status indicator — cookie/login state is shown in Settings,
 // matching every other provider.
@@ -1425,6 +1443,12 @@ async function refreshJannyAccountStatus({ validate = false } = {}) {
 
 async function ensureJannyAccountReady() {
     if (!jannyAccountStatus.plugin || !jannyAccountStatus.active) {
+        await refreshJannyAccountStatus({ validate: false });
+    }
+    // cl-helper may have lost its in-memory session (e.g. server restarted
+    // mid-session); re-push the persisted cookie before giving up.
+    if (jannyAccountStatus.plugin && !jannyAccountStatus.active && getSetting('jannyCookie')) {
+        await restoreJannySessionFromSettings();
         await refreshJannyAccountStatus({ validate: false });
     }
     if (!jannyAccountStatus.plugin) {
@@ -1983,7 +2007,7 @@ class JannyBrowseView extends BrowseView {
         const grid = document.getElementById('jannyGrid');
         if (grid) this.observeImages(grid);
         loadCharacters(false);
-        refreshJannyAccountStatus({ validate: false });
+        restoreJannySessionFromSettings().then(() => refreshJannyAccountStatus({ validate: false }));
     }
 
     getSearchInputId(mode) {
