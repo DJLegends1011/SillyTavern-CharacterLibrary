@@ -176,20 +176,28 @@ function extractJannyCollectionName(block, attrs = '') {
 
 function extractJannyUpdatedAt(block) {
     const match = String(block || '').match(/\bdatetime\s*=\s*(["'])([\s\S]*?)\1/i);
-    if (!match) return null;
-    return decodeJannyHtml(match[2]).trim().split('T')[0] || null;
+    if (match) return decodeJannyHtml(match[2]).trim().split('T')[0] || null;
+    const textMatch = stripJannyTags(block).match(/\blast\s+updated\s*:?\s*([0-9]{1,2}\/[0-9]{1,2}\/[0-9]{2,4}|[0-9]{4}-[0-9]{2}-[0-9]{2})/i);
+    return textMatch ? textMatch[1] : null;
 }
 
-function extractJannyImages(block) {
+// Collection previews are always member bot avatars; the surrounding card
+// markup also carries the owner avatar (/user-avatars/ or googleusercontent)
+// and icon sprites, so only bot-avatar URLs qualify as preview images.
+function extractJannyImages(...blocks) {
     const images = [];
     const seen = new Set();
     const re = /<img\b[^>]*\bsrc\s*=\s*(["'])([\s\S]*?)\1/ig;
-    let match;
-    while ((match = re.exec(String(block || ''))) && images.length < 4) {
-        const src = decodeJannyHtml(match[2]).trim();
-        if (!src || seen.has(src)) continue;
-        seen.add(src);
-        images.push(src);
+    for (const block of blocks) {
+        re.lastIndex = 0;
+        let match;
+        while ((match = re.exec(String(block || ''))) && images.length < 4) {
+            const src = decodeJannyHtml(match[2]).trim();
+            if (!src || !src.includes('/bot-avatars/') || seen.has(src)) continue;
+            seen.add(src);
+            images.push(src);
+        }
+        if (images.length >= 4) break;
     }
     return images;
 }
@@ -250,31 +258,75 @@ export function validateJannyPublicCharacterIds(ids) {
     return { ok: true, ids: value.split(',').map(id => id.trim()) };
 }
 
+const JANNY_CARD_SEGMENT_CAP = 6000;
+const JANNY_LAST_UPDATED_TEXT_RE = /^\s*last\s+updated\b/i;
+
+function stripJannyParagraphs(block) {
+    return String(block || '').replace(/<p\b[^>]*>[\s\S]*?<\/p>/ig, ' ');
+}
+
+function extractJannyCardDescription(...blocks) {
+    const re = /<p\b[^>]*>([\s\S]*?)<\/p>/ig;
+    for (const block of blocks) {
+        re.lastIndex = 0;
+        let match;
+        while ((match = re.exec(String(block || '')))) {
+            const text = stripJannyTags(match[1]);
+            if (text && !JANNY_LAST_UPDATED_TEXT_RE.test(text)) return text;
+        }
+    }
+    return '';
+}
+
+function stripJannyCollectionNameSuffix(name) {
+    return String(name || '').replace(/\s*\(\s*[0-9,]+\s*(?:characters?|cards?)\s*\)\s*$/i, '').trim();
+}
+
 export function parseJannyPublicCollectionsPage(html) {
     const text = String(html || '');
-    const collections = [];
     const seen = new Set();
+    const anchors = [];
     const anchorRe = /<a\b([^>]*\bhref\s*=\s*(["'])([\s\S]*?)\2[^>]*)>([\s\S]*?)<\/a>/ig;
     let match;
     while ((match = anchorRe.exec(text))) {
         const normalized = normalizeJannyCollectionPath(match[3]);
         if (!normalized || seen.has(normalized.id)) continue;
         seen.add(normalized.id);
-        const block = match[4];
-        const meta = extractJannyCollectionMetadata(block, match[1]);
-        collections.push({
-            id: normalized.id,
-            name: meta.name,
-            path: normalized.path,
-            url: `${JANNY_BASE}${normalized.path}`,
-            description: meta.description,
-            characterCount: meta.characterCount,
-            ownerName: meta.ownerName,
-            viewCount: meta.viewCount,
-            updatedAt: meta.updatedAt,
-            images: meta.images,
-        });
+        anchors.push({ normalized, attrs: match[1], block: match[4], start: match.index, end: match.index + match[0].length });
     }
+
+    // JannyAI's live card markup wraps only the <h3> title in the collection
+    // link: the preview <img> strip sits in a sibling div BEFORE the anchor,
+    // while the "Last updated" line, description, owner, and view count come
+    // AFTER it. Slice the page between neighbouring title anchors so each card
+    // only sees its own markup (capped so the outermost cards can't swallow
+    // the page header/footer). Anchor-wrapped cards keep working because the
+    // anchor block is always consulted too.
+    const collections = anchors.map((anchor, i) => {
+        const beforeStart = i > 0 ? anchors[i - 1].end : 0;
+        const before = text.slice(Math.max(beforeStart, anchor.start - JANNY_CARD_SEGMENT_CAP), anchor.start);
+        const afterEnd = i + 1 < anchors.length ? anchors[i + 1].start : text.length;
+        const after = text.slice(anchor.end, Math.min(afterEnd, anchor.end + JANNY_CARD_SEGMENT_CAP));
+
+        const titleText = stripJannyTags(anchor.block);
+        const footerText = stripJannyTags(stripJannyParagraphs(after));
+        const cardText = `${titleText} ${footerText}`;
+        const countMatch = cardText.match(/([0-9,]+)\s*(?:characters|cards)/i);
+        const viewsMatch = cardText.match(/([0-9,.]+[km]?)\s*views/i);
+
+        return {
+            id: anchor.normalized.id,
+            name: stripJannyCollectionNameSuffix(extractJannyCollectionName(anchor.block, anchor.attrs)),
+            path: anchor.normalized.path,
+            url: `${JANNY_BASE}${anchor.normalized.path}`,
+            description: extractJannyCardDescription(anchor.block, after),
+            characterCount: countMatch ? parseInt(countMatch[1].replace(/,/g, ''), 10) : null,
+            ownerName: extractJannyOwnerName(cardText),
+            viewCount: viewsMatch ? parseJannyCompactNumber(viewsMatch[1]) : null,
+            updatedAt: extractJannyUpdatedAt(anchor.block) || extractJannyUpdatedAt(after),
+            images: extractJannyImages(anchor.block, before),
+        };
+    });
 
     const hasMore = /<a\b[^>]*\brel\s*=\s*(["'])[^"']*\bnext\b[^"']*\1[^>]*>/i.test(text)
         || /<a\b[^>]*>[\s\S]*?\bNext\b[\s\S]*?<\/a>/i.test(text);

@@ -131,7 +131,76 @@ test('parseJannyBookmarkPage extracts count and unique character links', () => {
         'https://jannyai.com/characters/22222222-2222-4222-8222-222222222222_character-bob',
     ]);
 });
-test('parseJannyPublicCollectionsPage extracts public collection cards', () => {
+test('parseJannyPublicCollectionsPage parses live-style cards with images outside the title anchor', () => {
+    const html = `
+        <header><a href="https://jannyai.com/"><img src="https://jannyai.com/logo.png" alt="Logo"></a></header>
+        <div>
+            <div>
+                <div>
+                    <img src="https://image.jannyai.com/bot-avatars/a1.webp" alt="image">
+                    <img src="https://image.jannyai.com/bot-avatars/a2.webp" alt="image">
+                    <img src="https://image.jannyai.com/bot-avatars/a3.webp" alt="image">
+                    <img src="https://image.jannyai.com/bot-avatars/a4.webp" alt="image">
+                    <img src="https://image.jannyai.com/bot-avatars/a5.webp" alt="image">
+                </div>
+                <div>
+                    <a href="https://jannyai.com/collections/11111111-1111-4111-8111-111111111111_mind-control"><h3>Mind Control (82 characters)</h3></a>
+                    <p>Last updated: 7/9/2026</p>
+                    <p>Bots that are good at mind-control.</p>
+                </div>
+                <div>
+                    <span><img src="https://image.jannyai.com/user-avatars/owner-a.jpg">by <a href="https://jannyai.com/profiles/owner-a">AurelieCatena</a></span>
+                    <span><img src="https://img.icons8.com/sticker/view.png" alt="view count"><strong>20572</strong> views</span>
+                </div>
+            </div>
+            <div>
+                <div>
+                    <img src="https://image.jannyai.com/bot-avatars/b1.webp" alt="image">
+                    <img src="https://image.jannyai.com/bot-avatars/b2.webp" alt="image">
+                </div>
+                <div>
+                    <a href="/collections/22222222-2222-4222-8222-222222222222_clickable"><h3>Clickable Bot Catalogs (2 characters)</h3></a>
+                    <p>Last updated: 7/8/2026</p>
+                    <p>Lists of characters with clickable covers.</p>
+                </div>
+                <div>
+                    <span><img src="https://lh3.googleusercontent.com/a/owner-b=s96-c">by <a href="https://jannyai.com/profiles/owner-b">Archivist</a></span>
+                    <span><img src="https://img.icons8.com/sticker/view.png" alt="view count"><strong>11099</strong> views</span>
+                </div>
+            </div>
+        </div>
+        <a href="/collections?page=2">Next</a>
+    `;
+
+    const parsed = parseJannyPublicCollectionsPage(html);
+    assert.equal(parsed.collections.length, 2);
+    const [first, second] = parsed.collections;
+    assert.equal(first.name, 'Mind Control');
+    assert.equal(first.characterCount, 82);
+    assert.equal(first.description, 'Bots that are good at mind-control.');
+    assert.equal(first.ownerName, 'AurelieCatena');
+    assert.equal(first.viewCount, 20572);
+    assert.equal(first.updatedAt, '7/9/2026');
+    assert.deepEqual(first.images, [
+        'https://image.jannyai.com/bot-avatars/a1.webp',
+        'https://image.jannyai.com/bot-avatars/a2.webp',
+        'https://image.jannyai.com/bot-avatars/a3.webp',
+        'https://image.jannyai.com/bot-avatars/a4.webp',
+    ]);
+    assert.equal(second.name, 'Clickable Bot Catalogs');
+    assert.equal(second.characterCount, 2);
+    assert.equal(second.description, 'Lists of characters with clickable covers.');
+    assert.equal(second.ownerName, 'Archivist');
+    assert.equal(second.viewCount, 11099);
+    assert.equal(second.updatedAt, '7/8/2026');
+    assert.deepEqual(second.images, [
+        'https://image.jannyai.com/bot-avatars/b1.webp',
+        'https://image.jannyai.com/bot-avatars/b2.webp',
+    ]);
+    assert.equal(parsed.hasMore, true);
+});
+
+test('parseJannyPublicCollectionsPage extracts anchor-wrapped collection cards', () => {
     const html = `
         <main>
             <a class="collection-card" href="/collections/11111111-1111-4111-8111-111111111111_daily-finds">

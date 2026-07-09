@@ -1723,8 +1723,12 @@ function getJannyCollectionPreviewImages(collection) {
 function renderJannyCollectionPreviewCells(collection) {
     const images = getJannyCollectionPreviewImages(collection);
     const initials = String(collection?.name || 'J').trim().slice(0, 2).toUpperCase() || 'J';
+    // One cell per card in the collection (max 4): a 2-card collection gets 2
+    // tiles, not 2 tiles plus 2 initials fillers. Initials only stand in for
+    // cards whose avatars aren't known (yet).
+    const cellCount = Math.max(1, Math.min(4, Math.max(images.length, collectionCharacterCount(collection))));
     const cells = [];
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < cellCount; i++) {
         const src = images[i];
         cells.push(src
             ? `<span class="janny-collection-preview-cell"><img src="${escapeHtml(resolveJannyAvatarUrl(src))}" alt="" loading="lazy" onerror="this.remove()"></span>`

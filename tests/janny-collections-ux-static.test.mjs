@@ -36,6 +36,11 @@ test('Janny collections async state has guards for sort and stale responses', ()
     assert.match(js, /String\(jannySelectedChar\?\.id \|\| ''\) !== characterId/);
     assert.match(js, /function openPreviewModal[\s\S]*jannyCollectionRowMutations = new Set\(\);/);
 });
+test('Janny collection preview grid sizes to the collection card count', () => {
+    assert.match(js, /Math\.min\(4, Math\.max\(images\.length, collectionCharacterCount\(collection\)\)\)/);
+    assert.match(js, /for \(let i = 0; i < cellCount; i\+\+\)/);
+});
+
 test('Janny owned collection cards hydrate preview avatars after list load', () => {
     assert.match(js, /hydrateJannyOwnedCollectionPreviews/);
     assert.match(js, /fetchJannyCollectionCharacters\(collection\.id, jannyAccountOptions\(\)\)/);
