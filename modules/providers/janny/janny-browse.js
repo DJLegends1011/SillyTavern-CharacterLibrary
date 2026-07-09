@@ -1035,6 +1035,8 @@ function initJannyView() {
     // Convert native selects to styled custom dropdowns
     const sortEl = document.getElementById('jannySortSelect');
     if (sortEl) CoreAPI.initCustomSelect?.(sortEl);
+    const publicCollectionsSortEl = document.getElementById('jannyPublicCollectionsSort');
+    if (publicCollectionsSortEl) CoreAPI.initCustomSelect?.(publicCollectionsSortEl);
 
     // Grid card click → open preview (delegation)
     const grid = document.getElementById('jannyGrid');
@@ -1133,19 +1135,16 @@ function initJannyView() {
     on('jannyClearAuthorBtn', 'click', () => clearAuthorFilter());
 
     on('jannyRefreshBtn', 'click', () => {
+        const collectionsSection = document.getElementById('jannyCollectionsSection');
+        if (collectionsSection && !collectionsSection.classList.contains('hidden')) {
+            reloadJannyCollections();
+            return;
+        }
         jannyCurrentPage = 1;
         loadCharacters(false);
     });
     on('jannyCollectionsBtn', 'click', () => switchJannyCollectionsPanel(true));
     on('jannyBackToBrowseBtn', 'click', () => switchJannyCollectionsPanel(false));
-    on('jannyReloadCollectionsBtn', 'click', () => {
-        if (jannyCollectionsMode === 'owned') {
-            jannyOwnedCollectionsLoaded = false;
-            loadJannyOwnedCollections(true);
-        } else {
-            loadJannyPublicCollections({ reset: true });
-        }
-    });
     on('jannyCollectionsPublicBtn', 'click', () => setJannyCollectionsMode('public'));
     on('jannyCollectionsMineBtn', 'click', () => setJannyCollectionsMode('owned'));
     on('jannyPublicCollectionsSort', 'change', () => {
@@ -2354,6 +2353,33 @@ async function confirmAndDeleteJannyCollection(collectionId) {
     }
 }
 
+// Topbar refresh while the collections panel is open: re-fetch whatever
+// surface is actually visible, not just the list behind it.
+function reloadJannyCollections() {
+    const manageVisible = !document.getElementById('jannyCollectionManagePanel')?.classList.contains('hidden');
+    if (manageVisible && jannyManageCollection?.collection?.id) {
+        openJannyCollectionManage(jannyManageCollection.collection.id);
+        return;
+    }
+    const detailVisible = !document.getElementById('jannyCollectionDetailPanel')?.classList.contains('hidden');
+    if (detailVisible && jannyActiveCollection) {
+        if (jannyActiveCollection.kind === 'owned' && jannyActiveCollection.id) {
+            openJannyOwnedCollection(jannyActiveCollection.id);
+            return;
+        }
+        if (jannyActiveCollection.path) {
+            openJannyPublicCollection(jannyActiveCollection.path);
+            return;
+        }
+    }
+    if (jannyCollectionsMode === 'owned') {
+        jannyOwnedCollectionsLoaded = false;
+        loadJannyOwnedCollections(true);
+    } else {
+        loadJannyPublicCollections({ reset: true });
+    }
+}
+
 function switchJannyCollectionsPanel(show) {
     const panel = document.getElementById('jannyCollectionsSection');
     const browse = document.getElementById('jannyBrowseSection');
@@ -2511,7 +2537,6 @@ class JannyBrowseView extends BrowseView {
                     </div>
                     <div class="browse-author-banner-actions">
                         <button id="jannyBackToBrowseBtn" class="glass-btn"><i class="fa-solid fa-arrow-left"></i> Browse</button>
-                        <button id="jannyReloadCollectionsBtn" class="glass-btn"><i class="fa-solid fa-sync"></i> Reload</button>
                     </div>
                 </div>
 

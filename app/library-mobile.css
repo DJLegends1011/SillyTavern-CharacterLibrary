@@ -2954,8 +2954,9 @@
         display: none !important;
     }
     /* JannyAI collections panel renders in #onlineView (not .filters-wrapper), so its
-       "create collection" row shares the .browse-search-bar class - re-show just that one. */
-    #onlineView #jannyCollectionsSection .browse-search-bar {
+       "create collection" row shares the .browse-search-bar class - re-show just that
+       one, but only while its surface toggle hasn't .hidden it. */
+    #onlineView #jannyCollectionsSection .browse-search-bar:not(.hidden) {
         display: flex !important;
     }
     /* Per-provider filter chrome hidden on mobile (covered by Filters sheet, ie. createSettingsButton) */
@@ -3599,7 +3600,7 @@
     #jannyCollectionsSection .browse-search-bar {
         padding: var(--space-sm-md);
     }
-    /* Header ("Browse" / "Reload") and per-collection ("Open" / "Add Current") action
+    /* Header ("Browse") and per-collection ("Open" / "Add Current") action
        rows: wrap + fill so buttons get full-width touch targets instead of squeezing
        side-by-side at ~380px. */
     #jannyCollectionsSection .browse-author-banner-actions {

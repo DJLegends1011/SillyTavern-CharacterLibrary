@@ -346,6 +346,13 @@
     border: 1px solid var(--glass-border);
 }
 
+/* This sheet loads after library.css, so `display: flex` above out-cascades
+   the global `.hidden` rule — re-hide explicitly (the Janny collections
+   create panel toggles .hidden on this class). */
+.browse-search-bar.hidden {
+    display: none;
+}
+
 .browse-search-input-wrapper {
     display: flex;
     align-items: center;
@@ -803,6 +810,10 @@
     align-items: center;
     flex-wrap: wrap;
     gap: var(--space-sm);
+}
+
+.janny-collection-toolbar.hidden {
+    display: none;
 }
 
 .janny-collection-segmented {

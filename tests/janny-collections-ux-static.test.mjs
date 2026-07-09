@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 const js = readFileSync(new URL('../modules/providers/janny/janny-browse.js', import.meta.url), 'utf8');
 const api = readFileSync(new URL('../modules/providers/janny/janny-api.js', import.meta.url), 'utf8');
 const css = readFileSync(new URL('../modules/providers/browse-shared.css', import.meta.url), 'utf8');
+const mobileCss = readFileSync(new URL('../app/library-mobile.css', import.meta.url), 'utf8');
 
 test('Janny preview modal uses dropdown collection membership controls', () => {
     assert.match(js, /jannyCollectionDropdownBtn/);
@@ -36,6 +37,20 @@ test('Janny collections async state has guards for sort and stale responses', ()
     assert.match(js, /String\(jannySelectedChar\?\.id \|\| ''\) !== characterId/);
     assert.match(js, /function openPreviewModal[\s\S]*jannyCollectionRowMutations = new Set\(\);/);
 });
+test('Janny collections chrome: topbar refresh replaces banner Reload, sort uses CL dropdown, surfaces hide cleanly', () => {
+    // Banner "Reload" was redundant with the topbar refresh button.
+    assert.doesNotMatch(js, /jannyReloadCollectionsBtn/);
+    assert.match(js, /function reloadJannyCollections\(/);
+    assert.match(js, /on\('jannyRefreshBtn', 'click'[\s\S]*?reloadJannyCollections\(\)/);
+    // Public collections sort gets the same styled dropdown as the browse sort.
+    assert.match(js, /initCustomSelect\?\.\(publicCollectionsSortEl\)/);
+    // browse-shared.css loads after library.css, so its display rules need
+    // explicit .hidden overrides or toggled panels leak into other surfaces.
+    assert.match(css, /\.browse-search-bar\.hidden/);
+    assert.match(css, /\.janny-collection-toolbar\.hidden/);
+    assert.match(mobileCss, /#onlineView #jannyCollectionsSection \.browse-search-bar:not\(\.hidden\)/);
+});
+
 test('Janny collection preview grid sizes to the collection card count', () => {
     assert.match(js, /Math\.min\(4, Math\.max\(images\.length, collectionCharacterCount\(collection\)\)\)/);
     assert.match(js, /for \(let i = 0; i < cellCount; i\+\+\)/);
