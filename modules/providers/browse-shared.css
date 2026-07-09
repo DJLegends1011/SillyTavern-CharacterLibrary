@@ -845,6 +845,26 @@
     color: var(--text-secondary);
 }
 
+.janny-collection-detail-updated {
+    margin: 0;
+    padding: 10px 14px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-xl);
+    color: var(--text-secondary);
+    font-size: var(--font-sm);
+    font-style: italic;
+}
+
+/* Small self-sizing chips (cards count, owner, views) under the description */
+.janny-collection-detail-meta .janny-collection-meta-box {
+    padding: 8px 12px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-lg);
+    width: fit-content;
+}
+
 .janny-collection-manage label {
     display: flex;
     flex-direction: column;

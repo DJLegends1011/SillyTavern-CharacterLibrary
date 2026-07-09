@@ -245,6 +245,53 @@ test('parseJannyPublicCollectionsPage extracts anchor-wrapped collection cards',
     assert.equal(parsed.hasMore, false);
 });
 
+test('parseJannyPublicCollectionDetailPage parses the live header layout without page bleed', () => {
+    const html = `
+        <header><a href="https://jannyai.com/"><img src="https://jannyai.com/logo.png" alt="Logo"></a></header>
+        <div>
+            <div>
+                <img src="https://image.jannyai.com/bot-avatars/p1.webp">
+                <img src="https://image.jannyai.com/bot-avatars/p2.webp">
+                <img src="https://image.jannyai.com/bot-avatars/p3.webp">
+                <img src="https://image.jannyai.com/bot-avatars/p4.webp">
+                <img src="https://image.jannyai.com/bot-avatars/p5.webp">
+            </div>
+            <div>
+                <h1>Try another time (Prob favorites)<span><img src="https://image.jannyai.com/user-avatars/owner.jpg"><span>by</span><a href="https://jannyai.com/collections/user/prota">Prota Shonen</a></span></h1>
+                <p>Last updated: 7/9/2026</p>
+                <div><div><p>This is a list of bots that I want to try on later.</p></div></div>
+            </div>
+        </div>
+        <div>
+            <h2>Characters (250)</h2>
+            <a href="/characters/33333333-3333-4333-8333-333333333333_character-one">
+                <p>At the party, your bully's girlfriend... a story by SomeoneElse with 99 views</p>
+            </a>
+            <a href="https://jannyai.com/characters/44444444-4444-4444-8444-444444444444_character-two"><p>Another tagline</p></a>
+            <a href="/characters/33333333-3333-4333-8333-333333333333_character-one">Duplicate</a>
+        </div>
+    `;
+
+    const parsed = parseJannyPublicCollectionDetailPage(html, '/collections/74993388-9f25-4ecb-8e80-f81e134a1560_try-another-time');
+    assert.equal(parsed.collection.id, '74993388-9f25-4ecb-8e80-f81e134a1560');
+    assert.equal(parsed.collection.name, 'Try another time (Prob favorites)');
+    assert.equal(parsed.collection.ownerName, 'Prota Shonen');
+    assert.equal(parsed.collection.description, 'This is a list of bots that I want to try on later.');
+    assert.equal(parsed.collection.updatedAt, '7/9/2026');
+    assert.equal(parsed.collection.characterCount, 250);
+    assert.equal(parsed.collection.viewCount, null);
+    assert.deepEqual(parsed.collection.images, [
+        'https://image.jannyai.com/bot-avatars/p1.webp',
+        'https://image.jannyai.com/bot-avatars/p2.webp',
+        'https://image.jannyai.com/bot-avatars/p3.webp',
+        'https://image.jannyai.com/bot-avatars/p4.webp',
+    ]);
+    assert.deepEqual(parsed.characterIds, [
+        '33333333-3333-4333-8333-333333333333',
+        '44444444-4444-4444-8444-444444444444',
+    ]);
+});
+
 test('parseJannyPublicCollectionDetailPage extracts metadata and unique character ids', () => {
     const html = `
         <article>

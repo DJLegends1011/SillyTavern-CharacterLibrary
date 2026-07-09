@@ -162,11 +162,6 @@ function normalizeJannyCollectionPath(href) {
     return match ? { id: match[1], path } : null;
 }
 
-function firstJannyTagText(block, tagName) {
-    const match = String(block || '').match(new RegExp(`<${tagName}\\b[^>]*>([\\s\\S]*?)<\\/${tagName}>`, 'i'));
-    return match ? stripJannyTags(match[1]) : '';
-}
-
 function extractJannyCollectionName(block, attrs = '') {
     const heading = String(block || '').match(/<h[1-3]\b[^>]*>([\s\S]*?)<\/h[1-3]>/i);
     return (heading ? stripJannyTags(heading[1]) : '')
@@ -203,23 +198,8 @@ function extractJannyImages(...blocks) {
 }
 
 function extractJannyOwnerName(text) {
-    const match = String(text || '').match(/\bby\s+(.+?)(?=\s+(?:[0-9,.]+[km]?\s+views|[0-9,]+\s*(?:characters|cards)|[A-Z][a-z]{2}\s+\d{1,2}|\d{4}-\d{2}-\d{2})|$)/i);
+    const match = String(text || '').match(/\bby\s+(.+?)(?=\s+(?:[0-9,.]+[km]?\s+views|[0-9,]+\s*(?:characters|cards)|last\s+updated\b|[A-Z][a-z]{2}\s+\d{1,2}|\d{4}-\d{2}-\d{2}|\d{1,2}\/\d{1,2}\/\d{2,4})|$)/i);
     return match ? match[1].trim() : '';
-}
-
-function extractJannyCollectionMetadata(block, attrs = '') {
-    const cleanText = stripJannyTags(block);
-    const countMatch = cleanText.match(/([0-9,]+)\s*(?:characters|cards)/i);
-    const viewsMatch = cleanText.match(/([0-9,.]+[km]?)\s*views/i);
-    return {
-        name: extractJannyCollectionName(block, attrs),
-        description: firstJannyTagText(block, 'p'),
-        characterCount: countMatch ? parseInt(countMatch[1].replace(/,/g, ''), 10) : null,
-        ownerName: extractJannyOwnerName(cleanText),
-        viewCount: viewsMatch ? parseJannyCompactNumber(viewsMatch[1]) : null,
-        updatedAt: extractJannyUpdatedAt(block),
-        images: extractJannyImages(block),
-    };
 }
 
 function parseAccountPath(path) {
@@ -337,18 +317,46 @@ export function parseJannyPublicCollectionDetailPage(html, path = '') {
     const text = String(html || '');
     const validation = path ? validateJannyPublicCollectionPath(path) : { ok: false };
     const pathMatch = validation.ok ? validation.path.match(COLLECTION_PATH_RE) : null;
-    const meta = extractJannyCollectionMetadata(text);
+
+    // Collection meta lives in the header above the character grid. Character
+    // cards carry their own <p> taglines and "by" text, so scope every
+    // extraction to the header segment or the first card's tagline becomes the
+    // description and the owner regex swallows the rest of the page.
+    CHARACTER_LINK_RE.lastIndex = 0;
+    const firstCharacter = CHARACTER_LINK_RE.exec(text);
+    CHARACTER_LINK_RE.lastIndex = 0;
+    const gridHeading = text.match(/<h2\b[^>]*>\s*Characters\s*\(\s*([0-9,]+)\s*\)/i);
+    const headerEnd = Math.min(
+        firstCharacter ? firstCharacter.index : text.length,
+        gridHeading && gridHeading.index >= 0 ? gridHeading.index : text.length,
+    );
+    const header = text.slice(0, headerEnd);
+    const headerText = stripJannyTags(header);
+
+    // The title heading nests the owner credit, e.g.
+    // <h1>Name <span><img> <span>by</span> <a>Owner</a></span></h1>
+    const headingMatch = header.match(/<h[1-3]\b[^>]*>([\s\S]*?)<\/h[1-3]>/i);
+    const headingInner = headingMatch ? headingMatch[1] : '';
+    const ownerAnchor = headingInner.match(/<a\b[^>]*>([\s\S]*?)<\/a>/i);
+    const name = stripJannyCollectionNameSuffix(stripJannyTags(headingInner.replace(/<span\b[\s\S]*<\/span>/i, ' ')))
+        || stripJannyCollectionNameSuffix(extractJannyCollectionName(header));
+
+    const countMatch = headerText.match(/([0-9,]+)\s*(?:characters|cards)/i);
+    const viewsMatch = headerText.match(/([0-9,.]+[km]?)\s*views/i);
+
     const collection = {
         id: pathMatch ? pathMatch[1] : '',
-        name: meta.name,
+        name,
         path: validation.ok ? validation.path : '',
         url: validation.ok ? `${JANNY_BASE}${validation.path}` : '',
-        description: meta.description,
-        characterCount: meta.characterCount,
-        ownerName: meta.ownerName,
-        viewCount: meta.viewCount,
-        updatedAt: meta.updatedAt,
-        images: meta.images,
+        description: extractJannyCardDescription(header),
+        characterCount: countMatch
+            ? parseInt(countMatch[1].replace(/,/g, ''), 10)
+            : (gridHeading ? parseInt(gridHeading[1].replace(/,/g, ''), 10) : null),
+        ownerName: ownerAnchor ? stripJannyTags(ownerAnchor[1]) : extractJannyOwnerName(headerText),
+        viewCount: viewsMatch ? parseJannyCompactNumber(viewsMatch[1]) : null,
+        updatedAt: extractJannyUpdatedAt(header),
+        images: extractJannyImages(header),
     };
 
     const seen = new Set();

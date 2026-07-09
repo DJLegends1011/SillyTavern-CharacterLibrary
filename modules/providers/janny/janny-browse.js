@@ -1160,6 +1160,16 @@ function initJannyView() {
     const collectionsSection = document.getElementById('jannyCollectionsSection');
     if (collectionsSection) {
         collectionsSection.addEventListener('click', (e) => {
+            const ownerLink = e.target.closest('.janny-collection-owner-link');
+            if (ownerLink) {
+                e.preventDefault();
+                const author = ownerLink.dataset.author;
+                if (author) {
+                    switchJannyCollectionsPanel(false);
+                    filterByAuthor(author);
+                }
+                return;
+            }
             const publicOpen = e.target.closest('.janny-public-collection-open');
             if (publicOpen) { openJannyPublicCollection(publicOpen.dataset.collectionPath); return; }
             const loadMorePublic = e.target.closest('#jannyPublicCollectionsLoadMoreBtn');
@@ -1736,6 +1746,12 @@ function renderJannyCollectionPreviewCells(collection) {
     return cells.join('');
 }
 
+function renderJannyCollectionOwnerLink(ownerName) {
+    const owner = String(ownerName || '').trim();
+    if (!owner) return '';
+    return `<a href="#" class="creator-link janny-collection-owner-link" data-author="${escapeHtml(owner)}" title="Search characters by ${escapeHtml(owner)}">${escapeHtml(owner)}</a>`;
+}
+
 function formatJannyCollectionDate(value) {
     if (!value) return '';
     const date = new Date(value);
@@ -1758,7 +1774,7 @@ function createJannyCollectionCard(collection, { owned = false } = {}) {
     const openClass = owned ? 'janny-owned-collection-open' : 'janny-public-collection-open';
     const meta = [
         `<span><i class="fa-solid fa-layer-group"></i> ${formatNumber(count)} cards</span>`,
-        owner ? `<span><i class="fa-solid fa-user"></i> ${escapeHtml(owner)}</span>` : '',
+        owner ? `<span><i class="fa-solid fa-user"></i> ${renderJannyCollectionOwnerLink(owner)}</span>` : '',
         views !== null ? `<span><i class="fa-solid fa-eye"></i> ${formatNumber(views)} views</span>` : '',
         updated ? `<span><i class="fa-solid fa-clock"></i> ${escapeHtml(updated)}</span>` : '',
         owned ? `<span><i class="fa-solid ${collectionIsPrivate(collection) ? 'fa-lock' : 'fa-globe'}"></i> ${collectionPrivacyLabel(collection)}</span>` : '',
@@ -2073,6 +2089,7 @@ function renderJannyCollectionDetail({ loading = false, error = '' } = {}) {
     }
     const collection = jannyActiveCollection || {};
     const desc = stripHtml(collection.description || '');
+    const updated = formatJannyCollectionDate(collection.updatedAt || collection.updated_at || '');
     panel.innerHTML = `
         <div class="janny-collection-detail">
             <div class="browse-author-banner">
@@ -2084,12 +2101,13 @@ function renderJannyCollectionDetail({ loading = false, error = '' } = {}) {
                     <button id="jannyCollectionDetailBackBtn" class="glass-btn"><i class="fa-solid fa-arrow-left"></i> Back</button>
                 </div>
             </div>
+            ${updated ? `<p class="janny-collection-detail-updated">Last updated: ${escapeHtml(updated)}</p>` : ''}
             ${desc ? `<p class="janny-collection-detail-description">${escapeHtml(desc)}</p>` : ''}
-            <div class="janny-collection-meta">
-                <span><i class="fa-solid fa-layer-group"></i> ${formatNumber(collectionCharacterCount(collection) || jannyCollectionCharacters.length)} cards</span>
-                ${collection.ownerName ? `<span><i class="fa-solid fa-user"></i> ${escapeHtml(collection.ownerName)}</span>` : ''}
-                ${typeof collection.viewCount === 'number' ? `<span><i class="fa-solid fa-eye"></i> ${formatNumber(collection.viewCount)} views</span>` : ''}
-                ${collection.kind === 'owned' ? `<span><i class="fa-solid ${collectionIsPrivate(collection) ? 'fa-lock' : 'fa-globe'}"></i> ${collectionPrivacyLabel(collection)}</span>` : ''}
+            <div class="janny-collection-meta janny-collection-detail-meta">
+                <span class="janny-collection-meta-box"><i class="fa-solid fa-layer-group"></i> ${formatNumber(collectionCharacterCount(collection) || jannyCollectionCharacters.length)} cards</span>
+                ${collection.ownerName ? `<span class="janny-collection-meta-box"><i class="fa-solid fa-user"></i> ${renderJannyCollectionOwnerLink(collection.ownerName)}</span>` : ''}
+                ${typeof collection.viewCount === 'number' ? `<span class="janny-collection-meta-box"><i class="fa-solid fa-eye"></i> ${formatNumber(collection.viewCount)} views</span>` : ''}
+                ${collection.kind === 'owned' ? `<span class="janny-collection-meta-box"><i class="fa-solid ${collectionIsPrivate(collection) ? 'fa-lock' : 'fa-globe'}"></i> ${collectionPrivacyLabel(collection)}</span>` : ''}
             </div>
             <div id="jannyCollectionCharactersGrid" class="browse-grid"></div>
         </div>

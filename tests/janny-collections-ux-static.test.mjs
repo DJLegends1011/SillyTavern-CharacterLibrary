@@ -51,6 +51,15 @@ test('Janny collections chrome: topbar refresh replaces banner Reload, sort uses
     assert.match(mobileCss, /#onlineView #jannyCollectionsSection \.browse-search-bar:not\(\.hidden\)/);
 });
 
+test('Janny collection detail shows updated line, description, meta chips, and clickable owner', () => {
+    assert.match(js, /janny-collection-detail-updated/);
+    assert.match(js, /janny-collection-meta-box/);
+    assert.match(js, /renderJannyCollectionOwnerLink/);
+    assert.match(js, /switchJannyCollectionsPanel\(false\);\s*\n\s*filterByAuthor\(author\)/);
+    assert.match(css, /\.janny-collection-detail-updated/);
+    assert.match(css, /\.janny-collection-detail-meta \.janny-collection-meta-box/);
+});
+
 test('Janny collection preview grid sizes to the collection card count', () => {
     assert.match(js, /Math\.min\(4, Math\.max\(images\.length, collectionCharacterCount\(collection\)\)\)/);
     assert.match(js, /for \(let i = 0; i < cellCount; i\+\+\)/);
