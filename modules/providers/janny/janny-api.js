@@ -119,6 +119,23 @@ async function helperRequest(path, method = 'GET', data = null) {
     }
     return fetch(`/api${path}`, opts);
 }
+async function helperJsonGet(path, params = {}) {
+    const query = new URLSearchParams();
+    for (const [key, value] of Object.entries(params)) {
+        if (value !== undefined && value !== null && String(value) !== '') query.set(key, String(value));
+    }
+    const suffix = query.toString();
+    const resp = await helperRequest(`${path}${suffix ? `?${suffix}` : ''}`);
+    const data = await resp.json().catch(() => null);
+    if (!resp.ok || data?.cloudflare) {
+        const err = new Error(data?.error || (data?.cloudflare ? 'Cloudflare challenge' : `HTTP ${resp.status}`));
+        err.status = resp.status;
+        err.cloudflare = !!data?.cloudflare;
+        err.payload = data;
+        throw err;
+    }
+    return data || {};
+}
 
 export async function checkJannyPluginAvailable() {
     try {
@@ -277,6 +294,25 @@ export async function fetchJannyCollections(options = {}) {
     return data.json?.collections || data.collections || [];
 }
 
+export async function fetchJannyPublicCollections({ sort = 'latest', page = 1 } = {}) {
+    return helperJsonGet(`${CL_HELPER_PLUGIN_BASE}/janny-public-collections`, { sort, page });
+}
+
+export async function fetchJannyPublicCollection(path) {
+    return helperJsonGet(`${CL_HELPER_PLUGIN_BASE}/janny-public-collection`, { path });
+}
+
+export async function fetchJannyPublicCharactersByIds(ids) {
+    const characterIDs = toIdArray(ids);
+    if (!characterIDs.length) return [];
+    const out = [];
+    for (let i = 0; i < characterIDs.length; i += JANNY_GET_CHARACTERS_CHUNK) {
+        const chunk = characterIDs.slice(i, i + JANNY_GET_CHARACTERS_CHUNK);
+        const data = await helperJsonGet(`${CL_HELPER_PLUGIN_BASE}/janny-public-characters`, { ids: chunk.join(',') });
+        if (Array.isArray(data.characters)) out.push(...data.characters);
+    }
+    return out;
+}
 export async function fetchJannyCollectionCharacters(collectionId, options = {}) {
     if (!collectionId) return [];
     const data = await jannyAccountProxy('GET', `/api/collections/${collectionId}/characters`, undefined, options);
@@ -309,4 +345,14 @@ export async function createJannyCollection({ name, description = '', isPrivate 
     const location = data.location || '';
     const idMatch = location.match(/\/collections\/([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})/i);
     return { success: true, id: idMatch ? idMatch[1] : null, location };
+}
+export async function updateJannyCollection({ id, name, description = '', isPrivate = true } = {}, options = {}) {
+    const body = { id, name, description, isPrivate: isPrivate ? 'yes' : 'no' };
+    const data = await jannyAccountProxy('POST', '/collections/form/edit-collection', body, options);
+    return { success: true, location: data.location || '' };
+}
+
+export async function deleteJannyCollection(id, options = {}) {
+    const data = await jannyAccountProxy('POST', '/collections/form/delete-collection', { id }, options);
+    return { success: true, location: data.location || '' };
 }

@@ -3620,24 +3620,78 @@
         white-space: normal;
     }
 
-    /* ---- JannyAI card-modal "Add to collection" row (#jannyCharAccountSection) ----
-       Stack the collection <select> above the "Add" button and force both full-width;
-       relying on flex stretch defaults for <select> is inconsistent across browsers. */
-    #jannyCharAccountSection .browse-search-bar {
-        flex-direction: column;
-        align-items: stretch;
-        gap: var(--space-sm);
+    /* ---- JannyAI collections dropdown / sheet ---- */
+    html.cl-browse-quick-import #jannyCharModal .mobile-more-actions-btn {
+        display: inline-flex;
     }
-    #jannyCharAccountSection #jannyCollectionSelect,
-    #jannyCharAccountSection #jannyAddToCollectionBtn {
+
+    #jannyCharModal .janny-collection-caret {
+        display: none;
+    }
+
+    #jannyCharModal .janny-collection-dropdown {
+        position: fixed;
+        left: 0;
+        right: 0;
+        top: auto;
+        bottom: 0;
         width: 100%;
+        min-width: 0;
+        max-height: min(88vh, 620px);
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        padding: 12px 14px calc(14px + env(safe-area-inset-bottom));
+        border-radius: 18px 18px 0 0;
+        border: 1px solid var(--glass-border);
+        border-bottom: 0;
+        background: var(--cl-glass-bg, var(--card-bg));
+        box-shadow: 0 -18px 42px rgba(0, 0, 0, 0.45);
+        z-index: 10010;
     }
-    #jannyCharAccountSection #jannyAddToCollectionBtn {
-        display: flex;
-        align-items: center;
+
+    #jannyCharModal .janny-collection-dropdown::before {
+        content: '';
+        display: block;
+        width: 42px;
+        height: 4px;
+        margin: 0 auto 10px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.22);
+    }
+
+    #jannyCharModal .janny-collection-toggle-row {
+        min-height: var(--touch-target-min);
+    }
+
+    #jannyCollectionsSection .janny-collection-card-grid {
+        grid-template-columns: 1fr;
+    }
+
+    #jannyCollectionsSection .janny-collection-card {
+        grid-template-columns: 88px minmax(0, 1fr);
+    }
+
+    #jannyCollectionsSection .janny-collection-toolbar,
+    #jannyCollectionsSection .janny-collection-segmented {
+        width: 100%;
+        flex-wrap: wrap;
+    }
+
+    #jannyCollectionsSection .janny-collection-segmented .glass-btn,
+    #jannyCollectionsSection .janny-collection-toolbar .glass-btn {
+        flex: 1 1 auto;
         justify-content: center;
         min-height: var(--touch-target-min);
     }
+
+    #jannyCollectionsSection .janny-collection-manage {
+        gap: var(--space-md);
+    }
+
+    #jannyCollectionsSection .janny-manage-character-row {
+        grid-template-columns: 44px minmax(0, 1fr) auto;
+    }
+
 
 }
 

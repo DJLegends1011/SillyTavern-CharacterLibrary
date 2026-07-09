@@ -8,8 +8,12 @@ import {
     isJannyCollectionFormPath,
     jannyFamilyOrder,
     parseJannyBookmarkPage,
+    parseJannyPublicCollectionsPage,
+    parseJannyPublicCollectionDetailPage,
     sanitizeJannyCookieHeader,
     summarizeJannyResponseForClient,
+    validateJannyPublicCollectionPath,
+    validateJannyPublicCharacterIds,
 } from '../extras/cl-helper/janny-account.js';
 
 test('sanitizeJannyCookieHeader accepts a full Cookie header without leaking shape', () => {
@@ -125,6 +129,88 @@ test('parseJannyBookmarkPage extracts count and unique character links', () => {
         'https://jannyai.com/characters/11111111-1111-4111-8111-111111111111_character-alice',
         'https://jannyai.com/characters/22222222-2222-4222-8222-222222222222_character-bob',
     ]);
+});
+test('parseJannyPublicCollectionsPage extracts public collection cards', () => {
+    const html = `
+        <main>
+            <a class="collection-card" href="/collections/11111111-1111-4111-8111-111111111111_daily-finds">
+                <img src="https://image.jannyai.com/bot-avatars/a.webp" alt="">
+                <img src="https://image.jannyai.com/bot-avatars/b.webp" alt="">
+                <h2>Daily Finds</h2>
+                <p>A public list worth browsing.</p>
+                <span>12 characters</span>
+                <span>by Yuuri</span>
+                <span>1.2K views</span>
+                <time datetime="2026-07-08">Jul 8, 2026</time>
+            </a>
+            <a class="collection-card" href="https://jannyai.com/collections/22222222-2222-4222-8222-222222222222_lore-box">
+                <h3>Lore Box</h3>
+                <p>Plot-heavy cards.</p>
+                <span>3 cards</span>
+                <span>by Archivist</span>
+                <span>48 views</span>
+            </a>
+        </main>
+    `;
+
+    const parsed = parseJannyPublicCollectionsPage(html);
+    assert.equal(parsed.collections.length, 2);
+    assert.deepEqual(parsed.collections[0], {
+        id: '11111111-1111-4111-8111-111111111111',
+        name: 'Daily Finds',
+        path: '/collections/11111111-1111-4111-8111-111111111111_daily-finds',
+        url: 'https://jannyai.com/collections/11111111-1111-4111-8111-111111111111_daily-finds',
+        description: 'A public list worth browsing.',
+        characterCount: 12,
+        ownerName: 'Yuuri',
+        viewCount: 1200,
+        updatedAt: '2026-07-08',
+        images: [
+            'https://image.jannyai.com/bot-avatars/a.webp',
+            'https://image.jannyai.com/bot-avatars/b.webp',
+        ],
+    });
+    assert.equal(parsed.collections[1].characterCount, 3);
+    assert.equal(parsed.collections[1].ownerName, 'Archivist');
+    assert.equal(parsed.hasMore, false);
+});
+
+test('parseJannyPublicCollectionDetailPage extracts metadata and unique character ids', () => {
+    const html = `
+        <article>
+            <h1>Daily Finds</h1>
+            <p>Collected cards with strong intros.</p>
+            <span>by Yuuri</span>
+            <span>12 characters</span>
+            <span>1,234 views</span>
+            <time datetime="2026-07-08">Jul 8, 2026</time>
+            <a href="/characters/33333333-3333-4333-8333-333333333333_character-one">One</a>
+            <a href="https://jannyai.com/characters/44444444-4444-4444-8444-444444444444_character-two">Two</a>
+            <a href="/characters/33333333-3333-4333-8333-333333333333_character-one">Duplicate</a>
+        </article>
+    `;
+
+    const parsed = parseJannyPublicCollectionDetailPage(html, '/collections/11111111-1111-4111-8111-111111111111_daily-finds');
+    assert.equal(parsed.collection.id, '11111111-1111-4111-8111-111111111111');
+    assert.equal(parsed.collection.name, 'Daily Finds');
+    assert.equal(parsed.collection.description, 'Collected cards with strong intros.');
+    assert.equal(parsed.collection.ownerName, 'Yuuri');
+    assert.equal(parsed.collection.characterCount, 12);
+    assert.equal(parsed.collection.viewCount, 1234);
+    assert.equal(parsed.collection.updatedAt, '2026-07-08');
+    assert.deepEqual(parsed.characterIds, [
+        '33333333-3333-4333-8333-333333333333',
+        '44444444-4444-4444-8444-444444444444',
+    ]);
+});
+
+test('Janny public collection validators accept only narrow read inputs', () => {
+    assert.equal(validateJannyPublicCollectionPath('/collections/11111111-1111-4111-8111-111111111111_daily-finds').ok, true);
+    assert.equal(validateJannyPublicCollectionPath('/collections/11111111-1111-4111-8111-111111111111_daily-finds/edit').ok, false);
+    assert.equal(validateJannyPublicCollectionPath('https://evil.example/collections/11111111-1111-4111-8111-111111111111_x').ok, false);
+
+    assert.equal(validateJannyPublicCharacterIds('33333333-3333-4333-8333-333333333333,44444444-4444-4444-8444-444444444444').ok, true);
+    assert.equal(validateJannyPublicCharacterIds('../../../etc/passwd').ok, false);
 });
 
 test('buildFlareSolverrJannyRequest pins target, cookies, user agent, and session', () => {
