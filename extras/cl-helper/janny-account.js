@@ -232,6 +232,15 @@ export function validateJannyPublicCollectionPath(path) {
     return { ok: true, path: parsed.pathname };
 }
 
+// Collector profile pages live at /collectors/<username> and list that
+// user's public collections with the same card markup as /collections.
+export function validateJannyCollectorName(name) {
+    const value = String(name || '').trim();
+    if (!value) return { ok: false, error: 'collector name is required' };
+    if (value.length > 128 || /[\0-\x1f/\\]/.test(value)) return { ok: false, error: 'collector name is not valid' };
+    return { ok: true, name: value };
+}
+
 export function validateJannyPublicCharacterIds(ids) {
     const value = String(ids || '').trim();
     if (!csvIdsAreSafe(value)) return { ok: false, error: 'character ids are invalid' };
@@ -285,8 +294,15 @@ export function parseJannyPublicCollectionsPage(html) {
     const collections = anchors.map((anchor, i) => {
         const beforeStart = i > 0 ? anchors[i - 1].end : 0;
         const before = text.slice(Math.max(beforeStart, anchor.start - JANNY_CARD_SEGMENT_CAP), anchor.start);
-        const afterEnd = i + 1 < anchors.length ? anchors[i + 1].start : text.length;
-        const after = text.slice(anchor.end, Math.min(afterEnd, anchor.end + JANNY_CARD_SEGMENT_CAP));
+        // The last card's segment must stop at the site footer, whose <p> text
+        // would otherwise become the description of a card that has none.
+        const footerIndex = text.indexOf('<footer', anchor.end);
+        const afterEnd = Math.min(
+            i + 1 < anchors.length ? anchors[i + 1].start : text.length,
+            footerIndex >= 0 ? footerIndex : text.length,
+            anchor.end + JANNY_CARD_SEGMENT_CAP,
+        );
+        const after = text.slice(anchor.end, afterEnd);
 
         const titleText = stripJannyTags(anchor.block);
         const footerText = stripJannyTags(stripJannyParagraphs(after));

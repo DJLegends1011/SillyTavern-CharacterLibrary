@@ -255,6 +255,10 @@ export async function fetchJannyPublicCollection(path) {
     return helperJsonGet(`${CL_HELPER_PLUGIN_BASE}/janny-public-collection`, { path });
 }
 
+export async function fetchJannyCollectorCollections(name) {
+    return helperJsonGet(`${CL_HELPER_PLUGIN_BASE}/janny-collector-collections`, { name });
+}
+
 export async function fetchJannyPublicCharactersByIds(ids) {
     const characterIDs = toIdArray(ids);
     if (!characterIDs.length) return [];

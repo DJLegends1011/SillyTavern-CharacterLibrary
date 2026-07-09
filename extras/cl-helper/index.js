@@ -28,6 +28,7 @@ import {
     sanitizeJannyCookieHeader,
     sanitizeJannyUserAgent,
     summarizeJannyResponseForClient,
+    validateJannyCollectorName,
     validateJannyPublicCollectionPath,
     validateJannyPublicCharacterIds,
 } from './janny-account.js';
@@ -1321,6 +1322,20 @@ function registerJannyAccountRoutes(router) {
             res.json({ ok: true, status: result.status, ...parseJannyPublicCollectionsPage(result.body) });
         } catch (err) {
             console.error('[cl-helper] JannyAI public collections error:', err.message);
+            res.status(502).json({ error: `Failed to reach JannyAI: ${err.message}` });
+        }
+    });
+
+    router.get('/janny-collector-collections', async (req, res) => {
+        const validation = validateJannyCollectorName(typeof req.query?.name === 'string' ? req.query.name : '');
+        if (!validation.ok) return res.status(400).json({ error: validation.error });
+        try {
+            const result = await fetchJannyPublicDirect({ path: `/collectors/${encodeURIComponent(validation.name)}` });
+            if (result.cloudflare) return res.status(403).json({ error: 'Cloudflare challenge', cloudflare: true });
+            if (!result.ok) return res.status(result.status || 502).json({ error: `HTTP ${result.status}` });
+            res.json({ ok: true, status: result.status, ...parseJannyPublicCollectionsPage(result.body) });
+        } catch (err) {
+            console.error('[cl-helper] JannyAI collector collections error:', err.message);
             res.status(502).json({ error: `Failed to reach JannyAI: ${err.message}` });
         }
     });

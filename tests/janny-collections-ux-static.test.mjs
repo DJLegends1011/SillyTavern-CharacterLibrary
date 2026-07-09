@@ -55,9 +55,18 @@ test('Janny collection detail shows updated line, description, meta chips, and c
     assert.match(js, /janny-collection-detail-updated/);
     assert.match(js, /janny-collection-meta-box/);
     assert.match(js, /renderJannyCollectionOwnerLink/);
-    assert.match(js, /switchJannyCollectionsPanel\(false\);\s*\n\s*filterByAuthor\(author\)/);
     assert.match(css, /\.janny-collection-detail-updated/);
     assert.match(css, /\.janny-collection-detail-meta \.janny-collection-meta-box/);
+});
+
+test('Janny collection owner links open the collector collections surface', () => {
+    assert.match(js, /openJannyCollectorCollections\(author\)/);
+    assert.match(js, /fetchJannyCollectorCollections/);
+    assert.match(js, /jannyCollectorCollectionsPanel/);
+    assert.match(js, /surface !== 'collector'/);
+    // Collection owners must not fall back to character keyword search.
+    assert.doesNotMatch(js, /janny-collection-owner-link[\s\S]{0,400}filterByAuthor/);
+    assert.match(api, /janny-collector-collections/);
 });
 
 test('Janny collection preview grid sizes to the collection card count', () => {

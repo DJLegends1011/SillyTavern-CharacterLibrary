@@ -12,6 +12,7 @@ import {
     parseJannyPublicCollectionsPage,
     parseJannyPublicCollectionDetailPage,
     sanitizeJannyCookieHeader,
+    validateJannyCollectorName,
     summarizeJannyResponseForClient,
     validateJannyPublicCollectionPath,
     validateJannyPublicCharacterIds,
@@ -319,6 +320,57 @@ test('parseJannyPublicCollectionDetailPage extracts metadata and unique characte
         '33333333-3333-4333-8333-333333333333',
         '44444444-4444-4444-8444-444444444444',
     ]);
+});
+
+test('parseJannyPublicCollectionsPage handles collector profile pages without footer bleed', () => {
+    const html = `
+        <div>
+            <h1>Profile of Prota Shonen</h1>
+            <h2>Public Collections (2)</h2>
+            <div>
+                <div>
+                    <img src="https://image.jannyai.com/bot-avatars/c1.webp" alt="image">
+                    <img src="https://image.jannyai.com/bot-avatars/c2.webp" alt="image">
+                </div>
+                <div>
+                    <a href="/collections/74993388-9f25-4ecb-8e80-f81e134a1560_try-another-time"><h3>Try another time (546 characters)</h3></a>
+                    <p>Last updated: 7/9/2026</p>
+                    <p>Bots I want to try later.</p>
+                </div>
+                <div><span><img src="https://image.jannyai.com/user-avatars/o.jpg">by <a href="https://jannyai.com/collectors/Prota%20Shonen">Prota Shonen</a></span><span><strong>5414</strong> views</span></div>
+            </div>
+            <div>
+                <div>
+                    <img src="https://image.jannyai.com/bot-avatars/d1.webp" alt="image">
+                </div>
+                <div>
+                    <a href="/collections/22222222-2222-4222-8222-222222222222_deleted-stuff"><h3>Deleted stuff (72 characters)</h3></a>
+                    <p>Last updated: 6/21/2026</p>
+                </div>
+                <div><span><img src="https://image.jannyai.com/user-avatars/o.jpg">by <a href="https://jannyai.com/collectors/Prota%20Shonen">Prota Shonen</a></span><span><strong>6022</strong> views</span></div>
+            </div>
+        </div>
+        <footer><p>We created this page because JanitorAI went away.</p></footer>
+    `;
+
+    const parsed = parseJannyPublicCollectionsPage(html);
+    assert.equal(parsed.collections.length, 2);
+    assert.equal(parsed.collections[0].name, 'Try another time');
+    assert.equal(parsed.collections[0].characterCount, 546);
+    assert.equal(parsed.collections[1].name, 'Deleted stuff');
+    assert.equal(parsed.collections[1].ownerName, 'Prota Shonen');
+    // Second card has no description; the site footer's <p> must not leak in.
+    assert.equal(parsed.collections[1].description, '');
+    assert.deepEqual(parsed.collections[1].images, ['https://image.jannyai.com/bot-avatars/d1.webp']);
+});
+
+test('validateJannyCollectorName accepts usernames and rejects path-breaking input', () => {
+    assert.deepEqual(validateJannyCollectorName(' Prota Shonen '), { ok: true, name: 'Prota Shonen' });
+    assert.equal(validateJannyCollectorName('').ok, false);
+    assert.equal(validateJannyCollectorName('a/b').ok, false);
+    assert.equal(validateJannyCollectorName('a\\b').ok, false);
+    assert.equal(validateJannyCollectorName('bad\r\nname').ok, false);
+    assert.equal(validateJannyCollectorName('x'.repeat(200)).ok, false);
 });
 
 test('Janny public collection validators accept only narrow read inputs', () => {
