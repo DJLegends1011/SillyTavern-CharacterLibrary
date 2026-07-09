@@ -793,6 +793,9 @@ Expected output: no syntax errors.
   - `.janny-collection-manage`
   - `.janny-manage-character-row`
 - [ ] Use existing CSS variables: `--accent`, `--accent-rgb`, `--glass-border`, `--card-bg`, `--text-primary`, `--text-secondary`, `--radius-xl`, and `--touch-target-min`.
+- [ ] Cap the preview collection list so many collections scroll instead of overflowing the modal:
+  - Desktop: `.janny-collection-dropdown { max-height: min(320px, 60vh); overflow-y: auto; }` with a sticky `.janny-collection-dropdown-title` so the header stays put while rows scroll.
+  - Mobile bottom sheet: `max-height` (CL's `.mobile-sheet` uses `88vh`) + `overflow-y: auto; overscroll-behavior: contain;` so the sheet scrolls internally and does not push the modal off-screen.
 - [ ] Use line clamping for `.janny-collection-description`:
 
 ```css
@@ -870,6 +873,7 @@ Expected output: all tests pass.
   - Kebab off: open the preview modal, tap the `⋮` kebab, confirm the menu lists Open / Bookmark / Add to collection / Import. Tap "Add to collection"; confirm the kebab menu closes and the collections bottom sheet opens (no two menus stacked).
   - Kebab on (quick-import): confirm only the import square shows and the collections action is intentionally absent from the modal (reachable via the Collections tab).
   - Preview modal collection picker opens as a viewport-safe bottom sheet.
+  - With many owned collections (10+), the picker scrolls internally (desktop dropdown and mobile sheet both cap height + scroll) rather than growing past the modal/viewport.
   - Rows are tappable and do not clip behind modal edges.
   - Public collection cards are one column and descriptions clamp.
   - Public detail keeps Back visible above the grid.
