@@ -30,11 +30,13 @@ Work in the order below. After each slice, run the listed verification commands 
 
 - [ ] Create `docs/superpowers/artifacts/jannyai-collections-ux/`.
 - [ ] Add `docs/superpowers/artifacts/jannyai-collections-ux/index.html` as a static, self-contained artifact using CL's dark glass/magenta styling.
+  - The artifact MUST inline the real CL stylesheets (`app/library.css`, `modules/providers/browse-shared.css`, `app/library-mobile.css`) into a `<style>` block. Do NOT `<link>` them by relative path: a published Claude Artifact strips `<head>`/`<link>` and a strict CSP blocks external CSS, so linked styles render naked (this is exactly what broke the first pass). Add small wrapper neutralizers (`html,body{height:auto;overflow:auto}`, `.app-container{min-height:0}` for nested phone frames, etc.).
 - [ ] The artifact must show these named sections with `data-state` attributes so reviewers can inspect every target state:
   - `data-state="desktop-modal-closed"`
   - `data-state="desktop-modal-open"`
   - `data-state="desktop-modal-error"`
-  - `data-state="mobile-modal-open"`
+  - `data-state="mobile-modal-open"` — the 3-dot (kebab) menu open, with "Add to collection" listed alongside Open / Bookmark / Import (NOT inline action buttons; see Slice 8 mobile note)
+  - `data-state="mobile-collections-sheet"` — after tapping "Add to collection", the full-width `.mobile-sheet` collections picker
   - `data-state="desktop-public-list"`
   - `data-state="mobile-public-list"`
   - `data-state="desktop-owned-list"`
@@ -46,10 +48,10 @@ Work in the order below. After each slice, run the listed verification commands 
 - [ ] Verify the artifact contains every state marker:
 
 ```powershell
-rg -n "data-state=\"(desktop-modal-closed|desktop-modal-open|desktop-modal-error|mobile-modal-open|desktop-public-list|mobile-public-list|desktop-owned-list|mobile-owned-list|desktop-manage|mobile-manage)\"" docs/superpowers/artifacts/jannyai-collections-ux/index.html
+rg -n "data-state=\"(desktop-modal-closed|desktop-modal-open|desktop-modal-error|mobile-modal-open|mobile-collections-sheet|desktop-public-list|mobile-public-list|desktop-owned-list|mobile-owned-list|desktop-manage|mobile-manage)\"" docs/superpowers/artifacts/jannyai-collections-ux/index.html
 ```
 
-Expected output: ten matching lines, one for each state marker.
+Expected output: eleven matching lines, one for each state marker.
 
 - [ ] Commit this slice:
 
@@ -574,6 +576,17 @@ jannyModalCollectionIds = new Set();
 jannyModalCollectionChecksLoadedFor = '';
 ```
 
+### Mobile behavior (verified against `app/library-mobile.js` / `app/library-mobile.css`)
+
+On mobile, CL owns the online-card control row — we do NOT build a mobile button UI, but the design must account for how CL rewrites it:
+
+- Under `@media (max-width:768px)`, `library-mobile.css:999` hides **every** inline `.action-btn` in `.browse-char-modal .modal-controls` (including our `jannyCollectionDropdownBtn`) and `library-mobile.js` injects one of two controls, chosen by the `cl-browse-quick-import` `<html>` class:
+  - **kebab off (default):** a `⋮` `.mobile-more-actions-btn`. Tapping it opens `.mobile-more-actions-menu`, which mirrors each surviving `.action-btn` (clones `innerHTML`, proxies taps via `orig.click()`). Because `jannyCollectionDropdownBtn` is a normal `.action-btn`, "Add to collection" appears there automatically — no extra work.
+  - **quick-import on:** a single import square only; **the kebab is hidden**, so Open/Bookmark/Add-to-collection are unreachable from the preview modal. **Decision:** accept that collections membership is kebab-mode only, and rely on the Collections tab for quick-import users. Document this in the settings copy; do not try to force the collections action into quick-import mode.
+- **No stacked menus (answers the open question):** the kebab menu item handler is `closeMenu(); orig.click();` ([`library-mobile.js:3835`](../../app/library-mobile.js)). The kebab popover is removed *before* our button's click fires, so opening the collections sheet never leaves the kebab menu underneath it. A capture-phase document listener also closes the kebab on any outside tap. Our `openJannyCollectionDropdown()` therefore just needs to run on the (proxied) button click as normal.
+- **The dropdown must present as a bottom sheet on mobile, not an anchored popover.** Its anchor button is `display:none` on mobile, so an absolutely-positioned `.janny-collection-dropdown` would land at a collapsed origin. Slice 13 pins it to a `position:fixed` bottom sheet (mirroring CL's own `.mobile-sheet`) so it is independent of the hidden anchor.
+- Mirrored menu rows clone the button's `innerHTML`, so keep the desktop-only caret (`.janny-collection-caret`) hidden on mobile (or it shows a stray chevron inside the kebab row).
+
 - [ ] Run:
 
 ```powershell
@@ -793,7 +806,8 @@ Expected output: no syntax errors.
 
 - [ ] Edit `app/library-mobile.css`.
 - [ ] Replace the old `#jannyCharAccountSection` mobile rules with mobile dropdown rules:
-  - `.janny-collection-dropdown` becomes a fixed bottom sheet below 480px
+  - `.janny-collection-dropdown` becomes a `position:fixed` bottom sheet below 480px (independent of its `display:none` anchor button — see Slice 8 mobile note), styled to match CL's own `.mobile-sheet` (rounded top, handle optional, `--cl-glass-bg`, safe-area bottom padding)
+  - hide the desktop caret on mobile: `.janny-collection-caret { display: none; }` so the mirrored kebab-menu row doesn't show a stray chevron
   - rows have `min-height: var(--touch-target-min)`
   - `.janny-collection-card-grid` becomes one column
   - `.janny-collection-toolbar` wraps
@@ -852,8 +866,10 @@ Expected output: all tests pass.
   - Confirm owned cards show description, privacy, counts, preview cells, Open, Edit, and Delete.
   - Open an owned collection and import-preview a card.
   - Open Edit and verify metadata/membership layout.
-- [ ] Mobile verification at 390 x 844:
-  - Preview modal dropdown opens as a viewport-safe sheet.
+- [ ] Mobile verification at 390 x 844 (test BOTH `cl-browse-quick-import` off and on):
+  - Kebab off: open the preview modal, tap the `⋮` kebab, confirm the menu lists Open / Bookmark / Add to collection / Import. Tap "Add to collection"; confirm the kebab menu closes and the collections bottom sheet opens (no two menus stacked).
+  - Kebab on (quick-import): confirm only the import square shows and the collections action is intentionally absent from the modal (reachable via the Collections tab).
+  - Preview modal collection picker opens as a viewport-safe bottom sheet.
   - Rows are tappable and do not clip behind modal edges.
   - Public collection cards are one column and descriptions clamp.
   - Public detail keeps Back visible above the grid.
@@ -878,5 +894,6 @@ Expected status after all commits: clean working tree, branch ahead of remote by
 - [ ] Public, owned, detail, and manage state are separate from each other.
 - [ ] Delete collection requires confirmation.
 - [ ] Mobile CSS covers the dropdown, collection cards, detail view, and manage view.
+- [ ] Mobile collections action is reached via CL's kebab menu (kebab-off mode), opens as a bottom sheet, and does not stack under the kebab popover; quick-import mode's omission is documented, not a regression.
 - [ ] Tests cover parser behavior, narrow public validators, and static UI contract.
 - [ ] Final response reports whether work is uncommitted, committed, or pushed.
