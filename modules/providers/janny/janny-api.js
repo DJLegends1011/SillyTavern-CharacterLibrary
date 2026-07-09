@@ -32,62 +32,15 @@ export const TAG_MAP = {
 // TOKEN MANAGEMENT
 // ========================================
 
-let _cachedToken = null;
-let _tokenFetchPromise = null;
+let _cachedToken = JANNY_FALLBACK_TOKEN;
 
 /**
- * Fetch the MeiliSearch API key from JannyAI's client config JS bundle.
- * Falls back to a known hardcoded key if scraping fails.
- * Token is cached across calls (shared between provider and browse view).
+ * Return the known public MeiliSearch token without scraping JannyAI pages on
+ * provider boot. The page scrape is Cloudflare-prone and can make SillyTavern
+ * log noisy 403 binary bodies even though the fallback search token works.
  */
 export async function getSearchToken() {
-    if (_cachedToken) return _cachedToken;
-    if (_tokenFetchPromise) return _tokenFetchPromise;
-
-    _tokenFetchPromise = (async () => {
-        try {
-            const pageResp = await fetchWithProxy(`${JANNY_SITE_BASE}/characters/search`);
-            const html = await pageResp.text();
-
-            let configPath = null;
-            const configMatch = html.match(/client-config\.[a-zA-Z0-9_-]+\.js/);
-            if (configMatch) {
-                configPath = '/_astro/' + configMatch[0];
-            } else {
-                const spMatch = html.match(/SearchPage\.[a-zA-Z0-9_-]+\.js/);
-                if (spMatch) {
-                    const spResp = await fetchWithProxy(`${JANNY_SITE_BASE}/_astro/${spMatch[0]}`);
-                    if (spResp.ok) {
-                        const spJs = await spResp.text();
-                        const impMatch = spJs.match(/client-config\.[a-zA-Z0-9_-]+\.js/);
-                        if (impMatch) configPath = '/_astro/' + impMatch[0];
-                    }
-                }
-            }
-
-            if (configPath) {
-                const cfgResp = await fetchWithProxy(`${JANNY_SITE_BASE}${configPath}`);
-                if (cfgResp.ok) {
-                    const cfgJs = await cfgResp.text();
-                    const tokenMatch = cfgJs.match(/"([a-f0-9]{64})"/);
-                    if (tokenMatch) {
-                        _cachedToken = tokenMatch[1];
-                        return _cachedToken;
-                    }
-                }
-            }
-
-            throw new Error('Could not extract MeiliSearch token');
-        } catch (e) {
-            console.warn('[JannyAPI] Token fetch failed, using fallback:', e.message);
-            _cachedToken = JANNY_FALLBACK_TOKEN;
-            return _cachedToken;
-        } finally {
-            _tokenFetchPromise = null;
-        }
-    })();
-
-    return _tokenFetchPromise;
+    return _cachedToken || JANNY_FALLBACK_TOKEN;
 }
 
 // ========================================

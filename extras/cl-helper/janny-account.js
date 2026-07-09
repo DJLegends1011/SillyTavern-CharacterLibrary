@@ -381,6 +381,19 @@ export function buildJannyAccountUrl(path) {
     return parsed.toString();
 }
 
+export function buildJannyPublicRequestHeaders({ cookieHeader = '', userAgent = '' } = {}) {
+    const headers = {
+        'User-Agent': sanitizeJannyUserAgent(userAgent || JANNY_DEFAULT_UA),
+        'Accept': 'application/json,text/html;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Referer': `${JANNY_BASE}/`,
+    };
+    const parsed = sanitizeJannyCookieHeader(cookieHeader || '');
+    if (parsed.ok) headers.Cookie = parsed.header;
+    return headers;
+}
+
 export function buildFlareSolverrJannyRequest({ path, sessionId = '', cookie = null, userAgent = '' } = {}) {
     if (!isAllowedJannyAccountRequest('GET', path)) {
         throw new Error('FlareSolverr warmup only supports allowed GET paths');

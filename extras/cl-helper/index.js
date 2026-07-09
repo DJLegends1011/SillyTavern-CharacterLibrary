@@ -16,6 +16,7 @@ import {
     JANNY_DEFAULT_UA,
     buildFlareSolverrJannyRequest,
     buildJannyAccountUrl,
+    buildJannyPublicRequestHeaders,
     cookiesFromSetCookieHeader,
     detectJannyCloudflareChallenge,
     isAllowedJannyAccountRequest,
@@ -1115,14 +1116,13 @@ async function fetchJannyPublicDirect({ path = '/' } = {}) {
 
 async function fetchJannyPublicOnce({ path = '/', dispatcher = undefined } = {}) {
     const targetUrl = buildJannyAccountUrl(path);
+    const headers = buildJannyPublicRequestHeaders({
+        cookieHeader: jannyCombinedCookieHeader() || '',
+        userAgent: jannySessionUserAgent || JANNY_DEFAULT_UA,
+    });
     const response = await fetch(targetUrl, {
         method: 'GET',
-        headers: {
-            'User-Agent': jannySessionUserAgent || JANNY_DEFAULT_UA,
-            'Accept': 'application/json,text/html;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Referer': `${JANNY_BASE}/`,
-        },
+        headers,
         redirect: 'follow',
         dispatcher,
     });
@@ -1156,6 +1156,7 @@ async function fetchJannyAccountOnce({ method = 'GET', path = '/', body = undefi
         'User-Agent': jannySessionUserAgent || JANNY_DEFAULT_UA,
         'Accept': 'application/json,text/html;q=0.9,*/*;q=0.8',
         'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Encoding': 'gzip, deflate, br',
         'Origin': JANNY_BASE,
         'Referer': `${JANNY_BASE}/`,
     };

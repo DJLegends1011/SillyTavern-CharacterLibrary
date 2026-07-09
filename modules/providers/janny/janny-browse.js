@@ -101,6 +101,7 @@ let jannyBookmarkLimitToastShown = false;
 let jannyAccountStatus = { plugin: false, active: false, valid: false, cloudflare: false, reason: '' };
 let jannyOwnedCollections = [];
 let jannyOwnedCollectionsLoaded = false;
+let jannyOwnedPreviewHydrationToken = 0;
 let jannyModalCollectionIds = new Set();
 let jannyModalCollectionChecksLoadedFor = '';
 let jannyCollectionDropdownOpen = false;
@@ -1484,7 +1485,7 @@ function normalizeJannyCollectionCharacter(item) {
         ...c,
         id,
         name,
-        avatar: c.avatar || c.image || c.imageUrl || '',
+        avatar: c.avatar || c.avatarUrl || c.image || c.imageUrl || c.image_url || c.botAvatar || c.profilePicture || c.profile_picture || '',
         description: c.description || c.creatorNotes || c.tagline || '',
         tagIds: c.tagIds || c.tag_ids || [],
         totalToken: c.totalToken || c.total_tokens || c.token_counts?.total_tokens || 0,
@@ -1651,9 +1652,54 @@ function updateOwnedCollectionCount(collectionId, delta) {
     }
 }
 
+function collectionEntryCharacterId(entry) {
+    const raw = entry?.character || entry?.characters || entry;
+    const c = raw?.character || raw;
+    return c?.id || c?.characterId || c?.character_id || entry?.characterId || entry?.character_id || '';
+}
+
+function collectionHasPreviewImages(collection) {
+    return getJannyCollectionPreviewImages(collection).length > 0;
+}
+
+async function hydrateJannyOwnedCollectionPreviews() {
+    const token = ++jannyOwnedPreviewHydrationToken;
+    const candidates = jannyOwnedCollections.filter(collection =>
+        collection?.id && collectionCharacterCount(collection) > 0 && !collectionHasPreviewImages(collection)
+    );
+    if (!candidates.length) return;
+
+    for (const collection of candidates) {
+        try {
+            const entries = await fetchJannyCollectionCharacters(collection.id, jannyAccountOptions());
+            if (token !== jannyOwnedPreviewHydrationToken || !jannyOwnedCollectionsLoaded) return;
+
+            let previewCharacters = entries.map(normalizeJannyCollectionCharacter).filter(Boolean);
+            const missingIds = entries
+                .map(collectionEntryCharacterId)
+                .filter(id => id && !previewCharacters.some(c => String(c.id) === String(id)))
+                .slice(0, Math.max(0, 4 - previewCharacters.length));
+            if (missingIds.length) {
+                const fetched = await fetchJannyCharactersByIds(missingIds, jannyAccountOptions());
+                if (token !== jannyOwnedPreviewHydrationToken || !jannyOwnedCollectionsLoaded) return;
+                previewCharacters = previewCharacters.concat(fetched.map(normalizeJannyCollectionCharacter).filter(Boolean));
+            }
+
+            previewCharacters = previewCharacters.filter(c => c.avatar).slice(0, 4);
+            if (!previewCharacters.length) continue;
+            collection.previewCharacters = previewCharacters;
+            renderJannyOwnedCollectionsList();
+        } catch (err) {
+            debugLog('[JannyAccount] owned collection preview hydration failed:', err.message);
+        }
+    }
+}
+
 function getJannyCollectionPreviewImages(collection) {
     const pools = [
         collection?.images,
+        collection?.previewImages,
+        collection?.previewCharacters,
         collection?.collectionCharacters,
         collection?.characters,
         collection?.members,
@@ -1663,9 +1709,10 @@ function getJannyCollectionPreviewImages(collection) {
         if (!Array.isArray(pool)) continue;
         for (const item of pool) {
             const raw = item?.character || item?.characters || item;
+            const c = raw?.character || raw;
             const src = typeof item === 'string'
                 ? item
-                : (raw?.avatar || raw?.image || raw?.imageUrl || raw?.character?.avatar || item?.avatar || item?.image || item?.imageUrl || '');
+                : (c?.avatar || c?.avatarUrl || c?.image || c?.imageUrl || c?.image_url || c?.botAvatar || c?.profilePicture || c?.profile_picture || raw?.avatar || raw?.image || raw?.imageUrl || item?.avatar || item?.avatarUrl || item?.image || item?.imageUrl || '');
             if (src && !images.includes(src)) images.push(src);
             if (images.length >= 4) return images;
         }
@@ -1833,6 +1880,7 @@ async function loadJannyOwnedCollections(force = false) {
         jannyOwnedCollections = await fetchJannyCollections(jannyAccountOptions());
         jannyOwnedCollectionsLoaded = true;
         renderJannyOwnedCollectionsList();
+        hydrateJannyOwnedCollectionPreviews().catch(err => debugLog('[JannyAccount] owned preview hydration failed:', err.message));
         renderJannyCollectionDropdown();
         return jannyOwnedCollections;
     } catch (err) {
@@ -2081,7 +2129,7 @@ async function openJannyOwnedCollection(collectionId) {
         let entries = await fetchJannyCollectionCharacters(requestedId, jannyAccountOptions());
         let chars = entries.map(normalizeJannyCollectionCharacter).filter(Boolean);
         const missingDetailIds = entries
-            .map(e => e?.characterId || e?.character_id)
+            .map(collectionEntryCharacterId)
             .filter(id => id && !chars.some(c => String(c.id) === String(id)));
         if (missingDetailIds.length) {
             const fetched = await fetchJannyCharactersByIds(missingDetailIds, jannyAccountOptions());
@@ -2146,7 +2194,7 @@ async function openJannyCollectionManage(collectionId) {
         const entries = await fetchJannyCollectionCharacters(requestedId, jannyAccountOptions());
         let chars = entries.map(normalizeJannyCollectionCharacter).filter(Boolean);
         const missingDetailIds = entries
-            .map(e => e?.characterId || e?.character_id)
+            .map(collectionEntryCharacterId)
             .filter(id => id && !chars.some(c => String(c.id) === String(id)));
         if (missingDetailIds.length) {
             const fetched = await fetchJannyCharactersByIds(missingDetailIds, jannyAccountOptions());
@@ -2257,7 +2305,7 @@ async function addCharacterToManagedCollection() {
     }
     try {
         await addJannyCharacterToCollection(jannyManageCollection.collection.id, id, jannyAccountOptions());
-        const fetched = await fetchJannyPublicCharactersByIds([id]);
+        const fetched = await fetchJannyCharactersByIds([id], jannyAccountOptions());
         const normalized = fetched.map(normalizeJannyCollectionCharacter).filter(Boolean)[0] || { id, name: id, avatar: '' };
         jannyManageCollection.characters.push(normalized);
         updateOwnedCollectionCount(jannyManageCollection.collection.id, 1);

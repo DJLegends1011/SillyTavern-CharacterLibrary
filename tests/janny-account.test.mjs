@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+    buildJannyPublicRequestHeaders,
     buildFlareSolverrJannyRequest,
     detectJannyCloudflareChallenge,
     isAllowedJannyAccountRequest,
@@ -213,6 +214,17 @@ test('Janny public collection validators accept only narrow read inputs', () => 
     assert.equal(validateJannyPublicCharacterIds('../../../etc/passwd').ok, false);
 });
 
+test('buildJannyPublicRequestHeaders reuses validated session cookies and avoids zstd bodies', () => {
+    const headers = buildJannyPublicRequestHeaders({
+        cookieHeader: 'session=abc; cf_clearance=clear',
+        userAgent: 'TestAgent/1.0',
+    });
+
+    assert.equal(headers['User-Agent'], 'TestAgent/1.0');
+    assert.equal(headers.Cookie, 'session=abc; cf_clearance=clear');
+    assert.equal(headers['Accept-Encoding'], 'gzip, deflate, br');
+    assert.equal(headers.Referer, 'https://jannyai.com/');
+});
 test('buildFlareSolverrJannyRequest pins target, cookies, user agent, and session', () => {
     const cookie = sanitizeJannyCookieHeader('session=abc; cf_clearance=clear');
     const body = buildFlareSolverrJannyRequest({

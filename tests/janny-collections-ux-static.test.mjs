@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const js = readFileSync(new URL('../modules/providers/janny/janny-browse.js', import.meta.url), 'utf8');
+const api = readFileSync(new URL('../modules/providers/janny/janny-api.js', import.meta.url), 'utf8');
 const css = readFileSync(new URL('../modules/providers/browse-shared.css', import.meta.url), 'utf8');
 
 test('Janny preview modal uses dropdown collection membership controls', () => {
@@ -35,4 +36,13 @@ test('Janny collections async state has guards for sort and stale responses', ()
     assert.match(js, /String\(jannySelectedChar\?\.id \|\| ''\) !== characterId/);
     assert.match(js, /function openPreviewModal[\s\S]*jannyCollectionRowMutations = new Set\(\);/);
 });
+test('Janny owned collection cards hydrate preview avatars after list load', () => {
+    assert.match(js, /hydrateJannyOwnedCollectionPreviews/);
+    assert.match(js, /fetchJannyCollectionCharacters\(collection\.id, jannyAccountOptions\(\)\)/);
+    assert.match(js, /renderJannyOwnedCollectionsList\(\);[\s\S]*hydrateJannyOwnedCollectionPreviews\(\)/);
+});
 
+test('Janny search token avoids Cloudflare-prone page scraping on normal provider boot', () => {
+    assert.match(api, /let _cachedToken = JANNY_FALLBACK_TOKEN;/);
+    assert.doesNotMatch(api, /fetchWithProxy\(`\$\{JANNY_SITE_BASE\}\/characters\/search`\)/);
+});
