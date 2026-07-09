@@ -65,6 +65,13 @@ test('Janny collection preview grid sizes to the collection card count', () => {
     assert.match(js, /for \(let i = 0; i < cellCount; i\+\+\)/);
 });
 
+test('Janny owned collections list mirrors the public loading/error states', () => {
+    assert.match(js, /let jannyOwnedCollectionsLoading = false;/);
+    assert.match(js, /let jannyOwnedCollectionsError = '';/);
+    assert.match(js, /fa-spinner fa-spin"><\/i> Loading your collections\.\.\./);
+    assert.match(js, /if \(jannyOwnedCollectionsLoading\) return jannyOwnedCollections;/);
+});
+
 test('Janny owned collection cards hydrate preview avatars after list load', () => {
     assert.match(js, /hydrateJannyOwnedCollectionPreviews/);
     assert.match(js, /fetchJannyCollectionCharacters\(collection\.id, jannyAccountOptions\(\)\)/);

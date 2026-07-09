@@ -101,6 +101,8 @@ let jannyBookmarkLimitToastShown = false;
 let jannyAccountStatus = { plugin: false, active: false, valid: false, cloudflare: false, reason: '' };
 let jannyOwnedCollections = [];
 let jannyOwnedCollectionsLoaded = false;
+let jannyOwnedCollectionsLoading = false;
+let jannyOwnedCollectionsError = '';
 let jannyOwnedPreviewHydrationToken = 0;
 let jannyModalCollectionIds = new Set();
 let jannyModalCollectionChecksLoadedFor = '';
@@ -1889,29 +1891,41 @@ function renderJannyPublicCollectionsList() {
 
 async function loadJannyOwnedCollections(force = false) {
     if (jannyOwnedCollectionsLoaded && !force) return jannyOwnedCollections;
-    if (!await ensureJannyAccountReady()) {
-        renderJannyOwnedCollectionsList();
-        renderJannyCollectionDropdown();
-        return [];
-    }
-    const list = document.getElementById('jannyOwnedCollectionsList');
+    if (jannyOwnedCollectionsLoading) return jannyOwnedCollections;
+    jannyOwnedCollectionsLoading = true;
+    jannyOwnedCollectionsError = '';
+    renderJannyOwnedCollectionsList();
     try {
+        if (!await ensureJannyAccountReady()) {
+            renderJannyCollectionDropdown();
+            return [];
+        }
         jannyOwnedCollections = await fetchJannyCollections(jannyAccountOptions());
         jannyOwnedCollectionsLoaded = true;
-        renderJannyOwnedCollectionsList();
         hydrateJannyOwnedCollectionPreviews().catch(err => debugLog('[JannyAccount] owned preview hydration failed:', err.message));
         renderJannyCollectionDropdown();
         return jannyOwnedCollections;
     } catch (err) {
-        if (list) list.innerHTML = `<div class="browse-empty-state">${escapeHtml(describeJannyAccountError(err))}</div>`;
-        showToast(`Could not load Janny collections: ${describeJannyAccountError(err)}`, 'error', 8000);
+        jannyOwnedCollectionsError = describeJannyAccountError(err);
+        showToast(`Could not load Janny collections: ${jannyOwnedCollectionsError}`, 'error', 8000);
         return [];
+    } finally {
+        jannyOwnedCollectionsLoading = false;
+        renderJannyOwnedCollectionsList();
     }
 }
 
 function renderJannyOwnedCollectionsList() {
     const list = document.getElementById('jannyOwnedCollectionsList');
     if (!list) return;
+    if (jannyOwnedCollectionsLoading) {
+        list.innerHTML = '<div class="browse-empty-state"><i class="fa-solid fa-spinner fa-spin"></i> Loading your collections...</div>';
+        return;
+    }
+    if (jannyOwnedCollectionsError && !jannyOwnedCollections.length) {
+        list.innerHTML = `<div class="browse-empty-state">${escapeHtml(jannyOwnedCollectionsError)}</div>`;
+        return;
+    }
     if (!jannyOwnedCollectionsLoaded) {
         list.innerHTML = '<div class="browse-empty-state">Connect your JannyAI account to load your collections.</div>';
         return;
