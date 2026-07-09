@@ -253,12 +253,23 @@ export async function removeJannyBookmarks(ids, options = {}) {
     return data.json?.bookmarks || data.bookmarks || [];
 }
 
+// cl-helper caps each proxied path at 1024 chars, so a ?ids= query fits only
+// ~26 UUIDs before it's rejected as "path not allowed". Chunk conservatively so
+// any number of ids works regardless of how many a caller passes.
+const JANNY_GET_CHARACTERS_CHUNK = 20;
+
 export async function fetchJannyCharactersByIds(ids, options = {}) {
     const characterIDs = toIdArray(ids);
     if (!characterIDs.length) return [];
-    const path = `/api/get-characters?ids=${encodeURIComponent(characterIDs.join(','))}`;
-    const data = await jannyAccountProxy('GET', path, undefined, options);
-    return data.json?.characters || data.characters || [];
+    const out = [];
+    for (let i = 0; i < characterIDs.length; i += JANNY_GET_CHARACTERS_CHUNK) {
+        const chunk = characterIDs.slice(i, i + JANNY_GET_CHARACTERS_CHUNK);
+        const path = `/api/get-characters?ids=${encodeURIComponent(chunk.join(','))}`;
+        const data = await jannyAccountProxy('GET', path, undefined, options);
+        const chars = data.json?.characters || data.characters || [];
+        if (Array.isArray(chars)) out.push(...chars);
+    }
+    return out;
 }
 
 export async function fetchJannyCollections(options = {}) {

@@ -480,17 +480,14 @@ async function loadCharacters(append = false) {
 }
 
 // Renders the account's bookmarked characters instead of search results while
-// the "Only Bookmarked" feature filter is active. Details come from
-// /api/get-characters in batches (the ids query string is length-capped).
+// the "Only Bookmarked" feature filter is active. fetchJannyCharactersByIds
+// chunks internally to respect cl-helper's path-length cap.
 async function loadBookmarkedIntoGrid(thisToken) {
     const grid = document.getElementById('jannyGrid');
     const ids = [...await loadJannyBookmarks(true)];
-    let chars = [];
-    for (let i = 0; i < ids.length; i += 50) {
-        const batch = await fetchJannyCharactersByIds(ids.slice(i, i + 50), jannyAccountOptions());
-        if (thisToken !== jannyLoadToken || !delegatesInitialized) return;
-        chars = chars.concat(batch.map(normalizeJannyCollectionCharacter).filter(Boolean));
-    }
+    const fetched = await fetchJannyCharactersByIds(ids, jannyAccountOptions());
+    if (thisToken !== jannyLoadToken || !delegatesInitialized) return;
+    let chars = fetched.map(normalizeJannyCollectionCharacter).filter(Boolean);
 
     const query = (jannyAuthorFilter || jannyCurrentSearch || '').trim().toLowerCase();
     if (query) {
