@@ -583,7 +583,14 @@ On mobile, CL owns the online-card control row — we do NOT build a mobile butt
 
 - Under `@media (max-width:768px)`, `library-mobile.css:999` hides **every** inline `.action-btn` in `.browse-char-modal .modal-controls` (including our `jannyCollectionDropdownBtn`) and `library-mobile.js` injects one of two controls, chosen by the `cl-browse-quick-import` `<html>` class:
   - **kebab off (default):** a `⋮` `.mobile-more-actions-btn`. Tapping it opens `.mobile-more-actions-menu`, which mirrors each surviving `.action-btn` (clones `innerHTML`, proxies taps via `orig.click()`). Because `jannyCollectionDropdownBtn` is a normal `.action-btn`, "Add to collection" appears there automatically — no extra work.
-  - **quick-import on:** by default CL shows only the import square and hides the kebab, which would strand Open/Bookmark/Add-to-collection. **Decision (consistency):** keep the kebab in quick-import mode too, so the collections action — and every other action — always lives in the same `⋮` menu regardless of mode. Override the default hide so both show: `html.cl-browse-quick-import .mobile-more-actions-btn { display: inline-flex; }` (the import square stays as the one-tap primary; the kebab carries the rest). Note this is a shared `app/library-mobile.css` change, so it applies to every provider's online-card modal, not just JannyAI — that is intentional for a consistent control row. If a scoped change is preferred later, gate it behind a `.browse-char-modal` provider class, but default to global.
+  - **quick-import on:** by default CL shows only the import square and hides the kebab, which would strand Add to collection. **Decision (consistency):** keep the kebab in quick-import mode too, so the collections action — and every other action — always lives in the same `⋮` menu regardless of mode. **Scope this to the JannyAI modal only** — only JannyAI has collections in this branch, and other providers should keep CL's default quick-import behavior. The JannyAI overlay is `#jannyCharModal`, so the override is:
+
+```css
+/* JannyAI only: keep the kebab beside the import square so collections stays reachable */
+html.cl-browse-quick-import #jannyCharModal .mobile-more-actions-btn { display: inline-flex; }
+```
+
+    The import square stays as the one-tap primary; the kebab carries the rest. Do NOT touch the global `.mobile-more-actions-btn` rule — that would change every provider's control row.
 - **No stacked menus (answers the open question):** the kebab menu item handler is `closeMenu(); orig.click();` ([`library-mobile.js:3835`](../../app/library-mobile.js)). The kebab popover is removed *before* our button's click fires, so opening the collections sheet never leaves the kebab menu underneath it. A capture-phase document listener also closes the kebab on any outside tap. Our `openJannyCollectionDropdown()` therefore just needs to run on the (proxied) button click as normal.
 - **The dropdown must present as a bottom sheet on mobile, not an anchored popover.** Its anchor button is `display:none` on mobile, so an absolutely-positioned `.janny-collection-dropdown` would land at a collapsed origin. Slice 13 pins it to a `position:fixed` bottom sheet (mirroring CL's own `.mobile-sheet`) so it is independent of the hidden anchor.
 - Mirrored menu rows clone the button's `innerHTML`, so keep the desktop-only caret (`.janny-collection-caret`) hidden on mobile (or it shows a stray chevron inside the kebab row).
@@ -812,6 +819,7 @@ Expected output: no syntax errors.
 - [ ] Replace the old `#jannyCharAccountSection` mobile rules with mobile dropdown rules:
   - `.janny-collection-dropdown` becomes a `position:fixed` bottom sheet below 480px (independent of its `display:none` anchor button — see Slice 8 mobile note), styled to match CL's own `.mobile-sheet` (rounded top, handle optional, `--cl-glass-bg`, safe-area bottom padding)
   - hide the desktop caret on mobile: `.janny-collection-caret { display: none; }` so the mirrored kebab-menu row doesn't show a stray chevron
+  - keep the kebab in quick-import mode, scoped to JannyAI only: `html.cl-browse-quick-import #jannyCharModal .mobile-more-actions-btn { display: inline-flex; }` (do not alter the global rule — other providers keep CL's default)
   - rows have `min-height: var(--touch-target-min)`
   - `.janny-collection-card-grid` becomes one column
   - `.janny-collection-toolbar` wraps
@@ -872,7 +880,8 @@ Expected output: all tests pass.
   - Open Edit and verify metadata/membership layout.
 - [ ] Mobile verification at 390 x 844 (test BOTH `cl-browse-quick-import` off and on):
   - Kebab off: open the preview modal, tap the `⋮` kebab, confirm the menu lists Open / Bookmark / Add to collection / Import. Tap "Add to collection"; confirm the kebab menu closes and the collections bottom sheet opens (no two menus stacked).
-  - Kebab on (quick-import): confirm BOTH the import square and the `⋮` kebab show, and the kebab still lists Add to collection (consistency override working). Tapping the import square still does one-tap import.
+  - Kebab on (quick-import), JannyAI modal: confirm BOTH the import square and the `⋮` kebab show, and the kebab still lists Add to collection (Janny-scoped override working). Tapping the import square still does one-tap import.
+  - Kebab on (quick-import), a non-Janny provider (e.g. Chub): confirm CL's default is unchanged — only the import square shows, no kebab. The override must not leak to other providers.
   - Preview modal collection picker opens as a viewport-safe bottom sheet.
   - With many owned collections (10+), the picker scrolls internally (desktop dropdown and mobile sheet both cap height + scroll) rather than growing past the modal/viewport.
   - Rows are tappable and do not clip behind modal edges.
@@ -899,6 +908,6 @@ Expected status after all commits: clean working tree, branch ahead of remote by
 - [ ] Public, owned, detail, and manage state are separate from each other.
 - [ ] Delete collection requires confirmation.
 - [ ] Mobile CSS covers the dropdown, collection cards, detail view, and manage view.
-- [ ] Mobile collections action is reached via CL's kebab menu, opens as a bottom sheet, and does not stack under the kebab popover. The kebab stays visible in quick-import mode too (override applied), so collections is reachable in both modes for consistency.
+- [ ] Mobile collections action is reached via CL's kebab menu, opens as a bottom sheet, and does not stack under the kebab popover. The kebab stays visible in quick-import mode too, scoped to `#jannyCharModal` only, so collections is reachable in both modes without changing any other provider's control row.
 - [ ] Tests cover parser behavior, narrow public validators, and static UI contract.
 - [ ] Final response reports whether work is uncommitted, committed, or pushed.
