@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en" data-btn-style="glass">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>JannyAI Collections UX - CL Native Artifact</title>
+  <link rel="stylesheet" href="../../../../app/library.css">
+  <link rel="stylesheet" href="../../../../modules/providers/browse-shared.css">
+  <link rel="stylesheet" href="../../../../app/library-mobile.css">
+  <style>
+    body.artifact-page { height:auto; min-height:100vh; overflow:auto; }
+    .artifact-page .app-container { height:auto; min-height:100vh; }
+    .artifact-page .topbar { position:sticky; top:0; }
+    .artifact-page .gallery-content { overflow:visible; }
+    .artifact-page .filter-area.online-filters, .artifact-page #onlineFilterContent { display:flex; }
+    .artifact-shell { max-width:1440px; margin:0 auto; display:grid; gap:var(--space-xl); }
+    .artifact-state { display:grid; gap:var(--space-sm-md); padding-bottom:var(--space-xl); }
+    .artifact-label { display:flex; justify-content:space-between; gap:var(--space-md); color:var(--text-secondary); font-size:var(--font-md); }
+    .artifact-label strong { color:var(--text-primary); font-size:var(--font-base); }
+    .artifact-label code { color:var(--accent); background:rgba(var(--accent-rgb),.1); border:1px solid rgba(var(--accent-rgb),.22); border-radius:var(--radius-md); padding:3px 7px; }
+    .artifact-compare { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:var(--space-lg); align-items:start; }
+    .artifact-panel { border:1px solid var(--glass-border); border-radius:var(--radius-2xl); background:rgba(255,255,255,.025); padding:var(--space-md); }
+    .artifact-subhead { margin:0 0 var(--space-sm-md); color:var(--text-secondary); font-size:var(--font-md); }
+    .artifact-modal-stage { min-height:430px; display:flex; align-items:center; justify-content:center; padding:var(--space-md); background:rgba(0,0,0,.25); border:1px solid var(--glass-border); border-radius:var(--radius-2xl); }
+    .artifact-modal-stage .modal-glass { width:100%; height:auto; max-height:none; }
+    .artifact-modal-stage .browse-char-modal { max-width:760px; }
+    .artifact-modal-stage .browse-char-body { max-height:290px; }
+    .artifact-avatar { background:linear-gradient(135deg,rgba(var(--accent-rgb),.5),rgba(var(--accent-secondary-rgb),.75)); display:grid; place-items:center; color:var(--accent-text); font-weight:800; font-size:var(--font-lg); }
+    .janny-collection-action { position:relative; display:flex; }
+    .janny-collection-dropdown { position:absolute; right:0; top:calc(100% + 8px); width:min(340px,80vw); background:var(--bg-secondary); border:1px solid var(--glass-border); border-radius:var(--radius-xl); box-shadow:0 12px 36px rgba(0,0,0,.5); z-index:20; overflow:hidden; }
+    .janny-collection-dropdown.hidden { display:none; }
+    .janny-collection-dropdown-title { padding:9px 12px; color:var(--text-secondary); border-bottom:1px solid var(--glass-border); font-size:var(--font-sm); }
+    .janny-collection-toggle-row { width:100%; min-height:44px; display:grid; grid-template-columns:24px minmax(0,1fr) auto; gap:var(--space-sm); align-items:center; padding:8px 12px; border:0; border-bottom:1px solid rgba(255,255,255,.06); background:transparent; color:var(--text-primary); text-align:left; cursor:pointer; }
+    .janny-collection-toggle-row:hover, .janny-collection-toggle-row.is-member { background:rgba(var(--accent-rgb),.12); }
+    .janny-collection-check { width:18px; height:18px; border-radius:var(--radius-sm); border:1px solid var(--glass-border); display:grid; place-items:center; font-size:10px; color:transparent; }
+    .is-member .janny-collection-check { color:var(--accent-text); background:var(--accent); border-color:var(--accent); }
+    .janny-collection-row-main { display:flex; flex-direction:column; min-width:0; gap:2px; }
+    .janny-collection-row-main strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .janny-collection-row-main span, .janny-collection-row-status { color:var(--text-secondary); font-size:var(--font-xs); }
+    .janny-collection-inline-error { padding:10px 12px; color:var(--cl-error-bright); background:rgba(var(--cl-error-bright-rgb),.1); border-top:1px solid rgba(var(--cl-error-bright-rgb),.2); font-size:var(--font-sm); line-height:1.35; }
+    .janny-collection-segmented { display:flex; width:fit-content; background:rgba(0,0,0,.3); border:1px solid var(--glass-border); border-radius:var(--radius-xl); padding:3px; gap:var(--space-xs); }
+    .janny-collection-segmented .glass-btn { border:0; background:transparent; }
+    .janny-collection-segmented .glass-btn.active { background:var(--accent); color:var(--accent-text); box-shadow:0 2px 10px var(--accent-glow); }
+    .janny-collection-card-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:var(--space-lg); }
+    .janny-collection-card { cursor:default; content-visibility:visible; contain-intrinsic-size:auto; }
+    .janny-collection-preview-grid { display:grid; grid-template-columns:repeat(2,1fr); width:100%; height:100%; }
+    .janny-collection-preview-cell { display:grid; place-items:center; color:rgba(255,255,255,.86); font-weight:800; border-right:1px solid rgba(255,255,255,.08); border-bottom:1px solid rgba(255,255,255,.08); }
+    .janny-collection-preview-cell:nth-child(2n) { border-right:0; } .janny-collection-preview-cell:nth-child(n+3) { border-bottom:0; }
+    .janny-c1 { background:linear-gradient(135deg,#5b2346,#c33b76); } .janny-c2 { background:linear-gradient(135deg,#253c5d,#5c8fbd); } .janny-c3 { background:linear-gradient(135deg,#3a4d2d,#8cb66b); } .janny-c4 { background:linear-gradient(135deg,#50315b,#9b72ce); } .janny-c5 { background:linear-gradient(135deg,#5f3825,#c5844d); } .janny-c6 { background:linear-gradient(135deg,#263f3d,#66aaa2); }
+    .janny-collection-description { color:var(--text-secondary); font-size:var(--font-sm); line-height:1.35; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; min-height:38px; }
+    .janny-collection-card-actions { display:flex; gap:var(--space-xs-sm); flex-wrap:wrap; padding:0 12px 12px; }
+    .janny-collection-card-actions .glass-btn { flex:1 1 auto; justify-content:center; display:flex; align-items:center; gap:var(--space-xs-sm); }
+    .janny-collection-detail, .janny-collection-manage { display:grid; gap:var(--space-lg); }
+    .janny-collection-detail-head { display:grid; grid-template-columns:220px minmax(0,1fr) auto; gap:var(--space-lg); align-items:stretch; }
+    .janny-collection-detail-head .browse-card-image { border-radius:var(--radius-xl); border:1px solid var(--glass-border); }
+    .janny-collection-manage-grid { display:grid; grid-template-columns:minmax(260px,.9fr) minmax(320px,1.1fr); gap:var(--space-lg); align-items:start; }
+    .janny-manage-character-row { display:grid; grid-template-columns:52px minmax(0,1fr) auto; gap:var(--space-sm-md); align-items:center; min-height:66px; padding:7px; border:1px solid var(--glass-border); border-radius:var(--radius-lg); background:rgba(255,255,255,.035); }
+    .janny-manage-character-thumb { width:52px; height:52px; border-radius:var(--radius-md); display:grid; place-items:center; color:white; font-weight:800; overflow:hidden; }
+    .janny-manage-character-copy { min-width:0; display:flex; flex-direction:column; gap:2px; }
+    .janny-manage-character-copy strong, .janny-manage-character-copy span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .janny-manage-character-copy span { color:var(--text-secondary); font-size:var(--font-sm); }
+    .artifact-phone-frame { width:min(390px,100%); margin:0 auto; border:1px solid var(--glass-border); border-radius:var(--radius-3xl); background:var(--bg-primary); padding:8px; }
+    .artifact-phone-frame .gallery-content { padding:10px; }
+    .artifact-phone-frame .topbar { height:auto; min-height:48px; padding:6px 10px; gap:var(--space-xs-sm); border-radius:var(--radius-2xl) var(--radius-2xl) 0 0; position:static; }
+    .artifact-phone-frame .logo-area h1, .artifact-phone-frame .view-toggle, .artifact-phone-frame #onlineFilterContent { display:none; }
+    .artifact-phone-frame .janny-collection-detail-head, .artifact-phone-frame .janny-collection-manage-grid, .artifact-phone-frame .artifact-compare { grid-template-columns:1fr; }
+    .artifact-phone-frame .browse-grid, .artifact-phone-frame .janny-collection-card-grid { grid-template-columns:1fr; gap:var(--space-sm-md); }
+    .artifact-phone-frame .janny-collection-segmented, .artifact-phone-frame .browse-author-banner-actions { width:100%; }
+    .artifact-phone-frame .janny-collection-segmented .glass-btn, .artifact-phone-frame .browse-author-banner-actions .glass-btn { flex:1; }
+    .artifact-phone-frame .modal-glass.browse-char-modal { width:100%; max-width:none; border-radius:var(--radius-2xl); }
+    .artifact-phone-frame .browse-char-modal .modal-header { flex-direction:column; align-items:stretch; padding:12px; }
+    .artifact-phone-frame .browse-char-header-info { margin-right:0; gap:var(--space-sm-md); }
+    .artifact-phone-frame .browse-char-avatar { width:46px; height:46px; }
+    .artifact-phone-frame .modal-controls { flex-wrap:wrap; }
+    .artifact-phone-frame .modal-controls > * { flex:1 1 auto; justify-content:center; }
+    .artifact-phone-frame .janny-collection-action { flex-basis:100%; }
+    .artifact-phone-frame .janny-collection-dropdown { position:static; width:100%; margin-top:8px; box-shadow:none; }
+    @media (max-width:860px) { .artifact-compare, .janny-collection-detail-head, .janny-collection-manage-grid { grid-template-columns:1fr; } .artifact-label { align-items:flex-start; flex-direction:column; } }
+  </style>
+</head>
+<body class="artifact-page">
+  <div class="app-container">
+    <header class="topbar">
+      <div class="logo-area"><span class="accent-icon">CL</span><h1>Character<span>Library</span></h1></div>
+      <div class="view-toggle"><button class="view-toggle-btn">Characters</button><button class="view-toggle-btn">Chats</button><button class="view-toggle-btn active">Online</button></div>
+      <div class="filters-wrapper" id="onlineFilterArea"><div id="providerSelectorArea"><button class="glass-btn">JannyAI</button></div><div id="onlineFilterContent"><button class="glass-btn">Newest</button><button class="glass-btn">Tags</button><button class="glass-btn">Features</button><button class="glass-btn nsfw-toggle active">NSFW On</button><button class="glass-btn active">Collections</button><button class="glass-btn icon-only">Reload</button></div></div>
+    </header>
+    <main class="gallery-content"><div class="artifact-shell online-view" id="onlineView">      <section class="artifact-state" data-state="desktop-modal-closed">
+        <div class="artifact-label"><strong>Preview modal: current CL branch vs proposed dropdown</strong><code>data-state="desktop-modal-closed"</code></div>
+        <div class="artifact-compare">
+          <div class="artifact-panel">
+            <h3 class="artifact-subhead">Current CL branch: persistent Collections section</h3>
+            <div class="artifact-modal-stage"><div class="modal-glass browse-char-modal">
+              <div class="modal-header"><div class="browse-char-header-info"><div class="browse-char-avatar artifact-avatar">RG</div><div><h2>RULER OF GRAIN</h2><p class="browse-char-meta">by <a class="creator-link">@bleeod</a></p></div></div><div class="modal-controls"><button class="action-btn secondary">Open</button><button class="action-btn secondary">Bookmark</button><button class="action-btn primary">Import</button><button class="close-btn">x</button></div></div>
+              <div class="browse-char-body"><div class="browse-char-meta-grid"><div class="browse-char-stats"><div class="browse-stat">2.9K tokens</div><div class="browse-stat">7/3/2026</div></div><div class="browse-char-tags"><span class="browse-tag">Female</span><span class="browse-tag">Fictional</span><span class="browse-tag">Anime</span><span class="browse-tag">AnyPOV</span></div></div><div class="browse-char-section"><h3 class="browse-section-title">Collections</h3><div class="browse-search-bar" style="padding:0;gap:8px;"><select class="glass-select"><option>Choose collection...</option></select><button class="glass-btn">Add to collection</button></div></div><div class="browse-char-section"><h3 class="browse-section-title">Creator's Notes</h3><div class="scrolling-text">Preview content starts below the account form.</div></div></div>
+            </div></div>
+          </div>
+          <div class="artifact-panel">
+            <h3 class="artifact-subhead">Proposed: collection action joins Open/Bookmark/Import</h3>
+            <div class="artifact-modal-stage"><div class="modal-glass browse-char-modal">
+              <div class="modal-header"><div class="browse-char-header-info"><div class="browse-char-avatar artifact-avatar">RG</div><div><h2>RULER OF GRAIN</h2><p class="browse-char-meta">by <a class="creator-link">@bleeod</a></p></div></div><div class="modal-controls"><button class="action-btn secondary">Open</button><button class="action-btn secondary">Bookmark</button><div class="janny-collection-action"><button class="action-btn secondary">Add to collection</button><div class="janny-collection-dropdown hidden"></div></div><button class="action-btn primary">Import</button><button class="close-btn">x</button></div></div>
+              <div class="browse-char-body"><div class="browse-char-meta-grid"><div class="browse-char-stats"><div class="browse-stat">2.9K tokens</div><div class="browse-stat">7/3/2026</div></div><div class="browse-char-tags"><span class="browse-tag">Female</span><span class="browse-tag">Fictional</span><span class="browse-tag">Anime</span><span class="browse-tag">AnyPOV</span></div></div><div class="browse-char-section"><h3 class="browse-section-title">Creator's Notes</h3><div class="scrolling-text">The old Collections body section is gone; existing modal content moves up naturally.</div></div></div>
+            </div></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="artifact-state" data-state="desktop-modal-open">
+        <div class="artifact-label"><strong>Preview modal: dropdown open, checked state, row-level sync</strong><code>data-state="desktop-modal-open"</code></div>
+        <div class="artifact-modal-stage"><div class="modal-glass browse-char-modal">
+          <div class="modal-header"><div class="browse-char-header-info"><div class="browse-char-avatar artifact-avatar">RG</div><div><h2>RULER OF GRAIN</h2><p class="browse-char-meta">by <a class="creator-link">@bleeod</a></p></div></div><div class="modal-controls"><button class="action-btn secondary">Open</button><button class="action-btn secondary">Bookmarked</button><div class="janny-collection-action"><button class="action-btn secondary">Add to collection</button><div class="janny-collection-dropdown"><div class="janny-collection-dropdown-title">Changes save immediately</div><button class="janny-collection-toggle-row is-member"><span class="janny-collection-check">OK</span><span class="janny-collection-row-main"><strong>extra bookmarks</strong><span>166 cards - private</span></span><span class="janny-collection-row-status">Saved</span></button><button class="janny-collection-toggle-row"><span class="janny-collection-check">OK</span><span class="janny-collection-row-main"><strong>tf am I looking at: gaslight edition</strong><span>3 cards - private</span></span><span class="janny-collection-row-status">Add</span></button><button class="janny-collection-toggle-row"><span class="janny-collection-check">OK</span><span class="janny-collection-row-main"><strong>IRL</strong><span>7 cards - private</span></span><span class="janny-collection-row-status">Add</span></button><button class="janny-collection-toggle-row"><span class="janny-collection-check">OK</span><span class="janny-collection-row-main"><strong>DBZ</strong><span>2 cards - private</span></span><span class="janny-collection-row-status">Syncing</span></button></div></div><button class="action-btn primary">Import</button><button class="close-btn">x</button></div></div>
+          <div class="browse-char-body"><div class="browse-char-meta-grid"><div class="browse-char-stats"><div class="browse-stat">Added RULER OF GRAIN to extra bookmarks.</div><div class="browse-stat">Dropdown stays open.</div></div></div><div class="browse-char-section"><h3 class="browse-section-title">Creator's Notes</h3><div class="scrolling-text">This is still the normal CL preview modal body.</div></div></div>
+        </div></div>
+      </section>
+
+      <section class="artifact-state" data-state="desktop-modal-error">
+        <div class="artifact-label"><strong>Preview modal: account/Cloudflare error stays inside dropdown</strong><code>data-state="desktop-modal-error"</code></div>
+        <div class="artifact-modal-stage"><div class="modal-glass browse-char-modal">
+          <div class="modal-header"><div class="browse-char-header-info"><div class="browse-char-avatar artifact-avatar">RG</div><div><h2>RULER OF GRAIN</h2><p class="browse-char-meta">by <a class="creator-link">@bleeod</a></p></div></div><div class="modal-controls"><button class="action-btn secondary">Open</button><button class="action-btn secondary">Bookmark</button><div class="janny-collection-action"><button class="action-btn secondary">Add to collection</button><div class="janny-collection-dropdown"><div class="janny-collection-dropdown-title">Collections unavailable</div><div class="janny-collection-inline-error">Cloudflare challenged helper requests. Refresh your JannyAI cookie in Settings - Online - JannyAI.</div><button class="janny-collection-toggle-row"><span></span><span class="janny-collection-row-main"><strong>Retry loading collections</strong><span>No changes were made.</span></span><span class="janny-collection-row-status">Retry</span></button></div></div><button class="action-btn primary">Import</button><button class="close-btn">x</button></div></div>
+          <div class="browse-char-body"><div class="browse-char-section"><h3 class="browse-section-title">Creator's Notes</h3><div class="scrolling-text">Preview content remains usable when account sync errors.</div></div></div>
+        </div></div>
+      </section>
+
+      <section class="artifact-state" data-state="mobile-modal-open">
+        <div class="artifact-label"><strong>Mobile preview modal: dropdown becomes full-width sheet in the modal</strong><code>data-state="mobile-modal-open"</code></div>
+        <div class="artifact-phone-frame"><div class="app-container"><div class="topbar"><div class="logo-area"><span class="accent-icon">CL</span><h1>Character<span>Library</span></h1></div><button class="glass-btn">JannyAI</button></div><div class="gallery-content"><div class="artifact-modal-stage"><div class="modal-glass browse-char-modal"><div class="modal-header"><div class="browse-char-header-info"><div class="browse-char-avatar artifact-avatar">RG</div><div><h2>RULER OF GRAIN</h2><p class="browse-char-meta">by <a class="creator-link">@bleeod</a></p></div></div><div class="modal-controls"><button class="action-btn secondary">Open</button><button class="action-btn primary">Import</button><div class="janny-collection-action"><button class="action-btn secondary">Add to collection</button><div class="janny-collection-dropdown"><div class="janny-collection-dropdown-title">Choose collections</div><button class="janny-collection-toggle-row is-member"><span class="janny-collection-check">OK</span><span class="janny-collection-row-main"><strong>extra bookmarks</strong><span>166 cards</span></span><span class="janny-collection-row-status">Saved</span></button><button class="janny-collection-toggle-row"><span class="janny-collection-check">OK</span><span class="janny-collection-row-main"><strong>IRL</strong><span>7 cards</span></span><span class="janny-collection-row-status">Add</span></button></div></div></div></div><div class="browse-char-body"><div class="browse-char-meta-grid"><div class="browse-char-stats"><div class="browse-stat">2.9K tokens</div><div class="browse-stat">7/3/2026</div></div></div></div></div></div></div></div></div>
+      </section>      <section class="artifact-state" data-state="desktop-public-list">
+        <div class="artifact-label"><strong>Collections tab: CL shell with Public/My split and public cards</strong><code>data-state="desktop-public-list"</code></div>
+        <div id="jannyCollectionsSection" class="browse-section">
+          <div class="browse-author-banner"><div class="browse-author-banner-content"><span class="accent-icon">CL</span><span><strong>Janny Collections</strong> <span class="browse-author-banner-hint">Browse public collections or manage your own.</span></span></div><div class="browse-author-banner-actions"><button class="glass-btn">Browse</button><button class="glass-btn">Reload</button></div></div>
+          <div style="display:flex;justify-content:space-between;gap:var(--space-md);flex-wrap:wrap;"><div class="janny-collection-segmented"><button class="glass-btn active">Public Collections</button><button class="glass-btn">My Collections</button></div><div class="browse-author-banner-actions"><button class="glass-btn active">Latest</button><button class="glass-btn">Most popular</button></div></div>
+          <div class="janny-collection-card-grid">
+            <article class="browse-card janny-collection-card"><div class="browse-card-image loaded"><div class="janny-collection-preview-grid"><div class="janny-collection-preview-cell janny-c1">RG</div><div class="janny-collection-preview-cell janny-c2">EC</div><div class="janny-collection-preview-cell janny-c3">LP</div><div class="janny-collection-preview-cell janny-c4">FM</div></div></div><div class="browse-card-body"><div class="browse-card-name">Yuuri's weekly finds</div><span class="browse-card-creator-link">Yuuri</span><p class="janny-collection-description">Fresh high-signal characters with clear intros, compact lore, and preview-friendly starts.</p></div><div class="browse-card-footer"><span class="browse-card-stat">67 cards</span><span class="browse-card-stat">1.9K views</span><span class="browse-card-date">Updated Jul 8</span></div><div class="janny-collection-card-actions"><button class="glass-btn">Open</button></div></article>
+            <article class="browse-card janny-collection-card"><div class="browse-card-image loaded"><div class="janny-collection-preview-grid"><div class="janny-collection-preview-cell janny-c5">LA</div><div class="janny-collection-preview-cell janny-c6">MO</div><div class="janny-collection-preview-cell janny-c2">SP</div><div class="janny-collection-preview-cell janny-c1">AR</div></div></div><div class="browse-card-body"><div class="browse-card-name">Longform lore starters</div><span class="browse-card-creator-link">Archivist</span><p class="janny-collection-description">Scenario-first cards with enough world context to start strong without extra setup.</p></div><div class="browse-card-footer"><span class="browse-card-stat">24 cards</span><span class="browse-card-stat">844 views</span><span class="browse-card-date">Updated Jul 7</span></div><div class="janny-collection-card-actions"><button class="glass-btn">Open</button></div></article>
+          </div>
+          <div class="janny-collection-detail"><div class="browse-author-banner janny-collection-detail-head"><div class="browse-card-image loaded"><div class="janny-collection-preview-grid"><div class="janny-collection-preview-cell janny-c1">RG</div><div class="janny-collection-preview-cell janny-c2">EC</div><div class="janny-collection-preview-cell janny-c3">LP</div><div class="janny-collection-preview-cell janny-c4">FM</div></div></div><div class="browse-author-banner-content" style="align-items:flex-start;"><span><strong>Viewing Yuuri's weekly finds</strong><br><span class="browse-author-banner-hint">67 cards by Yuuri. Fresh high-signal characters with clear intros.</span></span></div><button class="glass-btn">Back</button></div><div class="browse-grid"><article class="browse-card"><div class="browse-card-image loaded"><div class="janny-collection-preview-cell janny-c1" style="height:100%;">RG</div></div><div class="browse-card-body"><div class="browse-card-name">Ruler of Grain</div><span class="browse-card-creator-link">bleeod</span><div class="browse-card-tags"><span class="browse-card-tag">Female</span><span class="browse-card-tag">Mystery</span></div></div><div class="browse-card-footer"><span class="browse-card-stat">2.9K</span><span class="browse-card-date">Jul 3</span></div></article><article class="browse-card"><div class="browse-card-image loaded"><div class="janny-collection-preview-cell janny-c2" style="height:100%;">EC</div></div><div class="browse-card-body"><div class="browse-card-name">Echo Courier</div><span class="browse-card-creator-link">yuuri</span><div class="browse-card-tags"><span class="browse-card-tag">AnyPOV</span></div></div><div class="browse-card-footer"><span class="browse-card-stat">4.1K</span><span class="browse-card-date">Jul 8</span></div></article></div></div>
+        </div>
+      </section>
+
+      <section class="artifact-state" data-state="mobile-public-list">
+        <div class="artifact-label"><strong>Mobile Collections tab: same CL cards stacked</strong><code>data-state="mobile-public-list"</code></div>
+        <div class="artifact-phone-frame"><div class="app-container"><div class="topbar"><div class="logo-area"><span class="accent-icon">CL</span><h1>Character<span>Library</span></h1></div><button class="glass-btn">Collections</button></div><div class="gallery-content"><div class="browse-section"><div class="browse-author-banner"><div class="browse-author-banner-content"><span><strong>Janny Collections</strong><br><span class="browse-author-banner-hint">Public discovery</span></span></div></div><div class="janny-collection-segmented"><button class="glass-btn active">Public</button><button class="glass-btn">Mine</button></div><div class="janny-collection-card-grid"><article class="browse-card janny-collection-card"><div class="browse-card-image loaded"><div class="janny-collection-preview-grid"><div class="janny-collection-preview-cell janny-c1">RG</div><div class="janny-collection-preview-cell janny-c2">EC</div><div class="janny-collection-preview-cell janny-c3">LP</div><div class="janny-collection-preview-cell janny-c4">FM</div></div></div><div class="browse-card-body"><div class="browse-card-name">Yuuri's weekly finds</div><p class="janny-collection-description">Fresh high-signal characters with clear intros.</p></div><div class="browse-card-footer"><span class="browse-card-stat">67 cards</span><span class="browse-card-stat">1.9K views</span></div><div class="janny-collection-card-actions"><button class="glass-btn">Open</button></div></article></div></div></div></div></div>
+      </section>
+
+      <section class="artifact-state" data-state="desktop-owned-list">
+        <div class="artifact-label"><strong>My Collections: richer CL browse cards, not plain rows</strong><code>data-state="desktop-owned-list"</code></div>
+        <div class="browse-section"><div class="browse-author-banner"><div class="browse-author-banner-content"><span><strong>Janny Collections</strong> <span class="browse-author-banner-hint">Owned collections keep create/edit tools here.</span></span></div><div class="browse-author-banner-actions"><button class="glass-btn">Browse</button><button class="glass-btn">Reload</button></div></div><div class="janny-collection-segmented"><button class="glass-btn">Public Collections</button><button class="glass-btn active">My Collections</button></div><div class="browse-search-bar"><div class="browse-search-input-wrapper"><span>+</span><input value="" placeholder="New collection name..."><button class="browse-search-submit">Go</button></div><input class="glass-select" placeholder="Optional description"><label class="browse-author-banner-hint"><input type="checkbox" checked> Private collection</label></div><div class="janny-collection-card-grid"><article class="browse-card janny-collection-card"><div class="browse-card-image loaded"><div class="janny-collection-preview-grid"><div class="janny-collection-preview-cell janny-c1">RG</div><div class="janny-collection-preview-cell janny-c5">ZA</div><div class="janny-collection-preview-cell janny-c3">IR</div><div class="janny-collection-preview-cell janny-c2">DB</div></div></div><div class="browse-card-body"><div class="browse-card-name">extra bookmarks</div><p class="janny-collection-description">Overflow save pile for cards worth revisiting after the bookmark cap starts filling up.</p></div><div class="browse-card-footer"><span class="browse-card-stat">166 cards</span><span class="browse-card-date">private</span></div><div class="janny-collection-card-actions"><button class="glass-btn">Open</button><button class="glass-btn">Edit</button><button class="action-btn danger small">Delete</button></div></article><article class="browse-card janny-collection-card"><div class="browse-card-image loaded"><div class="janny-collection-preview-grid"><div class="janny-collection-preview-cell janny-c6">TF</div><div class="janny-collection-preview-cell janny-c4">GL</div><div class="janny-collection-preview-cell janny-c5">IR</div><div class="janny-collection-preview-cell janny-c1">DB</div></div></div><div class="browse-card-body"><div class="browse-card-name">tf am I looking at: gaslight edition</div><p class="janny-collection-description">A small weird corner for second-look cards.</p></div><div class="browse-card-footer"><span class="browse-card-stat">3 cards</span><span class="browse-card-date">private</span></div><div class="janny-collection-card-actions"><button class="glass-btn">Open</button><button class="glass-btn">Edit</button><button class="action-btn danger small">Delete</button></div></article></div></div>
+      </section>
+
+      <section class="artifact-state" data-state="mobile-owned-list">
+        <div class="artifact-label"><strong>Mobile My Collections: create panel and cards stack</strong><code>data-state="mobile-owned-list"</code></div>
+        <div class="artifact-phone-frame"><div class="app-container"><div class="topbar"><div class="logo-area"><span class="accent-icon">CL</span><h1>Character<span>Library</span></h1></div><button class="glass-btn">Mine</button></div><div class="gallery-content"><div class="browse-section"><div class="janny-collection-segmented"><button class="glass-btn">Public</button><button class="glass-btn active">Mine</button></div><div class="browse-search-bar"><div class="browse-search-input-wrapper"><span>+</span><input placeholder="New collection name..."></div><button class="glass-btn">Create private collection</button></div><div class="janny-collection-card-grid"><article class="browse-card janny-collection-card"><div class="browse-card-image loaded"><div class="janny-collection-preview-grid"><div class="janny-collection-preview-cell janny-c1">RG</div><div class="janny-collection-preview-cell janny-c5">ZA</div><div class="janny-collection-preview-cell janny-c3">IR</div><div class="janny-collection-preview-cell janny-c2">DB</div></div></div><div class="browse-card-body"><div class="browse-card-name">extra bookmarks</div><p class="janny-collection-description">Overflow save pile for cards worth revisiting.</p></div><div class="browse-card-footer"><span class="browse-card-stat">166 cards</span><span class="browse-card-date">private</span></div><div class="janny-collection-card-actions"><button class="glass-btn">Open</button><button class="glass-btn">Edit</button></div></article></div></div></div></div></div>
+      </section>
+      <section class="artifact-state" data-state="desktop-manage">
+        <div class="artifact-label"><strong>Edit collection: details plus character management in CL browse panels</strong><code>data-state="desktop-manage"</code></div>
+        <div class="janny-collection-manage">
+          <div class="browse-author-banner">
+            <div class="browse-author-banner-content"><span class="accent-icon">CL</span><span><strong>Editing extra bookmarks</strong> <span class="browse-author-banner-hint">Matches the JannyAI mine/edit split while keeping CL controls.</span></span></div>
+            <div class="browse-author-banner-actions"><button class="glass-btn">Back to Mine</button><button class="action-btn primary">Save</button></div>
+          </div>
+          <div class="janny-collection-manage-grid">
+            <div class="browse-search-bar">
+              <h3 class="browse-section-title">Collection details</h3>
+              <div class="browse-search-input-wrapper"><span>Name</span><input value="extra bookmarks"></div>
+              <textarea class="scrolling-text" style="min-height:112px;resize:vertical;">Overflow save pile for cards worth revisiting after the bookmark cap starts filling up.</textarea>
+              <div class="janny-collection-segmented"><button class="glass-btn active">Private</button><button class="glass-btn">Public</button></div>
+              <div class="browse-author-banner-hint">Public collections require a description so browsing cards do not look empty.</div>
+              <div class="browse-author-banner-actions"><button class="action-btn primary">Save changes</button><button class="action-btn danger">Delete collection</button></div>
+            </div>
+            <div class="browse-search-bar">
+              <div style="display:flex;justify-content:space-between;gap:var(--space-md);align-items:center;flex-wrap:wrap;"><h3 class="browse-section-title">Characters (166)</h3><span class="browse-author-banner-hint">Add/remove mirrors JannyAI immediately.</span></div>
+              <div class="browse-search-input-wrapper"><input placeholder="Paste JannyAI character URL or ID"><button class="browse-search-submit">Go</button></div>
+              <div class="janny-manage-character-row"><div class="janny-manage-character-thumb janny-c1">RG</div><div><strong>Ruler of Grain</strong><br><span class="browse-author-banner-hint">bleeod - 2.9K tokens</span></div><button class="glass-btn">Remove</button></div>
+              <div class="janny-manage-character-row"><div class="janny-manage-character-thumb janny-c5">ZA</div><div><strong>Zeta Archive</strong><br><span class="browse-author-banner-hint">private save - synced</span></div><button class="glass-btn">Remove</button></div>
+              <div class="janny-manage-character-row"><div class="janny-manage-character-thumb janny-c3">IR</div><div><strong>IRL Study Partner</strong><br><span class="browse-author-banner-hint">latest import candidate</span></div><button class="glass-btn">Remove</button></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="artifact-state" data-state="mobile-manage">
+        <div class="artifact-label"><strong>Mobile edit collection: stacked CL controls, no tiny two-column traps</strong><code>data-state="mobile-manage"</code></div>
+        <div class="artifact-phone-frame">
+          <div class="app-container">
+            <div class="topbar"><div class="logo-area"><span class="accent-icon">CL</span><h1>Character<span>Library</span></h1></div><button class="glass-btn">Edit</button></div>
+            <div class="gallery-content">
+              <div class="janny-collection-manage">
+                <div class="browse-author-banner"><div class="browse-author-banner-content"><span><strong>Editing extra bookmarks</strong><br><span class="browse-author-banner-hint">166 cards - private</span></span></div></div>
+                <div class="janny-collection-manage-grid">
+                  <div class="browse-search-bar">
+                    <h3 class="browse-section-title">Details</h3>
+                    <div class="browse-search-input-wrapper"><input value="extra bookmarks"></div>
+                    <textarea class="scrolling-text" style="min-height:96px;resize:vertical;">Overflow save pile for cards worth revisiting.</textarea>
+                    <div class="janny-collection-segmented"><button class="glass-btn active">Private</button><button class="glass-btn">Public</button></div>
+                    <button class="action-btn primary">Save changes</button>
+                  </div>
+                  <div class="browse-search-bar">
+                    <h3 class="browse-section-title">Characters</h3>
+                    <div class="browse-search-input-wrapper"><input placeholder="Character URL or ID"></div>
+                    <div class="janny-manage-character-row"><div class="janny-manage-character-thumb janny-c1">RG</div><div><strong>Ruler of Grain</strong><br><span class="browse-author-banner-hint">bleeod</span></div><button class="glass-btn">Remove</button></div>
+                    <div class="janny-manage-character-row"><div class="janny-manage-character-thumb janny-c5">ZA</div><div><strong>Zeta Archive</strong><br><span class="browse-author-banner-hint">synced</span></div><button class="glass-btn">Remove</button></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div></main>
+  </div>
+</body>
+</html>
