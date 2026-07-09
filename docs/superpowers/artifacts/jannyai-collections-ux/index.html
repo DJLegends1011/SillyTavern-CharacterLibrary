@@ -18259,6 +18259,8 @@ body.collapse-all-browse-sections
    ============================================================ */
 html, body { height: auto !important; min-height: 100vh; overflow: auto !important; }
 .app-container { height: auto !important; min-height: 100vh; }
+/* Phone frames embed a nested .app-container - it must NOT be full viewport height. */
+.artifact-phone-frame .app-container { min-height: 0 !important; }
 .topbar { position: sticky; top: 0; }
 .gallery-content { overflow: visible !important; padding: var(--space-xl) var(--space-2xl); }
 .filter-area.online-filters, #onlineFilterContent { display: flex; }
@@ -18281,6 +18283,52 @@ html, body { height: auto !important; min-height: 100vh; overflow: auto !importa
   font-size: var(--font-xs); letter-spacing: .08em; text-transform: uppercase; color: var(--accent);
   background: rgba(var(--accent-rgb), .12); border: 1px solid rgba(var(--accent-rgb), .25);
   border-radius: var(--radius-pill); padding: 3px 10px; }
+
+/* ------------------------------------------------------------------
+   Mobile online-card controls, reproduced for the phone frames.
+   The real rules live behind @media (max-width:768px) in library-mobile.css,
+   which can't fire inside a desktop-width phone frame, so we re-scope the
+   real rule bodies under .artifact-phone-frame. This mirrors how CL actually
+   behaves on mobile: the inline action buttons are hidden and a ⋮ kebab (or a
+   single quick-import square) is injected; the kebab opens a popover that
+   mirrors Open / Bookmark / Add to collection / Import.
+   ------------------------------------------------------------------ */
+/* Phone frames wrap their own modal, so drop the big centered desktop stage. */
+.artifact-phone-frame .artifact-modal-stage { min-height: 0; align-items: stretch; padding: 0; background: transparent; border: none; }
+.artifact-phone-frame .browse-char-modal .modal-controls .action-btn:not(.mobile-more-actions-btn):not(.mobile-quick-import-btn) { display: none !important; }
+.artifact-phone-frame .mobile-more-actions-btn,
+.artifact-phone-frame .mobile-quick-import-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  flex: 0 0 auto; min-width: 38px; width: 38px; height: 38px; padding: 0;
+  border-radius: var(--radius-md); font-size: var(--font-lg); line-height: 1;
+  background: transparent; border: 1px solid var(--glass-border); color: var(--text-primary); cursor: pointer; }
+.artifact-phone-frame .mobile-quick-import-btn[data-state="primary"] {
+  color: var(--accent); border-color: rgba(var(--accent-rgb), .45); background: rgba(var(--accent-rgb), .08); }
+.artifact-phone-frame .mobile-more-actions-menu {
+  min-width: 220px; width: min(240px, 100%); margin: var(--space-sm) 0 0 auto;
+  background: var(--bg-secondary); border: 1px solid var(--glass-border); border-radius: var(--radius-md);
+  padding: var(--space-xs); box-shadow: 0 8px 24px rgba(0,0,0,.45); display: flex; flex-direction: column; gap: var(--space-2xs); }
+.artifact-phone-frame .mobile-more-actions-item {
+  background: transparent; border: none; color: var(--text-primary); padding: var(--space-md);
+  border-radius: var(--radius-sm); display: flex; align-items: center; gap: var(--space-sm);
+  font-size: var(--font-md); text-align: left; min-height: var(--touch-target-min); cursor: pointer; }
+.artifact-phone-frame .mobile-more-actions-item .mi { width: 18px; text-align: center; color: var(--text-secondary); font-size: var(--font-md); }
+.artifact-phone-frame .mobile-more-actions-item.is-primary { color: var(--accent); }
+.artifact-phone-frame .mobile-more-actions-item.is-primary .mi { color: var(--accent); }
+
+/* Bottom sheet used for the mobile collections picker */
+.artifact-phone-frame .mobile-sheet {
+  background: var(--cl-glass-bg); backdrop-filter: blur(12px); border: 1px solid var(--glass-border); border-bottom: none;
+  border-radius: var(--radius-2xl) var(--radius-2xl) 0 0; margin-top: var(--space-md); padding-bottom: var(--space-xl); }
+.artifact-phone-frame .mobile-sheet-handle { width: 40px; height: 4px; background: var(--text-faint); opacity: .4; border-radius: var(--radius-2xs); margin: 8px auto 12px; }
+.artifact-phone-frame .mobile-sheet-title { padding: 0 20px var(--space-sm); color: var(--text-secondary); font-size: var(--font-sm); }
+.artifact-phone-frame .mobile-sheet-item { display: flex; align-items: center; gap: var(--space-md); padding: 13px 20px; background: none; border: none; color: var(--text-primary); font-size: var(--font-md); text-align: left; width: 100%; cursor: pointer; }
+.artifact-phone-frame .mobile-sheet-item + .mobile-sheet-item { border-top: 1px solid rgba(255,255,255,.08); }
+.artifact-phone-frame .mobile-sheet-item-label { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.artifact-phone-frame .mobile-sheet-item-label span { color: var(--text-secondary); font-size: var(--font-xs); }
+.artifact-phone-frame .mobile-sheet-check { margin-left: auto; flex-shrink: 0; width: 22px; height: 22px; border-radius: var(--radius-sm); border: 1px solid var(--glass-border); display: grid; place-items: center; font-size: 12px; color: transparent; }
+.artifact-phone-frame .mobile-sheet-item.is-member .mobile-sheet-check { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+.artifact-phone-frame .mobile-sheet-status { margin-left: var(--space-sm); flex-shrink: 0; color: var(--text-secondary); font-size: var(--font-xs); }
 </style>
     <header class="topbar">
       <div class="logo-area"><span class="accent-icon">CL</span><h1>Character<span>Library</span></h1></div>
@@ -18324,8 +18372,12 @@ html, body { height: auto !important; min-height: 100vh; overflow: auto !importa
       </section>
 
       <section class="artifact-state" data-state="mobile-modal-open">
-        <div class="artifact-label"><strong>Mobile preview modal: dropdown becomes full-width sheet in the modal</strong><code>data-state="mobile-modal-open"</code></div>
-        <div class="artifact-phone-frame"><div class="app-container"><div class="topbar"><div class="logo-area"><span class="accent-icon">CL</span><h1>Character<span>Library</span></h1></div><button class="glass-btn">JannyAI</button></div><div class="gallery-content"><div class="artifact-modal-stage"><div class="modal-glass browse-char-modal"><div class="modal-header"><div class="browse-char-header-info"><div class="browse-char-avatar artifact-avatar">RG</div><div><h2>RULER OF GRAIN</h2><p class="browse-char-meta">by <a class="creator-link">@bleeod</a></p></div></div><div class="modal-controls"><button class="action-btn secondary">Open</button><button class="action-btn primary">Import</button><div class="janny-collection-action"><button class="action-btn secondary">Add to collection</button><div class="janny-collection-dropdown"><div class="janny-collection-dropdown-title">Choose collections</div><button class="janny-collection-toggle-row is-member"><span class="janny-collection-check">OK</span><span class="janny-collection-row-main"><strong>extra bookmarks</strong><span>166 cards</span></span><span class="janny-collection-row-status">Saved</span></button><button class="janny-collection-toggle-row"><span class="janny-collection-check">OK</span><span class="janny-collection-row-main"><strong>IRL</strong><span>7 cards</span></span><span class="janny-collection-row-status">Add</span></button></div></div></div></div><div class="browse-char-body"><div class="browse-char-meta-grid"><div class="browse-char-stats"><div class="browse-stat">2.9K tokens</div><div class="browse-stat">7/3/2026</div></div></div></div></div></div></div></div></div>
+        <div class="artifact-label"><strong>Mobile preview modal: actions collapse into the &#8942; menu &mdash; collections joins Open / Bookmark / Import there</strong><code>data-state="mobile-modal-open"</code></div>
+        <div class="artifact-phone-frame"><div class="app-container"><div class="topbar"><div class="logo-area"><span class="accent-icon">CL</span><h1>Character<span>Library</span></h1></div><button class="glass-btn">JannyAI</button></div><div class="gallery-content"><div class="artifact-modal-stage"><div class="modal-glass browse-char-modal"><div class="modal-header"><div class="browse-char-header-info"><div class="browse-char-avatar artifact-avatar">RG</div><div><h2>RULER OF GRAIN</h2><p class="browse-char-meta">by <a class="creator-link">@bleeod</a></p></div></div><div class="modal-controls"><button class="action-btn secondary">Open</button><button class="action-btn secondary">Bookmark</button><button class="action-btn secondary">Add to collection</button><button class="action-btn primary">Import</button><button class="mobile-more-actions-btn" aria-label="More actions">&#8942;</button><button class="close-btn">x</button></div></div><div class="mobile-more-actions-menu"><button class="mobile-more-actions-item"><span class="mi">&#8599;</span> Open</button><button class="mobile-more-actions-item"><span class="mi">&#9734;</span> Bookmark</button><button class="mobile-more-actions-item"><span class="mi">&#43;</span> Add to collection</button><button class="mobile-more-actions-item is-primary"><span class="mi">&#8595;</span> Import</button></div><div class="browse-char-body"><div class="browse-char-meta-grid"><div class="browse-char-stats"><div class="browse-stat">2.9K tokens</div><div class="browse-stat">7/3/2026</div></div><div class="browse-char-tags"><span class="browse-tag">Female</span><span class="browse-tag">Fictional</span><span class="browse-tag">Anime</span></div></div></div></div></div></div></div></div></div>
+      </section>
+      <section class="artifact-state" data-state="mobile-collections-sheet">
+        <div class="artifact-label"><strong>Mobile: choosing &ldquo;Add to collection&rdquo; opens a full-width bottom sheet</strong><code>data-state="mobile-collections-sheet"</code></div>
+        <div class="artifact-phone-frame"><div class="app-container"><div class="topbar"><div class="logo-area"><span class="accent-icon">CL</span><h1>Character<span>Library</span></h1></div><button class="glass-btn">JannyAI</button></div><div class="gallery-content"><div class="artifact-modal-stage" style="align-items:stretch;padding-bottom:0;"><div class="modal-glass browse-char-modal"><div class="modal-header"><div class="browse-char-header-info"><div class="browse-char-avatar artifact-avatar">RG</div><div><h2>RULER OF GRAIN</h2><p class="browse-char-meta">by <a class="creator-link">@bleeod</a></p></div></div><div class="modal-controls"><button class="action-btn secondary">Open</button><button class="action-btn primary">Import</button><button class="mobile-more-actions-btn" aria-label="More actions">&#8942;</button><button class="close-btn">x</button></div></div><div class="mobile-sheet open"><div class="mobile-sheet-handle"></div><div class="mobile-sheet-title">Add RULER OF GRAIN to a collection &middot; changes save immediately</div><button class="mobile-sheet-item is-member"><span class="mobile-sheet-item-label"><strong>extra bookmarks</strong><span>166 cards &middot; private</span></span><span class="mobile-sheet-status">Saved</span><span class="mobile-sheet-check">&#10003;</span></button><button class="mobile-sheet-item"><span class="mobile-sheet-item-label"><strong>IRL</strong><span>7 cards &middot; private</span></span><span class="mobile-sheet-status">Add</span><span class="mobile-sheet-check">&#10003;</span></button><button class="mobile-sheet-item"><span class="mobile-sheet-item-label"><strong>DBZ</strong><span>2 cards &middot; private</span></span><span class="mobile-sheet-status">Syncing&hellip;</span><span class="mobile-sheet-check">&#10003;</span></button></div></div></div></div></div></div>
       </section>      <section class="artifact-state" data-state="desktop-public-list">
         <div class="artifact-label"><strong>Collections tab: CL shell with Public/My split and public cards</strong><code>data-state="desktop-public-list"</code></div>
         <div id="jannyCollectionsSection" class="browse-section">
