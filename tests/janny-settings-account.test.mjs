@@ -36,8 +36,16 @@ test('JannyAI settings match the other cookie providers: inline validate, no ext
 test('JannyAI cookie save merges a bare cf_clearance refresh into the stored header', () => {
     assert.ok(js.includes('function mergeJannyClearanceIntoCookie'), 'missing merge helper');
     assert.ok(js.includes('mergeJannyClearanceIntoCookie(getSetting(\'jannyCookie\') || \'\', pasted)'), 'save must merge pasted clearance');
-    // Validate button saves new input first, then validates.
-    assert.match(js, /pasted !== \(getSetting\('jannyCookie'\) \|\| ''\)/);
+});
+
+test('JannyAI check button always pushes and the status check restores after restarts', () => {
+    // cl-helper holds the session in memory only, so the check button must
+    // push even "unchanged" input (a restart empties the helper while the
+    // setting persists), and the status check must silently re-push the
+    // stored cookie when the helper session is gone.
+    assert.doesNotMatch(js, /pasted !== \(getSetting\('jannyCookie'\) \|\| ''\)/);
+    assert.match(js, /if \(pasted\) \{\s*\n\s*try \{ await saveJannySettingsAccountCookie\(\); \} catch \{ return; \}/);
+    assert.match(js, /let session = await readJannySettingsAccountJson\('\/plugins\/cl-helper\/janny-session'\);[\s\S]{0,700}janny-set-cookie/);
 });
 
 test('JannyAI settings account controls are wired to cl-helper routes', () => {

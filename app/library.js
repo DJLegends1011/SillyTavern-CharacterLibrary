@@ -2161,7 +2161,20 @@ function setupSettingsModal() {
     async function updateJannySettingsAccountStatus({ validate = false } = {}) {
         if (!jannySettingsAccountHint) return { active: false, valid: false };
         try {
-            const session = await readJannySettingsAccountJson('/plugins/cl-helper/janny-session');
+            let session = await readJannySettingsAccountJson('/plugins/cl-helper/janny-session');
+            if (!session.active) {
+                // cl-helper only holds the session in memory: after a server
+                // restart it comes up empty while the cookie setting persists.
+                // Re-push silently instead of asking for a fresh paste.
+                const stored = (getSetting('jannyCookie') || '').trim();
+                if (stored) {
+                    try {
+                        const userAgent = (getSetting('jannyUserAgent') || navigator.userAgent || '').trim();
+                        await parseJannySettingsAccountResponse(await apiRequest('/plugins/cl-helper/janny-set-cookie', 'POST', { cookie: stored, userAgent }));
+                        session = await readJannySettingsAccountJson('/plugins/cl-helper/janny-session');
+                    } catch { /* fall through to the paste hint */ }
+                }
+            }
             if (!session.active) {
                 setJannySettingsAccountHint('Paste a logged-in jannyai.com Cookie header, then click the check button. Use the JannyAI link above to open a normal tab for login or cookie copying.');
                 return { active: false, valid: false };
@@ -2231,10 +2244,12 @@ function setupSettingsModal() {
     async function validateJannySettingsAccount() {
         if (jannySettingsValidateBtn) jannySettingsValidateBtn.disabled = true;
         try {
-            // The check button saves first when the input holds something new
-            // (full header or a fresh cf_clearance), then validates.
+            // The check button always pushes what's in the box first (full
+            // header or a fresh cf_clearance), then validates. cl-helper only
+            // holds the session in memory, so "unchanged" input still needs a
+            // push after a server restart.
             const pasted = (jannySettingsCookieInput?.value || '').trim();
-            if (pasted && pasted !== (getSetting('jannyCookie') || '')) {
+            if (pasted) {
                 try { await saveJannySettingsAccountCookie(); } catch { return; }
             }
             const result = await updateJannySettingsAccountStatus({ validate: true });
