@@ -1600,10 +1600,8 @@ function setupSettingsModal() {
     const datacatSessionStatus = document.getElementById('datacatSessionStatus');
     const jannySettingsCookieInput = document.getElementById('jannySettingsCookieInput');
     const jannySettingsUserAgentInput = document.getElementById('jannySettingsUserAgentInput');
-    const jannySettingsSaveCookieBtn = document.getElementById('jannySettingsSaveCookieBtn');
     const jannySettingsValidateBtn = document.getElementById('jannySettingsValidateBtn');
     const jannySettingsClearSessionBtn = document.getElementById('jannySettingsClearSessionBtn');
-    const jannySettingsAccountStatus = document.getElementById('jannySettingsAccountStatus');
     const jannySettingsAccountHint = document.getElementById('jannySettingsAccountHint');
     const minScoreSlider = document.getElementById('settingsMinScore');
     const minScoreValue = document.getElementById('minScoreValue');
@@ -2134,12 +2132,6 @@ function setupSettingsModal() {
         });
     }
 
-    function setJannySettingsAccountStatus(kind, label, icon = 'fa-solid fa-circle') {
-        if (!jannySettingsAccountStatus) return;
-        jannySettingsAccountStatus.className = `settings-status-badge ${kind === 'active' ? 'active' : 'inactive'}`;
-        jannySettingsAccountStatus.innerHTML = `<i class="${icon}"></i> ${escapeHtml(label)}`;
-    }
-
     function setJannySettingsAccountHint(message) {
         if (jannySettingsAccountHint) jannySettingsAccountHint.textContent = message || '';
     }
@@ -2166,75 +2158,92 @@ function setupSettingsModal() {
         return payload || {};
     }
 
-    async function updateJannySettingsAccountStatus({ validate = false, quiet = false } = {}) {
-        if (!jannySettingsAccountStatus) return { active: false, valid: false };
-        if (!quiet) setJannySettingsAccountStatus('inactive', 'Checking...', 'fa-solid fa-spinner fa-spin');
+    async function updateJannySettingsAccountStatus({ validate = false } = {}) {
+        if (!jannySettingsAccountHint) return { active: false, valid: false };
         try {
             const session = await readJannySettingsAccountJson('/plugins/cl-helper/janny-session');
             if (!session.active) {
-                setJannySettingsAccountStatus('inactive', 'Not connected');
-                setJannySettingsAccountHint('Paste a logged-in jannyai.com Cookie header, then click Save Cookie. Use the JannyAI link above to open a normal tab for login or cookie copying.');
+                setJannySettingsAccountHint('Paste a logged-in jannyai.com Cookie header, then click the check button. Use the JannyAI link above to open a normal tab for login or cookie copying.');
                 return { active: false, valid: false };
             }
 
             if (!validate) {
-                setJannySettingsAccountStatus('active', `Cookie stored (${session.cookieCount || 0})`);
-                setJannySettingsAccountHint('Click Validate to test bookmarks and collections access.');
+                setJannySettingsAccountHint(`Cookie stored (${session.cookieCount || 0} cookies). Click the check button to test bookmarks and collections access.`);
                 return { active: true, valid: false };
             }
 
             const result = await readJannySettingsValidateResult();
             if (result.valid) {
-                setJannySettingsAccountStatus('active', 'Valid', 'fa-solid fa-circle-check');
                 setJannySettingsAccountHint('JannyAI bookmarks and collections are ready.');
                 return { active: true, valid: true };
             }
             if (result.cloudflare) {
-                setJannySettingsAccountStatus('inactive', 'Cloudflare challenged', 'fa-solid fa-cloud');
-                setJannySettingsAccountHint('Cloudflare is blocking direct helper requests. Refresh the Cookie header from a normal JannyAI tab; if it still fails, JannyAI is rejecting non-browser helper sync.');
+                setJannySettingsAccountHint('Cloudflare is blocking helper requests. Solve Cloudflare in a normal JannyAI tab, then paste just the fresh cf_clearance=... value here — your login is kept.');
                 return { active: true, valid: false, cloudflare: true };
             }
-            setJannySettingsAccountStatus('inactive', 'Cookie rejected', 'fa-solid fa-circle-xmark');
             setJannySettingsAccountHint(result.reason || 'JannyAI did not accept the stored cookie.');
             return { active: true, valid: false };
         } catch (err) {
-            setJannySettingsAccountStatus('inactive', 'Plugin unavailable', 'fa-solid fa-circle-xmark');
             setJannySettingsAccountHint(`cl-helper Janny route unavailable: ${err.message}`);
             return { active: false, valid: false, error: err };
         }
     }
 
+    // A paste that is only a cf_clearance pair (or a bare clearance token)
+    // refreshes the Cloudflare pass inside the stored header instead of
+    // replacing the whole session — the sb-...-auth-token login is kept.
+    function mergeJannyClearanceIntoCookie(stored, pasted) {
+        const raw = String(pasted || '').replace(/^cookie\s*:\s*/i, '').trim().replace(/;+\s*$/, '');
+        const kept = String(stored || '').replace(/^cookie\s*:\s*/i, '').trim();
+        if (!kept) return raw;
+        const pairs = raw.split(';').map(s => s.trim()).filter(Boolean);
+        const clearanceOnly = pairs.length > 0 && pairs.every(p => /^cf_clearance\s*=/i.test(p));
+        const bareToken = pairs.length === 1 && !pairs[0].includes('=');
+        if (!clearanceOnly && !bareToken) return raw;
+        const clearance = bareToken ? `cf_clearance=${pairs[0]}` : pairs[pairs.length - 1];
+        const rest = kept.split(';').map(s => s.trim()).filter(p => p && !/^cf_clearance\s*=/i.test(p));
+        return rest.concat(clearance).join('; ');
+    }
+
     async function saveJannySettingsAccountCookie() {
-        const cookie = (jannySettingsCookieInput?.value || '').trim();
-        if (!cookie) {
+        const pasted = (jannySettingsCookieInput?.value || '').trim();
+        if (!pasted) {
             showToast('Paste a JannyAI Cookie header first', 'warning');
             return;
         }
+        const cookie = mergeJannyClearanceIntoCookie(getSetting('jannyCookie') || '', pasted);
         const userAgent = (jannySettingsUserAgentInput?.value || navigator.userAgent || '').trim();
-        if (jannySettingsSaveCookieBtn) jannySettingsSaveCookieBtn.disabled = true;
         try {
             await parseJannySettingsAccountResponse(await apiRequest('/plugins/cl-helper/janny-set-cookie', 'POST', { cookie, userAgent }));
             // Persist so the session survives a server restart (cl-helper only
             // holds it in memory); janny-browse re-pushes it on load.
             setSetting('jannyCookie', cookie);
             setSetting('jannyUserAgent', userAgent || null);
+            if (jannySettingsCookieInput) jannySettingsCookieInput.value = cookie;
             showToast('JannyAI cookie saved', 'success');
-            await updateJannySettingsAccountStatus({ validate: true });
         } catch (err) {
             showToast(`Could not save JannyAI cookie: ${err.message}`, 'error', 7000);
             setJannySettingsAccountHint(err.message);
-        } finally {
-            if (jannySettingsSaveCookieBtn) jannySettingsSaveCookieBtn.disabled = false;
+            throw err;
         }
     }
 
     async function validateJannySettingsAccount() {
         if (jannySettingsValidateBtn) jannySettingsValidateBtn.disabled = true;
-        const result = await updateJannySettingsAccountStatus({ validate: true });
-        if (result.valid) showToast('JannyAI account session is valid', 'success');
-        else if (result.cloudflare) showToast('Cloudflare challenged the JannyAI helper request', 'warning', 7000);
-        else showToast('JannyAI account session is not valid yet', 'warning');
-        if (jannySettingsValidateBtn) jannySettingsValidateBtn.disabled = false;
+        try {
+            // The check button saves first when the input holds something new
+            // (full header or a fresh cf_clearance), then validates.
+            const pasted = (jannySettingsCookieInput?.value || '').trim();
+            if (pasted && pasted !== (getSetting('jannyCookie') || '')) {
+                try { await saveJannySettingsAccountCookie(); } catch { return; }
+            }
+            const result = await updateJannySettingsAccountStatus({ validate: true });
+            if (result.valid) showToast('JannyAI account session is valid', 'success');
+            else if (result.cloudflare) showToast('Cloudflare challenged the JannyAI helper request', 'warning', 7000);
+            else showToast('JannyAI account session is not valid yet', 'warning');
+        } finally {
+            if (jannySettingsValidateBtn) jannySettingsValidateBtn.disabled = false;
+        }
     }
 
     async function clearJannySettingsAccountCookie() {
@@ -2253,10 +2262,6 @@ function setupSettingsModal() {
         }
     }
 
-    jannySettingsSaveCookieBtn?.addEventListener('click', (e) => {
-        e.preventDefault();
-        saveJannySettingsAccountCookie();
-    });
     jannySettingsValidateBtn?.addEventListener('click', (e) => {
         e.preventDefault();
         validateJannySettingsAccount();
@@ -2281,7 +2286,7 @@ function setupSettingsModal() {
         if (datacatTokenInput) datacatTokenInput.value = getSetting('datacatToken') || '';
         if (jannySettingsCookieInput) jannySettingsCookieInput.value = getSetting('jannyCookie') || '';
         if (jannySettingsUserAgentInput) jannySettingsUserAgentInput.value = getSetting('jannyUserAgent') || navigator.userAgent || '';
-        updateJannySettingsAccountStatus({ quiet: true });
+        updateJannySettingsAccountStatus();
         const civitaiApiKeyInput = document.getElementById('settingsCivitaiApiKey');
         if (civitaiApiKeyInput) civitaiApiKeyInput.value = getSetting('civitaiApiKey') || '';
         const datacatPublicFeedCheckbox = document.getElementById('datacatPublicFeedCheckbox');
