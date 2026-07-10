@@ -2178,7 +2178,7 @@ function setupSettingsModal() {
                 return { active: true, valid: true };
             }
             if (result.cloudflare) {
-                setJannySettingsAccountHint('Cloudflare is blocking helper requests. Solve Cloudflare in a normal JannyAI tab, then paste just the fresh cf_clearance=... value here — your login is kept.');
+                setJannySettingsAccountHint('Cloudflare is blocking helper requests. cf_clearance only works from the device/network AND browser identity that solved it: solve Cloudflare on the same device that runs THIS SillyTavern server, paste the fresh cf_clearance=... value here (your login is kept), and make sure the Advanced User-Agent matches the browser you solved it in.');
                 return { active: true, valid: false, cloudflare: true };
             }
             setJannySettingsAccountHint(result.reason || 'JannyAI did not accept the stored cookie.');
