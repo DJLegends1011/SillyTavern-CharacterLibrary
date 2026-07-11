@@ -7,7 +7,7 @@
 
 import { BrowseView } from '../browse-view.js';
 import CoreAPI from '../../core-api.js';
-import { IMG_PLACEHOLDER, formatNumber, BROWSE_PURIFY_CONFIG, skeletonLines, deferRender, deferCall, isMobileViewport } from '../provider-utils.js';
+import { IMG_PLACEHOLDER, formatNumber, BROWSE_PURIFY_CONFIG, skeletonLines, deferRender, deferCall, isMobileMode, finishBrowseImport } from '../provider-utils.js';
 import {
     DATACAT_API_BASE,
     resolveDatacatAvatarUrl,
@@ -31,6 +31,7 @@ import {
     fetchSaucepanCompanionsOfUser,
     JANNY_TAG_MAP,
     pickRecoveryVariant,
+    stripDatacatMarkers,
     createFlareSolverrSession,
     destroyFlareSolverrSession,
 } from './datacat-api.js';
@@ -42,13 +43,10 @@ const {
     debugLog,
     getSetting,
     setSetting,
-    fetchCharacters,
-    fetchAndAddCharacter,
     checkCharacterForDuplicatesAsync,
     showPreImportDuplicateWarning,
     deleteCharacter,
     getCharacterGalleryId,
-    showImportSummaryModal,
     formatRichText,
     safePurify,
     renderCreatorNotesSecure,
@@ -179,46 +177,6 @@ function clearFlareSession() {
     }
     flareSession = { url: '', id: '' };
     flareSessionPromise = null;
-    flareWarmed = false;
-    flareWarmupPromise = null;
-}
-
-// Whether the current FlareSolverr session has already solved the JanitorAI
-// CF challenge once (cookie cached). Once warm, subsequent fetches are fast.
-let flareWarmed = false;
-let flareWarmupPromise = null;
-
-/**
- * Pre-warm a FlareSolverr session by creating it AND issuing one background
- * request to JanitorAI's Hampter endpoint to cache the cf_clearance cookie.
- * Called on tab entry so that by the time the user picks a Hampter sort
- * (especially after browsing other modes first), the cookie is already
- * cached and the actual fetch is fast.
- *
- * If the user clicks Hampter during the warmup, loadCharacters() awaits this
- * promise instead of firing a duplicate request.
- */
-function prewarmFlareSession(flareUrl) {
-    if (!flareUrl || flareWarmed || flareWarmupPromise) return;
-    flareWarmupPromise = (async () => {
-        try {
-            const sessionId = await ensureFlareSession(flareUrl);
-            if (!sessionId) return;
-            // Single warmup fetch - solves CF challenge and caches cookie.
-            await fetchHampterCharacters({
-                sort: 'trending',
-                page: 1,
-                nsfw: true,
-                flareSolverrUrl: flareUrl,
-                flareSessionId: sessionId,
-            });
-            flareWarmed = true;
-        } catch (err) {
-            console.warn('[DatacatBrowse] FlareSolverr prewarm failed:', err.message);
-        } finally {
-            flareWarmupPromise = null;
-        }
-    })();
 }
 
 // Saucepan state
@@ -560,57 +518,37 @@ async function loadCharacters(append = false) {
         } else if (isHampterSortMode(datacatSortMode)) {
             if (!append) hampterCurrentPage = 1;
             const hampterSort = datacatSortMode.replace('hampter_', '');
-            const flareSolverrUrl = (getSetting('datacatFlareSolverrUrl') || '').trim();
-            // Always prefer sessions - even the first in-session fetch is
-            // ~4-5x faster than sessionless because cold browser spawns
-            // dominate sessionless latency on FlareSolverr.
-            let flareSessionId = '';
-            if (flareSolverrUrl) {
-                // If a prewarm is in flight, wait for it instead of firing a
-                // duplicate request that would queue behind it.
-                if (flareWarmupPromise) {
-                    setLoadingSubstatus('Warming FlareSolverr session in the background — waiting for it to finish...');
-                    try { await flareWarmupPromise; } catch { /* prewarm errors are logged elsewhere */ }
-                }
-                const sessionAlreadyExists = !!flareSession.id;
-                if (!sessionAlreadyExists) {
-                    setLoadingSubstatus('Starting FlareSolverr browser session (one-time, ~1-2s)...');
-                }
-                flareSessionId = await ensureFlareSession(flareSolverrUrl);
-            }
-            if (flareSolverrUrl) {
-                if (!flareSessionId) {
-                    setLoadingSubstatus('FlareSolverr session unavailable — falling back to direct fetch...');
-                } else if (flareWarmed && !append) {
-                    setLoadingSubstatus('Reusing cached Cloudflare cookie — this should be quick...');
-                } else if (flareWarmed) {
-                    setLoadingSubstatus('Fetching next page through FlareSolverr session...');
-                } else {
-                    setLoadingSubstatus('Solving Cloudflare challenge via FlareSolverr. The first request can take 30-60s; subsequent ones are much faster...');
-                }
-            }
             const fetchOpts = {
                 sort: hampterSort,
                 page: hampterCurrentPage,
                 search: hampterSearchQuery,
                 nsfw: datacatNsfwEnabled,
-                flareSolverrUrl,
-                flareSessionId,
+                authToken: (await window.getValidJanitoraiToken?.()) || '',
             };
             let data;
             try {
+                // Direct browser fetch is the normal path; FlareSolverr only backs up a blocked one.
                 data = await fetchHampterCharacters(fetchOpts);
-                if (flareSessionId) flareWarmed = true;
             } catch (err) {
-                if (err?.sessionInvalid && flareSessionId) {
-                    setLoadingSubstatus('FlareSolverr session expired — refreshing...');
-                    clearFlareSession();
-                    const freshId = await ensureFlareSession(flareSolverrUrl);
-                    setLoadingSubstatus('Retrying request through new session...');
-                    data = await fetchHampterCharacters({ ...fetchOpts, flareSessionId: freshId });
-                    if (freshId) flareWarmed = true;
+                // A 401 despite a token means it was rejected mid-session; refresh once and retry before giving up.
+                if (err?.code === 'HAMPTER_TOKEN_EXPIRED') {
+                    const fresh = (await window.janitoraiForceRefresh?.()) || '';
+                    if (!fresh) throw err;
+                    data = await fetchHampterCharacters({ ...fetchOpts, authToken: fresh });
+                    // data now set; fall through to the shared list/total assignment below.
                 } else {
-                    throw err;
+                    const flareSolverrUrl = (getSetting('datacatFlareSolverrUrl') || '').trim();
+                    if (err?.code !== 'HAMPTER_BLOCKED' || !flareSolverrUrl) throw err;
+                    setLoadingSubstatus('Direct fetch was blocked; retrying through FlareSolverr (a cold session can take a while)...');
+                    const flareOpts = { ...fetchOpts, flareSolverrUrl, flareSessionId: await ensureFlareSession(flareSolverrUrl) };
+                    try {
+                        data = await fetchHampterCharacters(flareOpts);
+                    } catch (err2) {
+                        if (!err2?.sessionInvalid || !flareOpts.flareSessionId) throw err2;
+                        setLoadingSubstatus('FlareSolverr session expired; refreshing...');
+                        clearFlareSession();
+                        data = await fetchHampterCharacters({ ...flareOpts, flareSessionId: await ensureFlareSession(flareSolverrUrl) });
+                    }
                 }
             }
             list = data?.characters || [];
@@ -745,21 +683,63 @@ async function loadCharacters(append = false) {
         console.error('[DatacatBrowse] Load error:', err);
         const isHampterBlocked = err?.code === 'HAMPTER_BLOCKED' && isHampterSortMode(datacatSortMode);
         const isFlareSolverrError = err?.code === 'FLARESOLVERR_ERROR' && isHampterSortMode(datacatSortMode);
-        const isInlineNotice = isHampterBlocked || isFlareSolverrError;
+        const isHampterLoginGated = err?.code === 'HAMPTER_LOGIN_REQUIRED' && isHampterSortMode(datacatSortMode);
+        const isHampterTokenExpired = err?.code === 'HAMPTER_TOKEN_EXPIRED' && isHampterSortMode(datacatSortMode);
+        const isInlineNotice = isHampterBlocked || isFlareSolverrError || isHampterLoginGated || isHampterTokenExpired;
         if (!isInlineNotice) {
             showToast(`DataCat load failed: ${err.message}`, 'error');
         }
+        if (isHampterTokenExpired) {
+            // Stale JanitorAI token: stop cleanly on load-more, prompt a re-paste on a fresh load.
+            if (append) {
+                hampterCurrentPage = Math.max(1, hampterCurrentPage - 1);
+                hampterTotalPages = hampterCurrentPage;
+                datacatHasMore = false;
+                updateLoadMore();
+            }
+            showToast('Your JanitorAI session expired. Re-paste your token in Settings to keep browsing these sorts.', 'warning', 8000);
+            if (append) return;
+        }
+        if (isHampterLoginGated && append) {
+            // JanitorAI login-gates page 2+ anonymously; end pagination cleanly instead of erroring.
+            hampterCurrentPage = Math.max(1, hampterCurrentPage - 1);
+            hampterTotalPages = hampterCurrentPage;
+            datacatHasMore = false;
+            updateLoadMore();
+            showToast('JanitorAI serves only the first page of this sort without a login. Add your JanitorAI token in Settings for more.', 'info', 7000);
+            return;
+        }
+        if ((isHampterBlocked || isFlareSolverrError) && append) {
+            // Transient Cloudflare block; roll the page back so the next Load More refetches it.
+            hampterCurrentPage = Math.max(1, hampterCurrentPage - 1);
+            showToast('JanitorAI blocked this page load. Hit Load More to retry.', 'warning', 6000);
+            return;
+        }
         if (!append && grid) {
-            if (isHampterBlocked) {
+            if (isHampterLoginGated || isHampterTokenExpired) {
+                const expired = isHampterTokenExpired;
+                grid.innerHTML = `
+                    <div style="grid-column: 1 / -1; padding: 40px; text-align: center; color: var(--text-muted); max-width: 560px; margin: 0 auto;">
+                        <i class="fa-solid fa-user-lock" style="font-size: 2rem; color: #f5a623;"></i>
+                        <p style="margin-top: 12px; color: var(--text-primary);"><strong>${expired ? 'Your JanitorAI session expired' : 'JanitorAI requires an account for this request'}</strong></p>
+                        <p style="margin-top: 8px;">${expired
+                            ? 'JanitorAI tokens last about 3 hours. Re-copy the sb-auth-auth-token cookie and paste it under Settings &rarr; Online &rarr; DataCat.'
+                            : 'Trending and Popular show the first page without a login. Paste your JanitorAI token under Settings &rarr; Online &rarr; DataCat to browse further, or use the MeiliSearch sort orders and Saucepan, which need no login.'}</p>
+                        <button class="glass-btn" style="margin-top: 12px;" id="datacatRetryBtn">
+                            <i class="fa-solid fa-redo"></i> Retry
+                        </button>
+                    </div>
+                `;
+            } else if (isHampterBlocked) {
                 const hasFlareUrl = !!(getSetting('datacatFlareSolverrUrl') || '').trim();
                 const flareHint = hasFlareUrl
-                    ? '<p style="margin-top: 8px;">Your configured FlareSolverr instance also could not satisfy the challenge. Try restarting it, or check its logs.</p>'
-                    : '<p style="margin-top: 8px;">To enable these sort orders, configure a <a href="https://github.com/FlareSolverr/FlareSolverr" target="_blank" rel="noopener noreferrer" style="color: var(--accent);">FlareSolverr</a> instance under Settings &rarr; Online &rarr; DataCat.</p>';
+                    ? '<p style="margin-top: 8px;">Your configured FlareSolverr fallback also could not satisfy the challenge. Try restarting it, or check its logs.</p>'
+                    : '<p style="margin-top: 8px;">Retry usually clears a one-off block. If it persists, an optional <a href="https://github.com/FlareSolverr/FlareSolverr" target="_blank" rel="noopener noreferrer" style="color: var(--accent);">FlareSolverr</a> instance (Settings &rarr; Online &rarr; DataCat) can act as a fallback fetcher.</p>';
                 grid.innerHTML = `
                     <div style="grid-column: 1 / -1; padding: 40px; text-align: center; color: var(--text-muted); max-width: 560px; margin: 0 auto;">
                         <i class="fa-solid fa-shield-halved" style="font-size: 2rem; color: #f5a623;"></i>
                         <p style="margin-top: 12px; color: var(--text-primary);"><strong>JanitorAI blocked this request</strong></p>
-                        <p style="margin-top: 8px;">JanitorAI's Hampter endpoint sits behind Cloudflare bot protection and rejects server-side requests. Trending and popular sort orders are unavailable through this extension.</p>
+                        <p style="margin-top: 8px;">Cloudflare rejected the fetch this time. These sort orders normally load directly in the browser without any setup.</p>
                         <p style="margin-top: 8px;">The other JanitorAI sort orders (MeiliSearch) and Saucepan still work.</p>
                         ${flareHint}
                         <button class="glass-btn" style="margin-top: 12px;" id="datacatRetryBtn">
@@ -1358,6 +1338,7 @@ async function browseCreator(creatorId, opts = {}) {
             datacatCreatorName = creatorId;
         }
     }
+    view._cdRef = { creatorId, source, name: datacatCreatorName, handle: saucepanCreatorHandle };
 
     if (banner && bannerName) {
         bannerName.textContent = datacatCreatorName;
@@ -2464,7 +2445,7 @@ function openPreviewModal(hit) {
 
     const modal = document.getElementById('datacatCharModal');
     if (!modal) return;
-    window.resetBrowseSectionCollapseState?.(modal);
+    CoreAPI.resetBrowseSectionCollapseState(modal);
 
     const charId = getCharId(hit);
     const name = hit.name || 'Unknown';
@@ -2545,7 +2526,7 @@ function openPreviewModal(hit) {
     if (altGreetingsSection) altGreetingsSection.style.display = 'none';
     const greetingsStat = document.getElementById('datacatCharGreetingsStat');
     if (greetingsStat) greetingsStat.style.display = 'none';
-    window.currentBrowseAltGreetings = [];
+    CoreAPI.setBrowseAltGreetings([]);
 
     // Hide linked-lorebooks section + stat until detail fetch reveals scripts
     const lorebooksSection = document.getElementById('datacatCharLorebooksSection');
@@ -2703,12 +2684,7 @@ async function fetchAndPopulateDetails(hit, token) {
             }
         }
 
-        // Saucepan characters with hidden definitions surface their repaired
-        // body via `content_variants[primary].content` on the character row.
-        // When present, those fields are authoritative. For open-definition
-        // Saucepan rows, DataCat populates `character.description` with the
-        // body and exposes a correctly-mapped V2 in `chara_card_v2_json.data`.
-        // JanitorAI rows keep the body in `character.personality`.
+        // Only Saucepan repair variants overload description with the body; janitor variants mirror the row blurb and must never paint as the body.
         const recoveredVariant = pickRecoveryVariant(character);
         const charIsSaucepan = getSourceKind(character) === 'saucepan' || getSourceKind(hit) === 'saucepan';
         const v2Data = character?.chara_card_v2_json?.data || null;
@@ -2717,7 +2693,7 @@ async function fetchAndPopulateDetails(hit, token) {
             : '';
         const personality = charIsSaucepan
             ? saucepanBody
-            : (recoveredVariant?.description || recoveredVariant?.personality || character.personality || '');
+            : (character.personality || recoveredVariant?.personality || stripDatacatMarkers(v2Data?.description) || '');
         const scenario = recoveredVariant?.scenario || character.scenario || v2Data?.scenario || '';
         const firstMessage = recoveredVariant?.first_message || character.first_message || v2Data?.first_mes || '';
         const canPaintBody = !!recoveredVariant || !charIsSaucepan || !!saucepanBody;
@@ -2949,13 +2925,14 @@ function renderDatacatLorebooks(scripts) {
         return;
     }
 
-    const privateCount = lorebooks.filter(s => s.is_public === false).length;
-    const allPrivate = privateCount === lorebooks.length;
-    const noneDownloadable = privateCount === 0
+    // Not downloadable = fully private OR listed-but-content-locked (is_code_public false).
+    const lockedCount = lorebooks.filter(s => s.is_public === false || s.is_code_public === false).length;
+    const allLocked = lockedCount === lorebooks.length;
+    const noneDownloadable = lockedCount === 0
         ? null
-        : (allPrivate
-            ? 'These lorebooks are private and cannot be downloaded through Character Library.'
-            : 'Some of these lorebooks are private and cannot be downloaded through Character Library.');
+        : (allLocked
+            ? 'These lorebooks are private or content-locked by their creator and cannot be downloaded through Character Library.'
+            : 'Some of these lorebooks are private or content-locked and cannot be downloaded through Character Library.');
 
     if (stat) {
         stat.style.display = 'flex';
@@ -2984,7 +2961,9 @@ function renderDatacatLorebooks(scripts) {
         const descHtml = desc ? `<div class="datacat-lorebook-desc">${escapeHtml(desc)}</div>` : '';
         const visibility = s.is_public === false
             ? '<span class="datacat-lorebook-meta-item datacat-lorebook-private" title="Not publicly browsable on DataCat"><i class="fa-solid fa-lock"></i> Private</span>'
-            : '';
+            : (s.is_code_public === false
+                ? '<span class="datacat-lorebook-meta-item datacat-lorebook-private" title="Entries are hidden by the creator; the lorebook cannot be downloaded"><i class="fa-solid fa-lock"></i> Content locked</span>'
+                : '');
         const meta = visibility ? `<div class="datacat-lorebook-meta">${visibility}</div>` : '';
         return `
             <div class="datacat-lorebook-row">
@@ -3017,7 +2996,7 @@ function renderAltGreetings(greetings, charName) {
         listEl.innerHTML = '';
         if (countEl) countEl.textContent = '';
         if (greetingsStat) greetingsStat.style.display = 'none';
-        window.currentBrowseAltGreetings = [];
+        CoreAPI.setBrowseAltGreetings([]);
         return;
     }
 
@@ -3061,12 +3040,12 @@ function renderAltGreetings(greetings, charName) {
     });
 
     if (countEl) countEl.textContent = `(${greetings.length})`;
-    window.currentBrowseAltGreetings = greetings;
+    CoreAPI.setBrowseAltGreetings(greetings);
 }
 
 function cleanupDatacatCharModal() {
     BrowseView.closeAvatarViewer();
-    window.currentBrowseAltGreetings = null;
+    CoreAPI.setBrowseAltGreetings(null);
     const sectionIds = [
         'datacatCharDescription',
         'datacatCharScenario',
@@ -3129,13 +3108,19 @@ async function importCharacter(charData) {
         const charName = character.chat_name || character.name || charData.name || '';
         const charCreator = character.creator_name || charData.creatorName || charData.creator_name || '';
 
+        // Body resolution mirrors buildV2FromDatacat so the dupe scorer compares body-to-body, not blurb-to-body.
+        const dupeRecovered = pickRecoveryVariant(character);
+        const dupeV2 = character.chara_card_v2_json?.data || null;
+        const dupeBody = getSourceKind(character) === 'saucepan'
+            ? (dupeRecovered?.description || dupeRecovered?.personality || dupeV2?.description || character.description || '')
+            : (character.personality || dupeRecovered?.personality || stripDatacatMarkers(dupeV2?.description) || '');
         const duplicateMatches = await checkCharacterForDuplicatesAsync({
             name: charName,
             creator: charCreator,
             fullPath: String(charId),
-            description: character.personality || character.description || '',
-            first_mes: character.first_message || '',
-            scenario: character.scenario || ''
+            description: dupeBody,
+            first_mes: character.first_message || dupeV2?.first_mes || '',
+            scenario: character.scenario || dupeV2?.scenario || ''
         });
 
         if (duplicateMatches && duplicateMatches.length > 0) {
@@ -3202,29 +3187,16 @@ async function importCharacter(charData) {
             }] : []
         };
 
-        // Mobile holds preview behind summary for the fade; desktop snaps preview off first then opens summary.
-        if (showSummary) {
-            if (window.matchMedia?.('(max-width: 768px)').matches) {
-                showImportSummaryModal(summaryArgs);
-                await new Promise(r => setTimeout(r, 220));
-                closePreviewModal();
-            } else {
-                closePreviewModal();
-                await new Promise(r => requestAnimationFrame(r));
-                showImportSummaryModal(summaryArgs);
-            }
-        } else {
-            if (importBtn) importBtn.innerHTML = '<i class="fa-solid fa-check"></i> Imported';
-            await new Promise(r => setTimeout(r, 350));
-            closePreviewModal();
-        }
-
-        showToast(`Imported "${result.characterName}"`, 'success');
-
-        const added = await fetchAndAddCharacter(result.fileName);
-        if (added) view.addCharToLookup(added);
-        else await fetchCharacters(true);
-        markCardAsImported(charId);
+        await finishBrowseImport({
+            view,
+            summaryArgs,
+            showSummary,
+            closePreview: closePreviewModal,
+            importBtn,
+            characterName: result.characterName,
+            avatarFileName: result.fileName,
+            markImported: () => markCardAsImported(charId),
+        });
 
     } catch (err) {
         console.error('[DatacatBrowse] Import failed:', err);
@@ -3240,7 +3212,7 @@ function markCardAsImported(charId) {
     for (const gridId of ['datacatGrid', 'datacatFollowingGrid']) {
         const grid = document.getElementById(gridId);
         if (!grid) continue;
-        const card = grid.querySelector(`[data-datacat-id="${charId}"]`);
+        const card = grid.querySelector(`[data-datacat-id="${CSS.escape(String(charId))}"]`);
         if (!card) continue;
         card.classList.add('in-library');
         card.classList.remove('possible-library');
@@ -3687,7 +3659,7 @@ function ensureModalEventsAttached() {
     const avatar = document.getElementById('datacatCharAvatar');
     if (avatar) {
         avatar.addEventListener('click', (e) => {
-            if (isMobileViewport()) return;
+            if (isMobileMode()) return;
             e.stopPropagation();
             if (!avatar.src || avatar.src.endsWith('/img/ai4.png')) return;
             BrowseView.openAvatarViewer(avatar.src);
@@ -4366,11 +4338,6 @@ const datacatBrowseView = new (class DatacatBrowseView extends BrowseView {
             updateTagsVisibility();
         }
 
-        // Pre-warm FlareSolverr in the background so by the time the user
-        // picks a Hampter sort the session has already solved CF and cached
-        // the cookie. Best-effort; no UI feedback if it fails silently.
-        const flareUrl = (getSetting('datacatFlareSolverrUrl') || '').trim();
-        if (flareUrl) prewarmFlareSession(flareUrl);
     }
 
     // -- Library Lookup (BrowseView contract) --

@@ -2,7 +2,7 @@
 
 import { BrowseView } from '../browse-view.js';
 import CoreAPI from '../../core-api.js';
-import { IMG_PLACEHOLDER, formatNumber, BROWSE_PURIFY_CONFIG, skeletonLines, deferRender, deferCall, isMobileViewport } from '../provider-utils.js';
+import { IMG_PLACEHOLDER, formatNumber, BROWSE_PURIFY_CONFIG, skeletonLines, deferRender, deferCall, isMobileMode, finishBrowseImport } from '../provider-utils.js';
 import {
     JANNY_SEARCH_URL,
     JANNY_IMAGE_BASE,
@@ -40,13 +40,10 @@ const {
     escapeHtml,
     debugLog,
     getSetting,
-    fetchCharacters,
-    fetchAndAddCharacter,
     checkCharacterForDuplicatesAsync,
     showPreImportDuplicateWarning,
     deleteCharacter,
     getCharacterGalleryId,
-    showImportSummaryModal,
     formatRichText,
     safePurify,
     renderCreatorNotesSecure,
@@ -558,7 +555,7 @@ function openPreviewModal(hit) {
 
     const modal = document.getElementById('jannyCharModal');
     if (!modal) return;
-    window.resetBrowseSectionCollapseState?.(modal);
+    CoreAPI.resetBrowseSectionCollapseState(modal);
 
     const name = hit.name || 'Unknown';
     const creatorNotes = stripHtml(hit.description) || '';
@@ -747,7 +744,7 @@ async function fetchAndPopulateDetails(hit, token) {
 
 function cleanupJannyCharModal() {
     BrowseView.closeAvatarViewer();
-    window.currentBrowseAltGreetings = null;
+    CoreAPI.setBrowseAltGreetings(null);
     const creatorEl = document.getElementById('jannyCharCreator');
     if (creatorEl) creatorEl.textContent = '';
     const sectionIds = [
@@ -755,7 +752,6 @@ function cleanupJannyCharModal() {
         'jannyCharScenario',
         'jannyCharFirstMsg',
         'jannyCharExamples',
-        'jannyCharAltGreetings',
         'jannyCharTags',
     ];
     for (const id of sectionIds) {
@@ -877,30 +873,16 @@ async function importCharacter(charData) {
             }]
         };
 
-        // Mobile holds preview behind summary for the fade; desktop snaps preview off first then opens summary.
-        if (showSummary) {
-            if (window.matchMedia?.('(max-width: 768px)').matches) {
-                showImportSummaryModal(summaryArgs);
-                await new Promise(r => setTimeout(r, 220));
-                closePreviewModal();
-            } else {
-                closePreviewModal();
-                await new Promise(r => requestAnimationFrame(r));
-                showImportSummaryModal(summaryArgs);
-            }
-        } else {
-            if (importBtn) importBtn.innerHTML = '<i class="fa-solid fa-check"></i> Imported';
-            await new Promise(r => setTimeout(r, 350));
-            closePreviewModal();
-        }
-
-        showToast(`Imported "${result.characterName}"`, 'success');
-
-        // Lightweight single-character add (avoids OOM from full list reload on mobile)
-        const added = await fetchAndAddCharacter(result.fileName);
-        if (added) view.addCharToLookup(added);
-        else await fetchCharacters(true);
-        markCardAsImported(charId);
+        await finishBrowseImport({
+            view,
+            summaryArgs,
+            showSummary,
+            closePreview: closePreviewModal,
+            importBtn,
+            characterName: result.characterName,
+            avatarFileName: result.fileName,
+            markImported: () => markCardAsImported(charId),
+        });
 
     } catch (err) {
         console.error('[JannyBrowse] Import failed:', err);
@@ -915,7 +897,7 @@ async function importCharacter(charData) {
 function markCardAsImported(charId) {
     const grid = document.getElementById('jannyGrid');
     if (!grid) return;
-    const card = grid.querySelector(`[data-janny-id="${charId}"]`);
+    const card = grid.querySelector(`[data-janny-id="${CSS.escape(String(charId))}"]`);
     if (!card) return;
     card.classList.add('in-library');
     card.classList.remove('possible-library');
@@ -1334,7 +1316,7 @@ function initJannyView() {
         const jannyAvatar = document.getElementById('jannyCharAvatar');
         if (jannyAvatar) {
             jannyAvatar.addEventListener('click', (e) => {
-                if (isMobileViewport()) return;
+                if (isMobileMode()) return;
                 e.stopPropagation();
                 if (!jannyAvatar.src || jannyAvatar.src.endsWith('/img/ai4.png')) return;
                 BrowseView.openAvatarViewer(jannyAvatar.src);
@@ -1417,6 +1399,7 @@ function doSearch() {
 
 function filterByAuthor(authorName) {
     jannyAuthorFilter = authorName;
+    view._cdRef = { creatorName: authorName };
     jannyCurrentSearch = '';
     jannyCurrentPage = 1;
     jannySortMode = 'relevant';
