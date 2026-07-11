@@ -13,12 +13,19 @@ export const IMG_PLACEHOLDER = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.o
 
 export const CL_HELPER_PLUGIN_BASE = '/plugins/cl-helper';
 
-// Live viewport check for handlers that branch per breakpoint. Always evaluate at event time,
-// never at listener-attach time: the browse modal listener guards never reset, so an attach-time
-// snapshot goes stale when the viewport crosses 768px mid-session.
-const _mobileMq = window.matchMedia('(max-width: 768px)');
-export function isMobileViewport() {
-    return _mobileMq.matches;
+// Live mobile-mode check for handlers that branch per mode (html.cl-mobile, owned by the boot
+// policy + the library-mobile lifecycle). Always evaluate at event time, never at listener-attach
+// time: the browse modal listener guards never reset, so an attach-time snapshot goes stale when
+// the mode flips mid-session.
+export function isMobileMode() {
+    return document.documentElement.classList.contains('cl-mobile');
+}
+
+// Jump the browse list to the top so a new result set doesnt strand the user mid-list; mobile only.
+export function scrollBrowseListTop() {
+    if (!isMobileMode()) return;
+    const sc = document.querySelector('.gallery-content');
+    if (sc) sc.scrollTop = 0;
 }
 
 // XSS gate for any third-party browse content rendered via innerHTML.
@@ -337,6 +344,45 @@ export async function generatePlaceholder() {
     return await blob.arrayBuffer();
 }
 
+// Post-import tail shared by every browse view: summary/preview choreography, success toast,
+// library refresh, imported-badge stamp. The timings are deliberate: mobile shows the summary
+// OVER the preview for 220ms (the small-viewport fade is too visible), the no-summary path
+// flashes the button for 350ms, the refresh waits 200ms for ST to settle the upload, and a
+// missed single-char add waits another 500ms before the full-list refetch.
+export async function finishBrowseImport({ view, summaryArgs, showSummary, closePreview, importBtn, characterName, avatarFileName, markImported }) {
+    if (showSummary) {
+        if (isMobileMode()) {
+            CoreAPI.showImportSummaryModal(summaryArgs);
+            await new Promise(r => setTimeout(r, 220));
+            closePreview();
+        } else {
+            closePreview();
+            await new Promise(r => requestAnimationFrame(r));
+            CoreAPI.showImportSummaryModal(summaryArgs);
+        }
+    } else {
+        if (importBtn) importBtn.innerHTML = '<i class="fa-solid fa-check"></i> Imported';
+        await new Promise(r => setTimeout(r, 350));
+        closePreview();
+    }
+
+    CoreAPI.showToast(`Imported "${characterName}"`, 'success');
+
+    await new Promise(r => setTimeout(r, 200));
+    // Lightweight single-character add (avoids OOM from a full list reload on mobile).
+    const added = await CoreAPI.fetchAndAddCharacter(avatarFileName);
+    if (added) {
+        view.addCharToLookup(added);
+    } else {
+        await new Promise(r => setTimeout(r, 500));
+        await CoreAPI.fetchCharacters(true);
+    }
+    markImported();
+    // markImported only stamps the browse grid; this re-grade covers the mode-aware grids
+    // (following/timeline included) and clears the card's stale possible-match badge.
+    view.refreshInLibraryBadges?.();
+}
+
 /**
  * Assign gallery_id to a character card, inheriting from a replaced character
  * or generating a new one if the uniqueGalleryFolders setting is enabled.
@@ -465,9 +511,8 @@ export async function importFromPng({
     }
 
     const mediaUrls = api.findCharacterMediaUrls?.(characterCard) || [];
-    await window.ensureExtractorsLoaded?.();
-    const galleryPageUrls = typeof window.findCharacterGalleryUrls === 'function'
-        ? window.findCharacterGalleryUrls(characterCard) : [];
+    await CoreAPI.ensureExtractorsLoaded();
+    const galleryPageUrls = CoreAPI.findCharacterGalleryUrls(characterCard);
     const galleryId = characterCard.data.extensions?.gallery_id || null;
 
     return {

@@ -5,7 +5,7 @@
 
 import { BrowseView } from '../browse-view.js';
 import CoreAPI from '../../core-api.js';
-import { IMG_PLACEHOLDER, formatNumber, BROWSE_PURIFY_CONFIG, skeletonLines, deferRender, isMobileViewport } from '../provider-utils.js';
+import { IMG_PLACEHOLDER, formatNumber, BROWSE_PURIFY_CONFIG, skeletonLines, deferRender, isMobileMode, finishBrowseImport } from '../provider-utils.js';
 import {
     searchCharacters,
     fetchCharacterDetail,
@@ -24,9 +24,8 @@ import {
 
 const {
     onElement: on, showToast, escapeHtml, safePurify, debugLog, getSetting, setSetting,
-    fetchCharacters, fetchAndAddCharacter,
     checkCharacterForDuplicatesAsync, showPreImportDuplicateWarning,
-    deleteCharacter, getCharacterGalleryId, showImportSummaryModal,
+    deleteCharacter, getCharacterGalleryId,
     formatRichText, debounce,
     apiRequest, cleanupCreatorNotesContainer,
     getProviderExcludeTags,
@@ -567,7 +566,7 @@ function openPreviewModal(hit) {
 
     const modal = document.getElementById('pygCharModal');
     if (!modal) return;
-    window.resetBrowseSectionCollapseState?.(modal);
+    CoreAPI.resetBrowseSectionCollapseState(modal);
 
     const name = hit.displayName || hit.personality?.name || 'Unknown';
     const owner = hit.owner || {};
@@ -799,7 +798,7 @@ function populateDefinitionSections(name, p, altGreetings) {
         if (altGreetings.length > 0) {
             altSection.style.display = 'block';
             if (altCountEl) altCountEl.textContent = `(${altGreetings.length})`;
-            window.currentBrowseAltGreetings = altGreetings;
+            CoreAPI.setBrowseAltGreetings(altGreetings);
             if (altEl) {
                 const buildPreview = (text) => {
                     const cleaned = (text || '').replace(/\s+/g, ' ').trim();
@@ -836,7 +835,7 @@ function populateDefinitionSections(name, p, altGreetings) {
             }
         } else {
             altSection.style.display = 'none';
-            window.currentBrowseAltGreetings = [];
+            CoreAPI.setBrowseAltGreetings([]);
         }
     }
 
@@ -912,7 +911,7 @@ async function fetchAndPopulateDetails(hit, stalenessToken) {
 
 function cleanupPygCharModal() {
     BrowseView.closeAvatarViewer();
-    window.currentBrowseAltGreetings = null;
+    CoreAPI.setBrowseAltGreetings(null);
     const sectionIds = [
         'pygCharDescription',
         'pygCharFirstMsg',
@@ -1033,29 +1032,16 @@ async function importCharacter(charData) {
             }] : []
         };
 
-        // Mobile holds preview behind summary for the fade; desktop snaps preview off first then opens summary.
-        if (showSummary) {
-            if (window.matchMedia?.('(max-width: 768px)').matches) {
-                showImportSummaryModal(summaryArgs);
-                await new Promise(r => setTimeout(r, 220));
-                closePreviewModal();
-            } else {
-                closePreviewModal();
-                await new Promise(r => requestAnimationFrame(r));
-                showImportSummaryModal(summaryArgs);
-            }
-        } else {
-            if (importBtn) importBtn.innerHTML = '<i class="fa-solid fa-check"></i> Imported';
-            await new Promise(r => setTimeout(r, 350));
-            closePreviewModal();
-        }
-
-        showToast(`Imported "${result.characterName}"`, 'success');
-
-        const added = await fetchAndAddCharacter(result.fileName);
-        if (added) view.addCharToLookup(added);
-        else await fetchCharacters(true);
-        markCardAsImported(charData.id);
+        await finishBrowseImport({
+            view,
+            summaryArgs,
+            showSummary,
+            closePreview: closePreviewModal,
+            importBtn,
+            characterName: result.characterName,
+            avatarFileName: result.fileName,
+            markImported: () => markCardAsImported(charData.id),
+        });
 
     } catch (err) {
         console.error('[PygBrowse] Import failed:', err);
@@ -1071,7 +1057,7 @@ function markCardAsImported(charId) {
     for (const gridId of ['pygGrid', 'pygFollowingGrid']) {
         const grid = document.getElementById(gridId);
         if (!grid) continue;
-        const card = grid.querySelector(`[data-pyg-id="${charId}"]`);
+        const card = grid.querySelector(`[data-pyg-id="${CSS.escape(String(charId))}"]`);
         if (!card) continue;
         card.classList.add('in-library');
         card.classList.remove('possible-library');
@@ -1104,6 +1090,7 @@ function filterByAuthor(authorName, ownerId) {
     closePreviewModal();
     pygAuthorFilter = authorName;
     pygAuthorOwnerId = ownerId || null;
+    view._cdRef = { ownerId: pygAuthorOwnerId, name: authorName };
     pygCurrentSearch = '';
     pygCurrentPage = 0;
 
@@ -2231,7 +2218,7 @@ function initPygView() {
         if (avatar) {
             avatar.style.cursor = 'pointer';
             avatar.addEventListener('click', () => {
-                if (isMobileViewport()) return;
+                if (isMobileMode()) return;
                 const src = avatar.src;
                 if (src && src !== '/img/ai4.png') {
                     BrowseView.openAvatarViewer(src, '/img/ai4.png');
