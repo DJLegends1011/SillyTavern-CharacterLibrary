@@ -11482,7 +11482,8 @@ html.cl-initial-loading .mobile-fab {
 
     .chub-view-btn,
     .pyg-view-btn,
-    .wyvern-view-btn {
+    .wyvern-view-btn,
+    .masquerade-view-btn {
         padding: 6px 10px;
         font-size: var(--font-sm);
     }
@@ -11520,7 +11521,8 @@ html.cl-initial-loading .mobile-fab {
     /* Online filter bar - collapse text labels to icon-only */
     .chub-view-btn span,
     .pyg-view-btn span,
-    .wyvern-view-btn span {
+    .wyvern-view-btn span,
+    .masquerade-view-btn span {
         display: none;
     }
 

@@ -133,6 +133,7 @@
 .chub-view-btn,
 .pyg-view-btn,
 .wyvern-view-btn,
+.masquerade-view-btn,
 .datacat-view-btn {
     padding: 8px 14px;
     background: transparent;
@@ -152,6 +153,7 @@
 .chub-view-btn:hover,
 .pyg-view-btn:hover,
 .wyvern-view-btn:hover,
+.masquerade-view-btn:hover,
 .datacat-view-btn:hover {
     color: var(--text-primary);
     background: rgba(255, 255, 255, 0.05);
@@ -160,6 +162,7 @@
 .chub-view-btn.active,
 .pyg-view-btn.active,
 .wyvern-view-btn.active,
+.masquerade-view-btn.active,
 .datacat-view-btn.active {
     background: var(--accent);
     color: var(--accent-text);
@@ -169,6 +172,7 @@
 .chub-view-btn i,
 .pyg-view-btn i,
 .wyvern-view-btn i,
+.masquerade-view-btn i,
 .datacat-view-btn i {
     font-size: var(--font-sm);
 }
@@ -2214,6 +2218,7 @@ html.cl-mobile .filter-area.online-filters .chub-view-toggle {
 html.cl-mobile .filter-area.online-filters .chub-view-btn,
 html.cl-mobile .filter-area.online-filters .pyg-view-btn,
 html.cl-mobile .filter-area.online-filters .wyvern-view-btn,
+html.cl-mobile .filter-area.online-filters .masquerade-view-btn,
 html.cl-mobile .filter-area.online-filters .datacat-view-btn {
     font-size: var(--font-2xs);
     padding: 4px 7px;

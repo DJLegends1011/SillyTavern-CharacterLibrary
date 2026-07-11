@@ -2739,6 +2739,10 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
                 if (target.src.endsWith('/img/ai4.png')) return;
                 e.stopPropagation();
                 openAvatarViewer(target.src);
+            } else if (target.id === 'masqueradeCharAvatar') {
+                if (target.src.endsWith('/img/ai4.png')) return;
+                e.stopPropagation();
+                openAvatarViewer(target.src);
             } else if (target.id === 'datacatCharAvatar') {
                 if (target.src.endsWith('/img/ai4.png')) return;
                 e.stopPropagation();

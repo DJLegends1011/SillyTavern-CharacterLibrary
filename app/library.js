@@ -549,6 +549,7 @@ const DEFAULT_SETTINGS = {
     // ---- NSFW Toggles ----
     chubNsfw: false,
     jannyNsfw: false,
+    masqueradeNsfw: false,
     pygmalionNsfw: false,
     wyvernNsfw: false,
     ctNsfw: false,
@@ -607,6 +608,7 @@ const DEFAULT_SETTINGS = {
     exportAsLinks: false,
     showProviderTagline: true,
     showWyvernTagline: true,
+    showMasqueradeTagline: true,
     allowRichTagline: false,
     displayNamePreference: 'card',
     displayNameOverrideEnabled: true,
@@ -1695,6 +1697,7 @@ function setupSettingsModal() {
     const showInfoTabCheckbox = document.getElementById('settingsShowInfoTab');
     const exportAsLinksCheckbox = document.getElementById('settingsExportAsLinks');
     const showProviderTaglineCheckbox = document.getElementById('settingsShowProviderTagline');
+    const showMasqueradeTaglineCheckbox = document.getElementById('settingsShowMasqueradeTagline');
     const allowRichTaglineCheckbox = document.getElementById('settingsAllowRichTagline');
     const browseSnapSectionsCheckbox = document.getElementById('settingsBrowseSnapSections');
     const collapseAllBrowseSectionsCheckbox = document.getElementById('settingsCollapseAllBrowseSections');
@@ -2124,6 +2127,7 @@ function setupSettingsModal() {
         { id: 'pygmalion', inputId: 'pygmalionExcludeTagsInput', pillsId: 'pygmalionExcludeTagsPills' },
         { id: 'chartavern', inputId: 'ctExcludeTagsInput', pillsId: 'ctExcludeTagsPills' },
         { id: 'wyvern', inputId: 'wyvernExcludeTagsInput', pillsId: 'wyvernExcludeTagsPills' },
+        { id: 'masquerade', inputId: 'masqueradeExcludeTagsInput', pillsId: 'masqueradeExcludeTagsPills' },
         { id: 'datacat', inputId: 'datacatExcludeTagsInput', pillsId: 'datacatExcludeTagsPills' },
         { id: 'botbooru', inputId: 'botbooruExcludeTagsInput', pillsId: 'botbooruExcludeTagsPills' },
     ];
@@ -2797,6 +2801,9 @@ function setupSettingsModal() {
         if (showProviderTaglineCheckbox) {
             showProviderTaglineCheckbox.checked = getSetting('showProviderTagline') !== false;
         }
+        if (showMasqueradeTaglineCheckbox) {
+            showMasqueradeTaglineCheckbox.checked = getSetting('showMasqueradeTagline') !== false;
+        }
         if (allowRichTaglineCheckbox) {
             allowRichTaglineCheckbox.checked = getSetting('allowRichTagline') === true;
         }
@@ -3320,6 +3327,7 @@ function setupSettingsModal() {
             showInfoTab: showInfoTabCheckbox ? showInfoTabCheckbox.checked : false,
             exportAsLinks: exportAsLinksCheckbox ? exportAsLinksCheckbox.checked : false,
             showProviderTagline: showProviderTaglineCheckbox ? showProviderTaglineCheckbox.checked : true,
+            showMasqueradeTagline: showMasqueradeTaglineCheckbox ? showMasqueradeTaglineCheckbox.checked : true,
             allowRichTagline: allowRichTaglineCheckbox ? allowRichTaglineCheckbox.checked : false,
             browseSnapSections: browseSnapSectionsCheckbox ? browseSnapSectionsCheckbox.checked : false,
             collapseAllBrowseSections: collapseAllBrowseSectionsCheckbox ? collapseAllBrowseSectionsCheckbox.checked : false,
@@ -3518,6 +3526,9 @@ function setupSettingsModal() {
         }
         if (showProviderTaglineCheckbox) {
             showProviderTaglineCheckbox.checked = DEFAULT_SETTINGS.showProviderTagline;
+        }
+        if (showMasqueradeTaglineCheckbox) {
+            showMasqueradeTaglineCheckbox.checked = DEFAULT_SETTINGS.showMasqueradeTagline;
         }
         if (browseSnapSectionsCheckbox) {
             browseSnapSectionsCheckbox.checked = DEFAULT_SETTINGS.browseSnapSections;
@@ -15011,6 +15022,7 @@ const ADV_FILTER_PROVIDERS = [
     { value: 'chartavern', label: 'CharacterTavern' },
     { value: 'pygmalion', label: 'Pygmalion' },
     { value: 'wyvern', label: 'Wyvern' },
+    { value: 'masquerade', label: 'MasqueradeAI' },
     { value: 'datacat', label: 'DataCat' },
     { value: 'botbooru', label: 'Botbooru' },
 ];
@@ -15575,7 +15587,7 @@ function performSearch() {
     //   "creator:john linked:yes dark elf"
     // ========================================================================
     
-    const prefixPattern = /(?:^|\s)((?:creator|version|gallery|uid|favorite|fav|linked|chub|janny|charactertavern|ct|pygmalion|wyvern|datacat|dc|botbooru|bb|playlist):(?:[^\s]+))/gi;
+    const prefixPattern = /(?:^|\s)((?:creator|version|gallery|uid|favorite|fav|linked|chub|janny|charactertavern|ct|pygmalion|wyvern|masquerade|mq|datacat|dc|botbooru|bb|playlist):(?:[^\s]+))/gi;
     
     let creatorFilter = null;
     let versionFilter = null;
@@ -15612,7 +15624,7 @@ function performSearch() {
             favoriteFilter = value;
             filterFavoriteYes = value === 'yes' || value === 'true';
             filterFavoriteNo = value === 'no' || value === 'false';
-        } else if (['linked', 'chub', 'janny', 'charactertavern', 'ct', 'pygmalion', 'wyvern', 'datacat', 'dc', 'botbooru', 'bb'].includes(prefix)) {
+        } else if (['linked', 'chub', 'janny', 'charactertavern', 'ct', 'pygmalion', 'wyvern', 'masquerade', 'mq', 'datacat', 'dc', 'botbooru', 'bb'].includes(prefix)) {
             linkFilterPrefix = prefix;
             linkFilterWantLinked = value === 'yes' || value === 'true' || value === 'linked';
         } else if (prefix === 'playlist') {
@@ -15689,6 +15701,7 @@ function performSearch() {
                     : (linkFilterPrefix === 'charactertavern' || linkFilterPrefix === 'ct') ? 'chartavern'
                     : linkFilterPrefix === 'pygmalion' ? 'pygmalion'
                     : linkFilterPrefix === 'wyvern' ? 'wyvern'
+                    : (linkFilterPrefix === 'masquerade' || linkFilterPrefix === 'mq') ? 'masquerade'
                     : (linkFilterPrefix === 'datacat' || linkFilterPrefix === 'dc') ? 'datacat'
                     : (linkFilterPrefix === 'botbooru' || linkFilterPrefix === 'bb') ? 'botbooru'
                     : null;
@@ -16893,7 +16906,7 @@ function getCharacterBookFromEditor() {
 // Utility Functions
 // ==============================================
 
-const PROVIDER_EXT_KEYS = ['chub', 'jannyai', 'pygmalion', 'wyvern', 'chartavern', 'datacat', 'botbooru'];
+const PROVIDER_EXT_KEYS = ['chub', 'jannyai', 'pygmalion', 'wyvern', 'chartavern', 'masquerade', 'datacat', 'botbooru'];
 
 function getListingNameFromExtensions(char) {
     const ext = char?.data?.extensions;
