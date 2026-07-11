@@ -2,7 +2,7 @@
 
 import { BrowseView } from '../browse-view.js';
 import CoreAPI from '../../core-api.js';
-import { IMG_PLACEHOLDER, formatNumber, BROWSE_PURIFY_CONFIG, skeletonLines, deferRender, deferCall, CL_HELPER_PLUGIN_BASE, isMobileViewport, absolutizeMediaPaths } from '../provider-utils.js';
+import { IMG_PLACEHOLDER, formatNumber, BROWSE_PURIFY_CONFIG, skeletonLines, deferRender, deferCall, CL_HELPER_PLUGIN_BASE, isMobileMode, absolutizeMediaPaths, finishBrowseImport } from '../provider-utils.js';
 import {
     BOTBOORU_BASE,
     getBotbooruPreviewUrl,
@@ -53,14 +53,11 @@ const {
     setSettings,
     debounce,
     getCharacterGalleryId,
-    fetchCharacters,
-    fetchAndAddCharacter,
     deleteCharacter,
     renderCreatorNotesSecure,
     cleanupCreatorNotesContainer,
     checkCharacterForDuplicatesAsync,
     showPreImportDuplicateWarning,
-    showImportSummaryModal,
     getProviderExcludeTags,
     apiRequest,
 } = CoreAPI;
@@ -1011,6 +1008,15 @@ class BotbooruBrowseView extends BrowseView {
         }, ['botbooruGrid', 'botbooruTimelineGrid']);
     }
 
+    // Same policy as postPossibleTier: writer tag, else the resolved uploader name; with no
+    // creator signal a name-only match would flag half the catalog, so skip the badge.
+    _cardPossibleTier(card, name) {
+        const el = card.querySelector('.browse-card-creator-link');
+        const creator = el?.dataset.writer
+            || (el?.dataset.uploaderId ? (bbUploaderNames.get(String(el.dataset.uploaderId)) || '') : '');
+        return creator ? this.getPossibleMatchTier(name, creator) : { show: false };
+    }
+
     deactivate() {
         super.deactivate();
         bbDelegatesInitialized = false;
@@ -1272,7 +1278,7 @@ function initBotbooruView() {
         const avatar = document.getElementById('botbooruCharAvatar');
         if (avatar) {
             avatar.addEventListener('click', (e) => {
-                if (isMobileViewport()) return;
+                if (isMobileMode()) return;
                 e.stopPropagation();
                 if (!avatar.src || !bbSelectedPost) return;
                 BrowseView.openAvatarViewer(getBotbooruDownloadUrl(bbSelectedPost.id, 'png'), avatar.src);
@@ -1525,7 +1531,7 @@ function initBotbooruTagsDropdown() {
                     }
                 });
             }
-            if (!window.matchMedia('(max-width: 768px)').matches) searchInput?.focus();
+            if (!isMobileMode()) searchInput?.focus();
         }
     });
 
@@ -1869,6 +1875,7 @@ async function performBotbooruUploaderSearch() {
 
 function filterByUploader(id, name) {
     bbUploaderFilter = { id: String(id), name: name || `#${id}` };
+    view._cdRef = bbUploaderFilter;
     resetBotbooruFavoritesFilter(); // favorites and uploads-view are competing data sources
     bbCurrentSearch = '';
     const searchInput = document.getElementById('botbooruSearchInput');
@@ -2670,7 +2677,7 @@ async function openBotbooruCharPreview(post) {
     bbSelectedDetail = null;
 
     const modal = document.getElementById('botbooruCharModal');
-    window.resetBrowseSectionCollapseState?.(modal);
+    CoreAPI.resetBrowseSectionCollapseState(modal);
 
     const avatarImg = document.getElementById('botbooruCharAvatar');
     const nameEl = document.getElementById('botbooruCharName');
@@ -2800,7 +2807,7 @@ async function openBotbooruCharPreview(post) {
             altGreetingsSection.style.display = 'none';
             altGreetingsEl.innerHTML = '';
             if (altGreetingsCountEl) altGreetingsCountEl.textContent = '';
-            window.currentBrowseAltGreetings = [];
+            CoreAPI.setBrowseAltGreetings([]);
             return;
         }
         const buildPreview = (text) => {
@@ -2838,7 +2845,7 @@ async function openBotbooruCharPreview(post) {
             }, { once: true });
         });
         if (altGreetingsCountEl) altGreetingsCountEl.textContent = `(${greetings.length})`;
-        window.currentBrowseAltGreetings = greetings;
+        CoreAPI.setBrowseAltGreetings(greetings);
     };
 
     // The /post/{id} detail carries the full definition inline PLUS the uploader
@@ -2929,7 +2936,9 @@ async function openBotbooruCharPreview(post) {
     }
 
     if (creatorNotesSection && creatorNotesEl) {
-        const notes = absBB((d.creator_notes || '').trim());
+        // creator_notes_display is botbooru's server-sanitized render (strips the raw notes'
+        // escaped-HTML junk and CSS-injection blocks); fall back to raw when its absent.
+        const notes = absBB((d.creator_notes_display || d.creator_notes || '').trim());
         if (notes) {
             creatorNotesSection.style.display = 'block';
             if (!creatorNotesEl.querySelector('iframe')) creatorNotesEl.innerHTML = skeletonLines(3);
@@ -2989,7 +2998,7 @@ async function openBotbooruCharPreview(post) {
  */
 function cleanupBotbooruCharModal() {
     BrowseView.closeAvatarViewer();
-    window.currentBrowseAltGreetings = null;
+    CoreAPI.setBrowseAltGreetings(null);
 
     const modal = document.getElementById('botbooruCharModal');
     if (modal) {
@@ -3186,39 +3195,20 @@ async function downloadBotbooruCharacter() {
             }] : []
         };
 
-        // Mobile holds the preview behind the summary while it fades in; desktop closes first
-        if (showSummary) {
-            if (window.matchMedia?.('(max-width: 768px)').matches) {
-                showImportSummaryModal(summaryArgs);
-                await new Promise(r => setTimeout(r, 220));
-                closeBotbooruCharPreview();
-            } else {
-                closeBotbooruCharPreview();
-                await new Promise(r => requestAnimationFrame(r));
-                showImportSummaryModal(summaryArgs);
-            }
-        } else {
-            downloadBtn.innerHTML = '<i class="fa-solid fa-check"></i> Imported';
-            await new Promise(r => setTimeout(r, 350));
-            closeBotbooruCharPreview();
-        }
-
-        showToast(`Downloaded "${result.characterName}" successfully!`, 'success');
-
-        // === REFRESH + SYNC ===
-        await new Promise(r => setTimeout(r, 200));
-        const added = await fetchAndAddCharacter(localAvatarFileName);
-        if (added) {
-            view.addCharToLookup(added);
-        } else {
-            await new Promise(r => setTimeout(r, 500));
-            await fetchCharacters(true);
-        }
-        markBotbooruCardAsImported(post.id);
+        await finishBrowseImport({
+            view,
+            summaryArgs,
+            showSummary,
+            closePreview: closeBotbooruCharPreview,
+            importBtn: downloadBtn,
+            characterName: result.characterName,
+            avatarFileName: localAvatarFileName,
+            markImported: () => markBotbooruCardAsImported(post.id),
+        });
 
     } catch (e) {
         console.error('[BotbooruDownload] Download error:', e);
-        showToast('Download failed: ' + e.message, 'error');
+        showToast('Import failed: ' + e.message, 'error');
     } finally {
         downloadBtn.innerHTML = originalHtml;
         downloadBtn.disabled = false;

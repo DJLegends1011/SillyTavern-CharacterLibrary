@@ -77,6 +77,7 @@ function saveChatCache(chats) {
                 charAvatar: c.charAvatar,
                 preview: c.preview,
                 models: c.models || null,
+                modelsResolved: !!c.modelsResolved,
                 isGroup: c.isGroup || false,
                 groupId: c.groupId || null,
                 chat_metadata: c.chat_metadata || null,
@@ -118,12 +119,14 @@ async function fetchCharacterChats(char) {
         const chats = await response.json();
 
         if (chats.error || !chats.length) {
-            chatsList.innerHTML = `
-                <div class="no-chats">
-                    <i class="fa-solid fa-comments"></i>
-                    <p>No chats found for this character</p>
-                </div>
-            `;
+            CoreAPI.renderEmptyState(chatsList, {
+                icon: 'fa-solid fa-comments',
+                title: 'No chats yet',
+                hint: `Start your first conversation with ${char.name || 'this character'}.`,
+                actionLabel: 'Start a chat',
+                actionIcon: 'fa-solid fa-comment-dots',
+                onAction: () => createNewChat(char),
+            });
             return;
         }
 
@@ -277,7 +280,16 @@ async function deleteChat(char, chatFile) {
 
 async function createNewChat(char) {
     try {
-        if (await CoreAPI.loadCharInMain(char, true)) {
+        let hasExistingChats = false;
+        try {
+            // simple:true returns bare file names; metadata would make ST parse every chat JSONL
+            const resp = await CoreAPI.apiRequest(ENDPOINTS.CHARACTERS_CHATS, 'POST', { avatar_url: char.avatar, simple: true });
+            if (resp.ok) {
+                const chats = await resp.json();
+                hasExistingChats = Array.isArray(chats) && chats.length > 0;
+            }
+        } catch (_) {}
+        if (await CoreAPI.loadCharInMain(char, hasExistingChats)) {
             CoreAPI.showToast("Creating new chat...", "success");
         }
     } catch (e) {
@@ -656,6 +668,7 @@ async function fetchFreshChats(isBackground = false) {
                     charAvatar: null,
                     preview: preview,
                     models: canReuseCache ? (cachedChat.models || null) : null,
+                    modelsResolved: canReuseCache ? !!cachedChat.modelsResolved : false,
                     chat_metadata: chat.chat_metadata || null,
                 });
             } else if (chat.avatar) {
@@ -689,6 +702,7 @@ async function fetchFreshChats(isBackground = false) {
                     charAvatar: chat.avatar,
                     preview: preview,
                     models: canReuseCache ? (cachedChat.models || null) : null,
+                    modelsResolved: canReuseCache ? !!cachedChat.modelsResolved : false,
                     chat_metadata: chat.chat_metadata || null,
                 });
             }
@@ -696,7 +710,7 @@ async function fetchFreshChats(isBackground = false) {
 
         if (signal.aborted) return;
         if (newChats.length === 0 && !isBackground) {
-            const isMobile = window.matchMedia('(max-width: 768px)').matches;
+            const isMobile = CoreAPI.isMobileMode();
             if (isMobile) {
                 CoreAPI.renderEmptyState(chatsGrid, {
                     icon: 'fa-solid fa-ghost',
@@ -1064,7 +1078,7 @@ function observeNewCards() {
 
 async function lazyLoadPreview(el) {
     const chat = findChatByElement(el);
-    if (!chat || chat._previewLoading || (chat.preview !== null && chat.models)) return;
+    if (!chat || chat._previewLoading || (chat.preview !== null && (chat.models || chat.modelsResolved))) return;
     chat._previewLoading = true;
 
     el.removeAttribute('data-needs-preview');
@@ -1088,6 +1102,7 @@ async function lazyLoadPreview(el) {
         if (response.ok) {
             const messages = await response.json();
             chat.models = extractModelStats(messages);
+            chat.modelsResolved = true;
 
             if (messages && messages.length > 0) {
                 const lastMsg = [...messages].reverse().find(m => !m.is_system && m.mes);
@@ -1179,11 +1194,6 @@ function buildModelBadgeHtml(models) {
 // CARD / ITEM CREATION
 // ========================================
 
-function getGroupAvatarUrl(group) {
-    if (group.avatar_url) return group.avatar_url;
-    return null;
-}
-
 // Cache-hit promotion: skip the opacity fade when an avatar is already in the browser cache. Uses the raw src attribute (not img.src) as the Set key because on mobile a detached <template>-content img can resolve img.src differently than the attached form, breaking sync lookups across renders.
 function promoteCachedChatAvatars(root) {
     if (!root || !root.querySelectorAll) return;
@@ -1246,7 +1256,7 @@ function createChatCard(chat) {
     const chatName = (chat.file_name || '').replace('.jsonl', '');
     const lastDate = chat.last_mes ? new Date(chat.last_mes).toLocaleDateString() : 'Unknown';
     const messageCount = chat.chat_items || chat.mes_count || chat.message_count || 0;
-    const needsPreview = chat.preview === null || !chat.models;
+    const needsPreview = chat.preview === null || (!chat.models && !chat.modelsResolved);
 
     let previewHtml;
     if (chat.preview === null) {
@@ -1313,7 +1323,7 @@ function createGroupedChatItem(chat) {
     const chatName = (chat.file_name || '').replace('.jsonl', '');
     const lastDate = chat.last_mes ? new Date(chat.last_mes).toLocaleDateString() : 'Unknown';
     const messageCount = chat.chat_items || chat.mes_count || chat.message_count || 0;
-    const needsPreview = chat.preview === null || !chat.models;
+    const needsPreview = chat.preview === null || (!chat.models && !chat.modelsResolved);
 
     let previewText;
     if (chat.preview === null) {
@@ -1450,6 +1460,7 @@ async function openChatPreview(chat) {
         CoreAPI.debugLog(`[ChatPreview] Got ${messages?.length || 0} messages`);
 
         const freshModels = extractModelStats(messages);
+        chat.modelsResolved = true;
         if (freshModels) {
             chat.models = freshModels;
             const mc = document.getElementById('chatPreviewModels');
@@ -2373,8 +2384,6 @@ export default {
 
     // Modal chats tab
     fetchCharacterChats,
-    openChat,
-    deleteChat,
     createNewChat,
 
     // Top-level chats view

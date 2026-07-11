@@ -778,31 +778,6 @@ class ChubProvider extends ProviderBase {
         }
     }
 
-    // ── Import Duplicate Detection ──────────────────────────
-
-    async searchForImportMatch(name, creator, localChar) {
-        if (!name) return null;
-        try {
-            // Reuse searchForBulkLink which already has multi-pass search
-            const results = await this.searchForBulkLink(name, creator || '');
-            if (results.length === 0) return null;
-
-            const normalizedName = name.toLowerCase().trim();
-            for (const r of results) {
-                const rName = (r.name || '').toLowerCase().trim();
-                if (rName === normalizedName || rName.includes(normalizedName) || normalizedName.includes(rName)) {
-                    return { id: r.id, fullPath: r.fullPath, hasGallery: false };
-                }
-            }
-
-            // Return best match if available
-            return { id: results[0].id, fullPath: results[0].fullPath, hasGallery: false };
-        } catch (e) {
-            console.error('[ChubProvider] searchForImportMatch:', e);
-            return null;
-        }
-    }
-
     // ── Private Helpers ─────────────────────────────────────
 
     _getHeaders() {

@@ -185,6 +185,9 @@ const advancedUids = new Set();
 let linkSelection = new Set();   // avatars (characters mode) OR chat file_names (chats mode)
 let linkSearch = '';
 let linkHideLinked = false;
+let linkPlaylistUid = '';        // '' = all characters
+let linkPlaylistSet = null;      // Set<avatar> of the active playlist filter
+let linkPlaylistAvailable = false; // any playlists exist (hides the filter when none)
 let linkBook = null;             // file_id the picker is linking
 let linkMode = 'characters';     // 'characters' | 'chats'
 let linkManageMode = false;      // true = "manage links" view (show only linked, action = unlink)
@@ -291,6 +294,11 @@ function createModal() {
                             <div class="lb-search-wrap">
                                 <i class="fa-solid fa-magnifying-glass"></i>
                                 <input type="search" id="lbLinkSearch" class="cl-input" placeholder="Search characters..." autocomplete="off">
+                            </div>
+                            <div class="lb-link-playlist-wrap" id="lbLinkPlaylistWrap" style="display: none;">
+                                <select id="lbLinkPlaylistFilter" class="cl-select-fluid" title="Filter by playlist">
+                                    <option value="">All characters</option>
+                                </select>
                             </div>
                         </div>
 
@@ -1366,14 +1374,7 @@ async function duplicateWorld() {
 function exportWorld() {
     if (!workingWorld || !currentWorld) return;
     const blob = new Blob([JSON.stringify(workingWorld, null, 4)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${currentWorld}.json`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    CoreAPI.downloadBlobAsFile(blob, `${currentWorld}.json`);
 }
 
 async function deleteWorld() {
@@ -1554,6 +1555,8 @@ function openLinkPicker(initialMode = 'characters', { manage = false } = {}) {
     linkSelection = new Set();
     linkSearch = '';
     linkHideLinked = false;
+    linkPlaylistUid = '';
+    linkPlaylistSet = null;
     linkChatChar = null;
     linkChatList = [];
     linkFiltered = [];
@@ -1570,6 +1573,7 @@ function openLinkPicker(initialMode = 'characters', { manage = false } = {}) {
     if (searchEl) searchEl.value = '';
     const hideEl = document.getElementById('lbLinkHideLinked');
     if (hideEl) hideEl.checked = false;
+    populateLinkPlaylistFilter();
     document.getElementById('lbLinkHead')?.classList.remove('lb-link-head-hidden', 'lb-pinned'); // start expanded + unpinned; a prior session may have left either
     syncLinkModeUI();
     setLinkApplyButton();
@@ -1600,6 +1604,7 @@ function syncLinkModeUI() {
     const hint = document.getElementById('lbLinkModeHint');
     const searchEl = document.getElementById('lbLinkSearch');
     const hideWrap = document.getElementById('lbLinkHideLinkedWrap');
+    syncLinkPlaylistVisibility();
     if (linkManageMode) {
         const what = linkMode === 'chats' ? 'chats bound to' : 'characters linked to';
         if (hint) hint.innerHTML = `Select the ${what} <strong>${esc(linkBook)}</strong> to unlink, then Unlink selected.`;
@@ -1622,6 +1627,35 @@ function syncLinkModeUI() {
     }
 }
 
+// Playlists group characters, so the filter only makes sense in the characters modes.
+function syncLinkPlaylistVisibility() {
+    const wrap = document.getElementById('lbLinkPlaylistWrap');
+    if (wrap) wrap.style.display = (linkPlaylistAvailable && linkMode === 'characters') ? '' : 'none';
+}
+
+// Rebuild the playlist options on each open so renames/new playlists show without a reload.
+async function populateLinkPlaylistFilter() {
+    const sel = document.getElementById('lbLinkPlaylistFilter');
+    if (!sel) return;
+    try { await CoreAPI.playlistsLoadPlaylists(); } catch (_) { /* filter just stays hidden */ }
+    const lists = CoreAPI.playlistsGetAll() || [];
+    sel.innerHTML = '';
+    const all = document.createElement('option');
+    all.value = '';
+    all.textContent = 'All characters';
+    sel.appendChild(all);
+    for (const pl of lists) {
+        const o = document.createElement('option');
+        o.value = pl.uid;
+        o.textContent = pl.name;
+        sel.appendChild(o);
+    }
+    sel.value = lists.some(p => p.uid === linkPlaylistUid) ? linkPlaylistUid : '';
+    sel._customSelect?.refresh();
+    linkPlaylistAvailable = lists.length > 0;
+    syncLinkPlaylistVisibility();
+}
+
 // The world/mode-filtered, name-sorted set, sorted once and cached. The sort (localeCompare,
 // matching the main grid) is the costly part, so it never re-runs on a keystroke or a
 // row toggle; only a mode/hide-linked/open change invalidates it.
@@ -1629,6 +1663,7 @@ function linkBaseList() {
     if (linkBaseSorted) return linkBaseSorted;
     const chars = (CoreAPI.getAllCharacters() || []).filter(c => c && c.avatar);
     linkBaseSorted = chars.filter(c => {
+        if (linkPlaylistSet && !linkPlaylistSet.has(c.avatar)) return false;
         const cur = c.data?.extensions?.world || '';
         if (linkManageMode && linkMode === 'characters') return cur === linkBook; // manage: only linked here
         if (linkMode === 'characters' && linkHideLinked && cur === linkBook) return false;
@@ -1673,7 +1708,7 @@ function clearVList() {
 // On mobile the modal body scrolls (sticky overlay header) and the list flows inside it; on desktop the
 // list scrolls itself. The windowing reads whichever actually scrolls.
 function vlistScroller(listEl) {
-    return matchMedia('(max-width: 768px)').matches ? (listEl.closest('.lb-link-body') || listEl) : listEl;
+    return CoreAPI.isMobileMode() ? (listEl.closest('.lb-link-body') || listEl) : listEl;
 }
 
 // Render a sizer the full height of the list, then fill only the in-view rows (absolute-positioned).
@@ -2247,6 +2282,13 @@ function attachEvents() {
         linkBaseSorted = null; // membership changed; rebuild the sorted base
         renderLinkList();
     });
+    CoreAPI.initCustomSelect(document.getElementById('lbLinkPlaylistFilter'));
+    document.getElementById('lbLinkPlaylistFilter')?.addEventListener('change', (e) => {
+        linkPlaylistUid = e.target.value || '';
+        linkPlaylistSet = linkPlaylistUid ? (CoreAPI.playlistsGetAvatarSet(linkPlaylistUid) || null) : null;
+        linkBaseSorted = null;
+        renderLinkList();
+    });
     // The link list repaints its in-view rows on scroll (coalesced to one rAF). On mobile the modal body
     // is the scroller and the search/controls header is a sticky overlay that auto-hides on scroll-down /
     // reveals on scroll-up (translateY, no list reflow). Attach to both; only the active scroller fires.
@@ -2427,7 +2469,7 @@ async function mobileBackToList() {
 // list and editor side by side, so theres no intermediate step and it always closes.
 function handleModalBack() {
     const body = document.querySelector('#lorebookModal .lb-body');
-    if (matchMedia('(max-width: 768px)').matches && body?.classList.contains('lb-editing')) {
+    if (CoreAPI.isMobileMode() && body?.classList.contains('lb-editing')) {
         mobileBackToList();
     } else {
         closeModal();
