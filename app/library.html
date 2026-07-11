@@ -2509,6 +2509,33 @@ https://www.masqueradeproductions.org/character/uuid
                             </summary>
                             <div class="settings-provider-body">
                                 <div class="settings-group">
+                                    <div class="settings-group-title"><i class="fa-solid fa-user-lock"></i> JannyAI Account Sync</div>
+                                    <div class="settings-row">
+                                        <label for="jannySettingsCookieInput">Cookie header:</label>
+                                        <div class="settings-input-group">
+                                            <textarea id="jannySettingsCookieInput" class="glass-input" rows="3" placeholder="Full Cookie header once; later just cf_clearance=... to refresh Cloudflare" style="font-family: monospace; font-size: 12px; resize: vertical;" autocomplete="off" data-sensitive="true"></textarea>
+                                            <button id="jannySettingsValidateBtn" class="settings-verify-btn" title="Validate Session">
+                                                <i class="fa-solid fa-check"></i>
+                                            </button>
+                                        </div>
+                                        <span class="settings-hint">Paste the full Cookie header from a logged-in jannyai.com request once — it persists across restarts and is shared with your other devices (phone included). When Cloudflare expires later, paste just the fresh <code>cf_clearance=...</code> value: your login is kept and only the Cloudflare pass is swapped.</span>
+                                    </div>
+                                    <details class="settings-row">
+                                        <summary class="settings-hint" style="cursor: pointer;">Advanced: User-Agent</summary>
+                                        <input id="jannySettingsUserAgentInput" class="glass-input" type="text" placeholder="Auto-filled with this browser" autocomplete="off">
+                                        <span class="settings-hint">Cloudflare ties cf_clearance to the browser that solved it. Only change this if you copied the cookie from a different browser than the one you use for SillyTavern.</span>
+                                    </details>
+                                    <div class="settings-row" style="gap: 8px; flex-wrap: wrap;">
+                                        <button id="jannySettingsClearSessionBtn" class="settings-action-btn danger">
+                                            <i class="fa-solid fa-trash-can"></i> Clear Session
+                                        </button>
+                                    </div>
+                                    <div class="settings-row">
+                                        <span id="jannySettingsAccountHint" class="settings-hint">Bookmarks and collections require cl-helper. Finish login or Cloudflare in a normal JannyAI tab, then paste the matching Cookie header.</span>
+                                        <a id="jannySettingsOpenJannyLink" class="settings-hint" href="https://jannyai.com/collections" target="_blank" rel="noopener noreferrer">Open JannyAI in a new tab</a>
+                                    </div>
+                                </div>
+                                <div class="settings-group">
                                     <div class="settings-group-title"><i class="fa-solid fa-ban"></i> Exclude Tags</div>
                                     <div class="settings-row">
                                         <div class="provider-exclude-tags-container">

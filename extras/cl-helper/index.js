@@ -22,6 +22,27 @@ import {
     normalizeOptionalDcCredential,
     sanitizeDataCatUser,
 } from './datacat-utils.js';
+import {
+    JANNY_BASE,
+    JANNY_DEFAULT_UA,
+    buildFlareSolverrJannyRequest,
+    buildJannyAccountUrl,
+    buildJannyPublicRequestHeaders,
+    cookiesFromSetCookieHeader,
+    detectJannyCloudflareChallenge,
+    isAllowedJannyAccountRequest,
+    isJannyCollectionFormPath,
+    jannyFamilyOrder,
+    mergeCookieHeaders,
+    parseJannyPublicCollectionsPage,
+    parseJannyPublicCollectionDetailPage,
+    sanitizeJannyCookieHeader,
+    sanitizeJannyUserAgent,
+    summarizeJannyResponseForClient,
+    validateJannyCollectorName,
+    validateJannyPublicCollectionPath,
+    validateJannyPublicCharacterIds,
+} from './janny-account.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -897,6 +918,544 @@ function registerCharacterTavernRoutes(router) {
     });
 }
 
+// =============================================================================
+// JannyAI: account cookie session + narrowly allowlisted account proxy
+// =============================================================================
+
+let jannySessionCookies = null;
+let jannyCloudflareCookies = null;
+let jannySessionUserAgent = JANNY_DEFAULT_UA;
+
+const JANNY_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function jannyCombinedCookieHeader() {
+    return mergeCookieHeaders(jannySessionCookies || '', jannyCloudflareCookies || '');
+}
+
+function headersToObject(headers) {
+    const out = {};
+    try {
+        for (const [key, value] of headers.entries()) out[key.toLowerCase()] = value;
+    } catch {}
+    return out;
+}
+
+function cookieHeaderFromFlareSolution(solution) {
+    if (!Array.isArray(solution?.cookies)) return null;
+    const pairs = [];
+    for (const cookie of solution.cookies) {
+        const name = typeof cookie?.name === 'string' ? cookie.name.trim() : '';
+        const value = typeof cookie?.value === 'string' ? cookie.value : '';
+        const domain = typeof cookie?.domain === 'string' ? cookie.domain.replace(/^\./, '').toLowerCase() : '';
+        if (!name || !value) continue;
+        if (domain && domain !== 'jannyai.com' && !domain.endsWith('.jannyai.com')) continue;
+        pairs.push(`${name}=${value}`);
+    }
+    if (!pairs.length) return null;
+    const sanitized = sanitizeJannyCookieHeader(pairs.join('; '));
+    return sanitized.ok ? sanitized.header : null;
+}
+
+function cleanFlareResponseBody(text) {
+    const raw = String(text || '');
+    return raw.replace(/^[\s\S]*?<pre[^>]*>/i, '').replace(/<\/pre>[\s\S]*$/i, '').trim() || raw;
+}
+
+function sanitizeJannyActionBody(method, path, body) {
+    const verb = String(method || 'GET').toUpperCase();
+    if (verb !== 'POST') return undefined;
+    const parsed = new URL(path, JANNY_BASE);
+    const payload = body && typeof body === 'object' ? body : {};
+
+    if (parsed.pathname === '/api/bookmark') {
+        const ids = Array.isArray(payload.characterIDs) ? payload.characterIDs.map(String) : [];
+        if (ids.length < 1 || ids.length > 50 || !ids.every(id => JANNY_UUID_RE.test(id))) return null;
+        return { characterIDs: ids };
+    }
+
+    if (/^\/api\/collections\/[0-9a-f-]+\/characters$/i.test(parsed.pathname)) {
+        const characterId = typeof payload.characterId === 'string' ? payload.characterId.trim() : '';
+        if (!JANNY_UUID_RE.test(characterId)) return null;
+        return { characterId };
+    }
+
+    if (parsed.pathname === '/collections/form/add-collection' || parsed.pathname === '/collections/form/edit-collection') {
+        const name = typeof payload.name === 'string' ? payload.name.trim() : '';
+        if (!name || name.length > 80) return null;
+        const description = typeof payload.description === 'string' ? payload.description.trim().slice(0, 500) : '';
+        const isPrivate = payload.isPrivate === 'no' || payload.isPrivate === false ? 'no' : 'yes';
+        const fields = { name, isPrivate, description };
+        if (parsed.pathname === '/collections/form/edit-collection') {
+            const id = typeof payload.id === 'string' ? payload.id.trim() : '';
+            if (!JANNY_UUID_RE.test(id)) return null;
+            fields.id = id;
+        }
+        return fields;
+    }
+
+    if (parsed.pathname === '/collections/form/delete-collection') {
+        const id = typeof payload.id === 'string' ? payload.id.trim() : '';
+        if (!JANNY_UUID_RE.test(id)) return null;
+        return { id };
+    }
+
+    return null;
+}
+
+async function warmJannyFlareSession({ flareUrl, sessionId = '', path = '/bookmark' } = {}) {
+    const flareCheck = validateFlareUrl(flareUrl);
+    if (flareCheck.error) {
+        const err = new Error(flareCheck.error);
+        err.status = 400;
+        throw err;
+    }
+
+    const warmPath = isAllowedJannyAccountRequest('GET', path) ? path : '/bookmark';
+    const cookies = jannyCombinedCookieHeader();
+    const cookie = cookies ? sanitizeJannyCookieHeader(cookies) : null;
+    const body = buildFlareSolverrJannyRequest({
+        path: warmPath,
+        sessionId,
+        cookie,
+        userAgent: jannySessionUserAgent,
+    });
+
+    const { response, data } = await postToFlareSolverr(flareCheck.url, body);
+    if (!data) throw new Error('FlareSolverr returned non-JSON response');
+    if (!response.ok || data.status !== 'ok' || !data.solution) {
+        const err = new Error(data.error || data.message || 'FlareSolverr did not return a solution');
+        err.status = response.ok ? 502 : response.status;
+        throw err;
+    }
+
+    if (data.solution.userAgent) {
+        jannySessionUserAgent = sanitizeJannyUserAgent(data.solution.userAgent);
+    }
+    const flareCookies = cookieHeaderFromFlareSolution(data.solution);
+    if (flareCookies) {
+        jannyCloudflareCookies = mergeCookieHeaders(jannyCloudflareCookies || '', flareCookies);
+    }
+    return data;
+}
+
+// cf_clearance is bound to the IP that solved the Cloudflare challenge — on
+// dual-stack networks that is usually the browser's IPv6 address — while
+// SillyTavern sets dns.setDefaultResultOrder('ipv4first') for the whole
+// process. Dial JannyAI with an explicit address family and remember the one
+// Cloudflare accepts. Requires undici (Node's built-in fetch dispatcher); if
+// unavailable, fall back to the process default resolution order.
+let jannyPreferredFamily = null;
+const jannyFamilyAgents = new Map();
+
+function jannyAgentForFamily(family) {
+    if (jannyFamilyAgents.has(family)) return jannyFamilyAgents.get(family);
+    let agent = null;
+    try {
+        // Node initializes the global dispatcher lazily on the first fetch call.
+        if (!globalThis[Symbol.for('undici.globalDispatcher.1')]) {
+            void fetch('data:,').catch(() => {});
+        }
+        const dispatcher = globalThis[Symbol.for('undici.globalDispatcher.1')];
+        const Agent = dispatcher?.constructor;
+        if (typeof Agent === 'function') agent = new Agent({ connect: { family } });
+    } catch { /* fall back to default fetch behavior */ }
+    jannyFamilyAgents.set(family, agent);
+    return agent;
+}
+
+async function fetchJannyAccountDirect({ method = 'GET', path = '/', body = undefined } = {}) {
+    const families = jannyAgentForFamily(6) ? jannyFamilyOrder(jannyPreferredFamily) : [null];
+    let lastResult = null;
+    let lastError = null;
+
+    for (const family of families) {
+        let result;
+        try {
+            result = await fetchJannyAccountOnce({
+                method, path, body,
+                dispatcher: family ? jannyAgentForFamily(family) : undefined,
+            });
+        } catch (err) {
+            lastError = err; // e.g. no IPv6 route on this network — try the next family
+            continue;
+        }
+        // A challenged request never reached JannyAI's backend, so retrying it
+        // (even a POST) on the other address family is safe.
+        if (!result.cloudflare) {
+            if (family) jannyPreferredFamily = family;
+            return result;
+        }
+        lastResult = result;
+    }
+
+    if (lastResult) return lastResult;
+    throw lastError ?? new Error('JannyAI request failed');
+}
+function buildJannyPublicCollectionsPath({ sort = 'latest', page = 1 } = {}) {
+    const normalizedSort = sort === 'popular' ? 'popular' : 'latest';
+    const normalizedPage = Math.max(1, Math.min(500, Number.parseInt(String(page || 1), 10) || 1));
+    const params = new URLSearchParams();
+    params.set('page', String(normalizedPage));
+    params.set('sort', normalizedSort);
+    return `/collections?${params.toString()}`;
+}
+
+async function fetchJannyPublicDirect({ path = '/' } = {}) {
+    const families = jannyAgentForFamily(6) ? jannyFamilyOrder(jannyPreferredFamily) : [null];
+    let lastResult = null;
+    let lastError = null;
+
+    for (const family of families) {
+        let result;
+        try {
+            result = await fetchJannyPublicOnce({
+                path,
+                dispatcher: family ? jannyAgentForFamily(family) : undefined,
+            });
+        } catch (err) {
+            lastError = err;
+            continue;
+        }
+        if (!result.cloudflare) {
+            if (family) jannyPreferredFamily = family;
+            return result;
+        }
+        lastResult = result;
+    }
+
+    if (lastResult) return lastResult;
+    throw lastError ?? new Error('JannyAI public request failed');
+}
+
+async function fetchJannyPublicOnce({ path = '/', dispatcher = undefined } = {}) {
+    const targetUrl = buildJannyAccountUrl(path);
+    const headers = buildJannyPublicRequestHeaders({
+        cookieHeader: jannyCombinedCookieHeader() || '',
+        userAgent: jannySessionUserAgent || JANNY_DEFAULT_UA,
+    });
+    const response = await fetch(targetUrl, {
+        method: 'GET',
+        headers,
+        redirect: 'follow',
+        dispatcher,
+    });
+
+    const contentType = response.headers.get('content-type') || '';
+    const headerObj = headersToObject(response.headers);
+    let cloudflare = detectJannyCloudflareChallenge({ status: response.status, headers: headerObj, body: '' });
+    let text = '';
+    if (!cloudflare) {
+        text = await response.text();
+        cloudflare = detectJannyCloudflareChallenge({ status: response.status, headers: headerObj, body: text });
+    } else {
+        try { await response.body?.cancel?.(); } catch {}
+    }
+    return {
+        ok: response.ok && !cloudflare,
+        status: response.status,
+        contentType,
+        cloudflare,
+        body: text,
+        headers: headerObj,
+    };
+}
+
+async function fetchJannyAccountOnce({ method = 'GET', path = '/', body = undefined, dispatcher = undefined } = {}) {
+    const verb = String(method || 'GET').toUpperCase();
+    const targetUrl = buildJannyAccountUrl(path);
+    const cookieHeader = jannyCombinedCookieHeader();
+
+    const headers = {
+        'User-Agent': jannySessionUserAgent || JANNY_DEFAULT_UA,
+        'Accept': 'application/json,text/html;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Origin': JANNY_BASE,
+        'Referer': `${JANNY_BASE}/`,
+    };
+    if (cookieHeader) headers.Cookie = cookieHeader;
+
+    // Collection form endpoints are HTML form POSTs that answer with a 302
+    // redirect on success; everything else uses JSON (Astro actions read a
+    // text/plain body). Follow redirects for JSON, but capture them manually
+    // for forms so the success Location isn't traded for a heavy edit page.
+    const isForm = isJannyCollectionFormPath(path);
+    let bodyStr;
+    if (body !== undefined) {
+        if (isForm) {
+            headers['Content-Type'] = 'application/x-www-form-urlencoded';
+            bodyStr = new URLSearchParams(body).toString();
+        } else {
+            headers['Content-Type'] = 'text/plain;charset=UTF-8';
+            bodyStr = JSON.stringify(body);
+        }
+    }
+
+    const response = await fetch(targetUrl, {
+        method: verb,
+        headers,
+        body: bodyStr,
+        redirect: isForm ? 'manual' : 'follow',
+        dispatcher,
+    });
+
+    const setCookie = cookiesFromSetCookieHeader(response.headers.get('set-cookie'));
+    if (setCookie) {
+        jannySessionCookies = mergeCookieHeaders(jannySessionCookies || '', setCookie);
+    }
+
+    const contentType = response.headers.get('content-type') || '';
+    const headerObj = headersToObject(response.headers);
+
+    // A 3xx from a form POST means the mutation succeeded; the Location points
+    // at the resulting collection. No body to read, and never a challenge.
+    if (isForm && response.status >= 300 && response.status < 400) {
+        try { await response.body?.cancel?.(); } catch {}
+        return {
+            ok: true,
+            status: response.status,
+            contentType,
+            cloudflare: false,
+            body: '',
+            headers: headerObj,
+            location: headerObj.location || response.headers.get('location') || '',
+        };
+    }
+
+    let cloudflare = detectJannyCloudflareChallenge({ status: response.status, headers: headerObj, body: '' });
+    let text = '';
+    if (!cloudflare) {
+        text = await response.text();
+        cloudflare = detectJannyCloudflareChallenge({ status: response.status, headers: headerObj, body: text });
+    } else {
+        try { await response.body?.cancel?.(); } catch {}
+    }
+    return {
+        ok: response.ok && !cloudflare,
+        status: response.status,
+        contentType,
+        cloudflare,
+        body: text,
+        headers: headerObj,
+    };
+}
+
+function registerJannyAccountRoutes(router) {
+    router.post('/janny-set-cookie', (req, res) => {
+        const { cookie, userAgent } = req.body ?? {};
+        const sanitized = sanitizeJannyCookieHeader(cookie || '');
+        if (!sanitized.ok) return res.status(400).json({ error: sanitized.error });
+
+        jannySessionCookies = sanitized.header;
+        jannyCloudflareCookies = null;
+        jannyPreferredFamily = null;
+        jannySessionUserAgent = sanitizeJannyUserAgent(userAgent || JANNY_DEFAULT_UA);
+        console.log(`[cl-helper] JannyAI session cookie stored (${sanitized.cookies.length} cookie(s))`);
+        res.json({ ok: true, cookieCount: sanitized.cookies.length });
+    });
+
+    router.post('/janny-clear-session', (_req, res) => {
+        jannySessionCookies = null;
+        jannyCloudflareCookies = null;
+        jannyPreferredFamily = null;
+        jannySessionUserAgent = JANNY_DEFAULT_UA;
+        console.log('[cl-helper] JannyAI session cleared');
+        res.json({ ok: true });
+    });
+
+    router.get('/janny-session', (_req, res) => {
+        const parsed = sanitizeJannyCookieHeader(jannyCombinedCookieHeader() || '');
+        res.json({
+            active: !!jannySessionCookies,
+            cloudflareCookies: !!jannyCloudflareCookies,
+            cookieCount: parsed.ok ? parsed.cookies.length : 0,
+            userAgent: jannySessionUserAgent && jannySessionUserAgent !== JANNY_DEFAULT_UA ? 'custom' : 'default',
+        });
+    });
+
+    router.get('/janny-validate', async (req, res) => {
+        if (!jannySessionCookies) {
+            return res.json({ valid: false, reason: 'no JannyAI cookies stored' });
+        }
+
+        const flareUrl = typeof req.query?.flareUrl === 'string' ? req.query.flareUrl.trim() : '';
+        const flareSessionId = typeof req.query?.flareSessionId === 'string' ? req.query.flareSessionId.trim() : '';
+
+        try {
+            let result = null;
+            if (flareUrl) {
+                try {
+                    const flarePayload = await warmJannyFlareSession({
+                        flareUrl,
+                        sessionId: flareSessionId,
+                        path: '/api/collections/mine',
+                    });
+                    if (flarePayload?.solution?.response) {
+                        const bodyText = cleanFlareResponseBody(flarePayload.solution.response);
+                        result = {
+                            ok: (flarePayload.solution.status || 200) < 400,
+                            status: flarePayload.solution.status || 200,
+                            contentType: bodyText.trim().startsWith('{') ? 'application/json' : 'text/html; charset=utf-8',
+                            cloudflare: detectJannyCloudflareChallenge({
+                                status: flarePayload.solution.status || 200,
+                                headers: {},
+                                body: bodyText,
+                            }),
+                            body: bodyText,
+                        };
+                    }
+                } catch (err) {
+                    return res.status(err.status || 502).json({ valid: false, cloudflare: true, reason: err.message });
+                }
+            }
+
+            if (!result) {
+                result = await fetchJannyAccountDirect({ method: 'GET', path: '/api/collections/mine' });
+            }
+            if (result.cloudflare) {
+                return res.json({ valid: false, cloudflare: true, reason: 'Cloudflare challenge' });
+            }
+            const summary = summarizeJannyResponseForClient(result);
+            const valid = result.ok && Array.isArray(summary.json?.collections);
+            res.json({ valid, status: result.status, reason: valid ? undefined : `HTTP ${result.status}` });
+        } catch (err) {
+            res.json({ valid: false, reason: err.message });
+        }
+    });
+    router.get('/janny-public-collections', async (req, res) => {
+        const path = buildJannyPublicCollectionsPath({
+            sort: typeof req.query?.sort === 'string' ? req.query.sort : 'latest',
+            page: typeof req.query?.page === 'string' ? req.query.page : '1',
+        });
+        try {
+            const result = await fetchJannyPublicDirect({ path });
+            if (result.cloudflare) return res.status(403).json({ error: 'Cloudflare challenge', cloudflare: true });
+            if (!result.ok) return res.status(result.status || 502).json({ error: `HTTP ${result.status}` });
+            res.json({ ok: true, status: result.status, ...parseJannyPublicCollectionsPage(result.body) });
+        } catch (err) {
+            console.error('[cl-helper] JannyAI public collections error:', err.message);
+            res.status(502).json({ error: `Failed to reach JannyAI: ${err.message}` });
+        }
+    });
+
+    router.get('/janny-collector-collections', async (req, res) => {
+        const validation = validateJannyCollectorName(typeof req.query?.name === 'string' ? req.query.name : '');
+        if (!validation.ok) return res.status(400).json({ error: validation.error });
+        try {
+            const result = await fetchJannyPublicDirect({ path: `/collectors/${encodeURIComponent(validation.name)}` });
+            if (result.cloudflare) return res.status(403).json({ error: 'Cloudflare challenge', cloudflare: true });
+            if (!result.ok) return res.status(result.status || 502).json({ error: `HTTP ${result.status}` });
+            res.json({ ok: true, status: result.status, ...parseJannyPublicCollectionsPage(result.body) });
+        } catch (err) {
+            console.error('[cl-helper] JannyAI collector collections error:', err.message);
+            res.status(502).json({ error: `Failed to reach JannyAI: ${err.message}` });
+        }
+    });
+
+    router.get('/janny-public-collection', async (req, res) => {
+        const rawPath = typeof req.query?.path === 'string' ? req.query.path : '';
+        const validation = validateJannyPublicCollectionPath(rawPath);
+        if (!validation.ok) return res.status(400).json({ error: validation.error });
+        try {
+            const result = await fetchJannyPublicDirect({ path: validation.path });
+            if (result.cloudflare) return res.status(403).json({ error: 'Cloudflare challenge', cloudflare: true });
+            if (!result.ok) return res.status(result.status || 502).json({ error: `HTTP ${result.status}` });
+            res.json({ ok: true, status: result.status, ...parseJannyPublicCollectionDetailPage(result.body, validation.path) });
+        } catch (err) {
+            console.error('[cl-helper] JannyAI public collection error:', err.message);
+            res.status(502).json({ error: `Failed to reach JannyAI: ${err.message}` });
+        }
+    });
+
+    router.get('/janny-public-characters', async (req, res) => {
+        const rawIds = typeof req.query?.ids === 'string' ? req.query.ids : '';
+        const validation = validateJannyPublicCharacterIds(rawIds);
+        if (!validation.ok) return res.status(400).json({ error: validation.error });
+        const path = `/api/get-characters?ids=${encodeURIComponent(validation.ids.join(','))}`;
+        try {
+            const result = await fetchJannyPublicDirect({ path });
+            if (result.cloudflare) return res.status(403).json({ error: 'Cloudflare challenge', cloudflare: true });
+            if (!result.ok) return res.status(result.status || 502).json({ error: `HTTP ${result.status}` });
+            const summary = summarizeJannyResponseForClient(result);
+            res.json({ ok: true, status: result.status, characters: summary.json?.characters || [] });
+        } catch (err) {
+            console.error('[cl-helper] JannyAI public characters error:', err.message);
+            res.status(502).json({ error: `Failed to reach JannyAI: ${err.message}` });
+        }
+    });
+
+    router.post('/janny-proxy', async (req, res) => {
+        const { method = 'GET', path, body, flareUrl, flareSessionId, useFlare = false } = req.body ?? {};
+        const verb = String(method || 'GET').toUpperCase();
+
+        if (!path || typeof path !== 'string') {
+            return res.status(400).json({ error: 'path is required' });
+        }
+        if (!isAllowedJannyAccountRequest(verb, path)) {
+            return res.status(403).json({ error: 'JannyAI account path not allowed' });
+        }
+        if (!jannySessionCookies && !jannyCloudflareCookies) {
+            return res.status(401).json({ error: 'No JannyAI account cookie stored' });
+        }
+
+        const sanitizedBody = sanitizeJannyActionBody(verb, path, body);
+        if (verb === 'POST' && sanitizedBody == null) {
+            return res.status(400).json({ error: 'Invalid JannyAI account request body' });
+        }
+
+        let flarePayload = null;
+        if (useFlare || flareUrl) {
+            try {
+                flarePayload = await warmJannyFlareSession({
+                    flareUrl,
+                    sessionId: flareSessionId || '',
+                    path: verb === 'GET' ? path : '/bookmark',
+                });
+            } catch (err) {
+                console.error('[cl-helper] JannyAI FlareSolverr warmup error:', err.message);
+                return res.status(err.status || 502).json({ error: err.message, cloudflare: true });
+            }
+        }
+
+        try {
+            let result;
+            if (verb === 'GET' && flarePayload?.solution?.response) {
+                const bodyText = cleanFlareResponseBody(flarePayload.solution.response);
+                result = {
+                    ok: (flarePayload.solution.status || 200) < 400,
+                    status: flarePayload.solution.status || 200,
+                    contentType: bodyText.trim().startsWith('{') ? 'application/json' : 'text/html; charset=utf-8',
+                    cloudflare: detectJannyCloudflareChallenge({
+                        status: flarePayload.solution.status || 200,
+                        headers: {},
+                        body: bodyText,
+                    }),
+                    body: bodyText,
+                };
+            } else {
+                result = await fetchJannyAccountDirect({ method: verb, path, body: sanitizedBody });
+            }
+
+            const summary = summarizeJannyResponseForClient(result);
+            const payload = {
+                ok: result.ok,
+                status: result.status,
+                contentType: result.contentType,
+                cloudflare: result.cloudflare,
+                ...(result.location ? { location: result.location } : {}),
+                ...summary,
+            };
+            // Map the upstream outcome onto our own HTTP status: challenges are
+            // 403, a successful form 302 collapses to 200, other failures keep
+            // their status so the client can distinguish 404 (unsupported).
+            const status = result.cloudflare ? 403 : (result.ok ? 200 : (result.status || 502));
+            res.status(status).json(payload);
+        } catch (err) {
+            console.error('[cl-helper] JannyAI proxy error:', err.message);
+            res.status(502).json({ error: `Failed to reach JannyAI: ${err.message}` });
+        }
+    });
+}
 // =============================================================================
 // DataCat: token session + extraction + read-only API proxy
 // =============================================================================
@@ -2616,7 +3175,7 @@ function registerFlareSolverrRoutes(router) {
  * @param {import('express').Router} router
  */
 // Files installed by /self-update. Add here if the bundle grows; nothing else lands on disk.
-const _SELF_UPDATE_FILES = ['package.json', 'index.js'];
+const _SELF_UPDATE_FILES = ['package.json', 'index.js', 'janny-account.js'];
 const _SELF_UPDATE_MAX_BYTES = 2 * 1024 * 1024;
 const _SELF_UPDATE_VERSION_RE = /^[\w.\-+]{1,32}$/;
 let _selfUpdateInFlight = false;
@@ -2750,6 +3309,7 @@ export async function init(router) {
     registerPygmalionRoutes(router);
     registerBotbooruRoutes(router);
     registerCharacterTavernRoutes(router);
+    registerJannyAccountRoutes(router);
     registerDataCatRoutes(router);
     registerImgchestRoutes(router);
     registerCivitaiRoutes(router);
