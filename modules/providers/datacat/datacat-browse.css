@@ -48,6 +48,34 @@
     border-radius: var(--radius-sm);
 }
 
+.datacat-yours-btn {
+    position: absolute;
+    bottom: 8px;
+    right: 8px;
+    z-index: 3;
+    width: 30px;
+    height: 30px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 999px;
+    background: rgba(0, 0, 0, 0.58);
+    color: rgba(255, 255, 255, 0.85);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: transform 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+
+.datacat-yours-btn:hover {
+    transform: scale(1.05);
+    background: rgba(0, 0, 0, 0.78);
+}
+
+.datacat-yours-btn.saved,
+.datacat-yours-modal-btn.saved {
+    color: var(--cl-favorite-gold, #ffd43b);
+}
+
 
 #datacatFollowCreatorBtn {
     background: linear-gradient(135deg, rgba(var(--cl-error-bright-rgb), 0.2), rgba(var(--cl-error-bright-darker-rgb), 0.2));

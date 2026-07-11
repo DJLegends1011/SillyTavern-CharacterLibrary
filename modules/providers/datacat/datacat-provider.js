@@ -13,6 +13,9 @@ import {
     resolveDatacatAvatarUrl,
     setApiRequest,
     setSavedTokenGetter,
+    setSavedAccountTokenGetter,
+    setSavedDeviceTokenGetter,
+    setDatacatClientIdGetter,
     slugify,
     stripHtml,
     resolveTagNames,
@@ -29,6 +32,10 @@ import {
     hasUnfetchedLorebook,
     submitExtraction,
     fetchExtractionStatus,
+    restoreDatacatAccount,
+    loginDatacatAccount,
+    validateDatacatAccount,
+    logoutDatacatAccount,
     parseJanitoraiSession,
     janitoraiRefreshGrant,
     janitoraiVerifyToken,
@@ -85,6 +92,15 @@ class DatacatProvider extends ProviderBase {
         api = coreAPI;
         setApiRequest(coreAPI.apiRequest);
         setSavedTokenGetter(() => coreAPI.getSetting('datacatToken') || null);
+        let datacatClientSessionId = coreAPI.getSetting('datacatClientSessionId') || null;
+        if (!datacatClientSessionId) {
+            datacatClientSessionId = globalThis.crypto?.randomUUID?.()
+                || `dc_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+            coreAPI.setSetting('datacatClientSessionId', datacatClientSessionId);
+        }
+        setDatacatClientIdGetter(() => coreAPI.getSetting('datacatClientSessionId') || null);
+        setSavedAccountTokenGetter(() => coreAPI.getSetting('datacatAccountToken') || null);
+        setSavedDeviceTokenGetter(() => coreAPI.getSetting('datacatDeviceToken') || null);
     }
 
     // ── View ────────────────────────────────────────────────
@@ -262,7 +278,11 @@ class DatacatProvider extends ProviderBase {
             const publicFeed = CoreAPI.getSetting('datacatPublicFeed') === true;
 
             report?.('Submitting re-extraction request...');
-            const result = await submitExtraction(upstreamUrl, { publicFeed, alwaysReextract: true });
+            const result = await submitExtraction(upstreamUrl, {
+                publicFeed,
+                alwaysReextract: true,
+                useAccount: CoreAPI.getSetting('datacatUseAccountForExtraction') !== false,
+            });
             if (!result?.success && !result?.queued && !result?.started) {
                 api?.debugLog?.('[DatacatProvider] refreshRemoteData: extraction submit failed:', result?.error);
                 return;
@@ -565,6 +585,30 @@ window.datacatValidateSession = async () => {
     const pluginOk = await checkDcPluginAvailable();
     if (!pluginOk) return { valid: false, reason: 'cl-helper plugin not available' };
     return validateDcSession();
+};
+
+window.datacatRestoreAccount = async () => {
+    const pluginOk = await checkDcPluginAvailable();
+    if (!pluginOk) return { valid: false, reason: 'cl-helper plugin not available' };
+    return restoreDatacatAccount();
+};
+
+window.datacatLoginAccount = async (email, password) => {
+    const pluginOk = await checkDcPluginAvailable();
+    if (!pluginOk) return { ok: false, error: 'cl-helper plugin not available' };
+    return loginDatacatAccount(email, password);
+};
+
+window.datacatValidateAccount = async () => {
+    const pluginOk = await checkDcPluginAvailable();
+    if (!pluginOk) return { valid: false, reason: 'cl-helper plugin not available' };
+    return validateDatacatAccount();
+};
+
+window.datacatLogoutAccount = async () => {
+    const pluginOk = await checkDcPluginAvailable();
+    if (!pluginOk) return { ok: false, error: 'cl-helper plugin not available' };
+    return logoutDatacatAccount();
 };
 
 window.datacatRefreshToken = async () => {
