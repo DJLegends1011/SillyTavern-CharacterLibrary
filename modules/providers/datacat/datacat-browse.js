@@ -45,6 +45,11 @@ import {
     createFlareSolverrSession,
     destroyFlareSolverrSession,
 } from './datacat-api.js';
+import {
+    initDatacatFolderPicker,
+    openDatacatFolderPicker,
+    closeDatacatFolderPicker,
+} from './datacat-folder-picker.js';
 
 const {
     onElement: on,
@@ -481,6 +486,12 @@ function updateDatacatModalYoursControl(characterId, hit = null, { refresh = fal
         fetchDatacatYoursStatus(id).then(result => {
             if (result?.ok) setDatacatYoursState(id, result.collected === true);
         }).catch(() => {});
+    }
+
+    const folderBtn = document.getElementById('datacatFolderBtn');
+    if (folderBtn) {
+        folderBtn.dataset.datacatId = id;
+        folderBtn.style.display = canShowDatacatYoursControl(id, hit) ? '' : 'none';
     }
 }
 
@@ -3519,6 +3530,7 @@ function cleanupDatacatCharModal() {
 }
 
 function closePreviewModal() {
+    closeDatacatFolderPicker();
     datacatDetailFetchToken++;
     datacatDetailFetchPromise = null;
     cleanupDatacatCharModal();
@@ -4162,6 +4174,23 @@ function ensureModalEventsAttached() {
         toggleDatacatYours(charId, hit);
     });
 
+    initDatacatFolderPicker({
+        getMainSaved: (id) => getDatacatYoursState(id, findDatacatHitById(id)),
+        toggleMain: (id) => toggleDatacatYours(id, findDatacatHitById(id)),
+    });
+
+    on('datacatFolderBtn', 'click', () => {
+        const btn = document.getElementById('datacatFolderBtn');
+        const charId = btn?.dataset?.datacatId;
+        if (!charId) return;
+        const hit = findDatacatHitById(charId) || datacatSelectedChar;
+        openDatacatFolderPicker({
+            anchor: btn,
+            characterId: charId,
+            characterName: hit?.name || 'character',
+        });
+    });
+
     const modalOverlay = document.getElementById('datacatCharModal');
     if (modalOverlay) {
         modalOverlay.addEventListener('click', (e) => {
@@ -4570,6 +4599,9 @@ const datacatBrowseView = new (class DatacatBrowseView extends BrowseView {
                 <div class="modal-controls">
                     <button id="datacatYoursBtn" class="action-btn secondary datacat-yours-modal-btn" title="Save to DataCat Yours" style="display: none;">
                         <i class="fa-regular fa-star"></i> Save
+                    </button>
+                    <button id="datacatFolderBtn" class="action-btn secondary datacat-folder-modal-btn" title="Save to folder" style="display: none;">
+                        <i class="fa-solid fa-folder-plus"></i> Folder
                     </button>
                     <a id="datacatOpenInBrowserBtn" href="#" target="_blank" class="action-btn secondary" title="Open on DataCat">
                         <i class="fa-solid fa-external-link"></i> Open
