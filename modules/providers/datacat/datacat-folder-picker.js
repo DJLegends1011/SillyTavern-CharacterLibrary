@@ -73,7 +73,7 @@ function rowHtml({ id, title, checked, icon = 'fa-folder' }) {
     </button>`;
 }
 
-function renderPickerBody(el, model) {
+function renderPickerBody(el, model, characterId, characterName) {
     el.innerHTML = `
         <div class="datacat-folder-picker-heading">Save to folder</div>
         ${rowHtml({ id: '__main__', title: 'Main', checked: model.mainChecked, icon: 'fa-star' })}
@@ -82,18 +82,18 @@ function renderPickerBody(el, model) {
             <input type="text" class="datacat-folder-create-input" placeholder="New folder name" maxlength="120">
             <button type="button" class="datacat-folder-create-btn" disabled>Save</button>
         </div>`;
-    wireRows(el);
+    wireRows(el, characterId, characterName);
 }
 
-function renderPickerError(el, message, { retry = true } = {}) {
+function renderPickerError(el, message, characterId, characterName, { retry = true } = {}) {
     el.innerHTML = `
         <div class="datacat-folder-picker-heading">Save to folder</div>
         <div class="datacat-folder-picker-error">${escapeHtml(message)}</div>
         ${retry ? '<button type="button" class="datacat-folder-retry-btn">Retry</button>' : ''}`;
-    el.querySelector('.datacat-folder-retry-btn')?.addEventListener('click', () => loadAndRender(el));
+    el.querySelector('.datacat-folder-retry-btn')?.addEventListener('click', () => loadAndRender(el, characterId, characterName));
 }
 
-async function loadAndRender(el) {
+async function loadAndRender(el, characterId, characterName) {
     el.innerHTML = '<div class="datacat-folder-picker-heading">Save to folder</div><div class="datacat-folder-picker-loading"><i class="fa-solid fa-spinner fa-spin"></i></div>';
     try {
         if (!_folderCache) {
@@ -101,24 +101,24 @@ async function loadAndRender(el) {
             if (!res?.ok) throw new Error(res?.error || 'Could not load folders');
             _folderCache = filterPickerFolders(res.folders);
         }
-        const status = await fetchDatacatYoursStatus(_openCharId);
+        const status = await fetchDatacatYoursStatus(characterId);
         const model = buildPickerModel({
             folders: _folderCache,
-            collected: status?.ok ? status.collected === true : _hooks.getMainSaved(_openCharId),
+            collected: status?.ok ? status.collected === true : _hooks.getMainSaved(characterId),
             folderIds: status?.ok ? status.folderIds : [],
         });
-        if (!_openEl) return; // closed while loading
-        renderPickerBody(el, model);
+        if (_openEl !== el) return; // closed or reopened for another character while loading
+        renderPickerBody(el, model, characterId, characterName);
     } catch (err) {
-        if (!_openEl) return;
+        if (_openEl !== el) return;
         const msg = /session|auth|account|401/i.test(err.message)
             ? 'Session expired - check Settings > Online > DataCat'
             : err.message;
-        renderPickerError(el, msg);
+        renderPickerError(el, msg, characterId, characterName);
     }
 }
 
-function wireRows(el) {
+function wireRows(el, characterId, characterName) {
     el.querySelectorAll('.datacat-folder-row').forEach(row => {
         row.addEventListener('click', async () => {
             if (row.classList.contains('busy')) return;
@@ -129,13 +129,13 @@ function wireRows(el) {
             row.classList.toggle('checked', next); // optimistic
             try {
                 if (folderId === '__main__') {
-                    await _hooks.toggleMain(_openCharId);
-                    row.classList.toggle('checked', _hooks.getMainSaved(_openCharId));
+                    await _hooks.toggleMain(characterId);
+                    row.classList.toggle('checked', _hooks.getMainSaved(characterId));
                 } else {
-                    const res = await setDatacatFolderMembership(folderId, _openCharId, next);
+                    const res = await setDatacatFolderMembership(folderId, characterId, next);
                     if (!res?.ok) throw new Error(res?.error || 'DataCat folder update failed');
                     const title = row.querySelector('.datacat-folder-row-title')?.textContent || 'folder';
-                    showToast(`${next ? 'Added' : 'Removed'} ${_openCharName} ${next ? 'to' : 'from'} ${title}.`, 'success');
+                    showToast(`${next ? 'Added' : 'Removed'} ${characterName} ${next ? 'to' : 'from'} ${title}.`, 'success');
                 }
             } catch (err) {
                 row.classList.toggle('checked', wasChecked); // revert
@@ -162,10 +162,10 @@ function wireRows(el) {
             invalidateDatacatFolderCache();
             const newId = res.folder?.id != null ? String(res.folder.id) : null;
             if (newId) {
-                const addRes = await setDatacatFolderMembership(newId, _openCharId, true);
-                if (addRes?.ok) showToast(`Added ${_openCharName} to ${title}.`, 'success');
+                const addRes = await setDatacatFolderMembership(newId, characterId, true);
+                if (addRes?.ok) showToast(`Added ${characterName} to ${title}.`, 'success');
             }
-            if (_openEl) await loadAndRender(_openEl);
+            if (_openEl === el) await loadAndRender(el, characterId, characterName);
         } catch (err) {
             createBtn.disabled = false; // keep input for retry
             showToast(`DataCat folder create failed: ${err.message}`, 'error');
@@ -193,8 +193,9 @@ export async function openDatacatFolderPicker({ anchor, characterId, characterNa
     if (_openEl && _openCharId === id) { closeDatacatFolderPicker(); return; } // toggle
     closeDatacatFolderPicker();
 
+    const name = String(characterName || 'character');
     _openCharId = id;
-    _openCharName = String(characterName || 'character');
+    _openCharName = name;
     const el = document.createElement('div');
     el.className = 'datacat-folder-picker';
     document.body.appendChild(el);
@@ -206,6 +207,6 @@ export async function openDatacatFolderPicker({ anchor, characterId, characterNa
     };
     document.addEventListener('pointerdown', _outsideHandler, true);
 
-    await loadAndRender(el);
+    await loadAndRender(el, id, name);
     if (_openEl === el) positionPicker(el, anchor);
 }
