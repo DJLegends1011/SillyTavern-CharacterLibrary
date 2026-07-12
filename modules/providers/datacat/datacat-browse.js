@@ -475,7 +475,16 @@ function updateDatacatModalYoursControl(characterId, hit = null, { refresh = fal
 
     btn.dataset.datacatId = id;
     btn.disabled = false;
-    if (!canShowDatacatYoursControl(id, hit)) {
+
+    const eligible = canShowDatacatYoursControl(id, hit);
+
+    const folderBtn = document.getElementById('datacatFolderBtn');
+    if (folderBtn) {
+        folderBtn.dataset.datacatId = id;
+        folderBtn.style.display = eligible ? '' : 'none';
+    }
+
+    if (!eligible) {
         btn.style.display = 'none';
         return;
     }
@@ -486,12 +495,6 @@ function updateDatacatModalYoursControl(characterId, hit = null, { refresh = fal
         fetchDatacatYoursStatus(id).then(result => {
             if (result?.ok) setDatacatYoursState(id, result.collected === true);
         }).catch(() => {});
-    }
-
-    const folderBtn = document.getElementById('datacatFolderBtn');
-    if (folderBtn) {
-        folderBtn.dataset.datacatId = id;
-        folderBtn.style.display = canShowDatacatYoursControl(id, hit) ? '' : 'none';
     }
 }
 
