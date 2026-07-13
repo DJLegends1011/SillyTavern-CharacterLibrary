@@ -4,6 +4,7 @@ import { describe, it } from 'node:test';
 import {
     filterPickerFolders,
     buildPickerModel,
+    applyDatacatFolderOrder,
 } from '../modules/providers/datacat/datacat-folder-picker.js';
 
 describe('filterPickerFolders', () => {
@@ -43,5 +44,42 @@ describe('buildPickerModel', () => {
         const model = buildPickerModel({ folders: [{ id: '7', title: 'a' }] });
         assert.equal(model.mainChecked, false);
         assert.deepEqual(model.rows, [{ id: '7', title: 'a', checked: false }]);
+    });
+});
+
+describe('applyDatacatFolderOrder', () => {
+    const folders = [
+        { id: '2359', title: 'marvel smut' },
+        { id: '2360', title: 'DC Smut' },
+        { id: '3883', title: 'misc' },
+    ];
+
+    it('reorders saved ids first, tolerating string/number mismatch', () => {
+        const result = applyDatacatFolderOrder(folders, ['2360', 2359]);
+        assert.deepEqual(result, [
+            { id: '2360', title: 'DC Smut' },
+            { id: '2359', title: 'marvel smut' },
+            { id: '3883', title: 'misc' },
+        ]);
+    });
+
+    it('skips ids that no longer exist and does not duplicate on repeated ids', () => {
+        const result = applyDatacatFolderOrder(folders, ['9999', '2360', '2360', '2359']);
+        assert.deepEqual(result, [
+            { id: '2360', title: 'DC Smut' },
+            { id: '2359', title: 'marvel smut' },
+            { id: '3883', title: 'misc' },
+        ]);
+    });
+
+    it('keeps server order unchanged on empty/missing orderIds and does not mutate input', () => {
+        const original = [...folders];
+        assert.deepEqual(applyDatacatFolderOrder(folders, []), folders);
+        assert.deepEqual(applyDatacatFolderOrder(folders, undefined), folders);
+        assert.deepEqual(applyDatacatFolderOrder(folders, null), folders);
+        assert.deepEqual(folders, original); // input array not mutated
+
+        assert.deepEqual(applyDatacatFolderOrder([], ['1']), []);
+        assert.deepEqual(applyDatacatFolderOrder(null, ['1']), []);
     });
 });

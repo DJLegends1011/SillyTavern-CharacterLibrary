@@ -29,6 +29,30 @@ export function buildPickerModel({ folders = [], collected = false, folderIds = 
     };
 }
 
+/**
+ * Apply the user's client-side folder ordering. Folders whose ids appear in
+ * orderIds render first, in that order; the rest keep server order after them.
+ * @param {{id: string, title: string}[]} folders
+ * @param {Array} orderIds saved id list (values may be numbers or strings)
+ * @returns {{id: string, title: string}[]} new array; input not mutated
+ */
+export function applyDatacatFolderOrder(folders, orderIds) {
+    if (!Array.isArray(folders) || folders.length === 0) return [];
+    const order = (Array.isArray(orderIds) ? orderIds : []).map(v => String(v));
+    if (order.length === 0) return [...folders];
+    const byId = new Map(folders.map(f => [String(f.id), f]));
+    const ordered = [];
+    const used = new Set();
+    for (const id of order) {
+        const f = byId.get(id);
+        if (f && !used.has(id)) { ordered.push(f); used.add(id); }
+    }
+    for (const f of folders) {
+        if (!used.has(String(f.id))) ordered.push(f);
+    }
+    return ordered;
+}
+
 import CoreAPI from '../../core-api.js';
 import {
     fetchDatacatFolders,
@@ -37,7 +61,7 @@ import {
     createDatacatFolder,
 } from './datacat-api.js';
 
-const { showToast, escapeHtml } = CoreAPI;
+const { showToast, escapeHtml, getSetting } = CoreAPI;
 
 let _hooks = { getMainSaved: () => false, toggleMain: async () => {} };
 let _folderCache = null;   // filtered [{id,title}] or null
@@ -106,7 +130,7 @@ async function loadAndRender(el, characterId, characterName) {
         }
         const status = await fetchDatacatYoursStatus(characterId);
         const model = buildPickerModel({
-            folders: _folderCache,
+            folders: applyDatacatFolderOrder(_folderCache, getSetting('datacatFolderOrder') || []),
             collected: status?.ok ? status.collected === true : _hooks.getMainSaved(characterId),
             folderIds: status?.ok ? status.folderIds : [],
         });
