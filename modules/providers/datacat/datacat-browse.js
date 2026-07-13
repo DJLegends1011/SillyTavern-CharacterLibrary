@@ -345,6 +345,18 @@ function findDatacatHitById(characterId) {
         || null;
 }
 
+// Like findDatacatHitById, but also falls back to the currently-previewed
+// character. Direct previews (opened via URL/window.openDatacatCharPreview)
+// live only in datacatSelectedChar, not in either list, so callers that need
+// to act on "whatever character is on screen" (e.g. the folder picker) must
+// consider it too. The id check keeps this from returning a stale preview
+// for an unrelated characterId.
+function findDatacatHitOrSelected(characterId) {
+    const id = String(characterId || '').trim();
+    const selected = datacatSelectedChar && String(getCharId(datacatSelectedChar)) === id ? datacatSelectedChar : null;
+    return findDatacatHitById(id) || selected;
+}
+
 // Lazily verify whether an external-search character exists on DataCat. On a
 // positive result, cache it, sync the saved state, and reveal the card ⭐.
 // A negative result is cached so the ⭐ stays hidden and we never re-probe.
@@ -4180,15 +4192,23 @@ function ensureModalEventsAttached() {
     });
 
     initDatacatFolderPicker({
-        getMainSaved: (id) => getDatacatYoursState(id, findDatacatHitById(id)),
-        toggleMain: (id) => toggleDatacatYours(id, findDatacatHitById(id)),
+        getMainSaved: (id) => getDatacatYoursState(id, findDatacatHitOrSelected(id)),
+        toggleMain: (id) => toggleDatacatYours(id, findDatacatHitOrSelected(id)),
     });
 
     on('datacatFolderBtn', 'click', () => {
         const btn = document.getElementById('datacatFolderBtn');
         const charId = btn?.dataset?.datacatId;
         if (!charId) return;
-        const hit = findDatacatHitById(charId) || datacatSelectedChar;
+        const hit = findDatacatHitOrSelected(charId);
+        if (!isDatacatYoursSyncEnabled()) {
+            showToast('Sign in to DataCat in Settings to use folders', 'warning');
+            return;
+        }
+        if (!canShowDatacatYoursControl(charId, hit)) {
+            showToast('Extract this character first; DataCat folders hold extracted account characters.', 'info');
+            return;
+        }
         openDatacatFolderPicker({
             anchor: btn,
             characterId: charId,
