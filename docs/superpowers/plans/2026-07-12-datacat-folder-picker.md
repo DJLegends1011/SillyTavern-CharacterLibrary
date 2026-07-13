@@ -612,3 +612,21 @@ With the user's ST (http://127.0.0.1:8001, DataCat account signed in):
 git push
 ```
 Report results to the user, including anything that deviated from the plan.
+
+---
+
+## Addendum (2026-07-13): pre-merge pass — sub-filter + folder ordering
+
+User-requested additions before PR #4 merges. Same global constraints apply.
+
+### Task 6: applyDatacatFolderOrder helper (TDD)
+Pure helper in `datacat-folder-picker.js`: `applyDatacatFolderOrder(folders, orderIds)` — folders whose ids appear in orderIds come first in that order; the rest keep server order. The picker's rows use it with the `datacatFolderOrder` CL setting. Unit tests in `tests/datacat-folder-picker.test.mjs`.
+
+### Task 7: Folder-order settings section
+Inside `datacatSettingsFields` (library.html) below the account block: "Folder order" — client-side only note, Load folders button (account-gated hint when logged out), rows with up/down buttons, Reset to server order. Persists `datacatFolderOrder` (array of id strings) via CL settings. List rendering reuses the ordered fetch exposed by the provider layer.
+
+### Task 8: Yours folder sub-filter
+`datacat-browse.js`: when `datacatFilterOnlyYours` is active, show a folder bar above the grid (hidden otherwise) with a CL dropdown: All Yours (default) / Main only / each custom folder in user order. All Yours keeps `fetchDatacatYoursCharacters`; Main/folder route through `fetchDatacatFolderCharacters({mainOnly}|{folderId})` with the same limit/offset pagination and tagIds passthrough. Selection resets to All Yours when the filter is unchecked. Mobile uses the same dropdown pattern as the sort select.
+
+### Task 9: verification
+Suite + live: sub-filter round-trip against the real account, ordering respected in picker + sub-filter, direct-preview folder add (Codex finding 1 live check), kebab gating (Codex finding 2 live check).
