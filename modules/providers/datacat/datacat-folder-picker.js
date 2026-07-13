@@ -19,12 +19,13 @@ export function filterPickerFolders(folders) {
 /**
  * Build the render model from the folder list + membership status.
  * @param {{folders?: Array, collected?: boolean, folderIds?: Array}} opts
- * @returns {{mainChecked: boolean, rows: {id: string, title: string, checked: boolean}[]}}
+ * @returns {{collected: boolean, mainChecked: boolean, rows: {id: string, title: string, checked: boolean}[]}}
  */
 export function buildPickerModel({ folders = [], collected = false, folderIds = [] } = {}) {
     const memberIds = new Set((Array.isArray(folderIds) ? folderIds : []).map(v => String(v)));
     return {
-        mainChecked: collected === true,
+        collected: collected === true,
+        mainChecked: collected === true && memberIds.size === 0,
         rows: folders.map(f => ({ id: f.id, title: f.title, checked: memberIds.has(String(f.id)) })),
     };
 }
@@ -131,6 +132,7 @@ function rowHtml({ id, title, checked, icon = 'fa-folder' }) {
 }
 
 function renderPickerBody(el, model, characterId, characterName) {
+    el.dataset.collected = model.collected ? 'true' : 'false';
     el.innerHTML = `
         <div class="datacat-folder-picker-heading">Save to folder</div>
         ${rowHtml({ id: '__main__', title: 'Main', checked: model.mainChecked, icon: 'fa-star' })}
@@ -185,16 +187,25 @@ async function loadAndRender(el, characterId, characterName) {
  * @returns {Promise<boolean>}
  */
 async function ensureCollected(el, characterId) {
-    const mainRow = el.querySelector('.datacat-folder-row[data-folder-id="__main__"]');
-    if (mainRow?.classList.contains('checked')) return true;
+    if (_hooks.getMainSaved(characterId)) {
+        el.dataset.collected = 'true';
+        return true;
+    }
     await _hooks.toggleMain(characterId);
     const mainSaved = _hooks.getMainSaved(characterId);
-    mainRow?.classList.toggle('checked', mainSaved);
+    el.dataset.collected = mainSaved ? 'true' : 'false';
     if (!mainSaved) {
         showToast('DataCat folder sync failed: could not save to Yours first', 'error');
         return false;
     }
     return true;
+}
+
+function syncMainRowFromFolders(el) {
+    const mainRow = el.querySelector('.datacat-folder-row[data-folder-id="__main__"]');
+    const hasCustomFolder = [...el.querySelectorAll('.datacat-folder-row:not([data-folder-id="__main__"])')]
+        .some(row => row.classList.contains('checked'));
+    mainRow?.classList.toggle('checked', el.dataset.collected === 'true' && !hasCustomFolder);
 }
 
 /**
@@ -206,8 +217,8 @@ async function ensureCollected(el, characterId) {
  */
 export function syncDatacatFolderPickerMainRow(characterId, saved) {
     if (!_openEl || _openCharId !== String(characterId)) return;
-    const mainRow = _openEl.querySelector('.datacat-folder-row[data-folder-id="__main__"]');
-    mainRow?.classList.toggle('checked', saved === true);
+    _openEl.dataset.collected = saved === true ? 'true' : 'false';
+    syncMainRowFromFolders(_openEl);
 }
 
 function wireRows(el, characterId, characterName) {
@@ -221,8 +232,21 @@ function wireRows(el, characterId, characterName) {
             row.classList.toggle('checked', next); // optimistic
             try {
                 if (folderId === '__main__') {
-                    await _hooks.toggleMain(characterId);
-                    row.classList.toggle('checked', _hooks.getMainSaved(characterId));
+                    const customRows = [...el.querySelectorAll('.datacat-folder-row:not([data-folder-id="__main__"]).checked')];
+                    if (customRows.length > 0) {
+                        for (const customRow of customRows) {
+                            const res = await setDatacatFolderMembership(customRow.dataset.folderId, characterId, false);
+                            if (!res?.ok) throw new Error(res?.error || 'DataCat folder update failed');
+                            customRow.classList.remove('checked');
+                        }
+                        el.dataset.collected = 'true';
+                        syncMainRowFromFolders(el);
+                        showToast('Moved ' + characterName + ' to Main.', 'success');
+                    } else {
+                        await _hooks.toggleMain(characterId);
+                        el.dataset.collected = _hooks.getMainSaved(characterId) ? 'true' : 'false';
+                        syncMainRowFromFolders(el);
+                    }
                 } else {
                     if (next) {
                         // DataCat's server rejects folder membership for characters not
@@ -230,16 +254,19 @@ function wireRows(el, characterId, characterName) {
                         const collected = await ensureCollected(el, characterId);
                         if (!collected) {
                             row.classList.toggle('checked', wasChecked); // revert
+                            syncMainRowFromFolders(el);
                             return;
                         }
                     }
                     const res = await setDatacatFolderMembership(folderId, characterId, next);
                     if (!res?.ok) throw new Error(res?.error || 'DataCat folder update failed');
+                    syncMainRowFromFolders(el);
                     const title = row.querySelector('.datacat-folder-row-title')?.textContent || 'folder';
                     showToast(`${next ? 'Added' : 'Removed'} ${characterName} ${next ? 'to' : 'from'} ${title}.`, 'success');
                 }
             } catch (err) {
                 row.classList.toggle('checked', wasChecked); // revert
+                syncMainRowFromFolders(el);
                 showToast(`DataCat folder sync failed: ${err.message}`, 'error');
             } finally {
                 row.classList.remove('busy');

@@ -35,7 +35,8 @@ describe('buildPickerModel', () => {
             collected: true,
             folderIds: [2359],
         });
-        assert.equal(model.mainChecked, true);
+        assert.equal(model.collected, true);
+        assert.equal(model.mainChecked, false);
         assert.deepEqual(model.rows, [
             { id: '2359', title: 'marvel smut', checked: true },
             { id: '2360', title: 'DC Smut', checked: false },
@@ -46,6 +47,16 @@ describe('buildPickerModel', () => {
         const model = buildPickerModel({ folders: [{ id: '7', title: 'a' }] });
         assert.equal(model.mainChecked, false);
         assert.deepEqual(model.rows, [{ id: '7', title: 'a', checked: false }]);
+    });
+
+    it('marks Main only when collected without a custom folder', () => {
+        const model = buildPickerModel({
+            folders: [{ id: '7', title: 'Custom' }],
+            collected: true,
+            folderIds: [],
+        });
+        assert.equal(model.collected, true);
+        assert.equal(model.mainChecked, true);
     });
 });
 
