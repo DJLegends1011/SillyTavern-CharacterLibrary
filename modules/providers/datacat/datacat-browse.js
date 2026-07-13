@@ -50,6 +50,7 @@ import {
     initDatacatFolderPicker,
     openDatacatFolderPicker,
     closeDatacatFolderPicker,
+    syncDatacatFolderPickerMainRow,
 } from './datacat-folder-picker.js';
 
 const {
@@ -409,6 +410,7 @@ function setDatacatYoursState(characterId, saved) {
         modalBtn.innerHTML = saved ? '<i class="fa-solid fa-star"></i> Saved' : '<i class="fa-regular fa-star"></i> Save';
         modalBtn.title = saved ? 'Saved to DataCat Yours' : 'Save to DataCat Yours';
     }
+    syncDatacatFolderPickerMainRow(id, saved === true);
 }
 
 function refreshDatacatOnlyYoursFilterIfActive() {
