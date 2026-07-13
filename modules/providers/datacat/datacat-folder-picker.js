@@ -118,6 +118,41 @@ async function loadAndRender(el, characterId, characterName) {
     }
 }
 
+/**
+ * DataCat's server rejects folder membership changes for characters not
+ * already collected to Main/Yours. Ensure the character is collected first,
+ * updating the picker's Main row to match. Returns true when the character
+ * is collected by the end (either already was, or the save succeeded).
+ * @param {HTMLElement} el picker root element
+ * @param {string} characterId
+ * @returns {Promise<boolean>}
+ */
+async function ensureCollected(el, characterId) {
+    const mainRow = el.querySelector('.datacat-folder-row[data-folder-id="__main__"]');
+    if (mainRow?.classList.contains('checked')) return true;
+    await _hooks.toggleMain(characterId);
+    const mainSaved = _hooks.getMainSaved(characterId);
+    mainRow?.classList.toggle('checked', mainSaved);
+    if (!mainSaved) {
+        showToast('DataCat folder sync failed: could not save to Yours first', 'error');
+        return false;
+    }
+    return true;
+}
+
+/**
+ * Sync the open folder picker's Main row checkmark after an external change
+ * to a character's Yours/Main status (e.g. the grid-card star). No-op unless
+ * the picker is currently open for this character.
+ * @param {string|number} characterId
+ * @param {boolean} saved
+ */
+export function syncDatacatFolderPickerMainRow(characterId, saved) {
+    if (!_openEl || _openCharId !== String(characterId)) return;
+    const mainRow = _openEl.querySelector('.datacat-folder-row[data-folder-id="__main__"]');
+    mainRow?.classList.toggle('checked', saved === true);
+}
+
 function wireRows(el, characterId, characterName) {
     el.querySelectorAll('.datacat-folder-row').forEach(row => {
         row.addEventListener('click', async () => {
@@ -135,16 +170,10 @@ function wireRows(el, characterId, characterName) {
                     if (next) {
                         // DataCat's server rejects folder membership for characters not
                         // already collected to Main/Yours. Auto-save to Main first.
-                        const mainRow = el.querySelector('.datacat-folder-row[data-folder-id="__main__"]');
-                        if (!mainRow?.classList.contains('checked')) {
-                            await _hooks.toggleMain(characterId);
-                            const mainSaved = _hooks.getMainSaved(characterId);
-                            mainRow?.classList.toggle('checked', mainSaved);
-                            if (!mainSaved) {
-                                row.classList.toggle('checked', wasChecked); // revert
-                                showToast('DataCat folder sync failed: could not save to Yours first', 'error');
-                                return;
-                            }
+                        const collected = await ensureCollected(el, characterId);
+                        if (!collected) {
+                            row.classList.toggle('checked', wasChecked); // revert
+                            return;
                         }
                     }
                     const res = await setDatacatFolderMembership(folderId, characterId, next);
@@ -176,7 +205,7 @@ function wireRows(el, characterId, characterName) {
             showToast(`Created ${title}.`, 'success');
             invalidateDatacatFolderCache();
             const newId = res.folder?.id != null ? String(res.folder.id) : null;
-            if (newId) {
+            if (newId && await ensureCollected(el, characterId)) {
                 const addRes = await setDatacatFolderMembership(newId, characterId, true);
                 if (addRes?.ok) showToast(`Added ${characterName} to ${title}.`, 'success');
             }
