@@ -554,3 +554,30 @@ html.cl-mobile .datacat-folder-picker {
     max-height: 60vh;
 }
 html.cl-mobile .datacat-folder-row { min-height: 44px; }
+
+/* ===== DataCat folder order settings ===== */
+.datacat-folder-order-list { display: flex; flex-direction: column; gap: 4px; width: 100%; }
+.datacat-folder-order-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.05);
+}
+.datacat-folder-order-row .datacat-folder-order-title {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.datacat-folder-order-row button {
+    background: transparent;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 6px;
+    color: inherit;
+    min-width: 32px;
+    min-height: 32px;
+    cursor: pointer;
+}
+.datacat-folder-order-row button:disabled { opacity: 0.3; cursor: default; }
