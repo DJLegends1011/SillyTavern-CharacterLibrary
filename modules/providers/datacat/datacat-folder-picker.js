@@ -132,6 +132,21 @@ function wireRows(el, characterId, characterName) {
                     await _hooks.toggleMain(characterId);
                     row.classList.toggle('checked', _hooks.getMainSaved(characterId));
                 } else {
+                    if (next) {
+                        // DataCat's server rejects folder membership for characters not
+                        // already collected to Main/Yours. Auto-save to Main first.
+                        const mainRow = el.querySelector('.datacat-folder-row[data-folder-id="__main__"]');
+                        if (!mainRow?.classList.contains('checked')) {
+                            await _hooks.toggleMain(characterId);
+                            const mainSaved = _hooks.getMainSaved(characterId);
+                            mainRow?.classList.toggle('checked', mainSaved);
+                            if (!mainSaved) {
+                                row.classList.toggle('checked', wasChecked); // revert
+                                showToast('DataCat folder sync failed: could not save to Yours first', 'error');
+                                return;
+                            }
+                        }
+                    }
                     const res = await setDatacatFolderMembership(folderId, characterId, next);
                     if (!res?.ok) throw new Error(res?.error || 'DataCat folder update failed');
                     const title = row.querySelector('.datacat-folder-row-title')?.textContent || 'folder';

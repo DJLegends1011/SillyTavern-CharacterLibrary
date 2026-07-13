@@ -28,6 +28,13 @@ Inspected the production picker while logged in:
   `GET /api/characters/{id}/folders` (the latter returns `collected` plus
   custom `folderIds`). A 401 on the first call is retried with the session
   token and succeeds — matching phase 1's lazy-restore design.
+- Folder assignment requires the character to already be collected to
+  Main/Yours: the server rejects `PUT` folder-membership with
+  `{ ok: false, status: 400, reason: "Character is not in your library" }`
+  otherwise (verified live 2026-07-12). Custom folders on datacat.run are
+  subsets of Yours, so its own picker has this precondition implicitly. Our
+  picker now auto-saves to Main first (via the same path as the star) when
+  toggling a custom folder on for a character that isn't collected yet.
 
 ## Existing building blocks (all on this branch — do not rebuild)
 
