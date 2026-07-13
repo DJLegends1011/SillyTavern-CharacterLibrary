@@ -46,6 +46,11 @@ import {
     createFlareSolverrSession,
     destroyFlareSolverrSession,
 } from './datacat-api.js';
+import {
+    initDatacatFolderPicker,
+    openDatacatFolderPicker,
+    closeDatacatFolderPicker,
+} from './datacat-folder-picker.js';
 
 const {
     onElement: on,
@@ -471,7 +476,16 @@ function updateDatacatModalYoursControl(characterId, hit = null, { refresh = fal
 
     btn.dataset.datacatId = id;
     btn.disabled = false;
-    if (!canShowDatacatYoursControl(id, hit)) {
+
+    const eligible = canShowDatacatYoursControl(id, hit);
+
+    const folderBtn = document.getElementById('datacatFolderBtn');
+    if (folderBtn) {
+        folderBtn.dataset.datacatId = id;
+        folderBtn.style.display = eligible ? '' : 'none';
+    }
+
+    if (!eligible) {
         btn.style.display = 'none';
         return;
     }
@@ -3577,6 +3591,7 @@ function cleanupDatacatCharModal() {
 }
 
 function closePreviewModal() {
+    closeDatacatFolderPicker();
     datacatDetailFetchToken++;
     datacatDetailFetchPromise = null;
     cleanupDatacatCharModal();
@@ -4230,6 +4245,23 @@ function ensureModalEventsAttached() {
         toggleDatacatYours(charId, hit);
     });
 
+    initDatacatFolderPicker({
+        getMainSaved: (id) => getDatacatYoursState(id, findDatacatHitById(id)),
+        toggleMain: (id) => toggleDatacatYours(id, findDatacatHitById(id)),
+    });
+
+    on('datacatFolderBtn', 'click', () => {
+        const btn = document.getElementById('datacatFolderBtn');
+        const charId = btn?.dataset?.datacatId;
+        if (!charId) return;
+        const hit = findDatacatHitById(charId) || datacatSelectedChar;
+        openDatacatFolderPicker({
+            anchor: btn,
+            characterId: charId,
+            characterName: hit?.name || 'character',
+        });
+    });
+
     const modalOverlay = document.getElementById('datacatCharModal');
     if (modalOverlay) {
         modalOverlay.addEventListener('click', (e) => {
@@ -4643,6 +4675,9 @@ const datacatBrowseView = new (class DatacatBrowseView extends BrowseView {
                         <i class="fa-regular fa-star"></i> Save
                     </button>
                     ${datacatBookmarks.renderModalBtn()}
+                    <button id="datacatFolderBtn" class="action-btn secondary datacat-folder-modal-btn" title="Save to folder" style="display: none;">
+                        <i class="fa-solid fa-folder-plus"></i> Folder
+                    </button>
                     <a id="datacatOpenInBrowserBtn" href="#" target="_blank" class="action-btn secondary" title="Open on DataCat">
                         <i class="fa-solid fa-external-link"></i> Open
                     </a>
