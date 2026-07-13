@@ -103,10 +103,42 @@
 }
 
 
+.datacat-yours-folder-bar {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    margin-bottom: var(--space-md);
+    padding: 8px 10px;
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-md);
+    background: rgba(var(--accent-rgb), 0.06);
+}
+.datacat-yours-folder-bar.hidden { display: none; }
+.datacat-yours-folder-label {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-xs);
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+.datacat-yours-folder-bar .custom-select-container,
+.datacat-yours-folder-bar .custom-select-trigger { min-width: 180px; }
+
 /* Mobile overrides */
 
 html.cl-mobile #datacatCreatorSortSelect, html.cl-mobile [data-select-id="datacatCreatorSortSelect"] { min-width: 0; flex: 1; font-size: var(--font-sm); }
 html.cl-mobile [data-select-id="datacatCreatorSortSelect"] .custom-select-trigger { min-width: 0; }
+
+html.cl-mobile .datacat-yours-folder-bar {
+    align-items: stretch;
+    flex-direction: column;
+    gap: var(--space-xs);
+}
+html.cl-mobile .datacat-yours-folder-bar .custom-select-container,
+html.cl-mobile .datacat-yours-folder-bar .custom-select-trigger {
+    width: 100%;
+    min-width: 0;
+}
 
 
 

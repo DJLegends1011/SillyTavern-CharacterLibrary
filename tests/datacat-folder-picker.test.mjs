@@ -5,6 +5,8 @@ import {
     filterPickerFolders,
     buildPickerModel,
     applyDatacatFolderOrder,
+    normalizeDatacatYoursFolderSelection,
+    buildDatacatYoursFolderFetchOptions,
 } from '../modules/providers/datacat/datacat-folder-picker.js';
 
 describe('filterPickerFolders', () => {
@@ -81,5 +83,27 @@ describe('applyDatacatFolderOrder', () => {
 
         assert.deepEqual(applyDatacatFolderOrder([], ['1']), []);
         assert.deepEqual(applyDatacatFolderOrder(null, ['1']), []);
+    });
+});
+
+describe('DataCat Yours folder sub-filter helpers', () => {
+    const folders = [{ id: '2359' }, { id: '2360' }];
+
+    it('keeps All Yours, Main, and available custom folders', () => {
+        assert.equal(normalizeDatacatYoursFolderSelection('all', folders), 'all');
+        assert.equal(normalizeDatacatYoursFolderSelection('main', folders), 'main');
+        assert.equal(normalizeDatacatYoursFolderSelection(2359, folders), '2359');
+    });
+
+    it('falls back to All Yours when a custom folder disappears', () => {
+        assert.equal(normalizeDatacatYoursFolderSelection('9999', folders), 'all');
+        assert.equal(normalizeDatacatYoursFolderSelection(null, folders), 'all');
+    });
+
+    it('routes Main and custom folders through the folder endpoint options', () => {
+        const common = { limit: 60, offset: 120, tagIds: ['7'] };
+        assert.equal(buildDatacatYoursFolderFetchOptions('all', common), null);
+        assert.deepEqual(buildDatacatYoursFolderFetchOptions('main', common), { ...common, mainOnly: true });
+        assert.deepEqual(buildDatacatYoursFolderFetchOptions(2359, common), { ...common, folderId: '2359' });
     });
 });

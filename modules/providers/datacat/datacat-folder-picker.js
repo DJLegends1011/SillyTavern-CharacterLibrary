@@ -53,6 +53,36 @@ export function applyDatacatFolderOrder(folders, orderIds) {
     return ordered;
 }
 
+/**
+ * Normalize the Yours sub-filter selection against the currently available
+ * custom folders. Main is always valid; removed/unknown folder ids fall back
+ * to the complete Yours listing.
+ * @param {string|number|null|undefined} selection
+ * @param {{id: string}[]} folders
+ * @returns {string}
+ */
+export function normalizeDatacatYoursFolderSelection(selection, folders = []) {
+    const value = String(selection ?? 'all').trim() || 'all';
+    if (value === 'all' || value === 'main') return value;
+    return Array.isArray(folders) && folders.some(folder => String(folder?.id) === value)
+        ? value
+        : 'all';
+}
+
+/**
+ * Build the account folder-list request for the Yours sub-filter. The complete
+ * Yours selection keeps its dedicated endpoint, so this returns null for it.
+ * @param {string|number|null|undefined} selection
+ * @param {{limit?: number, offset?: number, tagIds?: Array}} common
+ * @returns {{limit?: number, offset?: number, tagIds?: Array, mainOnly?: boolean, folderId?: string}|null}
+ */
+export function buildDatacatYoursFolderFetchOptions(selection, common = {}) {
+    const value = String(selection ?? 'all').trim() || 'all';
+    if (value === 'all') return null;
+    if (value === 'main') return { ...common, mainOnly: true };
+    return { ...common, folderId: value };
+}
+
 import CoreAPI from '../../core-api.js';
 import {
     fetchDatacatFolders,
