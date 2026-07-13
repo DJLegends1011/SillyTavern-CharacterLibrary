@@ -456,9 +456,15 @@ html.cl-mobile .datacat-lorebook-author { font-size: var(--font-xs); }
 html.cl-mobile .datacat-lorebook-desc { font-size: var(--font-xs); }
 
 /* ===== DataCat folder picker ===== */
+.datacat-folder-picker-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 10006;
+    background: transparent;
+}
 .datacat-folder-picker {
     position: fixed;
-    z-index: 10010; /* above the preview modal overlay */
+    z-index: 10007; /* above the preview modal (10005) but below toasts (10010) */
     min-width: 240px;
     max-width: 320px;
     max-height: 55vh;

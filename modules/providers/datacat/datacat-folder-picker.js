@@ -42,6 +42,7 @@ const { showToast, escapeHtml } = CoreAPI;
 let _hooks = { getMainSaved: () => false, toggleMain: async () => {} };
 let _folderCache = null;   // filtered [{id,title}] or null
 let _openEl = null;
+let _backdropEl = null;
 let _openCharId = '';
 let _openCharName = '';
 let _outsideHandler = null;
@@ -59,6 +60,8 @@ export function closeDatacatFolderPicker() {
         document.removeEventListener('pointerdown', _outsideHandler, true);
         _outsideHandler = null;
     }
+    _backdropEl?.remove();
+    _backdropEl = null;
     _openEl?.remove();
     _openEl = null;
     _openCharId = '';
@@ -240,6 +243,18 @@ export async function openDatacatFolderPicker({ anchor, characterId, characterNa
     const name = String(characterName || 'character');
     _openCharId = id;
     _openCharName = name;
+
+    // Transparent tap-catcher behind the picker. CL renders creator notes in a
+    // nested sandboxed iframe inside the preview modal; taps landing there never
+    // bubble to the document, so the pointerdown listener below can't see them.
+    // The backdrop sits in the main document and closes the picker on any tap.
+    const backdrop = document.createElement('div');
+    backdrop.className = 'datacat-folder-picker-backdrop';
+    backdrop.addEventListener('pointerdown', () => closeDatacatFolderPicker());
+    backdrop.addEventListener('click', () => closeDatacatFolderPicker());
+    document.body.appendChild(backdrop);
+    _backdropEl = backdrop;
+
     const el = document.createElement('div');
     el.className = 'datacat-folder-picker';
     document.body.appendChild(el);
