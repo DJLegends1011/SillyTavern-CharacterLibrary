@@ -21,6 +21,7 @@ import {
     resolveTagNames,
     fetchDatacatCharacter,
     fetchDatacatDownload,
+    fetchDatacatFolders,
     validateDcSession,
     clearDcSession,
     initDcSession,
@@ -41,6 +42,7 @@ import {
     janitoraiVerifyToken,
     decodeJanitoraiClaims,
 } from './datacat-api.js';
+import { filterPickerFolders, applyDatacatFolderOrder } from './datacat-folder-picker.js';
 
 let api = null;
 
@@ -619,6 +621,14 @@ window.datacatRefreshToken = async () => {
 
 window.datacatClearSession = async () => {
     return clearDcSession();
+};
+
+// Ordered custom-folder list for the settings Folder Order UI.
+window.datacatGetSettingsFolders = async () => {
+    const res = await fetchDatacatFolders();
+    if (!res?.ok) return { ok: false, error: res?.error || res?.reason || 'Could not load folders' };
+    const folders = filterPickerFolders(res.folders);
+    return { ok: true, folders: applyDatacatFolderOrder(folders, CoreAPI.getSetting('datacatFolderOrder') || []) };
 };
 
 // ── JanitorAI account session (Supabase; unlocks Hampter pagination) ──────────

@@ -1658,6 +1658,10 @@ function setupSettingsModal() {
     const jannySettingsValidateBtn = document.getElementById('jannySettingsValidateBtn');
     const jannySettingsClearSessionBtn = document.getElementById('jannySettingsClearSessionBtn');
     const jannySettingsAccountHint = document.getElementById('jannySettingsAccountHint');
+    const datacatFolderOrderLoadBtn = document.getElementById('datacatFolderOrderLoadBtn');
+    const datacatFolderOrderResetBtn = document.getElementById('datacatFolderOrderResetBtn');
+    const datacatFolderOrderStatus = document.getElementById('datacatFolderOrderStatus');
+    const datacatFolderOrderList = document.getElementById('datacatFolderOrderList');
     const minScoreSlider = document.getElementById('settingsMinScore');
     const minScoreValue = document.getElementById('minScoreValue');
     const possibleMatchScoreSlider = document.getElementById('settingsPossibleMatchScore');
@@ -4078,6 +4082,96 @@ function setupSettingsModal() {
         datacatSyncYoursCheckbox.checked = getSetting('datacatSyncYours') !== false;
         datacatSyncYoursCheckbox.addEventListener('change', () => {
             setSetting('datacatSyncYours', datacatSyncYoursCheckbox.checked);
+        });
+    }
+
+    // ── Folder Order settings (client-side reorder of DataCat custom folders) ──
+    let _datacatFolderOrderFolders = [];
+
+    function showDatacatFolderOrderStatus(message) {
+        if (!datacatFolderOrderStatus) return;
+        if (!message) {
+            datacatFolderOrderStatus.style.display = 'none';
+            datacatFolderOrderStatus.textContent = '';
+            return;
+        }
+        datacatFolderOrderStatus.textContent = message;
+        datacatFolderOrderStatus.style.display = '';
+    }
+
+    function renderDatacatFolderOrderList() {
+        if (!datacatFolderOrderList) return;
+        if (_datacatFolderOrderFolders.length === 0) {
+            datacatFolderOrderList.innerHTML = '';
+            return;
+        }
+        const last = _datacatFolderOrderFolders.length - 1;
+        datacatFolderOrderList.innerHTML = _datacatFolderOrderFolders.map((f, i) => `
+            <div class="datacat-folder-order-row" data-folder-id="${escapeHtml(String(f.id))}">
+                <span class="datacat-folder-order-title">${escapeHtml(f.title)}</span>
+                <button type="button" class="datacat-folder-order-up-btn" ${i === 0 ? 'disabled' : ''} title="Move up"><i class="fa-solid fa-chevron-up"></i></button>
+                <button type="button" class="datacat-folder-order-down-btn" ${i === last ? 'disabled' : ''} title="Move down"><i class="fa-solid fa-chevron-down"></i></button>
+            </div>`).join('');
+        datacatFolderOrderList.querySelectorAll('.datacat-folder-order-up-btn').forEach((btn, i) => {
+            btn.addEventListener('click', () => moveDatacatFolderOrderRow(i, -1));
+        });
+        datacatFolderOrderList.querySelectorAll('.datacat-folder-order-down-btn').forEach((btn, i) => {
+            btn.addEventListener('click', () => moveDatacatFolderOrderRow(i, 1));
+        });
+    }
+
+    function persistDatacatFolderOrder() {
+        setSetting('datacatFolderOrder', _datacatFolderOrderFolders.map(f => f.id));
+    }
+
+    function moveDatacatFolderOrderRow(index, delta) {
+        const target = index + delta;
+        if (target < 0 || target >= _datacatFolderOrderFolders.length) return;
+        const arr = _datacatFolderOrderFolders;
+        [arr[index], arr[target]] = [arr[target], arr[index]];
+        persistDatacatFolderOrder();
+        renderDatacatFolderOrderList();
+    }
+
+    async function loadDatacatFolderOrderFolders() {
+        if (!datacatFolderOrderLoadBtn) return;
+        datacatFolderOrderLoadBtn.disabled = true;
+        showDatacatFolderOrderStatus('Loading folders...');
+        try {
+            const res = await window.datacatGetSettingsFolders?.();
+            if (!res?.ok) {
+                const errText = res?.error || 'Could not load folders';
+                const msg = /account|session|auth/i.test(errText) ? 'Sign in to DataCat first' : errText;
+                showDatacatFolderOrderStatus(msg);
+                _datacatFolderOrderFolders = [];
+                renderDatacatFolderOrderList();
+                if (datacatFolderOrderResetBtn) datacatFolderOrderResetBtn.style.display = 'none';
+                return;
+            }
+            _datacatFolderOrderFolders = Array.isArray(res.folders) ? res.folders : [];
+            if (_datacatFolderOrderFolders.length === 0) {
+                showDatacatFolderOrderStatus('No custom folders on this account.');
+                if (datacatFolderOrderResetBtn) datacatFolderOrderResetBtn.style.display = 'none';
+            } else {
+                showDatacatFolderOrderStatus(null);
+                if (datacatFolderOrderResetBtn) datacatFolderOrderResetBtn.style.display = '';
+            }
+            renderDatacatFolderOrderList();
+        } catch (err) {
+            showDatacatFolderOrderStatus(err.message || 'Could not load folders');
+        } finally {
+            datacatFolderOrderLoadBtn.disabled = false;
+        }
+    }
+
+    if (datacatFolderOrderLoadBtn) {
+        datacatFolderOrderLoadBtn.addEventListener('click', loadDatacatFolderOrderFolders);
+    }
+
+    if (datacatFolderOrderResetBtn) {
+        datacatFolderOrderResetBtn.addEventListener('click', async () => {
+            setSetting('datacatFolderOrder', []);
+            await loadDatacatFolderOrderFolders();
         });
     }
 
