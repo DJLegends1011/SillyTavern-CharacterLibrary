@@ -1,4 +1,4 @@
-﻿// DatacatBrowseView -- DataCat browse/search UI for the Online tab
+// DatacatBrowseView -- DataCat browse/search UI for the Online tab
 //
 // Data sources:
 //   - DataCat API: recent browse, creator browse, faceted tag filtering
@@ -21,6 +21,7 @@ import {
     fetchDatacatCreator,
     fetchDatacatCreatorCharacters,
     fetchDatacatYoursCharacters,
+    fetchDatacatFolderCharacters,
     fetchRecentPublic,
     fetchFreshCharacters,
     fetchFacetedTags,
@@ -45,6 +46,14 @@ import {
     createFlareSolverrSession,
     destroyFlareSolverrSession,
 } from './datacat-api.js';
+import {
+    initDatacatFolderPicker,
+    openDatacatFolderPicker,
+    closeDatacatFolderPicker,
+    syncDatacatFolderPickerMainRow,
+    normalizeDatacatYoursFolderSelection,
+    buildDatacatYoursFolderFetchOptions,
+} from './datacat-folder-picker.js';
 
 const {
     onElement: on,
@@ -102,6 +111,13 @@ let datacatFilterHidePossible = false;
 let datacatFilterOnlyYours = false;
 let datacatFilterHideJanitor = false;
 let datacatFilterHideSaucepan = false;
+// "Only DataCat Yours" folder sub-filter: 'all' | 'main' | a custom folder id string.
+// Reset to 'all' whenever the Only Yours filter is turned off (see the
+// datacatFilterOnlyYours checkbox handler below).
+let datacatYoursFolderSel = 'all';
+// Ordered custom folders returned by the provider layer. Re-fetched each time
+// the Only Yours filter is switched on so Settings order changes are reflected.
+let datacatYoursFoldersCache = [];
 const datacatYoursStateById = new Map();
 const datacatYoursPendingIds = new Set();
 // External-search rows (Hampter/Meili/Saucepan) carry no DataCat collectability
@@ -339,6 +355,18 @@ function findDatacatHitById(characterId) {
         || null;
 }
 
+// Like findDatacatHitById, but also falls back to the currently-previewed
+// character. Direct previews (opened via URL/window.openDatacatCharPreview)
+// live only in datacatSelectedChar, not in either list, so callers that need
+// to act on "whatever character is on screen" (e.g. the folder picker) must
+// consider it too. The id check keeps this from returning a stale preview
+// for an unrelated characterId.
+function findDatacatHitOrSelected(characterId) {
+    const id = String(characterId || '').trim();
+    const selected = datacatSelectedChar && String(getCharId(datacatSelectedChar)) === id ? datacatSelectedChar : null;
+    return findDatacatHitById(id) || selected;
+}
+
 // Lazily verify whether an external-search character exists on DataCat. On a
 // positive result, cache it, sync the saved state, and reveal the card ⭐.
 // A negative result is cached so the ⭐ stays hidden and we never re-probe.
@@ -403,6 +431,7 @@ function setDatacatYoursState(characterId, saved) {
         modalBtn.innerHTML = saved ? '<i class="fa-solid fa-star"></i> Saved' : '<i class="fa-regular fa-star"></i> Save';
         modalBtn.title = saved ? 'Saved to DataCat Yours' : 'Save to DataCat Yours';
     }
+    syncDatacatFolderPickerMainRow(id, saved === true);
 }
 
 function refreshDatacatOnlyYoursFilterIfActive() {
@@ -470,7 +499,16 @@ function updateDatacatModalYoursControl(characterId, hit = null, { refresh = fal
 
     btn.dataset.datacatId = id;
     btn.disabled = false;
-    if (!canShowDatacatYoursControl(id, hit)) {
+
+    const eligible = canShowDatacatYoursControl(id, hit);
+
+    const folderBtn = document.getElementById('datacatFolderBtn');
+    if (folderBtn) {
+        folderBtn.dataset.datacatId = id;
+        folderBtn.style.display = eligible ? '' : 'none';
+    }
+
+    if (!eligible) {
         btn.style.display = 'none';
         return;
     }
@@ -658,7 +696,15 @@ function renderGrid(characters, append = false) {
         filtered = filtered.filter(c => !isCharPossibleMatchObj(c));
     }
     if (datacatFilterOnlyYours) {
-        filtered = filtered.filter(c => isDatacatYoursFilteredHit(c));
+        // isDatacatYoursFilteredHit relies on the "saved" flags (isCollected etc.)
+        // that fetchDatacatYoursCharacters forcibly stamps on every hit ('all').
+        // fetchDatacatFolderCharacters (the 'main'/folder routes) proxies DataCat's
+        // raw /api/characters?mainOnly=1|folderId=X response and does NOT stamp
+        // those flags, so re-checking them here would wrongly drop results the
+        // server already scoped correctly. Skip the client-side re-check in that case.
+        if (datacatYoursFolderSel === 'all') {
+            filtered = filtered.filter(c => isDatacatYoursFilteredHit(c));
+        }
     }
     if (datacatFilterHideJanitor) {
         filtered = filtered.filter(c => getSourceKind(c) !== 'janitor');
@@ -845,13 +891,17 @@ async function loadCharacters(append = false) {
                 }
             }
         } else if (datacatFilterOnlyYours) {
-            const data = await fetchDatacatYoursCharacters({
+            const common = {
                 limit: PAGE_SIZE,
                 offset: datacatCurrentOffset,
                 tagIds: [...datacatActiveTagIds],
-            });
+            };
+            const folderOptions = buildDatacatYoursFolderFetchOptions(datacatYoursFolderSel, common);
+            const data = folderOptions
+                ? await fetchDatacatFolderCharacters(folderOptions)
+                : await fetchDatacatYoursCharacters(common);
             list = data?.characters || [];
-            total = data?.totalCount || 0;
+            total = data?.count ?? data?.totalCount ?? list.length;
         } else {
             const tagIds = [...datacatActiveTagIds];
             const parsed = parseSortMode(datacatSortMode);
@@ -3519,6 +3569,7 @@ function cleanupDatacatCharModal() {
 }
 
 function closePreviewModal() {
+    closeDatacatFolderPicker();
     datacatDetailFetchToken++;
     datacatDetailFetchPromise = null;
     cleanupDatacatCharModal();
@@ -3720,6 +3771,35 @@ function updateDatacatFiltersButtonState() {
         : '<i class="fa-solid fa-sliders"></i> <span>Features</span>';
 }
 
+function renderDatacatYoursFolderOptions() {
+    const select = document.getElementById('datacatYoursFolderSelect');
+    if (!select) return;
+    datacatYoursFolderSel = normalizeDatacatYoursFolderSelection(datacatYoursFolderSel, datacatYoursFoldersCache);
+    select.innerHTML = '<option value="all">All Yours</option><option value="main">Main only</option>'
+        + datacatYoursFoldersCache.map(folder => '<option value="' + escapeHtml(String(folder.id)) + '">' + escapeHtml(folder.title || 'Untitled folder') + '</option>').join('');
+    select.value = datacatYoursFolderSel;
+    select._customSelect?.refresh?.();
+}
+function updateDatacatYoursFolderBar() {
+    document.getElementById('datacatYoursFolderBar')?.classList.toggle('hidden', !datacatFilterOnlyYours);
+}
+async function loadDatacatYoursFolders() {
+    try {
+        const res = await window.datacatGetSettingsFolders?.();
+        if (!res?.ok) throw new Error(res?.error || 'Could not load DataCat folders');
+        datacatYoursFoldersCache = Array.isArray(res.folders) ? res.folders : [];
+    } catch (err) {
+        datacatYoursFoldersCache = [];
+        debugLog('[DatacatBrowse] Folder sub-filter list unavailable:', err?.message || err);
+    }
+    renderDatacatYoursFolderOptions();
+}
+function resetDatacatYoursPagination() {
+    datacatCurrentOffset = 0;
+    datacatFreshLimit24 = 80;
+    datacatFreshLimitWeek = 20;
+}
+
 // ========================================
 // EVENT WIRING
 // ========================================
@@ -3744,6 +3824,13 @@ function initDatacatView() {
         creatorSortEl.value = datacatCreatorSortMode;
         CoreAPI.initCustomSelect?.(creatorSortEl);
     }
+
+    const yoursFolderSelect = document.getElementById('datacatYoursFolderSelect');
+    if (yoursFolderSelect) {
+        CoreAPI.initCustomSelect?.(yoursFolderSelect);
+        renderDatacatYoursFolderOptions();
+    }
+    updateDatacatYoursFolderBar();
 
     // Grid card click --> open preview (delegation)
     const grid = document.getElementById('datacatGrid');
@@ -3913,17 +4000,28 @@ function initDatacatView() {
         document.getElementById(id)?.addEventListener('change', (e) => {
             setter(e.target.checked);
             updateDatacatFiltersButtonState();
-            if (datacatViewMode === 'following') {
-                renderFollowing();
-            } else if (id === 'datacatFilterOnlyYours') {
-                datacatCurrentOffset = 0;
-                datacatFreshLimit24 = 80;
-                datacatFreshLimitWeek = 20;
-                loadCharacters(false);
-            } else {
-                renderGrid(datacatCharacters, false);
+            if (id === 'datacatFilterOnlyYours') {
+                if (e.target.checked) void loadDatacatYoursFolders();
+                else {
+                    datacatYoursFolderSel = 'all';
+                    renderDatacatYoursFolderOptions();
+                }
+                updateDatacatYoursFolderBar();
             }
+            if (datacatViewMode === 'following') renderFollowing();
+            else if (id === 'datacatFilterOnlyYours') {
+                resetDatacatYoursPagination();
+                loadCharacters(false);
+            } else renderGrid(datacatCharacters, false);
         });
+    });
+
+    on('datacatYoursFolderSelect', 'change', () => {
+        const select = document.getElementById('datacatYoursFolderSelect');
+        if (!select || !datacatFilterOnlyYours) return;
+        datacatYoursFolderSel = normalizeDatacatYoursFolderSelection(select.value, datacatYoursFoldersCache);
+        resetDatacatYoursPagination();
+        loadCharacters(false);
     });
 
     // Sort mode
@@ -4160,6 +4258,31 @@ function ensureModalEventsAttached() {
             || datacatSelectedChar
         ) : null;
         toggleDatacatYours(charId, hit);
+    });
+
+    initDatacatFolderPicker({
+        getMainSaved: (id) => getDatacatYoursState(id, findDatacatHitOrSelected(id)),
+        toggleMain: (id) => toggleDatacatYours(id, findDatacatHitOrSelected(id)),
+    });
+
+    on('datacatFolderBtn', 'click', () => {
+        const btn = document.getElementById('datacatFolderBtn');
+        const charId = btn?.dataset?.datacatId;
+        if (!charId) return;
+        const hit = findDatacatHitOrSelected(charId);
+        if (!isDatacatYoursSyncEnabled()) {
+            showToast('Sign in to DataCat in Settings to use folders', 'warning');
+            return;
+        }
+        if (!canShowDatacatYoursControl(charId, hit)) {
+            showToast('Extract this character first; DataCat folders hold extracted account characters.', 'info');
+            return;
+        }
+        openDatacatFolderPicker({
+            anchor: btn,
+            characterId: charId,
+            characterName: hit?.name || 'character',
+        });
     });
 
     const modalOverlay = document.getElementById('datacatCharModal');
@@ -4515,6 +4638,14 @@ const datacatBrowseView = new (class DatacatBrowseView extends BrowseView {
                     </div>
                 </div>
 
+                <div id="datacatYoursFolderBar" class="datacat-yours-folder-bar hidden">
+                    <span class="datacat-yours-folder-label"><i class="fa-solid fa-folder-open"></i> Yours folder</span>
+                    <select id="datacatYoursFolderSelect" class="glass-select cl-select-fluid" title="Filter DataCat Yours by folder">
+                        <option value="all">All Yours</option>
+                        <option value="main">Main only</option>
+                    </select>
+                </div>
+
                 <!-- Results Grid -->
                 <div id="datacatGrid" class="browse-grid"></div>
 
@@ -4570,6 +4701,9 @@ const datacatBrowseView = new (class DatacatBrowseView extends BrowseView {
                 <div class="modal-controls">
                     <button id="datacatYoursBtn" class="action-btn secondary datacat-yours-modal-btn" title="Save to DataCat Yours" style="display: none;">
                         <i class="fa-regular fa-star"></i> Save
+                    </button>
+                    <button id="datacatFolderBtn" class="action-btn secondary datacat-folder-modal-btn" title="Save to folder" style="display: none;">
+                        <i class="fa-solid fa-folder-plus"></i> Folder
                     </button>
                     <a id="datacatOpenInBrowserBtn" href="#" target="_blank" class="action-btn secondary" title="Open on DataCat">
                         <i class="fa-solid fa-external-link"></i> Open

@@ -2710,6 +2710,18 @@ https://jannyai.com/characters/uuid_slug
                                     </div>
                                 </div>
                                 <div class="settings-group">
+                                    <div class="settings-group-title"><i class="fa-solid fa-folder-tree"></i> Folder Order</div>
+                                    <div class="settings-row">
+                                        <span class="settings-hint">Reorder how your DataCat folders appear in Character Library (folder picker and Yours filter). Client-side only &mdash; DataCat doesn't support folder ordering yet.</span>
+                                    </div>
+                                    <div class="settings-row">
+                                        <button id="datacatFolderOrderLoadBtn" class="settings-action-btn"><i class="fa-solid fa-rotate"></i> Load Folders</button>
+                                        <button id="datacatFolderOrderResetBtn" class="settings-action-btn" style="display: none;"><i class="fa-solid fa-arrow-rotate-left"></i> Reset Order</button>
+                                    </div>
+                                    <div id="datacatFolderOrderStatus" class="settings-row" style="display: none;"></div>
+                                    <div id="datacatFolderOrderList" class="settings-row datacat-folder-order-list"></div>
+                                </div>
+                                <div class="settings-group">
                                     <div class="settings-group-title"><i class="fa-solid fa-cloud-arrow-down"></i> Extraction</div>
                                     <div class="settings-row">
                                         <label class="settings-checkbox-label">
