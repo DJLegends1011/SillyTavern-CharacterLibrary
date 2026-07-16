@@ -1797,6 +1797,30 @@ html.cl-mobile .settings-input-group textarea {
     flex-basis: 100% !important;
     font-size: var(--mobile-input-size) !important;
 }
+
+/* Android companion settings are mobile-only and keep touch controls usable at narrow widths. */
+html.cl-mobile .android-webview-bridge-settings .settings-group-title {
+    flex-wrap: wrap;
+}
+html.cl-mobile .android-webview-bridge-settings .settings-hint {
+    overflow-wrap: anywhere;
+}
+html.cl-mobile .android-webview-bridge-settings .settings-input-group {
+    width: 100%;
+}
+html.cl-mobile .android-webview-bridge-settings .android-bridge-key-group {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) var(--touch-target-min);
+    gap: var(--space-sm);
+}
+html.cl-mobile .android-webview-bridge-settings .android-bridge-key-group input {
+    min-width: 0;
+    width: 100% !important;
+    flex-basis: auto !important;
+}
+html.cl-mobile .android-webview-bridge-settings #testDatacatAndroidBridgeBtn {
+    width: 100%;
+}
 html.cl-mobile .settings-verify-btn {
     min-width: var(--touch-target-min) !important;
     min-height: var(--touch-target-min) !important;
@@ -1857,6 +1881,7 @@ html.cl-mobile .botbooru-suggest-anchor .provider-exclude-tags-input {
 
 /* Platform-specific settings visibility */
 html.cl-mobile .settings-row[data-platform="desktop"] { display: none !important; }
+html.cl-mobile .settings-group[data-platform="desktop"] { display: none !important; }
 
 /* ---------------------------------------------------
    ALL CONFIRM MODALS – holistic mobile treatment

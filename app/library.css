@@ -8294,6 +8294,7 @@ details.settings-provider-section > .settings-provider-body {
 
 /* @canonical settings-platform-visibility */
 html:not(.cl-mobile) .settings-row[data-platform="mobile"] { display: none !important; }
+html:not(.cl-mobile) .settings-group[data-platform="mobile"] { display: none !important; }
 
 /* @canonical settings-platform-badge */
 .settings-platform-badge {

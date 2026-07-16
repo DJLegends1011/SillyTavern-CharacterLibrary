@@ -2697,20 +2697,20 @@ https://jannyai.com/characters/uuid_slug
                                         <span id="janitoraiTokenStatus" class="settings-status-badge inactive"><i class="fa-solid fa-circle"></i> Not logged in</span>
                                     </div>
                                 </div>
-                                <div class="settings-group">
+                                <div class="settings-group android-webview-bridge-settings" data-platform="mobile">
                                     <div class="settings-group-title"><i class="fa-brands fa-android"></i> Android WebView Bridge <span class="settings-provider-badge">EXPERIMENTAL</span></div>
                                     <div class="settings-row">
                                         <span class="settings-hint">Optional Termux companion for Trending/Popular. The APK keeps JanitorAI login and Cloudflare state inside Android WebView, then returns only the Hampter JSON to Character Library. Install the prototype from <code>extras/android-webview-bridge</code>, log in inside it, and leave it open while browsing. The pairing key prevents other pages from using the local bridge.</span>
                                     </div>
                                     <div class="settings-row">
                                         <label>Bridge URL:</label>
-                                        <div class="settings-input-group">
+                                        <div class="settings-input-group android-bridge-url-group">
                                             <input type="url" id="settingsDatacatAndroidBridgeUrl" class="glass-input" placeholder="http://127.0.0.1:17863" autocomplete="off">
                                         </div>
                                     </div>
                                     <div class="settings-row">
                                         <label>Pairing key:</label>
-                                        <div class="settings-input-group">
+                                        <div class="settings-input-group android-bridge-key-group">
                                             <input type="password" id="settingsDatacatAndroidBridgeKey" class="glass-input" placeholder="Paste the key shown in the APK" autocomplete="off" spellcheck="false" data-sensitive="true">
                                             <button id="toggleDatacatAndroidBridgeKeyVisibility" class="glass-btn icon-only" title="Show/Hide">
                                                 <i class="fa-solid fa-eye"></i>
