@@ -24,6 +24,14 @@ The default output is `CharacterLibraryBridge-debug.apk` beside the build script
 
 The bridge is loopback-only and requires its random key on every non-preflight request. Only the fixed JanitorAI Hampter operation is implemented; it is not an open URL proxy.
 
+## Diagnostics
+
+- The APK shows the latest sanitized bridge event in its **Last request** line. If it remains `none yet`, Chrome did not reach the loopback server.
+- Enable **Settings -> Developer -> Debug Mode** in Character Library to print `[AndroidBridge]` request IDs, origins, response codes, and network failures in the browser console.
+- With Android platform tools installed, run `adb logcat -s CLBridge` for the APK's detailed lifecycle and request log.
+
+Pairing keys, cookies, request bodies, search text, and JanitorAI response bodies are never logged.
+
 ## Prototype limitations
 
 - The APK must stay open and on a `janitorai.com` page while Character Library requests data.

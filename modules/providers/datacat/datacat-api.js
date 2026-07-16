@@ -989,19 +989,41 @@ function normalizeAndroidBridgeUrl(rawUrl) {
     return parsed.origin;
 }
 
+function createAndroidBridgeRequestId() {
+    return globalThis.crypto?.randomUUID?.().slice(0, 8)
+        || Math.random().toString(36).slice(2, 10);
+}
+
 async function fetchViaAndroidBridge(bridgeUrl, bridgeKey, opts) {
     const origin = normalizeAndroidBridgeUrl(bridgeUrl);
+    const requestId = createAndroidBridgeRequestId();
+    const diagnosticContext = {
+        requestId,
+        targetOrigin: origin,
+        sort: opts.sort,
+        page: opts.page,
+        nsfw: opts.nsfw,
+        searchLength: String(opts.search || '').length,
+    };
+    CoreAPI.debugLog?.('[AndroidBridge] Hampter request starting', diagnosticContext);
     let response;
     try {
         response = await fetch(`${origin}/v1/janitor/hampter`, {
             method: 'POST',
+            cache: 'no-store',
             headers: {
                 'Content-Type': 'application/json',
                 'X-CL-Bridge-Key': bridgeKey,
+                'X-CL-Bridge-Request-Id': requestId,
             },
             body: JSON.stringify({ sort: opts.sort, page: opts.page, search: opts.search, nsfw: opts.nsfw }),
         });
     } catch (cause) {
+        CoreAPI.debugLog?.('[AndroidBridge] Hampter request received no HTTP response', {
+            ...diagnosticContext,
+            errorName: cause?.name || 'Error',
+            errorMessage: cause?.message || String(cause),
+        });
         const err = new Error('Android WebView bridge is not reachable');
         err.code = 'ANDROID_BRIDGE_UNAVAILABLE';
         err.cause = cause;
@@ -1010,6 +1032,13 @@ async function fetchViaAndroidBridge(bridgeUrl, bridgeKey, opts) {
 
     const contentType = response.headers.get('content-type') || '';
     const text = await response.text();
+    CoreAPI.debugLog?.('[AndroidBridge] Hampter response received', {
+        requestId,
+        status: response.status,
+        ok: response.ok,
+        contentType,
+        bodyBytes: new TextEncoder().encode(text).byteLength,
+    });
     let payload = null;
     if (contentType.includes('json') || text.trim().startsWith('{')) {
         try { payload = JSON.parse(text); } catch { /* handled below */ }

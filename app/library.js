@@ -2660,13 +2660,35 @@ function setupSettingsModal() {
             setSetting('datacatAndroidBridgeUrl', origin);
             setSetting('datacatAndroidBridgeKey', key);
             if (datacatAndroidBridgeUrlInput) datacatAndroidBridgeUrlInput.value = origin;
+            const requestId = globalThis.crypto?.randomUUID?.().slice(0, 8)
+                || Math.random().toString(36).slice(2, 10);
+            const diagnosticContext = {
+                requestId,
+                pageOrigin: location.origin,
+                targetOrigin: origin,
+                secureContext: globalThis.isSecureContext,
+                online: navigator.onLine,
+            };
+            debugLog('[AndroidBridge] Status test starting', diagnosticContext);
             testDatacatAndroidBridgeBtn.disabled = true;
             if (datacatAndroidBridgeStatus) {
                 datacatAndroidBridgeStatus.className = 'settings-status-badge inactive';
                 datacatAndroidBridgeStatus.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Testing...';
             }
             try {
-                const response = await fetch(`${origin}/v1/status`, { headers: { 'X-CL-Bridge-Key': key } });
+                const response = await fetch(`${origin}/v1/status`, {
+                    cache: 'no-store',
+                    headers: {
+                        'X-CL-Bridge-Key': key,
+                        'X-CL-Bridge-Request-Id': requestId,
+                    },
+                });
+                debugLog('[AndroidBridge] Status response received', {
+                    requestId,
+                    status: response.status,
+                    ok: response.ok,
+                    contentType: response.headers.get('content-type') || '',
+                });
                 const payload = await response.json().catch(() => null);
                 if (!response.ok || !payload?.ok) throw new Error(payload?.error || `HTTP ${response.status}`);
                 const ready = payload.janitorReady === true;
@@ -2678,11 +2700,22 @@ function setupSettingsModal() {
                 }
                 showToast(ready ? 'Android bridge connected and ready' : 'Bridge connected; finish opening JanitorAI in the APK', ready ? 'success' : 'warning');
             } catch (err) {
+                const noResponse = err instanceof TypeError && /fetch|network/i.test(err.message || '');
+                debugLog('[AndroidBridge] Status test failed', {
+                    ...diagnosticContext,
+                    errorName: err?.name || 'Error',
+                    errorMessage: err?.message || String(err),
+                    noResponse,
+                });
                 if (datacatAndroidBridgeStatus) {
                     datacatAndroidBridgeStatus.className = 'settings-status-badge inactive';
-                    datacatAndroidBridgeStatus.innerHTML = '<i class="fa-solid fa-circle-xmark"></i> Failed';
+                    datacatAndroidBridgeStatus.innerHTML = noResponse
+                        ? '<i class="fa-solid fa-circle-xmark"></i> No response - see APK'
+                        : '<i class="fa-solid fa-circle-xmark"></i> Failed';
                 }
-                showToast(`Android bridge test failed: ${err.message}`, 'error');
+                showToast(noResponse
+                    ? "Android bridge gave no HTTP response. Check the APK's Last request line and Character Library Debug Mode console."
+                    : `Android bridge test failed: ${err.message}`, 'error');
             } finally {
                 testDatacatAndroidBridgeBtn.disabled = false;
             }

@@ -11,6 +11,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Base64;
+import android.util.Log;
 import android.view.View;
 import android.view.ViewGroup;
 import android.webkit.CookieManager;
@@ -31,6 +32,7 @@ import java.util.Locale;
 import java.util.UUID;
 
 public final class MainActivity extends Activity {
+    private static final String LOG_TAG = "CLBridge";
     static final int BRIDGE_PORT = 17863;
     private static final String JANITOR_ORIGIN = "https://janitorai.com";
     private static final long FETCH_TIMEOUT_MS = 45_000L;
@@ -39,6 +41,7 @@ public final class MainActivity extends Activity {
     private WebView webView;
     private TextView pageStatus;
     private TextView bridgeStatus;
+    private TextView requestStatus;
     private LocalBridgeServer bridgeServer;
     private String bridgeKey;
 
@@ -111,8 +114,11 @@ public final class MainActivity extends Activity {
     }
 
     void fetchHampter(String sort, int page, String search, boolean nsfw, FetchCallback callback) {
+        Log.i(LOG_TAG, "WebView Hampter fetch requested: sort=" + sort + ", page=" + page
+            + ", nsfw=" + nsfw + ", searchLength=" + search.length());
         mainHandler.post(() -> {
             if (!isJanitorReady()) {
+                Log.w(LOG_TAG, "WebView Hampter fetch rejected: JanitorAI page is not ready");
                 callback.complete(FetchResult.error(409,
                     "Open JanitorAI in the bridge and finish logging in before retrying."));
                 return;
@@ -144,6 +150,7 @@ public final class MainActivity extends Activity {
 
     private void pollFetchResult(String requestId, long deadline, FetchCallback callback) {
         if (System.currentTimeMillis() >= deadline) {
+            Log.w(LOG_TAG, "WebView Hampter fetch timed out");
             callback.complete(FetchResult.error(504, "Timed out waiting for the JanitorAI WebView request."));
             return;
         }
@@ -159,6 +166,11 @@ public final class MainActivity extends Activity {
             }
             try {
                 JSONObject result = new JSONObject(decoded);
+                Log.i(LOG_TAG, "WebView Hampter fetch completed: status="
+                    + result.optInt("status", 0) + ", contentType="
+                    + result.optString("contentType", "") + ", bodyChars="
+                    + result.optString("body", "").length() + ", hasError="
+                    + !result.optString("error", "").isEmpty());
                 callback.complete(new FetchResult(
                     result.optInt("status", 0),
                     result.optString("contentType", ""),
@@ -166,6 +178,7 @@ public final class MainActivity extends Activity {
                     result.optString("error", "")
                 ));
             } catch (Exception e) {
+                Log.e(LOG_TAG, "Could not decode the WebView response", e);
                 callback.complete(FetchResult.error(502, "Could not decode the WebView response."));
             }
         });
@@ -228,6 +241,9 @@ public final class MainActivity extends Activity {
         bridgeStatus = text("Bridge starting...", 12, Color.rgb(245, 166, 35));
         bridgeStatus.setPadding(dp(14), 0, dp(14), dp(2));
         root.addView(bridgeStatus);
+        requestStatus = text("Last request: none yet", 12, Color.LTGRAY);
+        requestStatus.setPadding(dp(14), 0, dp(14), dp(2));
+        root.addView(requestStatus);
 
         pageStatus = text("JanitorAI page loading...", 12, Color.LTGRAY);
         pageStatus.setPadding(dp(14), 0, dp(14), dp(6));
@@ -256,6 +272,8 @@ public final class MainActivity extends Activity {
         webView.setWebViewClient(new WebViewClient() {
             @Override
             public void onPageFinished(WebView view, String url) {
+                Log.i(LOG_TAG, "WebView page finished: host=" + safeHost(url)
+                    + ", janitorReady=" + isJanitorUrl(url));
                 pageStatus.setText(isJanitorUrl(url)
                     ? "JanitorAI context ready. Log in if needed, then test from Character Library."
                     : "Return to JanitorAI before Character Library sends a request.");
@@ -271,7 +289,24 @@ public final class MainActivity extends Activity {
         bridgeServer.start((ok, message) -> mainHandler.post(() -> {
             bridgeStatus.setText(message);
             bridgeStatus.setTextColor(ok ? Color.rgb(129, 199, 132) : Color.rgb(239, 83, 80));
+            Log.i(LOG_TAG, "Bridge startup result: ok=" + ok + ", message=" + message);
         }));
+    }
+
+    void reportBridgeRequest(String message, boolean error) {
+        if (error) Log.w(LOG_TAG, message);
+        else Log.i(LOG_TAG, message);
+        mainHandler.post(() -> {
+            if (requestStatus == null) return;
+            requestStatus.setText("Last request: " + message);
+            requestStatus.setTextColor(error
+                ? Color.rgb(239, 83, 80) : Color.rgb(129, 199, 132));
+        });
+    }
+
+    void reportBridgeException(String message, Throwable error) {
+        Log.e(LOG_TAG, message, error);
+        reportBridgeRequest(message + " (" + error.getClass().getSimpleName() + ")", true);
     }
 
     private String loadOrCreateBridgeKey() {
@@ -293,6 +328,16 @@ public final class MainActivity extends Activity {
                 || host.toLowerCase(Locale.ROOT).endsWith(".janitorai.com"));
         } catch (Exception ignored) {
             return false;
+        }
+    }
+
+    private static String safeHost(String value) {
+        if (value == null || value.isEmpty()) return "(none)";
+        try {
+            String host = Uri.parse(value).getHost();
+            return host == null || host.isEmpty() ? "(unknown)" : host;
+        } catch (Exception ignored) {
+            return "(invalid)";
         }
     }
 

@@ -19,6 +19,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 final class LocalBridgeServer {
@@ -32,6 +33,7 @@ final class LocalBridgeServer {
     private final MainActivity activity;
     private final int port;
     private final ExecutorService clients = Executors.newCachedThreadPool();
+    private final AtomicLong requestSequence = new AtomicLong();
     private volatile boolean running;
     private ServerSocket serverSocket;
 
@@ -67,25 +69,34 @@ final class LocalBridgeServer {
     }
 
     private void handle(Socket socket) {
+        String requestLabel = "request";
         try (Socket client = socket;
              InputStream input = new BufferedInputStream(client.getInputStream());
              BufferedOutputStream output = new BufferedOutputStream(client.getOutputStream())) {
             client.setSoTimeout(SOCKET_TIMEOUT_MS);
             Request request = readRequest(input);
             if (request == null) {
+                activity.reportBridgeRequest("Malformed HTTP request", true);
                 writeJson(output, 400, "Bad Request", "", errorBody("Malformed HTTP request."));
                 return;
             }
 
             String origin = request.headers.getOrDefault("origin", "");
+            String suppliedRequestId = request.headers.getOrDefault("x-cl-bridge-request-id", "");
+            String requestId = safeRequestId(suppliedRequestId);
+            if (requestId.isEmpty()) requestId = String.valueOf(requestSequence.incrementAndGet());
+            requestLabel = "#" + requestId + " " + request.method + " " + request.path;
+            activity.reportBridgeRequest(requestLabel + " received from " + safeOrigin(origin), false);
             if ("OPTIONS".equals(request.method)) {
                 write(output, 204, "No Content", origin, "text/plain; charset=utf-8", new byte[0]);
+                activity.reportBridgeRequest(requestLabel + " preflight allowed", false);
                 return;
             }
 
             String suppliedKey = request.headers.getOrDefault("x-cl-bridge-key", "");
             if (!constantTimeEquals(activity.getBridgeKey(), suppliedKey)) {
                 writeJson(output, 401, "Unauthorized", origin, errorBody("Invalid bridge key."));
+                activity.reportBridgeRequest(requestLabel + " rejected: invalid pairing key", true);
                 return;
             }
 
@@ -96,21 +107,25 @@ final class LocalBridgeServer {
                 status.put("janitorReady", activity.isJanitorReady());
                 status.put("currentUrl", activity.getCurrentPageUrl());
                 writeJson(output, 200, "OK", origin, status.toString());
+                activity.reportBridgeRequest(requestLabel + " responded 200 (janitorReady="
+                    + activity.isJanitorReady() + ")", false);
                 return;
             }
 
             if ("POST".equals(request.method) && "/v1/janitor/hampter".equals(request.path)) {
-                handleHampter(output, origin, request.body);
+                handleHampter(output, origin, request.body, requestLabel);
                 return;
             }
 
             writeJson(output, 404, "Not Found", origin, errorBody("Unknown bridge route."));
-        } catch (Exception ignored) {
-            // The browser will surface a network failure if the socket disappears.
+            activity.reportBridgeRequest(requestLabel + " responded 404", true);
+        } catch (Exception error) {
+            activity.reportBridgeException(requestLabel + " socket failure", error);
         }
     }
 
-    private void handleHampter(BufferedOutputStream output, String origin, String body) throws Exception {
+    private void handleHampter(BufferedOutputStream output, String origin, String body,
+                               String requestLabel) throws Exception {
         JSONObject input;
         try { input = new JSONObject(body.isEmpty() ? "{}" : body); }
         catch (Exception e) {
@@ -134,6 +149,8 @@ final class LocalBridgeServer {
             return;
         }
         boolean nsfw = input.optBoolean("nsfw", true);
+        activity.reportBridgeRequest(requestLabel + " dispatching WebView fetch (sort=" + sort
+            + ", page=" + page + ", nsfw=" + nsfw + ", searchLength=" + search.length() + ")", false);
 
         CountDownLatch latch = new CountDownLatch(1);
         AtomicReference<MainActivity.FetchResult> resultRef = new AtomicReference<>();
@@ -143,15 +160,18 @@ final class LocalBridgeServer {
         });
 
         if (!latch.await(48, TimeUnit.SECONDS)) {
+            activity.reportBridgeRequest(requestLabel + " timed out waiting for WebView", true);
             writeJson(output, 504, "Gateway Timeout", origin, errorBody("WebView request timed out."));
             return;
         }
         MainActivity.FetchResult result = resultRef.get();
         if (result == null) {
+            activity.reportBridgeRequest(requestLabel + " failed: WebView returned no result", true);
             writeJson(output, 502, "Bad Gateway", origin, errorBody("WebView returned no result."));
             return;
         }
         if (!result.error.isEmpty()) {
+            activity.reportBridgeRequest(requestLabel + " WebView error (status=" + result.status + ")", true);
             writeJson(output, result.status > 0 ? result.status : 502, "Bridge Error", origin,
                 errorBody(result.error));
             return;
@@ -161,6 +181,8 @@ final class LocalBridgeServer {
             ? "application/octet-stream" : result.contentType;
         write(output, status, reasonFor(status), origin, contentType,
             result.body.getBytes(StandardCharsets.UTF_8));
+        activity.reportBridgeRequest(requestLabel + " responded " + status + " (contentType="
+            + contentType + ", bodyChars=" + result.body.length() + ")", status < 200 || status >= 300);
     }
 
     private static Request readRequest(InputStream input) throws IOException {
@@ -222,7 +244,7 @@ final class LocalBridgeServer {
             + "Cache-Control: no-store\r\n"
             + "Access-Control-Allow-Origin: " + allowedOrigin + "\r\n"
             + "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n"
-            + "Access-Control-Allow-Headers: Content-Type, X-CL-Bridge-Key\r\n"
+            + "Access-Control-Allow-Headers: Content-Type, X-CL-Bridge-Key, X-CL-Bridge-Request-Id\r\n"
             + "Access-Control-Allow-Private-Network: true\r\n"
             + "Vary: Origin\r\n"
             + "Connection: close\r\n\r\n";
@@ -233,6 +255,18 @@ final class LocalBridgeServer {
 
     private static boolean isWebOrigin(String origin) {
         return origin != null && (origin.startsWith("http://") || origin.startsWith("https://"));
+    }
+
+    private static String safeOrigin(String origin) {
+        if (origin == null || origin.isEmpty()) return "(none)";
+        if (!isWebOrigin(origin) || origin.length() > 200) return "(invalid)";
+        return origin.replaceAll("[^A-Za-z0-9:/._-]", "?");
+    }
+
+    private static String safeRequestId(String value) {
+        if (value == null) return "";
+        String cleaned = value.replaceAll("[^A-Za-z0-9_-]", "");
+        return cleaned.length() > 24 ? cleaned.substring(0, 24) : cleaned;
     }
 
     private static String errorBody(String message) {
