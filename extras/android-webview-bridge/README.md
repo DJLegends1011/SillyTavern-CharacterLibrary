@@ -20,11 +20,11 @@ The default output is `CharacterLibraryBridge-debug.apk` beside the build script
 4. Open SillyTavern through `http://127.0.0.1` or `http://localhost` on the same Android device.
 5. In Character Library, open **Settings → Online → DataCat → Android WebView Bridge**.
 6. Enter `http://127.0.0.1:17863`, paste the bridge key, and press **Test Bridge**.
-7. In DataCat, select **Trending** or **Popular**.
+7. In DataCat, select **Popular**, **Latest**, **Trending**, **Trending 24h**, or **Relevance** from the JanitorAI (Hampter) group.
 
 The bridge is loopback-only and requires its random key on every non-preflight request. Only the fixed JanitorAI Hampter operation is implemented; it is not an open URL proxy.
 
-When signed in inside the APK, the bridge reads JanitorAI's Supabase session cookie internally and attaches its access token to same-origin Hampter requests. This unlocks Trending/Popular page 2+ without using Character Library's manual **JanitorAI Login (Hampter pagination)** cookie field. Neither the cookie nor token leaves the APK.
+When signed in inside the APK, the bridge reads JanitorAI's Supabase session cookie internally and attaches its access token to same-origin Hampter requests. This unlocks authenticated Hampter pagination without using Character Library's manual **JanitorAI Login (Hampter pagination)** cookie field. Neither the cookie nor token leaves the APK.
 
 Transient Android WebView network rejections are retried twice with short backoff. If all three attempts fail during pagination, Character Library keeps the cards already loaded and rolls the page number back so **Load More** retries the same page.
 

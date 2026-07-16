@@ -1245,6 +1245,9 @@ const JANNY_SORT_OPTIONS = [
 const HAMPTER_SORT_OPTIONS = [
     { value: 'hampter_trending', label: '🔥 Trending' },
     { value: 'hampter_popular', label: '👑 Popular' },
+    { value: 'hampter_latest', label: '\u{1F195} Latest' },
+    { value: 'hampter_trending24', label: '\u{1F55B} Trending 24h' },
+    { value: 'hampter_relevance', label: '\u{1F50D} Relevance' },
 ];
 
 const SAUCEPAN_SORT_OPTIONS = [

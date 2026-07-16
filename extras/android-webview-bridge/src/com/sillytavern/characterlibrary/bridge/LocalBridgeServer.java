@@ -134,7 +134,11 @@ final class LocalBridgeServer {
         }
 
         String sort = input.optString("sort", "trending");
-        if (!"trending".equals(sort) && !"popular".equals(sort)) {
+        if (!"trending".equals(sort)
+                && !"popular".equals(sort)
+                && !"latest".equals(sort)
+                && !"trending24".equals(sort)
+                && !"relevance".equals(sort)) {
             writeJson(output, 400, "Bad Request", origin, errorBody("Unsupported Hampter sort."));
             return;
         }

@@ -1152,9 +1152,9 @@ async function fetchViaFlareSolverr(flareUrl, targetUrl, sessionId = '') {
 }
 
 /**
- * Fetch characters from JanitorAI's Hampter API (trending/popular sort).
+ * Fetch characters from JanitorAI's Hampter API.
  * @param {Object} opts
- * @param {string} [opts.sort='trending'] - 'trending' or 'popular'
+ * @param {string} [opts.sort='trending'] - 'popular' | 'latest' | 'trending' | 'trending24' | 'relevance'
  * @param {number} [opts.page=1]
  * @param {string} [opts.search='']
  * @param {boolean} [opts.nsfw=true] - false adds mode=sfw
