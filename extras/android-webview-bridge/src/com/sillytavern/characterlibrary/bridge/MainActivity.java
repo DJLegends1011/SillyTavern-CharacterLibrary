@@ -44,6 +44,7 @@ public final class MainActivity extends Activity {
     private TextView requestStatus;
     private LocalBridgeServer bridgeServer;
     private String bridgeKey;
+    private volatile String currentPageUrl = "";
 
     interface FetchCallback {
         void complete(FetchResult result);
@@ -106,7 +107,7 @@ public final class MainActivity extends Activity {
     }
 
     String getCurrentPageUrl() {
-        return webView == null || webView.getUrl() == null ? "" : webView.getUrl();
+        return currentPageUrl;
     }
 
     boolean isJanitorReady() {
@@ -212,8 +213,7 @@ public final class MainActivity extends Activity {
         LinearLayout keyRow = new LinearLayout(this);
         keyRow.setOrientation(LinearLayout.HORIZONTAL);
         keyRow.setPadding(dp(14), dp(4), dp(14), dp(6));
-        TextView keyView = text(bridgeKey, 12, Color.rgb(138, 180, 248));
-        keyView.setTextIsSelectable(true);
+        TextView keyView = text("Pairing key hidden - use Copy key", 12, Color.rgb(138, 180, 248));
         keyRow.addView(keyView, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         Button copy = new Button(this);
         copy.setText("Copy key");
@@ -272,6 +272,7 @@ public final class MainActivity extends Activity {
         webView.setWebViewClient(new WebViewClient() {
             @Override
             public void onPageFinished(WebView view, String url) {
+                currentPageUrl = url == null ? "" : url;
                 Log.i(LOG_TAG, "WebView page finished: host=" + safeHost(url)
                     + ", janitorReady=" + isJanitorUrl(url));
                 pageStatus.setText(isJanitorUrl(url)

@@ -16,7 +16,7 @@ The default output is `CharacterLibraryBridge-debug.apk` beside the build script
 
 1. Install and open the APK.
 2. Log into JanitorAI in the embedded page and leave the bridge open.
-3. Copy the bridge key shown above the browser.
+3. Tap **Copy key** in the APK. The key stays hidden on screen to avoid accidental screenshot leaks.
 4. Open SillyTavern through `http://127.0.0.1` or `http://localhost` on the same Android device.
 5. In Character Library, open **Settings → Online → DataCat → Android WebView Bridge**.
 6. Enter `http://127.0.0.1:17863`, paste the bridge key, and press **Test Bridge**.
