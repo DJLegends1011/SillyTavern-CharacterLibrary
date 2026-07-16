@@ -15,7 +15,7 @@ The default output is `CharacterLibraryBridge-debug.apk` beside the build script
 ## Test on the Android device running SillyTavern in Termux
 
 1. Install and open the APK.
-2. Log into JanitorAI in the embedded page and leave the bridge open.
+2. Log into JanitorAI in the embedded page, allow notifications, then return to Chrome.
 3. Tap **Copy key** in the APK. The key stays hidden on screen to avoid accidental screenshot leaks.
 4. Open SillyTavern through `http://127.0.0.1` or `http://localhost` on the same Android device.
 5. In Character Library, open **Settings → Online → DataCat → Android WebView Bridge**.
@@ -28,6 +28,12 @@ When signed in inside the APK, the bridge reads JanitorAI's Supabase session coo
 
 Transient Android WebView network rejections are retried twice with short backoff. If all three attempts fail during pagination, Character Library keeps the cards already loaded and rolls the page number back so **Load More** retries the same page.
 
+## Background operation
+
+The APK starts an Android foreground service and holds a partial wake lock while the bridge is active. Its persistent notification has a **Stop** action that closes the local server and removes the app task. Swiping the app away from Android's recent-apps screen also stops the service.
+
+This substantially reduces background suspension, but Android System WebView or device-specific battery management can still reject an occasional request. The existing retries and page rollback handle those failures without skipping pagination.
+
 ## Diagnostics
 
 - The APK shows the latest sanitized bridge event in its **Last request** line. If it remains `none yet`, Chrome did not reach the loopback server.
@@ -38,8 +44,8 @@ Pairing keys, cookies, request bodies, search text, and JanitorAI response bodie
 
 ## Prototype limitations
 
-- The APK must stay open and on a `janitorai.com` page while Character Library requests data.
+- The embedded WebView must remain on a `janitorai.com` page while Character Library requests data.
 - WebView and Chrome have separate cookie stores, so login must happen inside the APK.
-- Android may suspend the bridge when the app is backgrounded.
+- Device-specific battery managers can still suspend a foreground service; the notification makes its state visible.
 - Some Cloudflare configurations may still reject Android WebView.
 - A debug signing key is generated for every local build, so install updates may require uninstalling the prior debug APK first.

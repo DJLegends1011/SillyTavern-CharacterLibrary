@@ -1,12 +1,16 @@
 package com.sillytavern.characterlibrary.bridge;
 
+import android.Manifest;
 import android.app.Activity;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
+import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -27,6 +31,7 @@ import android.widget.Toast;
 import org.json.JSONObject;
 import org.json.JSONTokener;
 
+import java.lang.ref.WeakReference;
 import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
 import java.util.Locale;
@@ -38,6 +43,8 @@ public final class MainActivity extends Activity {
     static final int BRIDGE_PORT = 17863;
     private static final String JANITOR_ORIGIN = "https://janitorai.com";
     private static final long FETCH_TIMEOUT_MS = 45_000L;
+    private static final int NOTIFICATION_PERMISSION_REQUEST = 1001;
+    private static WeakReference<MainActivity> activeActivity = new WeakReference<>(null);
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private WebView webView;
@@ -73,10 +80,13 @@ public final class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        activeActivity = new WeakReference<>(this);
         bridgeKey = loadOrCreateBridgeKey();
         buildUi();
         configureWebView();
         startBridge();
+        startForegroundBridge();
+        requestNotificationPermission();
 
         if (savedInstanceState == null) {
             webView.loadUrl(JANITOR_ORIGIN + "/");
@@ -93,9 +103,26 @@ public final class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
-        if (bridgeServer != null) bridgeServer.close();
+        if (activeActivity.get() == this) activeActivity.clear();
+        if (bridgeServer != null) {
+            bridgeServer.close();
+            bridgeServer = null;
+        }
+        stopService(new Intent(this, BridgeForegroundService.class));
         if (webView != null) webView.destroy();
         super.onDestroy();
+    }
+
+    static void stopBridgeFromService() {
+        MainActivity activity = activeActivity.get();
+        if (activity == null) return;
+        activity.mainHandler.post(() -> {
+            if (activity.bridgeServer != null) {
+                activity.bridgeServer.close();
+                activity.bridgeServer = null;
+            }
+            activity.finishAndRemoveTask();
+        });
     }
 
     @Override
@@ -218,7 +245,7 @@ public final class MainActivity extends Activity {
         root.addView(title);
 
         TextView help = text(
-            "Log in normally below, then leave this app open while DataCat loads Trending or Popular.",
+            "Log in normally below, then return to Chrome. The bridge stays active until you use Stop in its notification.",
             13, Color.rgb(205, 209, 218));
         help.setPadding(dp(14), 0, dp(14), dp(8));
         root.addView(help);
@@ -305,6 +332,27 @@ public final class MainActivity extends Activity {
             bridgeStatus.setTextColor(ok ? Color.rgb(129, 199, 132) : Color.rgb(239, 83, 80));
             Log.i(LOG_TAG, "Bridge startup result: ok=" + ok + ", message=" + message);
         }));
+    }
+
+    private void startForegroundBridge() {
+        try {
+            startForegroundService(new Intent(this, BridgeForegroundService.class));
+            Log.i(LOG_TAG, "Foreground bridge service started");
+        } catch (RuntimeException error) {
+            Log.e(LOG_TAG, "Could not start foreground bridge service", error);
+            bridgeStatus.setText("Bridge started, but Android background mode failed");
+            bridgeStatus.setTextColor(Color.rgb(239, 83, 80));
+        }
+    }
+
+    private void requestNotificationPermission() {
+        if (Build.VERSION.SDK_INT >= 33
+                && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                    != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(
+                new String[] { Manifest.permission.POST_NOTIFICATIONS },
+                NOTIFICATION_PERMISSION_REQUEST);
+        }
     }
 
     void reportBridgeRequest(String message, boolean error) {
