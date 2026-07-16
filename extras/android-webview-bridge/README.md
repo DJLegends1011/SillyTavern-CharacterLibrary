@@ -26,6 +26,8 @@ The bridge is loopback-only and requires its random key on every non-preflight r
 
 When signed in inside the APK, the bridge reads JanitorAI's Supabase session cookie internally and attaches its access token to same-origin Hampter requests. This unlocks Trending/Popular page 2+ without using Character Library's manual **JanitorAI Login (Hampter pagination)** cookie field. Neither the cookie nor token leaves the APK.
 
+Transient Android WebView network rejections are retried twice with short backoff. If all three attempts fail during pagination, Character Library keeps the cards already loaded and rolls the page number back so **Load More** retries the same page.
+
 ## Diagnostics
 
 - The APK shows the latest sanitized bridge event in its **Last request** line. If it remains `none yet`, Chrome did not reach the loopback server.

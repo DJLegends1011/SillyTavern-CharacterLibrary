@@ -687,7 +687,9 @@ async function loadCharacters(append = false) {
         const isFlareSolverrError = err?.code === 'FLARESOLVERR_ERROR' && isHampterSortMode(datacatSortMode);
         const isHampterLoginGated = err?.code === 'HAMPTER_LOGIN_REQUIRED' && isHampterSortMode(datacatSortMode);
         const isHampterTokenExpired = err?.code === 'HAMPTER_TOKEN_EXPIRED' && isHampterSortMode(datacatSortMode);
-        const isInlineNotice = isHampterBlocked || isFlareSolverrError || isHampterLoginGated || isHampterTokenExpired;
+        const isAndroidBridgeError = err?.code === 'ANDROID_BRIDGE_ERROR' && isHampterSortMode(datacatSortMode);
+        const isInlineNotice = isHampterBlocked || isFlareSolverrError || isHampterLoginGated || isHampterTokenExpired
+            || (isAndroidBridgeError && append);
         if (!isInlineNotice) {
             showToast(`DataCat load failed: ${err.message}`, 'error');
         }
@@ -715,6 +717,12 @@ async function loadCharacters(append = false) {
             // Transient Cloudflare block; roll the page back so the next Load More refetches it.
             hampterCurrentPage = Math.max(1, hampterCurrentPage - 1);
             showToast('JanitorAI blocked this page load. Hit Load More to retry.', 'warning', 6000);
+            return;
+        }
+        if (isAndroidBridgeError && append) {
+            // The APK already retried transient WebView failures; preserve the grid and retry this page next time.
+            hampterCurrentPage = Math.max(1, hampterCurrentPage - 1);
+            showToast('Android bridge could not finish this page after 3 attempts. Hit Load More to retry it.', 'warning', 7000);
             return;
         }
         if (!append && grid) {

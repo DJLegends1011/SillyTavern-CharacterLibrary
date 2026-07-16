@@ -145,12 +145,15 @@ public final class MainActivity extends Activity {
             String script = "(function(){"
                 + "window.__clBridgeResults=window.__clBridgeResults||{};"
                 + "window.__clBridgeResults[" + resultKey + "]=null;"
-                + "fetch(" + targetUrl + ",{credentials:'include',headers:{Accept:'application/json'"
-                + authorizationHeader + "}})"
-                + ".then(async function(r){var b=await r.text();window.__clBridgeResults[" + resultKey + "]="
-                + "JSON.stringify({status:r.status,contentType:r.headers.get('content-type')||'',body:b});})"
-                + ".catch(function(e){window.__clBridgeResults[" + resultKey + "]="
-                + "JSON.stringify({status:0,contentType:'',body:'',error:String(e&&e.message||e)});});"
+                + "(async function(){var delays=[500,1500];"
+                + "for(var attempt=0;attempt<3;attempt++){try{"
+                + "var r=await fetch(" + targetUrl + ",{credentials:'include',cache:'no-store',headers:{Accept:'application/json'"
+                + authorizationHeader + "}});"
+                + "var b=await r.text();window.__clBridgeResults[" + resultKey + "]="
+                + "JSON.stringify({status:r.status,contentType:r.headers.get('content-type')||'',body:b,attempts:attempt+1});return;"
+                + "}catch(e){if(attempt<2){await new Promise(function(resolve){setTimeout(resolve,delays[attempt]);});continue;}"
+                + "window.__clBridgeResults[" + resultKey + "]="
+                + "JSON.stringify({status:0,contentType:'',body:'',error:String(e&&e.message||e),attempts:attempt+1});return;}}})();"
                 + "return true;})()";
 
             long deadline = System.currentTimeMillis() + FETCH_TIMEOUT_MS;
@@ -179,7 +182,8 @@ public final class MainActivity extends Activity {
                 Log.i(LOG_TAG, "WebView Hampter fetch completed: status="
                     + result.optInt("status", 0) + ", contentType="
                     + result.optString("contentType", "") + ", bodyChars="
-                    + result.optString("body", "").length() + ", hasError="
+                    + result.optString("body", "").length() + ", attempts="
+                    + result.optInt("attempts", 1) + ", hasError="
                     + !result.optString("error", "").isEmpty());
                 callback.complete(new FetchResult(
                     result.optInt("status", 0),
