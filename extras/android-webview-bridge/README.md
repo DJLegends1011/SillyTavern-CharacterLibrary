@@ -24,6 +24,8 @@ The default output is `CharacterLibraryBridge-debug.apk` beside the build script
 
 The bridge is loopback-only and requires its random key on every non-preflight request. Only the fixed JanitorAI Hampter operation is implemented; it is not an open URL proxy.
 
+When signed in inside the APK, the bridge reads JanitorAI's Supabase session cookie internally and attaches its access token to same-origin Hampter requests. This unlocks Trending/Popular page 2+ without using Character Library's manual **JanitorAI Login (Hampter pagination)** cookie field. Neither the cookie nor token leaves the APK.
+
 ## Diagnostics
 
 - The APK shows the latest sanitized bridge event in its **Last request** line. If it remains `none yet`, Chrome did not reach the loopback server.

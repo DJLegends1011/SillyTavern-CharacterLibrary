@@ -27,8 +27,10 @@ import android.widget.Toast;
 import org.json.JSONObject;
 import org.json.JSONTokener;
 
+import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
 import java.util.Locale;
+import java.util.TreeMap;
 import java.util.UUID;
 
 public final class MainActivity extends Activity {
@@ -115,8 +117,6 @@ public final class MainActivity extends Activity {
     }
 
     void fetchHampter(String sort, int page, String search, boolean nsfw, FetchCallback callback) {
-        Log.i(LOG_TAG, "WebView Hampter fetch requested: sort=" + sort + ", page=" + page
-            + ", nsfw=" + nsfw + ", searchLength=" + search.length());
         mainHandler.post(() -> {
             if (!isJanitorReady()) {
                 Log.w(LOG_TAG, "WebView Hampter fetch rejected: JanitorAI page is not ready");
@@ -124,6 +124,12 @@ public final class MainActivity extends Activity {
                     "Open JanitorAI in the bridge and finish logging in before retrying."));
                 return;
             }
+
+            String accessToken = getJanitorAccessToken();
+            boolean authenticated = !accessToken.isEmpty();
+            Log.i(LOG_TAG, "WebView Hampter fetch requested: sort=" + sort + ", page=" + page
+                + ", nsfw=" + nsfw + ", searchLength=" + search.length()
+                + ", authenticated=" + authenticated);
 
             Uri.Builder builder = Uri.parse(JANITOR_ORIGIN + "/hampter/characters").buildUpon()
                 .appendQueryParameter("sort", sort)
@@ -134,10 +140,13 @@ public final class MainActivity extends Activity {
             String requestId = "r" + UUID.randomUUID().toString().replace("-", "");
             String resultKey = JSONObject.quote(requestId);
             String targetUrl = JSONObject.quote(builder.build().toString());
+            String authorizationHeader = authenticated
+                ? ",Authorization:" + JSONObject.quote("Bearer " + accessToken) : "";
             String script = "(function(){"
                 + "window.__clBridgeResults=window.__clBridgeResults||{};"
                 + "window.__clBridgeResults[" + resultKey + "]=null;"
-                + "fetch(" + targetUrl + ",{credentials:'include',headers:{Accept:'application/json'}})"
+                + "fetch(" + targetUrl + ",{credentials:'include',headers:{Accept:'application/json'"
+                + authorizationHeader + "}})"
                 + ".then(async function(r){var b=await r.text();window.__clBridgeResults[" + resultKey + "]="
                 + "JSON.stringify({status:r.status,contentType:r.headers.get('content-type')||'',body:b});})"
                 + ".catch(function(e){window.__clBridgeResults[" + resultKey + "]="
@@ -330,6 +339,92 @@ public final class MainActivity extends Activity {
         } catch (Exception ignored) {
             return false;
         }
+    }
+
+    private String getJanitorAccessToken() {
+        String cookieHeader = CookieManager.getInstance().getCookie(JANITOR_ORIGIN);
+        if (cookieHeader == null || cookieHeader.isEmpty()) {
+            Log.w(LOG_TAG, "No JanitorAI cookies are available in WebView");
+            return "";
+        }
+
+        String directValue = "";
+        TreeMap<Integer, String> chunks = new TreeMap<>();
+        for (String part : cookieHeader.split(";")) {
+            int equals = part.indexOf('=');
+            if (equals <= 0) continue;
+            String name = part.substring(0, equals).trim();
+            String value = part.substring(equals + 1).trim();
+            String baseName = name;
+            Integer chunkIndex = null;
+            int lastDot = name.lastIndexOf('.');
+            if (lastDot > 0 && lastDot < name.length() - 1) {
+                try {
+                    chunkIndex = Integer.parseInt(name.substring(lastDot + 1));
+                    baseName = name.substring(0, lastDot);
+                } catch (NumberFormatException ignored) {
+                    chunkIndex = null;
+                }
+            }
+            if (!isJanitorSessionCookieName(baseName)) continue;
+            if (chunkIndex == null) directValue = value;
+            else chunks.put(chunkIndex, value);
+        }
+
+        String rawValue = directValue;
+        if (rawValue.isEmpty() && !chunks.isEmpty()) {
+            StringBuilder joined = new StringBuilder();
+            for (String chunk : chunks.values()) joined.append(chunk);
+            rawValue = joined.toString();
+        }
+        if (rawValue.isEmpty()) {
+            Log.w(LOG_TAG, "JanitorAI cookies exist, but no Supabase auth cookie was found");
+            return "";
+        }
+
+        String token = decodeJanitorAccessToken(rawValue);
+        if (token.isEmpty()) {
+            Log.w(LOG_TAG, "JanitorAI auth cookie was present but could not be decoded");
+        }
+        return token;
+    }
+
+    private static boolean isJanitorSessionCookieName(String name) {
+        return "sb-auth-auth-token".equals(name)
+            || (name.startsWith("sb-") && name.endsWith("-auth-token"));
+    }
+
+    private static String decodeJanitorAccessToken(String rawValue) {
+        try {
+            String value = Uri.decode(rawValue);
+            if (value.length() >= 2 && value.startsWith("\"") && value.endsWith("\"")) {
+                value = value.substring(1, value.length() - 1);
+            }
+            if (value.startsWith("base64-")) {
+                String padded = value.substring("base64-".length());
+                while (padded.length() % 4 != 0) padded += "=";
+                byte[] decoded;
+                try {
+                    decoded = Base64.decode(padded, Base64.URL_SAFE | Base64.NO_WRAP);
+                } catch (IllegalArgumentException ignored) {
+                    decoded = Base64.decode(padded, Base64.DEFAULT);
+                }
+                value = new String(decoded, StandardCharsets.UTF_8);
+            }
+            if (value.startsWith("{")) {
+                JSONObject session = new JSONObject(value);
+                String token = session.optString("access_token", "");
+                if (!token.isEmpty()) return token;
+                JSONObject currentSession = session.optJSONObject("currentSession");
+                if (currentSession != null) return currentSession.optString("access_token", "");
+            }
+            if (value.startsWith("eyJ") && value.chars().filter(ch -> ch == '.').count() == 2) {
+                return value;
+            }
+        } catch (Exception ignored) {
+            // Never log the cookie or decoder exception because either may include token material.
+        }
+        return "";
     }
 
     private static String safeHost(String value) {
