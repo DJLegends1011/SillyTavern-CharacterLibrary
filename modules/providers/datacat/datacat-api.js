@@ -975,6 +975,85 @@ const FLARESOLVERR_FETCH_PATH = `${CL_HELPER_PLUGIN_BASE}/flaresolverr-fetch`;
 const FLARESOLVERR_SESSION_CREATE_PATH = `${CL_HELPER_PLUGIN_BASE}/flaresolverr-session-create`;
 const FLARESOLVERR_SESSION_DESTROY_PATH = `${CL_HELPER_PLUGIN_BASE}/flaresolverr-session-destroy`;
 
+function normalizeAndroidBridgeUrl(rawUrl) {
+    let parsed;
+    try { parsed = new URL(String(rawUrl || '').trim()); }
+    catch { throw new Error('Android bridge URL is invalid'); }
+    const host = parsed.hostname.toLowerCase();
+    if (parsed.protocol !== 'http:' || !['127.0.0.1', 'localhost', '::1', '[::1]'].includes(host)) {
+        throw new Error('Android bridge URL must use HTTP on localhost');
+    }
+    if (parsed.username || parsed.password || (parsed.pathname && parsed.pathname !== '/') || parsed.search || parsed.hash) {
+        throw new Error('Android bridge URL must be a plain localhost origin');
+    }
+    return parsed.origin;
+}
+
+async function fetchViaAndroidBridge(bridgeUrl, bridgeKey, opts) {
+    const origin = normalizeAndroidBridgeUrl(bridgeUrl);
+    let response;
+    try {
+        response = await fetch(`${origin}/v1/janitor/hampter`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CL-Bridge-Key': bridgeKey,
+            },
+            body: JSON.stringify({ sort: opts.sort, page: opts.page, search: opts.search, nsfw: opts.nsfw }),
+        });
+    } catch (cause) {
+        const err = new Error('Android WebView bridge is not reachable');
+        err.code = 'ANDROID_BRIDGE_UNAVAILABLE';
+        err.cause = cause;
+        throw err;
+    }
+
+    const contentType = response.headers.get('content-type') || '';
+    const text = await response.text();
+    let payload = null;
+    if (contentType.includes('json') || text.trim().startsWith('{')) {
+        try { payload = JSON.parse(text); } catch { /* handled below */ }
+    }
+
+    if (!response.ok) {
+        if (response.status === 403) {
+            const err = new Error('JanitorAI blocked the Android WebView request');
+            err.code = 'HAMPTER_BLOCKED';
+            err.status = response.status;
+            throw err;
+        }
+        if (payload?.ok === false && payload?.error) {
+            const err = new Error(payload.error);
+            err.code = 'ANDROID_BRIDGE_ERROR';
+            err.status = response.status;
+            throw err;
+        }
+        if (response.status === 401) {
+            const err = new Error('JanitorAI requires signing in inside the Android bridge');
+            err.code = 'HAMPTER_LOGIN_REQUIRED';
+            err.status = response.status;
+            throw err;
+        }
+        const err = new Error(`Android bridge upstream HTTP ${response.status}`);
+        err.code = 'ANDROID_BRIDGE_ERROR';
+        err.status = response.status;
+        throw err;
+    }
+    if (!payload && (contentType.includes('text/html') || /cloudflare|cf-chl|just a moment/i.test(text))) {
+        const err = new Error('JanitorAI returned a Cloudflare page inside Android WebView');
+        err.code = 'HAMPTER_BLOCKED';
+        err.status = response.status;
+        throw err;
+    }
+
+    if (!payload) {
+        const err = new Error('Android bridge returned non-JSON data');
+        err.code = 'ANDROID_BRIDGE_ERROR';
+        throw err;
+    }
+    return payload;
+}
+
 /**
  * Create a FlareSolverr session. Sessions keep a Chromium instance hot, so
  * subsequent fetches reuse the cached cf_clearance cookie and skip the
@@ -1052,10 +1131,16 @@ async function fetchViaFlareSolverr(flareUrl, targetUrl, sessionId = '') {
  * @param {boolean} [opts.nsfw=true] - false adds mode=sfw
  * @param {string} [opts.flareSolverrUrl] - Fallback: route through this FlareSolverr instance (only when the direct fetch was blocked)
  * @param {string} [opts.flareSessionId] - Reuse this FlareSolverr session for hot-Chromium speedup
+ * @param {string} [opts.androidBridgeUrl] - Android WebView companion origin (loopback only)
+ * @param {string} [opts.androidBridgeKey] - Android WebView companion pairing key
  * @returns {Promise<{characters: Object[], total: number, page: number, pageSize: number}>}
  */
 export async function fetchHampterCharacters(opts = {}) {
-    const { sort = 'trending', page = 1, search = '', nsfw = true, flareSolverrUrl = '', flareSessionId = '', authToken = '' } = opts;
+    const {
+        sort = 'trending', page = 1, search = '', nsfw = true,
+        flareSolverrUrl = '', flareSessionId = '', authToken = '',
+        androidBridgeUrl = '', androidBridgeKey = '',
+    } = opts;
     const params = new URLSearchParams({ sort, page: String(page) });
     if (search) params.set('search', search);
     if (!nsfw) params.set('mode', 'sfw');
@@ -1093,6 +1178,26 @@ export async function fetchHampterCharacters(opts = {}) {
             throw wrapped;
         }
     } else {
+        if (androidBridgeUrl && androidBridgeKey) {
+            try {
+                data = await fetchViaAndroidBridge(androidBridgeUrl, androidBridgeKey, { sort, page, search, nsfw });
+            } catch (err) {
+                // Closing or suspending the companion must not break the existing direct path.
+                // Bad keys and unfinished logins remain visible so they can be corrected.
+                if (err?.code !== 'ANDROID_BRIDGE_UNAVAILABLE') throw err;
+                console.warn('[DatacatAPI] Android bridge unavailable; falling back to direct browser fetch');
+            }
+        }
+
+        if (data) {
+            return {
+                characters: (data.data || []).map(normalizeHampterHit),
+                total: data.total || 0,
+                page: data.page || page,
+                pageSize: data.size || 34,
+            };
+        }
+
         // Direct browser fetch: hampter serves CORS * and browser TLS passes the bot gate that
         // 403s every server-side client. Deliberately not fetchWithProxy (the /proxy/ leg cant
         // pass, and a poisoned _proxyOrigins entry would skip the working direct attempt).

@@ -1,0 +1,33 @@
+# Character Library Browser Bridge (Android prototype)
+
+This prototype keeps JanitorAI login and Hampter requests inside Android WebView. It does **not** export JanitorAI or Cloudflare cookies to SillyTavern's Node backend.
+
+## Build
+
+The included PowerShell build script uses the Android 34 SDK tools directly and does not require Gradle:
+
+```powershell
+.\build-debug.ps1
+```
+
+The default output is `CharacterLibraryBridge-debug.apk` beside the build script.
+
+## Test on the Android device running SillyTavern in Termux
+
+1. Install and open the APK.
+2. Log into JanitorAI in the embedded page and leave the bridge open.
+3. Copy the bridge key shown above the browser.
+4. Open SillyTavern through `http://127.0.0.1` or `http://localhost` on the same Android device.
+5. In Character Library, open **Settings → Online → DataCat → Android WebView Bridge**.
+6. Enter `http://127.0.0.1:17863`, paste the bridge key, and press **Test Bridge**.
+7. In DataCat, select **Trending** or **Popular**.
+
+The bridge is loopback-only and requires its random key on every non-preflight request. Only the fixed JanitorAI Hampter operation is implemented; it is not an open URL proxy.
+
+## Prototype limitations
+
+- The APK must stay open and on a `janitorai.com` page while Character Library requests data.
+- WebView and Chrome have separate cookie stores, so login must happen inside the APK.
+- Android may suspend the bridge when the app is backgrounded.
+- Some Cloudflare configurations may still reject Android WebView.
+- A debug signing key is generated for every local build, so install updates may require uninstalling the prior debug APK first.

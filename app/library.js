@@ -525,6 +525,8 @@ const DEFAULT_SETTINGS = {
     datacatPublicFeed: false,
     datacatReextractOnUpdate: false,
     datacatFlareSolverrUrl: '',
+    datacatAndroidBridgeUrl: '',
+    datacatAndroidBridgeKey: '',
     janitoraiToken: null,
     janitoraiRefreshToken: null,
     botbooruToken: null,
@@ -2583,6 +2585,108 @@ function setupSettingsModal() {
                 window.ProviderRegistry?.getProvider('botbooru')?.browseView?.refreshAfterContentFlagsChange?.(wasSynced);
             });
         }
+
+        // Android WebView bridge for authenticated Hampter requests on Termux.
+        const datacatAndroidBridgeUrlInput = document.getElementById('settingsDatacatAndroidBridgeUrl');
+        const datacatAndroidBridgeKeyInput = document.getElementById('settingsDatacatAndroidBridgeKey');
+        const datacatAndroidBridgeStatus = document.getElementById('datacatAndroidBridgeStatus');
+        const testDatacatAndroidBridgeBtn = document.getElementById('testDatacatAndroidBridgeBtn');
+        const toggleDatacatAndroidBridgeKeyVisibility = document.getElementById('toggleDatacatAndroidBridgeKeyVisibility');
+
+        const normalizeAndroidBridgeOrigin = (raw) => {
+            let parsed;
+            try { parsed = new URL(String(raw || '').trim()); }
+            catch { throw new Error('Enter a valid bridge URL'); }
+            const host = parsed.hostname.toLowerCase();
+            if (parsed.protocol !== 'http:' || !['127.0.0.1', 'localhost', '::1', '[::1]'].includes(host)) {
+                throw new Error('Bridge URL must use HTTP on localhost');
+            }
+            if (parsed.username || parsed.password || (parsed.pathname && parsed.pathname !== '/') || parsed.search || parsed.hash) {
+                throw new Error('Bridge URL must be a plain localhost origin');
+            }
+            return parsed.origin;
+        };
+
+        const updateAndroidBridgeStatusBadge = () => {
+            if (!datacatAndroidBridgeStatus) return;
+            const url = (getSetting('datacatAndroidBridgeUrl') || '').trim();
+            const key = (getSetting('datacatAndroidBridgeKey') || '').trim();
+            if (!url && !key) {
+                datacatAndroidBridgeStatus.className = 'settings-status-badge inactive';
+                datacatAndroidBridgeStatus.innerHTML = '<i class="fa-solid fa-circle"></i> Not configured';
+            } else if (!url || !key) {
+                datacatAndroidBridgeStatus.className = 'settings-status-badge inactive';
+                datacatAndroidBridgeStatus.innerHTML = '<i class="fa-solid fa-circle-exclamation"></i> URL and key required';
+            } else {
+                datacatAndroidBridgeStatus.className = 'settings-status-badge active';
+                datacatAndroidBridgeStatus.innerHTML = '<i class="fa-solid fa-circle"></i> Configured (untested)';
+            }
+        };
+
+        if (datacatAndroidBridgeUrlInput) {
+            datacatAndroidBridgeUrlInput.value = getSetting('datacatAndroidBridgeUrl') || '';
+            const saveUrl = () => {
+                setSetting('datacatAndroidBridgeUrl', datacatAndroidBridgeUrlInput.value.trim());
+                updateAndroidBridgeStatusBadge();
+            };
+            datacatAndroidBridgeUrlInput.addEventListener('change', saveUrl);
+            datacatAndroidBridgeUrlInput.addEventListener('blur', saveUrl);
+        }
+        if (datacatAndroidBridgeKeyInput) {
+            datacatAndroidBridgeKeyInput.value = getSetting('datacatAndroidBridgeKey') || '';
+            const saveKey = () => {
+                setSetting('datacatAndroidBridgeKey', datacatAndroidBridgeKeyInput.value.trim());
+                updateAndroidBridgeStatusBadge();
+            };
+            datacatAndroidBridgeKeyInput.addEventListener('change', saveKey);
+            datacatAndroidBridgeKeyInput.addEventListener('blur', saveKey);
+        }
+        toggleDatacatAndroidBridgeKeyVisibility?.addEventListener('click', () => {
+            if (!datacatAndroidBridgeKeyInput) return;
+            datacatAndroidBridgeKeyInput.type = datacatAndroidBridgeKeyInput.type === 'password' ? 'text' : 'password';
+        });
+        updateAndroidBridgeStatusBadge();
+
+        testDatacatAndroidBridgeBtn?.addEventListener('click', async () => {
+            const rawUrl = (datacatAndroidBridgeUrlInput?.value || '').trim();
+            const key = (datacatAndroidBridgeKeyInput?.value || '').trim();
+            if (!rawUrl || !key) {
+                showToast('Enter the Android bridge URL and pairing key first', 'warning');
+                return;
+            }
+            let origin;
+            try { origin = normalizeAndroidBridgeOrigin(rawUrl); }
+            catch (err) { showToast(err.message, 'error'); return; }
+            setSetting('datacatAndroidBridgeUrl', origin);
+            setSetting('datacatAndroidBridgeKey', key);
+            if (datacatAndroidBridgeUrlInput) datacatAndroidBridgeUrlInput.value = origin;
+            testDatacatAndroidBridgeBtn.disabled = true;
+            if (datacatAndroidBridgeStatus) {
+                datacatAndroidBridgeStatus.className = 'settings-status-badge inactive';
+                datacatAndroidBridgeStatus.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Testing...';
+            }
+            try {
+                const response = await fetch(`${origin}/v1/status`, { headers: { 'X-CL-Bridge-Key': key } });
+                const payload = await response.json().catch(() => null);
+                if (!response.ok || !payload?.ok) throw new Error(payload?.error || `HTTP ${response.status}`);
+                const ready = payload.janitorReady === true;
+                if (datacatAndroidBridgeStatus) {
+                    datacatAndroidBridgeStatus.className = ready ? 'settings-status-badge active' : 'settings-status-badge inactive';
+                    datacatAndroidBridgeStatus.innerHTML = ready
+                        ? '<i class="fa-solid fa-circle-check"></i> Connected - JanitorAI ready'
+                        : '<i class="fa-solid fa-circle-exclamation"></i> Connected - open JanitorAI in APK';
+                }
+                showToast(ready ? 'Android bridge connected and ready' : 'Bridge connected; finish opening JanitorAI in the APK', ready ? 'success' : 'warning');
+            } catch (err) {
+                if (datacatAndroidBridgeStatus) {
+                    datacatAndroidBridgeStatus.className = 'settings-status-badge inactive';
+                    datacatAndroidBridgeStatus.innerHTML = '<i class="fa-solid fa-circle-xmark"></i> Failed';
+                }
+                showToast(`Android bridge test failed: ${err.message}`, 'error');
+            } finally {
+                testDatacatAndroidBridgeBtn.disabled = false;
+            }
+        });
 
         // FlareSolverr endpoint for Hampter sort orders
         const datacatFlareSolverrInput = document.getElementById('settingsDatacatFlareSolverrUrl');

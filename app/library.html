@@ -2698,6 +2698,38 @@ https://jannyai.com/characters/uuid_slug
                                     </div>
                                 </div>
                                 <div class="settings-group">
+                                    <div class="settings-group-title"><i class="fa-brands fa-android"></i> Android WebView Bridge <span class="settings-provider-badge">EXPERIMENTAL</span></div>
+                                    <div class="settings-row">
+                                        <span class="settings-hint">Optional Termux companion for Trending/Popular. The APK keeps JanitorAI login and Cloudflare state inside Android WebView, then returns only the Hampter JSON to Character Library. Install the prototype from <code>extras/android-webview-bridge</code>, log in inside it, and leave it open while browsing. The pairing key prevents other pages from using the local bridge.</span>
+                                    </div>
+                                    <div class="settings-row">
+                                        <label>Bridge URL:</label>
+                                        <div class="settings-input-group">
+                                            <input type="url" id="settingsDatacatAndroidBridgeUrl" class="glass-input" placeholder="http://127.0.0.1:17863" autocomplete="off">
+                                        </div>
+                                    </div>
+                                    <div class="settings-row">
+                                        <label>Pairing key:</label>
+                                        <div class="settings-input-group">
+                                            <input type="password" id="settingsDatacatAndroidBridgeKey" class="glass-input" placeholder="Paste the key shown in the APK" autocomplete="off" spellcheck="false" data-sensitive="true">
+                                            <button id="toggleDatacatAndroidBridgeKeyVisibility" class="glass-btn icon-only" title="Show/Hide">
+                                                <i class="fa-solid fa-eye"></i>
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div class="settings-row" style="gap: 8px;">
+                                        <button id="testDatacatAndroidBridgeBtn" class="settings-action-btn primary">
+                                            <i class="fa-solid fa-plug-circle-check"></i> Test Bridge
+                                        </button>
+                                    </div>
+                                    <div class="settings-row">
+                                        <span id="datacatAndroidBridgeStatus" class="settings-status-badge inactive"><i class="fa-solid fa-circle"></i> Not configured</span>
+                                    </div>
+                                    <div class="settings-row">
+                                        <span class="settings-hint">The prototype listens only on this Android device. Open SillyTavern through <strong>http://127.0.0.1</strong> or <strong>http://localhost</strong>; an HTTPS-hosted Character Library page cannot call the HTTP loopback bridge.</span>
+                                    </div>
+                                </div>
+                                <div class="settings-group">
                                     <div class="settings-group-title"><i class="fa-solid fa-fire"></i> FlareSolverr (Hampter fallback)</div>
                                     <div class="settings-row">
                                         <span class="settings-hint">Optional fallback. JanitorAI's <strong>Trending</strong> and <strong>Popular</strong> sort orders normally load directly with no setup; if Cloudflare ever blocks that direct fetch, a <a href="https://github.com/FlareSolverr/FlareSolverr" target="_blank" rel="noopener noreferrer">FlareSolverr</a> instance configured here is used as a backup fetcher. JanitorAI serves only the first page of these sorts without an account, regardless of fetch method.</span>

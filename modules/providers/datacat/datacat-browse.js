@@ -524,6 +524,8 @@ async function loadCharacters(append = false) {
                 search: hampterSearchQuery,
                 nsfw: datacatNsfwEnabled,
                 authToken: (await window.getValidJanitoraiToken?.()) || '',
+                androidBridgeUrl: (getSetting('datacatAndroidBridgeUrl') || '').trim(),
+                androidBridgeKey: (getSetting('datacatAndroidBridgeKey') || '').trim(),
             };
             let data;
             try {
