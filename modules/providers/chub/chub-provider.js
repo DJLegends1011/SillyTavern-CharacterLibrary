@@ -5,7 +5,7 @@
 
 import { ProviderBase } from '../provider-interface.js';
 import CoreAPI from '../../core-api.js';
-import { assignGalleryId, importFromPng, slugify } from '../provider-utils.js';
+import { assignGalleryId, importFromPng, slugify, proxyEncode } from '../provider-utils.js';
 import chubBrowseView, { openChubTokenModal } from './chub-browse.js';
 import {
     initChubApi,
@@ -296,7 +296,7 @@ class ChubProvider extends ProviderBase {
             const pngUrl = `${CHUB_AVATAR_BASE}${fullPath}/chara_card_v2.png`;
             let response;
             try { response = await fetch(pngUrl); }
-            catch { response = await fetch(`/proxy/${encodeURIComponent(pngUrl)}`); }
+            catch { response = await fetch(`/proxy/${proxyEncode(pngUrl)}`); }
             if (response.ok) {
                 const buffer = await response.arrayBuffer();
                 const cardData = api?.extractCharacterDataFromPng?.(buffer);

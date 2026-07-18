@@ -957,6 +957,17 @@ class BotbooruBrowseView extends BrowseView {
                 if (el) el.value = defaults.sort;
             }
         }
+        if (defaults.hideOwned) {
+            bbFilterHideOwned = true;
+            const el = document.getElementById('botbooruFilterHideOwned');
+            if (el) el.checked = true;
+        }
+        if (defaults.hidePossible) {
+            bbFilterHidePossible = true;
+            const el = document.getElementById('botbooruFilterHidePossible');
+            if (el) el.checked = true;
+        }
+        if (defaults.hideOwned || defaults.hidePossible) updateBotbooruFeaturesButton();
     }
 
     activate(container, options = {}) {
@@ -1147,6 +1158,7 @@ function initBotbooruView() {
 
     on('botbooruCuratedFresh', 'change', (e) => {
         bbCuratedFreshOnly = e.target.checked;
+        updateBotbooruFeaturesButton();
         loadBotbooruPosts(true);
     });
 
@@ -1174,6 +1186,7 @@ function initBotbooruView() {
         const checkbox = document.getElementById(id);
         if (checkbox) checkbox.checked = getter();
     });
+    updateBotbooruFeaturesButton();
     filterCheckboxes.forEach(({ id, setter }) => {
         document.getElementById(id)?.addEventListener('change', (e) => {
             if (id === 'botbooruFilterFavorites' && e.target.checked && !getSetting('botbooruToken')) {
@@ -1183,6 +1196,7 @@ function initBotbooruView() {
                 return;
             }
             setter(e.target.checked);
+            updateBotbooruFeaturesButton();
             if (id === 'botbooruFilterFavorites') {
                 // Favorites is a different data source (the account list), not a
                 // client-side predicate; it lives in the browse grid
@@ -1805,6 +1819,15 @@ function updateTagsButtonState() {
     label.textContent = count > 0 ? `Tags (${count})` : 'Tags';
 }
 
+function updateBotbooruFeaturesButton() {
+    const btn = document.getElementById('botbooruFiltersBtn');
+    if (!btn) return;
+    const count = [bbCuratedFreshOnly, bbFilterFavorites, bbFilterHideOwned, bbFilterHidePossible, bbHideAi].filter(Boolean).length;
+    btn.classList.toggle('has-filters', count > 0);
+    const span = btn.querySelector('span');
+    if (span) span.textContent = count > 0 ? `Features (${count})` : 'Features';
+}
+
 // ========================================
 // LOAD / SEARCH
 // ========================================
@@ -2185,6 +2208,12 @@ function renderBotbooruGrid(appendOnly = false) {
 
     buildBbLookup(bbCardLookup, displayPosts);
 
+    // A page whose posts all got client-filtered (or deduped) adds nothing visible. Without
+    // this guard it fell to the else branch below and innerHTML-rebuilt the whole grid with
+    // identical content, teardown-flashing every loaded thumbnail. The deferred scroll check
+    // in updateLoadMoreVisibility still fetches the next page, so the scroll doesnt stall.
+    if (appendOnly && bbGridRenderedCount === displayPosts.length) return;
+
     if (appendOnly && bbGridRenderedCount > 0 && bbGridRenderedCount < displayPosts.length) {
         const newPosts = displayPosts.slice(bbGridRenderedCount);
         grid.insertAdjacentHTML('beforeend', newPosts.map(p => createBotbooruCard(p)).join(''));
@@ -2476,8 +2505,28 @@ function renderBotbooruTimeline() {
         return;
     }
 
-    botbooruBrowseView.disconnectImageObserver();
-    grid.innerHTML = posts.map(p => createBotbooruCard(p)).join('');
+    // Keyed reconciliation instead of an innerHTML rebuild: the per-user pagination interleaves
+    // new posts anywhere in the client-sorted order, so a tail-append guard cant help here.
+    // Moving an existing card node keeps its decoded <img>, so appends AND re-sorts reorder
+    // without the page-wide thumbnail teardown flash. Cards absent from the new order (eg.
+    // freshly filtered out) simply aren't re-added and drop with the replace.
+    const existingById = new Map();
+    for (const el of grid.querySelectorAll(':scope > [data-post-id]')) {
+        existingById.set(el.dataset.postId, el);
+    }
+    const frag = document.createDocumentFragment();
+    const scratch = document.createElement('div');
+    for (const p of posts) {
+        const el = existingById.get(String(p.id));
+        if (el) {
+            existingById.delete(String(p.id));
+            frag.appendChild(el);
+        } else {
+            scratch.innerHTML = createBotbooruCard(p);
+            frag.appendChild(scratch.firstElementChild);
+        }
+    }
+    grid.replaceChildren(frag);
     botbooruBrowseView.observeImages(grid);
     resolveUploaderNames(grid);
 }

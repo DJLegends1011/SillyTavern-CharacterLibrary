@@ -519,6 +519,8 @@ html.cl-mobile .mobile-sheet {
 html.cl-mobile .mobile-sheet.open { transform: translateY(0); }
 html.cl-mobile .mobile-sheet-handle {
     width: 40px; height: 4px;
+    /* Overflowing flex-column hosts (the relocated filter popups) squash unarmored children thinner. */
+    flex-shrink: 0;
     background: var(--text-faint);
     opacity: 0.4;
     border-radius: var(--radius-2xs);
@@ -852,6 +854,21 @@ html.cl-mobile .mobile-avatar-viewer img {
     object-fit: contain;
     border-radius: var(--radius-lg);
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+}
+/* Full-res load indicator; reveal is delayed so fast/cached opens never flash it */
+html.cl-mobile .mobile-avatar-viewer .mobile-av-spinner {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: var(--font-3xl);
+    color: var(--text-primary);
+    pointer-events: none;
+    opacity: 0;
+    animation: mobileAvSpinnerIn 0s linear 0.15s forwards;
+}
+@keyframes mobileAvSpinnerIn {
+    to { opacity: 1; }
 }
 
 /* Browse avatar viewer - mobile overrides (single image; galleries use the shared gallery viewer) */
@@ -1972,9 +1989,10 @@ html.cl-mobile .import-urls-textarea {
     resize: vertical;
 }
 
-/* Import source toggle */
+/* Import source toggle; shrink-armored: the flex-column body would squash it when the taller panel overflows */
 html.cl-mobile .import-source-toggle {
     margin-bottom: 10px;
+    flex-shrink: 0;
 }
 html.cl-mobile .import-source-btn {
     padding: 10px 12px;
@@ -2685,12 +2703,12 @@ html.cl-mobile .provider-order-item .provider-order-badge {
     grid-area: default;
     justify-self: end;
 }
+/* Two-column grid so every row's controls align; a lone select spans both columns. */
 html.cl-mobile .provider-order-item .provider-order-defaults {
     grid-area: body;
-    display: flex;
-    flex-direction: row;
-    flex-wrap: wrap;
-    align-items: center;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    align-items: stretch;
     gap: var(--space-xs);
     margin-left: 0;
     padding-top: var(--space-xs);
@@ -2704,15 +2722,38 @@ html.cl-mobile .provider-order-item .provider-order-defaults:empty {
 html.cl-mobile .provider-order-item .provider-order-defaults select {
     font-size: var(--font-sm) !important;
     padding: 4px 8px;
-    min-height: 32px;
-    flex: 1 1 calc(50% - var(--space-xs));
-    min-width: 130px;
+    min-height: 36px;
+    min-width: 0;
     max-width: none;
-    width: auto;
+    width: 100%;
     border-radius: var(--radius-md);
     background: rgba(0, 0, 0, 0.35);
     border: 1px solid rgba(255, 255, 255, 0.1);
     color: var(--text-primary);
+}
+html.cl-mobile .provider-order-item .provider-order-defaults select:only-of-type {
+    grid-column: 1 / -1;
+}
+html.cl-mobile .provider-order-item .provider-default-hide {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: var(--space-sm);
+    min-height: 36px;
+    padding: 4px 10px;
+    font-size: var(--font-sm);
+    color: var(--text-secondary);
+    border-radius: var(--radius-md);
+    background: rgba(0, 0, 0, 0.25);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    white-space: nowrap;
+    touch-action: manipulation;
+}
+html.cl-mobile .provider-order-item .provider-default-hide input {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+    margin: 0;
 }
 html.cl-mobile .provider-order-item.provider-disabled {
     opacity: 0.55;
