@@ -13,10 +13,7 @@ import {
     slugify,
     stripHtml,
     resolveTagNames,
-    checkJannyPluginAvailable,
-    getJannySessionStatus,
-    setJannySessionCookie,
-    validateJannySession,
+    probeJannyAccount,
     fetchJannyBookmarks,
     addJannyBookmarks,
     removeJannyBookmarks,
@@ -96,7 +93,7 @@ let jannyBookmarkIds = new Set();
 let jannyBookmarksLoaded = false;
 let jannyBookmarkTotalCount = null;
 let jannyBookmarkLimitToastShown = false;
-let jannyAccountStatus = { plugin: false, active: false, valid: false, cloudflare: false, reason: '' };
+let jannyAccountStatus = { bridge: false, active: false, cloudflare: false, reason: '' };
 let jannyOwnedCollections = [];
 let jannyOwnedCollectionsLoaded = false;
 let jannyOwnedCollectionsLoading = false;
@@ -506,11 +503,11 @@ async function loadCharacters(append = false) {
 
 // Renders the account's bookmarked characters instead of search results while
 // the "Only Bookmarked" feature filter is active. fetchJannyCharactersByIds
-// chunks internally to respect cl-helper's path-length cap.
+// chunks internally to keep the query string a reasonable length.
 async function loadBookmarkedIntoGrid(thisToken) {
     const grid = document.getElementById('jannyGrid');
     const ids = [...await loadJannyBookmarks(true)];
-    const fetched = await fetchJannyCharactersByIds(ids, jannyAccountOptions());
+    const fetched = await fetchJannyCharactersByIds(ids);
     if (thisToken !== jannyLoadToken || !delegatesInitialized) return;
     let chars = fetched.map(normalizeJannyCollectionCharacter).filter(Boolean);
 
@@ -1455,13 +1452,9 @@ function updateNsfwToggle() {
 // ACCOUNT SYNC
 // ========================================
 
-function jannyAccountOptions() {
-    return {};
-}
-
 function describeJannyAccountError(err) {
     if (err?.cloudflare) {
-        return 'Cloudflare challenged direct helper requests. Refresh the Janny Cookie header from a normal JannyAI tab; if it still 403s, JannyAI is rejecting non-browser helper sync.';
+        return 'Cloudflare challenged the request. Reload jannyai.com in this browser to clear the challenge, then try again.';
     }
     return err?.message || String(err || 'unknown error');
 }
@@ -1491,64 +1484,23 @@ function normalizeJannyCollectionCharacter(item) {
     };
 }
 
-// The cookie is persisted in extension settings (like every other provider's
-// credentials). cl-helper only holds it in memory, so on load — after a server
-// restart wiped that memory — re-push the saved cookie so the session survives.
-async function restoreJannySessionFromSettings() {
-    const savedCookie = getSetting('jannyCookie');
-    if (!savedCookie) return;
-    try {
-        if (!await checkJannyPluginAvailable()) return;
-        const session = await getJannySessionStatus();
-        if (session?.active) return; // cl-helper still has it
-        await setJannySessionCookie(savedCookie, getSetting('jannyUserAgent') || '');
-        debugLog('[JannyBrowse] Restored saved account cookie into cl-helper');
-    } catch (err) {
-        debugLog('[JannyBrowse] Could not restore saved Janny cookie:', err.message);
-    }
-}
-
-// Tracks account readiness for gating (ensureJannyAccountReady) only. There is
-// no browse-view status indicator — cookie/login state is shown in Settings,
-// matching every other provider.
-async function refreshJannyAccountStatus({ validate = false } = {}) {
-    const plugin = await checkJannyPluginAvailable();
-    if (!plugin) {
-        jannyAccountStatus = { plugin: false, active: false, valid: false, cloudflare: false, reason: 'cl-helper plugin not available' };
-        return jannyAccountStatus;
-    }
-
-    const session = await getJannySessionStatus();
-    jannyAccountStatus = { plugin: true, active: !!session?.active, valid: false, cloudflare: false, reason: session?.active ? '' : 'No JannyAI cookie stored' };
-    if (validate && session?.active) {
-        const result = await validateJannySession(jannyAccountOptions());
-        jannyAccountStatus = {
-            plugin: true,
-            active: true,
-            valid: !!result?.valid,
-            cloudflare: !!result?.cloudflare,
-            reason: result?.reason || '',
-        };
-    }
+// Tracks account readiness for gating (ensureJannyAccountReady) only. Login state is
+// shown in Settings, matching every other provider.
+async function refreshJannyAccountStatus() {
+    jannyAccountStatus = await probeJannyAccount();
     return jannyAccountStatus;
 }
 
 async function ensureJannyAccountReady() {
-    if (!jannyAccountStatus.plugin || !jannyAccountStatus.active) {
-        await refreshJannyAccountStatus({ validate: false });
+    if (!jannyAccountStatus.bridge || !jannyAccountStatus.active) {
+        await refreshJannyAccountStatus();
     }
-    // cl-helper may have lost its in-memory session (e.g. server restarted
-    // mid-session); re-push the persisted cookie before giving up.
-    if (jannyAccountStatus.plugin && !jannyAccountStatus.active && getSetting('jannyCookie')) {
-        await restoreJannySessionFromSettings();
-        await refreshJannyAccountStatus({ validate: false });
-    }
-    if (!jannyAccountStatus.plugin) {
-        showToast('Install cl-helper to use Janny account sync', 'warning');
+    if (!jannyAccountStatus.bridge) {
+        showToast('Install the JannyAI bridge userscript (extras/cl-janny-bridge.user.js) to use account sync', 'warning', 6000);
         return false;
     }
     if (!jannyAccountStatus.active) {
-        showToast('Connect your JannyAI account in Settings → Online → JannyAI', 'warning', 5000);
+        showToast('Log into jannyai.com in this browser, then try again', 'warning', 5000);
         return false;
     }
     return true;
@@ -1557,7 +1509,7 @@ async function ensureJannyAccountReady() {
 async function loadJannyBookmarks(force = false) {
     if (jannyBookmarksLoaded && !force) return jannyBookmarkIds;
     if (!await ensureJannyAccountReady()) return jannyBookmarkIds;
-    const ids = await fetchJannyBookmarks(jannyAccountOptions());
+    const ids = await fetchJannyBookmarks();
     jannyBookmarkIds = new Set(ids.map(String));
     jannyBookmarkTotalCount = ids.length;
     jannyBookmarksLoaded = true;
@@ -1592,7 +1544,7 @@ async function toggleSelectedJannyBookmark() {
         if (!jannyBookmarksLoaded) await loadJannyBookmarks(true);
         const id = String(jannySelectedChar.id);
         if (jannyBookmarkIds.has(id)) {
-            await removeJannyBookmarks([id], jannyAccountOptions());
+            await removeJannyBookmarks([id]);
             jannyBookmarkIds.delete(id);
             if (typeof jannyBookmarkTotalCount === 'number') jannyBookmarkTotalCount = Math.max(0, jannyBookmarkTotalCount - 1);
             showToast('Removed from Janny bookmarks', 'success');
@@ -1604,7 +1556,7 @@ async function toggleSelectedJannyBookmark() {
                 }
                 return;
             }
-            await addJannyBookmarks([id], jannyAccountOptions());
+            await addJannyBookmarks([id]);
             jannyBookmarkIds.add(id);
             jannyBookmarkTotalCount = (jannyBookmarkTotalCount || jannyBookmarkIds.size - 1) + 1;
             showToast('Saved to Janny bookmarks', 'success');
@@ -1669,7 +1621,7 @@ async function hydrateJannyOwnedCollectionPreviews() {
 
     for (const collection of candidates) {
         try {
-            const entries = await fetchJannyCollectionCharacters(collection.id, jannyAccountOptions());
+            const entries = await fetchJannyCollectionCharacters(collection.id);
             if (token !== jannyOwnedPreviewHydrationToken || !jannyOwnedCollectionsLoaded) return;
 
             let previewCharacters = entries.map(normalizeJannyCollectionCharacter).filter(Boolean);
@@ -1678,7 +1630,7 @@ async function hydrateJannyOwnedCollectionPreviews() {
                 .filter(id => id && !previewCharacters.some(c => String(c.id) === String(id)))
                 .slice(0, Math.max(0, 4 - previewCharacters.length));
             if (missingIds.length) {
-                const fetched = await fetchJannyCharactersByIds(missingIds, jannyAccountOptions());
+                const fetched = await fetchJannyCharactersByIds(missingIds);
                 if (token !== jannyOwnedPreviewHydrationToken || !jannyOwnedCollectionsLoaded) return;
                 previewCharacters = previewCharacters.concat(fetched.map(normalizeJannyCollectionCharacter).filter(Boolean));
             }
@@ -1946,7 +1898,7 @@ async function loadJannyOwnedCollections(force = false) {
             renderJannyCollectionDropdown();
             return [];
         }
-        jannyOwnedCollections = await fetchJannyCollections(jannyAccountOptions());
+        jannyOwnedCollections = await fetchJannyCollections();
         jannyOwnedCollectionsLoaded = true;
         hydrateJannyOwnedCollectionPreviews().catch(err => debugLog('[JannyAccount] owned preview hydration failed:', err.message));
         renderJannyCollectionDropdown();
@@ -2008,7 +1960,7 @@ async function refreshSelectedJannyCollectionMemberships() {
         }
         if (!collection?.id || collectionCharacterCount(collection) <= 0) continue;
         try {
-            const fetched = await fetchJannyCollectionCharacters(collection.id, jannyAccountOptions());
+            const fetched = await fetchJannyCollectionCharacters(collection.id);
             if (String(jannySelectedChar?.id || '') !== characterId) return jannyModalCollectionIds;
             if (Array.isArray(fetched) && fetched.some(entry => entryMatchesCharacter(entry, characterId))) {
                 membershipIds.add(String(collection.id));
@@ -2098,12 +2050,12 @@ async function toggleSelectedJannyCollectionMembership(collectionId) {
     renderJannyCollectionDropdown();
     try {
         if (wasMember) {
-            await removeJannyCharacterFromCollection(collectionId, characterId, jannyAccountOptions());
+            await removeJannyCharacterFromCollection(collectionId, characterId);
             if (String(jannySelectedChar?.id || '') === characterId) jannyModalCollectionIds.delete(String(collectionId));
             updateOwnedCollectionCount(collectionId, -1);
             showToast(`Removed ${characterName} from ${name}.`, 'success');
         } else {
-            await addJannyCharacterToCollection(collectionId, characterId, jannyAccountOptions());
+            await addJannyCharacterToCollection(collectionId, characterId);
             if (String(jannySelectedChar?.id || '') === characterId) jannyModalCollectionIds.add(String(collectionId));
             updateOwnedCollectionCount(collectionId, 1);
             showToast(`Added ${characterName} to ${name}.`, 'success');
@@ -2207,13 +2159,13 @@ async function openJannyOwnedCollection(collectionId) {
     renderJannyCollectionDetail({ loading: true });
     try {
         const collection = jannyOwnedCollections.find(c => String(c.id) === requestedId) || { id: requestedId, name: 'Collection' };
-        let entries = await fetchJannyCollectionCharacters(requestedId, jannyAccountOptions());
+        let entries = await fetchJannyCollectionCharacters(requestedId);
         let chars = entries.map(normalizeJannyCollectionCharacter).filter(Boolean);
         const missingDetailIds = entries
             .map(collectionEntryCharacterId)
             .filter(id => id && !chars.some(c => String(c.id) === String(id)));
         if (missingDetailIds.length) {
-            const fetched = await fetchJannyCharactersByIds(missingDetailIds, jannyAccountOptions());
+            const fetched = await fetchJannyCharactersByIds(missingDetailIds);
             chars = chars.concat(fetched.map(normalizeJannyCollectionCharacter).filter(Boolean));
         }
         if (token !== jannyCollectionDetailLoadToken || jannyActiveCollection?.kind !== 'owned' || String(jannyActiveCollection.id || '') !== requestedId) return;
@@ -2243,7 +2195,7 @@ async function createCollectionFromPanel() {
     if (!await ensureJannyAccountReady()) return;
     try {
         const isPrivate = privateEl ? !!privateEl.checked : true;
-        await createJannyCollection({ name, description: descEl?.value || '', isPrivate }, jannyAccountOptions());
+        await createJannyCollection({ name, description: descEl?.value || '', isPrivate });
         if (nameEl) nameEl.value = '';
         if (descEl) descEl.value = '';
         jannyOwnedCollectionsLoaded = false;
@@ -2272,13 +2224,13 @@ async function openJannyCollectionManage(collectionId) {
     jannyManageCollection = { collection: { ...collection }, characters: [], saving: false, error: '' };
     renderJannyCollectionManage({ loading: true });
     try {
-        const entries = await fetchJannyCollectionCharacters(requestedId, jannyAccountOptions());
+        const entries = await fetchJannyCollectionCharacters(requestedId);
         let chars = entries.map(normalizeJannyCollectionCharacter).filter(Boolean);
         const missingDetailIds = entries
             .map(collectionEntryCharacterId)
             .filter(id => id && !chars.some(c => String(c.id) === String(id)));
         if (missingDetailIds.length) {
-            const fetched = await fetchJannyCharactersByIds(missingDetailIds, jannyAccountOptions());
+            const fetched = await fetchJannyCharactersByIds(missingDetailIds);
             chars = chars.concat(fetched.map(normalizeJannyCollectionCharacter).filter(Boolean));
         }
         if (token !== jannyCollectionManageLoadToken || String(jannyManageCollection?.collection?.id || '') !== requestedId) return;
@@ -2352,7 +2304,7 @@ async function saveJannyManagedCollection() {
         return;
     }
     try {
-        await updateJannyCollection({ id: collection.id, name, description, isPrivate: collectionIsPrivate(collection) }, jannyAccountOptions());
+        await updateJannyCollection({ id: collection.id, name, description, isPrivate: collectionIsPrivate(collection) });
         collection.name = name;
         collection.description = description;
         const existing = jannyOwnedCollections.find(c => String(c.id) === String(collection.id));
@@ -2385,8 +2337,8 @@ async function addCharacterToManagedCollection() {
         return;
     }
     try {
-        await addJannyCharacterToCollection(jannyManageCollection.collection.id, id, jannyAccountOptions());
-        const fetched = await fetchJannyCharactersByIds([id], jannyAccountOptions());
+        await addJannyCharacterToCollection(jannyManageCollection.collection.id, id);
+        const fetched = await fetchJannyCharactersByIds([id]);
         const normalized = fetched.map(normalizeJannyCollectionCharacter).filter(Boolean)[0] || { id, name: id, avatar: '' };
         jannyManageCollection.characters.push(normalized);
         updateOwnedCollectionCount(jannyManageCollection.collection.id, 1);
@@ -2402,7 +2354,7 @@ async function addCharacterToManagedCollection() {
 async function removeCharacterFromManagedCollection(characterId) {
     if (!jannyManageCollection?.collection?.id || !characterId) return;
     try {
-        await removeJannyCharacterFromCollection(jannyManageCollection.collection.id, characterId, jannyAccountOptions());
+        await removeJannyCharacterFromCollection(jannyManageCollection.collection.id, characterId);
         jannyManageCollection.characters = jannyManageCollection.characters.filter(c => String(c.id) !== String(characterId));
         updateOwnedCollectionCount(jannyManageCollection.collection.id, -1);
         renderJannyOwnedCollectionsList();
@@ -2420,7 +2372,7 @@ async function confirmAndDeleteJannyCollection(collectionId) {
         : window.confirm('Delete this Janny collection? This cannot be undone from Character Library.');
     if (!ok) return;
     try {
-        await deleteJannyCollection(collectionId, jannyAccountOptions());
+        await deleteJannyCollection(collectionId);
         jannyOwnedCollections = jannyOwnedCollections.filter(c => String(c.id) !== String(collectionId));
         jannyManageCollection = null;
         renderJannyOwnedCollectionsList();
@@ -2811,7 +2763,7 @@ class JannyBrowseView extends BrowseView {
         const grid = document.getElementById('jannyGrid');
         if (grid) this.observeImages(grid);
         loadCharacters(false);
-        restoreJannySessionFromSettings().then(() => refreshJannyAccountStatus({ validate: false }));
+        refreshJannyAccountStatus();
     }
 
     getSearchInputId(mode) {

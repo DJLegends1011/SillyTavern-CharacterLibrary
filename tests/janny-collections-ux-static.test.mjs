@@ -66,7 +66,7 @@ test('Janny collection owner links open the collector collections surface', () =
     assert.match(js, /surface !== 'collector'/);
     // Collection owners must not fall back to character keyword search.
     assert.doesNotMatch(js, /janny-collection-owner-link[\s\S]{0,400}filterByAuthor/);
-    assert.match(api, /janny-collector-collections/);
+    assert.match(api, /\/collectors\/\$\{encodeURIComponent/);
 });
 
 test('Janny collection preview grid sizes to the collection card count', () => {
@@ -83,7 +83,7 @@ test('Janny owned collections list mirrors the public loading/error states', () 
 
 test('Janny owned collection cards hydrate preview avatars after list load', () => {
     assert.match(js, /hydrateJannyOwnedCollectionPreviews/);
-    assert.match(js, /fetchJannyCollectionCharacters\(collection\.id, jannyAccountOptions\(\)\)/);
+    assert.match(js, /fetchJannyCollectionCharacters\(collection\.id\)/);
     assert.match(js, /renderJannyOwnedCollectionsList\(\);[\s\S]*hydrateJannyOwnedCollectionPreviews\(\)/);
 });
 

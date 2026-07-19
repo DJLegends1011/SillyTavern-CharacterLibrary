@@ -7,6 +7,7 @@ import { ProviderBase } from '../provider-interface.js';
 import CoreAPI from '../../core-api.js';
 import { assignGalleryId, importFromPng, proxyEncode } from '../provider-utils.js';
 import jannyBrowseView from './janny-browse.js';
+import { initJannyBridge } from './janny-bridge.js';
 import {
     JANNY_SEARCH_URL,
     JANNY_IMAGE_BASE,
@@ -16,7 +17,6 @@ import {
     slugify,
     stripHtml,
     resolveTagNames,
-    setJannyApiRequest
 } from './janny-api.js';
 
 let api = null;
@@ -424,7 +424,8 @@ class JannyProvider extends ProviderBase {
     async init(coreAPI) {
         super.init(coreAPI);
         api = coreAPI;
-        setJannyApiRequest(coreAPI.apiRequest);
+        // Listen for the JannyAI bridge userscript (passive, free when absent)
+        initJannyBridge();
     }
 
     // ── View ────────────────────────────────────────────────
