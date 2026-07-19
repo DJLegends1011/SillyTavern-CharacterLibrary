@@ -101,3 +101,10 @@ test('Janny collection images stay hidden until their full bitmap has decoded', 
     assert.match(browseViewJs, /const preloader = new Image\(\);[\s\S]*preloader\.decode\(\)\.then\(reveal\)/);
     assert.match(browseViewJs, /img\.src = src;[\s\S]*BrowseView\.adjustPortraitPosition/);
 });
+
+test('Janny duplicate collection adds reconcile membership instead of reporting a false login error', () => {
+    assert.match(js, /collectionEntryMatchesCharacter/);
+    assert.match(js, /!wasMember && err\?\.status === 401/);
+    assert.match(js, /fetchJannyCollectionCharacters\(collectionId\)/);
+    assert.match(js, /is already in \$\{name\}\. Membership refreshed\./);
+});

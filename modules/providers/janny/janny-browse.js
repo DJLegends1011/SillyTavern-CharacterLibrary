@@ -4,6 +4,7 @@ import { BrowseView } from '../browse-view.js';
 import CoreAPI from '../../core-api.js';
 import { IMG_PLACEHOLDER, formatNumber, BROWSE_PURIFY_CONFIG, skeletonLines, deferRender, deferCall, isMobileMode, finishBrowseImport } from '../provider-utils.js';
 import { orderJannyCollectionCharacters } from './janny-collection-order.js';
+import { collectionEntryCharacterId, collectionEntryMatchesCharacter } from './janny-collection-membership.js';
 import {
     JANNY_SEARCH_URL,
     JANNY_IMAGE_BASE,
@@ -1609,11 +1610,6 @@ function updateOwnedCollectionCount(collectionId, delta) {
     }
 }
 
-function collectionEntryCharacterId(entry) {
-    const raw = entry?.character || entry?.characters || entry;
-    const c = raw?.character || raw;
-    return c?.id || c?.characterId || c?.character_id || entry?.characterId || entry?.character_id || '';
-}
 
 function collectionHasPreviewImages(collection) {
     return getJannyCollectionPreviewImages(collection).length > 0;
@@ -1951,11 +1947,6 @@ function getCollectionEntries(collection) {
     return null;
 }
 
-function entryMatchesCharacter(entry, characterId) {
-    const raw = entry?.character || entry?.characters || entry;
-    const id = raw?.id || raw?.characterId || raw?.character_id || entry?.characterId || entry?.character_id || '';
-    return String(id) === String(characterId);
-}
 
 async function refreshSelectedJannyCollectionMemberships() {
     const characterId = String(jannySelectedChar?.id || '');
@@ -1965,14 +1956,14 @@ async function refreshSelectedJannyCollectionMemberships() {
     for (const collection of jannyOwnedCollections) {
         const entries = getCollectionEntries(collection);
         if (entries) {
-            if (entries.some(entry => entryMatchesCharacter(entry, characterId))) membershipIds.add(String(collection.id));
+            if (entries.some(entry => collectionEntryMatchesCharacter(entry, characterId))) membershipIds.add(String(collection.id));
             continue;
         }
         if (!collection?.id || collectionCharacterCount(collection) <= 0) continue;
         try {
             const fetched = await fetchJannyCollectionCharacters(collection.id);
             if (String(jannySelectedChar?.id || '') !== characterId) return jannyModalCollectionIds;
-            if (Array.isArray(fetched) && fetched.some(entry => entryMatchesCharacter(entry, characterId))) {
+            if (Array.isArray(fetched) && fetched.some(entry => collectionEntryMatchesCharacter(entry, characterId))) {
                 membershipIds.add(String(collection.id));
             }
         } catch (err) {
@@ -2075,7 +2066,25 @@ async function toggleSelectedJannyCollectionMembership(collectionId) {
             openJannyOwnedCollection(collectionId);
         }
     } catch (err) {
-        showToast(`Could not update collection: ${describeJannyAccountError(err)}`, 'error', 8000);
+        let duplicateAddReconciled = false;
+        if (!wasMember && err?.status === 401) {
+            try {
+                const entries = await fetchJannyCollectionCharacters(collectionId);
+                duplicateAddReconciled = Array.isArray(entries)
+                    && entries.some(entry => collectionEntryMatchesCharacter(entry, characterId));
+            } catch (refreshErr) {
+                debugLog('[JannyAccount] duplicate-add membership refresh failed:', refreshErr.message);
+            }
+        }
+
+        if (duplicateAddReconciled) {
+            if (String(jannySelectedChar?.id || '') === characterId) {
+                jannyModalCollectionIds.add(String(collectionId));
+            }
+            showToast(`${characterName} is already in ${name}. Membership refreshed.`, 'info');
+        } else {
+            showToast(`Could not update collection: ${describeJannyAccountError(err)}`, 'error', 8000);
+        }
     } finally {
         jannyCollectionRowMutations.delete(String(collectionId));
         if (String(jannySelectedChar?.id || '') === characterId) renderJannyCollectionDropdown();
