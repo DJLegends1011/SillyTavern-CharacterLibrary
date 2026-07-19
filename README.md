@@ -530,7 +530,7 @@ Providers with Following support include a **Followed Creators Manager** panel f
 <details>
 <summary><h3>JanitorAI</h3></summary>
 
-**Auth:** None required for browsing. Optional account sync requires the [cl-helper plugin](#cl-helper-plugin-not-detected) and your logged-in JannyAI cookie header.
+**Auth:** None required for browsing. Optional account sync uses a companion userscript bridge (see below) — nothing to paste.
 
 - Browse and search the full JanitorAI character catalog
 - Filter by tags, token count, NSFW toggle
@@ -543,14 +543,14 @@ No gallery downloads or version history (JanitorAI doesn't expose these APIs).
 
 #### JannyAI Account Sync
 
-JannyAI protects account endpoints with Cloudflare and uses HttpOnly cookies, so Character Library cannot read your login automatically. To use account sync:
+JannyAI's bookmark and collection endpoints sit behind Cloudflare and use HttpOnly cookies, so Character Library can't read your login directly. Instead of pasting anything, a companion **userscript** bridges the request through your own browser:
 
-1. Install/update the [cl-helper plugin](#cl-helper-plugin-not-detected) and restart SillyTavern
-2. Log into [jannyai.com](https://jannyai.com) in a browser
-3. Copy the full `Cookie` request header for a logged-in JannyAI request
-4. Open Settings > Online > JannyAI, paste the cookie header under **JannyAI Account Sync**, and validate. The JanitorAI browse toolbar also has an **Account** shortcut for the same cl-helper session.
+1. Install a userscript manager (Tampermonkey or Violentmonkey)
+2. Add `extras/cl-janny-bridge.user.js` from this repository
+3. Log into [jannyai.com](https://jannyai.com) in that same browser
+4. Open Settings > Online > JannyAI and check the **Bridge** and **Account** status; hit **Refresh** after installing the userscript or logging in
 
-If JannyAI starts challenging the helper, refresh the `Cookie` and matching `User-Agent` headers from a normal JannyAI browser tab and validate again. If it still reports a Cloudflare challenge, JannyAI is rejecting non-browser helper requests; Character Library will show that cleanly instead of dumping the challenge body. Bookmark adds are guarded at JannyAI's current 220-bookmark UI limit; if your account is already full, remove one bookmark before adding another.
+Being logged into jannyai.com in that browser *is* the login: the userscript reads your existing session cookies and makes the request for you, so there's nothing to copy or paste, and cl-helper is not involved. Tested on desktop; also works on Firefox for Android with Tampermonkey. If Account status stays "Not logged in", confirm you're logged into jannyai.com in the same browser the userscript runs in, then hit Refresh. Bookmark adds are guarded at JannyAI's current 220-bookmark UI limit; if your account is already full, remove one bookmark before adding another.
 
 </details>
 
@@ -783,7 +783,7 @@ The full app is optimized for mobile with:
 
 ### cl-helper plugin not detected
 
-The **cl-helper** plugin is required for Pygmalion login, Botbooru login, CharacterTavern NSFW access, DataCat session proxying, optional JannyAI account sync, the Pixiv and Dropbox gallery extractors, Imgchest password-protected posts, Civitai API-key requests, and the disk-cached avatar/gallery thumbnails. It ships with Character Library in the `extras/cl-helper/` folder but needs to be placed in SillyTavern's plugins directory:
+The **cl-helper** plugin is required for Pygmalion login, Botbooru login, CharacterTavern NSFW access, DataCat session proxying, the Pixiv and Dropbox gallery extractors, Imgchest password-protected posts, Civitai API-key requests, and the disk-cached avatar/gallery thumbnails. JannyAI account sync does not need it — it uses a companion userscript bridge instead (see the JanitorAI provider section above). It ships with Character Library in the `extras/cl-helper/` folder but needs to be placed in SillyTavern's plugins directory:
 
 1. Copy (or symlink) the `extras/cl-helper` folder into your SillyTavern **plugins** directory:
    ```
@@ -796,7 +796,7 @@ The **cl-helper** plugin is required for Pygmalion login, Botbooru login, Charac
 3. **Restart SillyTavern** (plugins only load at startup)
 4. Verify in the login/auth modal (appears when enabling NSFW). You should see "cl-helper plugin detected"
 
-> The plugin runs server-side to handle auth flows that browsers can't do directly (e.g. Origin headers for Pygmalion, cookie proxying for CharacterTavern, session token management for DataCat, and allowlisted JannyAI account requests). It only communicates with the specific provider APIs through hostname-pinned, path-allowlisted proxies; most are read-only GET proxies, plus a handful of dedicated POST routes for login handshakes, extraction, and the account actions Character Library exposes, such as JannyAI bookmark and collection updates. See the [plugin source](extras/cl-helper/index.js) for details.
+> The plugin runs server-side to handle auth flows that browsers can't do directly (e.g. Origin headers for Pygmalion, cookie proxying for CharacterTavern, session token management for DataCat). It only communicates with the specific provider APIs through hostname-pinned, path-allowlisted proxies; most are read-only GET proxies, plus a handful of dedicated POST routes for login handshakes and extraction. See the [plugin source](extras/cl-helper/index.js) for details.
 
 ### Media downloads fail with CORS errors
 
