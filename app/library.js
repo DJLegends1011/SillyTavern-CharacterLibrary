@@ -2211,13 +2211,17 @@ function setupSettingsModal() {
         if (!bridgeEl || !accountEl) return;
 
         const bridge = window.clJannyBridge;
-        const available = !!bridge?.isAvailable?.();
+        bridgeEl.className = 'settings-status-badge inactive';
+        bridgeEl.innerHTML = '<i class="fa-solid fa-circle"></i> Checking&hellip;';
+        const available = typeof bridge?.refresh === 'function'
+            ? await bridge.refresh()
+            : !!bridge?.isAvailable?.();
         bridgeEl.className = `settings-status-badge ${available ? 'active' : 'inactive'}`;
         bridgeEl.innerHTML = `<i class="fa-solid fa-circle"></i> ${available ? 'Userscript detected' : 'Not detected'}`;
         if (!available) {
             accountEl.className = 'settings-status-badge inactive';
             accountEl.innerHTML = '<i class="fa-solid fa-circle"></i> Unavailable';
-            if (hintEl) hintEl.textContent = 'Install extras/cl-janny-bridge.user.js in Tampermonkey or Violentmonkey, then reload this page.';
+            if (hintEl) hintEl.textContent = 'Install or update extras/cl-janny-bridge.user.js in Tampermonkey or Violentmonkey, reload Character Library, then try Refresh.';
             return;
         }
 

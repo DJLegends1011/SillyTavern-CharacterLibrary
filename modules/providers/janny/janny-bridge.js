@@ -13,10 +13,16 @@
 const PAGE_SRC = 'character-library-janny';
 const SCRIPT_SRC = 'cl-janny-bridge';
 const REQUEST_TIMEOUT_MS = 30000;
+const HANDSHAKE_TIMEOUT_MS = 750;
 
 let bridgeReady = false;
 let initialized = false;
 const pending = new Map(); // requestId -> { resolve, timer }
+const readyWaiters = new Set();
+
+function pingBridge() {
+    window.postMessage({ source: PAGE_SRC, type: 'ping' }, window.location.origin);
+}
 
 function handleMessage(e) {
     // Origin-guarded, not e.source === window: the userscript runs behind an Xray wrapper
@@ -28,6 +34,8 @@ function handleMessage(e) {
     if (msg.type === 'ready') {
         if (!bridgeReady) console.debug('[CL] JannyAI userscript bridge connected');
         bridgeReady = true;
+        for (const resolve of readyWaiters) resolve(true);
+        readyWaiters.clear();
         return;
     }
     if (msg.type === 'result') {
@@ -50,13 +58,36 @@ export function initJannyBridge() {
     window.addEventListener('message', handleMessage);
     // Symmetric handshake: the userscript announces 'ready' on load, and this ping
     // re-triggers that announce if the userscript attached first.
-    window.postMessage({ source: PAGE_SRC, type: 'ping' }, window.location.origin);
+    pingBridge();
     // Settings UI (app/library.js) lives outside the module graph; give it a handle.
-    window.clJannyBridge = { isAvailable: isJannyBridgeAvailable, request: jannyBridgeFetch };
+    window.clJannyBridge = {
+        isAvailable: isJannyBridgeAvailable,
+        refresh: refreshJannyBridgeAvailability,
+        request: jannyBridgeFetch,
+    };
 }
 
 export function isJannyBridgeAvailable() {
     return bridgeReady;
+}
+
+// Re-run the handshake and wait briefly for a fresh ready reply. A timeout resets the
+// stale ready flag so Settings reports the userscript's current state.
+export function refreshJannyBridgeAvailability() {
+    if (!initialized) initJannyBridge();
+
+    return new Promise((resolve) => {
+        let timer;
+        const finish = (available) => {
+            clearTimeout(timer);
+            readyWaiters.delete(finish);
+            bridgeReady = available;
+            resolve(available);
+        };
+        readyWaiters.add(finish);
+        timer = setTimeout(() => finish(false), HANDSHAKE_TIMEOUT_MS);
+        pingBridge();
+    });
 }
 
 // Resolves { ok, status, body, finalUrl }; rejects on transport failure (no bridge /

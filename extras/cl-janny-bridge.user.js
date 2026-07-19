@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Character Library - JannyAI Bridge
 // @namespace    https://github.com/Sillyanonymous/SillyTavern-CharacterLibrary
-// @version      1.0.0
+// @version      1.0.1
 // @description  Lets Character Library sync JannyAI bookmarks and collections by making the Cloudflare-gated requests from your own logged-in browser.
 // @author       DJLegends
 // @match        *://*/*
@@ -9,7 +9,6 @@
 // @grant        GM_xmlhttpRequest
 // @grant        GM.xmlHttpRequest
 // @run-at       document-idle
-// @noframes
 // ==/UserScript==
 
 /*
@@ -29,6 +28,10 @@
  *     public site that copies the CL marker still can't wake the bridge. See isTrustedHost.
  *   - Only answers same-origin messages tagged by CL ('character-library-janny').
  *   - @connect jannyai.com makes the userscript manager enforce the host boundary too.
+ *
+ * FRAME NOTE
+ * Character Library normally runs inside SillyTavern's same-origin embedded iframe.
+ * Do not add @noframes: that prevents the userscript from ever reaching library.html.
  */
 
 (function () {

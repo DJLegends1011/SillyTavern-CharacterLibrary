@@ -16,7 +16,7 @@ function makeFakeWindow() {
 }
 
 globalThis.window = makeFakeWindow();
-const { initJannyBridge, isJannyBridgeAvailable, jannyBridgeFetch } =
+const { initJannyBridge, isJannyBridgeAvailable, refreshJannyBridgeAvailability, jannyBridgeFetch } =
     await import('../modules/providers/janny/janny-bridge.js');
 
 // Acts as the userscript side. One listener, one swappable fetch handler — repeated
@@ -24,6 +24,7 @@ const { initJannyBridge, isJannyBridgeAvailable, jannyBridgeFetch } =
 // assert inside a stacked handler would throw as an unhandled microtask rejection).
 let fetchHandler = null;
 let listenerInstalled = false;
+let pingCount = 0;
 function installFakeUserscript(handler) {
     fetchHandler = handler;
     if (listenerInstalled) return;
@@ -32,6 +33,7 @@ function installFakeUserscript(handler) {
         const msg = e.data;
         if (!msg || msg.source !== 'character-library-janny') return;
         if (msg.type === 'ping') {
+            pingCount++;
             window.postMessage({ source: 'cl-janny-bridge', type: 'ready' }, window.location.origin);
             return;
         }
@@ -44,6 +46,7 @@ function installFakeUserscript(handler) {
 
 test('bridge reports unavailable before handshake and rejects fetches', async () => {
     initJannyBridge();
+    assert.equal(await refreshJannyBridgeAvailability(), false);
     assert.equal(isJannyBridgeAvailable(), false);
     await assert.rejects(
         jannyBridgeFetch('GET', 'https://jannyai.com/api/bookmark'),
@@ -94,6 +97,13 @@ test('replies from unknown sources are ignored', async () => {
 
 test('initJannyBridge exposes window.clJannyBridge for the settings UI', () => {
     assert.equal(typeof window.clJannyBridge?.isAvailable, 'function');
+    assert.equal(typeof window.clJannyBridge?.refresh, 'function');
     assert.equal(typeof window.clJannyBridge?.request, 'function');
     assert.equal(window.clJannyBridge.isAvailable(), true);
+});
+
+test('refresh re-pings the userscript and reports a fresh handshake', async () => {
+    const before = pingCount;
+    assert.equal(await refreshJannyBridgeAvailability(), true);
+    assert.equal(pingCount, before + 1);
 });

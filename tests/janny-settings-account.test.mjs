@@ -30,6 +30,7 @@ test('JannyAI settings are status-only (bridge + account), no paste fields', () 
 test('library.js drops the cookie plumbing and refreshes via the bridge', () => {
     assert.ok(js.includes('function refreshJannySettingsAccountStatus'), 'missing status refresh');
     assert.ok(js.includes('window.clJannyBridge'), 'must read the bridge handle');
+    assert.ok(js.includes('await bridge.refresh()'), 'Refresh must re-run bridge discovery');
     for (const stale of [
         'mergeJannyClearanceIntoCookie',
         'saveJannySettingsAccountCookie',
