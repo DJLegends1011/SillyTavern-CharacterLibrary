@@ -47,7 +47,7 @@ export async function getSearchToken() {
 // NETWORK & TEXT UTILITIES (shared)
 // ========================================
 
-import { CL_HELPER_PLUGIN_BASE, fetchWithProxy } from '../provider-utils.js';
+import { fetchWithProxy } from '../provider-utils.js';
 export { fetchWithProxy };
 export { slugify, stripHtml } from '../provider-utils.js';
 
@@ -56,127 +56,45 @@ export function resolveTagNames(tagIds) {
 }
 
 // ========================================
-// ACCOUNT SYNC (bookmarks + collections via cl-helper)
+// ACCOUNT SYNC (bookmarks + collections via the userscript bridge)
 // ========================================
+// All jannyai.com account and public-collection requests ride the companion userscript
+// (extras/cl-janny-bridge.user.js): GM_xmlhttpRequest carries the browser's own jannyai
+// cookies, so Cloudflare passes and being logged into jannyai.com IS the login. No
+// cookies are captured, stored, or relayed through cl-helper.
 
-let _apiRequest = null;
+import { isJannyBridgeAvailable, jannyBridgeFetch } from './janny-bridge.js';
+import {
+    parseJannyPublicCollectionsPage,
+    parseJannyPublicCollectionDetailPage,
+    validateJannyPublicCollectionPath,
+    validateJannyCollectorName,
+    detectJannyCloudflareBody,
+} from './janny-html.js';
 
-export function setJannyApiRequest(fn) { _apiRequest = fn; }
-
-async function helperRequest(path, method = 'GET', data = null) {
-    if (_apiRequest) return _apiRequest(path, method, data);
-    const opts = { method };
-    if (data != null) {
-        opts.headers = { 'Content-Type': 'application/json' };
-        opts.body = JSON.stringify(data);
-    }
-    return fetch(`/api${path}`, opts);
-}
-async function helperJsonGet(path, params = {}) {
-    const query = new URLSearchParams();
-    for (const [key, value] of Object.entries(params)) {
-        if (value !== undefined && value !== null && String(value) !== '') query.set(key, String(value));
-    }
-    const suffix = query.toString();
-    const resp = await helperRequest(`${path}${suffix ? `?${suffix}` : ''}`);
-    const data = await resp.json().catch(() => null);
-    if (!resp.ok || data?.cloudflare) {
-        const err = new Error(data?.error || (data?.cloudflare ? 'Cloudflare challenge' : `HTTP ${resp.status}`));
-        err.status = resp.status;
-        err.cloudflare = !!data?.cloudflare;
-        err.payload = data;
+async function jannyBridgeRequest(method, path, { json, form } = {}) {
+    if (!isJannyBridgeAvailable()) {
+        const err = new Error('JannyAI bridge userscript not detected');
+        err.code = 'JANNY_BRIDGE_MISSING';
         throw err;
     }
-    return data || {};
-}
+    let body, contentType;
+    if (json !== undefined) { body = JSON.stringify(json); contentType = 'application/json'; }
+    if (form !== undefined) { body = new URLSearchParams(form).toString(); contentType = 'application/x-www-form-urlencoded'; }
 
-export async function checkJannyPluginAvailable() {
-    try {
-        const resp = await helperRequest(`${CL_HELPER_PLUGIN_BASE}/health`);
-        if (!resp.ok) return false;
-        const data = await resp.json();
-        return data?.ok === true;
-    } catch {
-        return false;
-    }
-}
-
-export async function setJannySessionCookie(cookie, userAgent = '') {
-    const resp = await helperRequest(`${CL_HELPER_PLUGIN_BASE}/janny-set-cookie`, 'POST', { cookie, userAgent });
-    const payload = await resp.json().catch(() => null);
-    if (!resp.ok) throw new Error(payload?.error || `HTTP ${resp.status}`);
-    return payload;
-}
-
-export async function clearJannySession() {
-    try {
-        const resp = await helperRequest(`${CL_HELPER_PLUGIN_BASE}/janny-clear-session`, 'POST');
-        return resp.ok;
-    } catch {
-        return false;
-    }
-}
-
-export async function getJannySessionStatus() {
-    try {
-        const resp = await helperRequest(`${CL_HELPER_PLUGIN_BASE}/janny-session`);
-        if (!resp.ok) return { active: false };
-        return resp.json();
-    } catch {
-        return { active: false };
-    }
-}
-
-function jannyValidatePath(options = {}) {
-    const params = new URLSearchParams();
-    const flareUrl = options.flareSolverrUrl || options.flareUrl || '';
-    if (flareUrl) params.set('flareUrl', flareUrl);
-    if (options.flareSessionId) params.set('flareSessionId', options.flareSessionId);
-    const query = params.toString();
-    return `${CL_HELPER_PLUGIN_BASE}/janny-validate${query ? `?${query}` : ''}`;
-}
-
-export async function validateJannySession(options = {}) {
-    try {
-        const resp = await helperRequest(jannyValidatePath(options));
-        const payload = await resp.json().catch(() => null);
-        if (!resp.ok) {
-            return {
-                valid: false,
-                cloudflare: !!payload?.cloudflare,
-                reason: payload?.reason || payload?.error || `HTTP ${resp.status}`,
-            };
-        }
-        return payload || { valid: false, reason: 'empty response' };
-    } catch (err) {
-        return { valid: false, reason: err.message };
-    }
-}
-
-function accountOptions(options = {}) {
-    const flareUrl = options.flareSolverrUrl || options.flareUrl || '';
-    return {
-        flareUrl,
-        useFlare: !!flareUrl && options.useFlare !== false,
-        flareSessionId: options.flareSessionId || '',
-    };
-}
-
-async function jannyAccountProxy(method, path, body = undefined, options = {}) {
-    const payload = { method, path, ...accountOptions(options) };
-    if (body !== undefined) payload.body = body;
-
-    const resp = await helperRequest(`${CL_HELPER_PLUGIN_BASE}/janny-proxy`, 'POST', payload);
-    const data = await resp.json().catch(() => null);
-    if (!resp.ok || data?.cloudflare) {
-        const msg = data?.error || (data?.cloudflare ? 'Cloudflare challenge' : `HTTP ${resp.status}`);
-        const err = new Error(msg);
-        err.status = resp.status;
-        err.cloudflare = !!data?.cloudflare;
-        err.payload = data;
+    const res = await jannyBridgeFetch(method, `${JANNY_SITE_BASE}${path}`, { body, contentType });
+    if (!res.ok) {
+        const err = new Error(`JannyAI HTTP ${res.status}`);
+        err.status = res.status;
+        err.cloudflare = detectJannyCloudflareBody(res.status, res.body);
+        if (res.status === 401) err.code = 'JANNY_LOGIN_REQUIRED';
         throw err;
     }
-    return data || {};
+    return res;
+}
+
+function parseJsonBody(res) {
+    try { return JSON.parse(res.body); } catch { return null; }
 }
 
 function toIdArray(ids) {
@@ -191,125 +109,128 @@ function bookmarkEntryId(entry) {
     return '';
 }
 
-export async function fetchJannyBookmarks(options = {}) {
+// Reports transport + login state for gating and the Settings panel. Never throws.
+export async function probeJannyAccount() {
+    if (!isJannyBridgeAvailable()) {
+        return { bridge: false, active: false, cloudflare: false, reason: 'JannyAI bridge userscript not detected' };
+    }
     try {
-        const data = await jannyAccountProxy('GET', '/api/bookmark', undefined, options);
-        const bookmarks = data.json?.bookmarks || data.bookmarks || [];
-        return Array.isArray(bookmarks) ? bookmarks.map(bookmarkEntryId).filter(Boolean) : [];
+        await jannyBridgeRequest('GET', '/api/bookmark');
+        return { bridge: true, active: true, cloudflare: false, reason: '' };
     } catch (err) {
-        if (!err.cloudflare) throw err;
-        const data = await jannyAccountProxy('GET', '/bookmark', undefined, options);
-        return data.bookmarkPage?.characterIds || [];
+        return {
+            bridge: true,
+            active: false,
+            cloudflare: !!err.cloudflare,
+            reason: err.code === 'JANNY_LOGIN_REQUIRED' ? 'Not logged into jannyai.com in this browser' : err.message,
+        };
     }
 }
 
-export async function fetchJannyBookmarkPage(options = {}) {
-    const data = await jannyAccountProxy('GET', '/bookmark', undefined, options);
-    return data.bookmarkPage || { totalCount: null, characterIds: [], characterUrls: [] };
+export async function fetchJannyBookmarks() {
+    const data = parseJsonBody(await jannyBridgeRequest('GET', '/api/bookmark'));
+    const bookmarks = data?.bookmarks || [];
+    return Array.isArray(bookmarks) ? bookmarks.map(bookmarkEntryId).filter(Boolean) : [];
 }
 
-export async function addJannyBookmarks(ids, options = {}) {
+export async function addJannyBookmarks(ids) {
     const characterIDs = toIdArray(ids);
     if (!characterIDs.length) return [];
-    const data = await jannyAccountProxy('POST', '/api/bookmark', { characterIDs }, options);
-    return data.json?.bookmarks || data.bookmarks || [];
+    const data = parseJsonBody(await jannyBridgeRequest('POST', '/api/bookmark', { json: { characterIDs } }));
+    return data?.bookmarks || [];
 }
 
-export async function removeJannyBookmarks(ids, options = {}) {
+export async function removeJannyBookmarks(ids) {
     const characterIDs = toIdArray(ids);
     if (!characterIDs.length) return [];
-    const path = `/api/bookmark?ids=${encodeURIComponent(characterIDs.join(','))}`;
-    const data = await jannyAccountProxy('DELETE', path, undefined, options);
-    return data.json?.bookmarks || data.bookmarks || [];
+    const data = parseJsonBody(await jannyBridgeRequest('DELETE', `/api/bookmark?ids=${encodeURIComponent(characterIDs.join(','))}`));
+    return data?.bookmarks || [];
 }
 
-// cl-helper caps each proxied path at 1024 chars, so a ?ids= query fits only
-// ~26 UUIDs before it's rejected as "path not allowed". Chunk conservatively so
-// any number of ids works regardless of how many a caller passes.
+// Keep ?ids= URLs comfortably short regardless of how many ids a caller passes.
 const JANNY_GET_CHARACTERS_CHUNK = 20;
 
-export async function fetchJannyCharactersByIds(ids, options = {}) {
+export async function fetchJannyCharactersByIds(ids) {
     const characterIDs = toIdArray(ids);
     if (!characterIDs.length) return [];
     const out = [];
     for (let i = 0; i < characterIDs.length; i += JANNY_GET_CHARACTERS_CHUNK) {
         const chunk = characterIDs.slice(i, i + JANNY_GET_CHARACTERS_CHUNK);
-        const path = `/api/get-characters?ids=${encodeURIComponent(chunk.join(','))}`;
-        const data = await jannyAccountProxy('GET', path, undefined, options);
-        const chars = data.json?.characters || data.characters || [];
+        const data = parseJsonBody(await jannyBridgeRequest('GET', `/api/get-characters?ids=${encodeURIComponent(chunk.join(','))}`));
+        const chars = data?.characters || [];
         if (Array.isArray(chars)) out.push(...chars);
     }
     return out;
 }
 
-export async function fetchJannyCollections(options = {}) {
-    const data = await jannyAccountProxy('GET', '/api/collections/mine', undefined, options);
-    return data.json?.collections || data.collections || [];
+// /api/get-characters is public; with the bridge there is no separate anonymous path.
+export const fetchJannyPublicCharactersByIds = fetchJannyCharactersByIds;
+
+export async function fetchJannyCollections() {
+    const data = parseJsonBody(await jannyBridgeRequest('GET', '/api/collections/mine'));
+    return data?.collections || [];
 }
 
-export async function fetchJannyPublicCollections({ sort = 'latest', page = 1 } = {}) {
-    return helperJsonGet(`${CL_HELPER_PLUGIN_BASE}/janny-public-collections`, { sort, page });
-}
-
-export async function fetchJannyPublicCollection(path) {
-    return helperJsonGet(`${CL_HELPER_PLUGIN_BASE}/janny-public-collection`, { path });
-}
-
-export async function fetchJannyCollectorCollections(name) {
-    return helperJsonGet(`${CL_HELPER_PLUGIN_BASE}/janny-collector-collections`, { name });
-}
-
-export async function fetchJannyPublicCharactersByIds(ids) {
-    const characterIDs = toIdArray(ids);
-    if (!characterIDs.length) return [];
-    const out = [];
-    for (let i = 0; i < characterIDs.length; i += JANNY_GET_CHARACTERS_CHUNK) {
-        const chunk = characterIDs.slice(i, i + JANNY_GET_CHARACTERS_CHUNK);
-        const data = await helperJsonGet(`${CL_HELPER_PLUGIN_BASE}/janny-public-characters`, { ids: chunk.join(',') });
-        if (Array.isArray(data.characters)) out.push(...data.characters);
-    }
-    return out;
-}
-export async function fetchJannyCollectionCharacters(collectionId, options = {}) {
+export async function fetchJannyCollectionCharacters(collectionId) {
     if (!collectionId) return [];
-    const data = await jannyAccountProxy('GET', `/api/collections/${collectionId}/characters`, undefined, options);
-    return data.json?.characters || data.characters || [];
+    const data = parseJsonBody(await jannyBridgeRequest('GET', `/api/collections/${collectionId}/characters`));
+    return data?.characters || [];
 }
 
-export async function addJannyCharacterToCollection(collectionId, characterId, options = {}) {
-    const data = await jannyAccountProxy('POST', `/api/collections/${collectionId}/characters`, { characterId }, options);
-    return data.json || data;
+export async function addJannyCharacterToCollection(collectionId, characterId) {
+    const res = await jannyBridgeRequest('POST', `/api/collections/${collectionId}/characters`, { json: { characterId } });
+    return parseJsonBody(res) || {};
 }
 
-export async function removeJannyCharacterFromCollection(collectionId, characterId, options = {}) {
-    const path = `/api/collections/${collectionId}/characters?characterId=${encodeURIComponent(characterId)}`;
-    const data = await jannyAccountProxy('DELETE', path, undefined, options);
-    return data.json || data;
+export async function removeJannyCharacterFromCollection(collectionId, characterId) {
+    const res = await jannyBridgeRequest('DELETE', `/api/collections/${collectionId}/characters?characterId=${encodeURIComponent(characterId)}`);
+    return parseJsonBody(res) || {};
 }
 
-export async function createJannyCollection({ name, description = '', isPrivate = true } = {}, options = {}) {
-    // JannyAI has no JSON create API; it's a server-rendered form POST that
-    // answers 302 -> /collections/<id>_<slug>/edit. cl-helper form-encodes the
-    // body and surfaces that Location as `location`.
-    const body = { name, description, isPrivate: isPrivate ? 'yes' : 'no' };
-    let data;
-    try {
-        data = await jannyAccountProxy('POST', '/collections/form/add-collection', body, options);
-    } catch (err) {
-        if (err.status === 404 && !err.cloudflare) err.unsupported = true;
-        throw err;
-    }
-    const location = data.location || '';
+// Collection create/edit/delete are server-rendered Astro form POSTs
+// (application/x-www-form-urlencoded). Success answers 302; the userscript manager
+// follows the redirect, so the created collection's id is read from finalUrl.
+export async function createJannyCollection({ name, description = '', isPrivate = true } = {}) {
+    const res = await jannyBridgeRequest('POST', '/collections/form/add-collection', {
+        form: { name, description, isPrivate: isPrivate ? 'yes' : 'no' },
+    });
+    const location = res.finalUrl || '';
     const idMatch = location.match(/\/collections\/([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})/i);
     return { success: true, id: idMatch ? idMatch[1] : null, location };
 }
-export async function updateJannyCollection({ id, name, description = '', isPrivate = true } = {}, options = {}) {
-    const body = { id, name, description, isPrivate: isPrivate ? 'yes' : 'no' };
-    const data = await jannyAccountProxy('POST', '/collections/form/edit-collection', body, options);
-    return { success: true, location: data.location || '' };
+
+export async function updateJannyCollection({ id, name, description = '', isPrivate = true } = {}) {
+    const res = await jannyBridgeRequest('POST', '/collections/form/edit-collection', {
+        form: { id, name, description, isPrivate: isPrivate ? 'yes' : 'no' },
+    });
+    return { success: true, location: res.finalUrl || '' };
 }
 
-export async function deleteJannyCollection(id, options = {}) {
-    const data = await jannyAccountProxy('POST', '/collections/form/delete-collection', { id }, options);
-    return { success: true, location: data.location || '' };
+export async function deleteJannyCollection(id) {
+    const res = await jannyBridgeRequest('POST', '/collections/form/delete-collection', { form: { id } });
+    return { success: true, location: res.finalUrl || '' };
+}
+
+// ========================================
+// PUBLIC COLLECTIONS (HTML pages via the bridge, parsed client-side)
+// ========================================
+
+export async function fetchJannyPublicCollections({ sort = 'latest', page = 1 } = {}) {
+    const params = new URLSearchParams({ sort: String(sort), page: String(page) });
+    const res = await jannyBridgeRequest('GET', `/collections?${params}`);
+    return { ok: true, status: res.status, ...parseJannyPublicCollectionsPage(res.body) };
+}
+
+export async function fetchJannyCollectorCollections(name) {
+    const validation = validateJannyCollectorName(name);
+    if (!validation.ok) throw new Error(validation.error);
+    const res = await jannyBridgeRequest('GET', `/collectors/${encodeURIComponent(validation.name)}`);
+    return { ok: true, status: res.status, ...parseJannyPublicCollectionsPage(res.body) };
+}
+
+export async function fetchJannyPublicCollection(path) {
+    const validation = validateJannyPublicCollectionPath(path);
+    if (!validation.ok) throw new Error(validation.error);
+    const res = await jannyBridgeRequest('GET', validation.path);
+    return { ok: true, status: res.status, ...parseJannyPublicCollectionDetailPage(res.body, validation.path) };
 }
