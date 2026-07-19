@@ -279,7 +279,7 @@ export function detectJannyCloudflareBody(status, body) {
     if (status >= 400) {
         return lower.includes('just a moment')
             || lower.includes('cf_chl_')
-            || lower.includes('/cdn-cgi/challenge-platform/');
+            || lower.includes('challenge-platform');
     }
     return false;
 }

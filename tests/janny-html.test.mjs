@@ -13,6 +13,8 @@ test('detectJannyCloudflareBody flags real challenges but not injected scripts o
     assert.equal(detectJannyCloudflareBody(403, '<title>Just a moment...</title>'), true);
     assert.equal(detectJannyCloudflareBody(403, 'window._cf_chl_opt = {}'), true);
     assert.equal(detectJannyCloudflareBody(403, '<script src="/cdn-cgi/challenge-platform/h/g"></script>'), true);
+    // Bare marker (no /cdn-cgi/ prefix) still counts on error statuses, matching the original detector.
+    assert.equal(detectJannyCloudflareBody(403, 'loading challenge-platform assets'), true);
     // Cloudflare injects its detection script into legitimate 200s — not a challenge.
     assert.equal(detectJannyCloudflareBody(200, '<script src="/cdn-cgi/challenge-platform/h/g"></script><div>real page</div>'), false);
     assert.equal(detectJannyCloudflareBody(200, '<title>Just a moment</title>'), true);
