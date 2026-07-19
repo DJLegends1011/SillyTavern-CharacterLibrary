@@ -1571,6 +1571,16 @@ https://jannyai.com/characters/uuid_slug
                             </ul>
                             <p class="info-tip"><i class="fa-solid fa-lightbulb"></i> Username/password login needs the cl-helper plugin. Without it, paste a token manually in the login dialog; a copied "Bearer " prefix is stripped automatically.</p>
                         </div>
+                        <div class="info-section" id="helpJannyBridge">
+                            <h4><i class="fa-solid fa-broom"></i> JannyAI</h4>
+                            <p>Bookmarks and collections require you to be logged into jannyai.com, which sits behind Cloudflare. There's nothing to paste: install the companion <strong>userscript</strong> (<code>extras/cl-janny-bridge.user.js</code>, in Tampermonkey or Violentmonkey); it makes JannyAI requests from your own browser, so Cloudflare and your login are handled by the browser itself. Works on desktop and on Firefox for Android + Tampermonkey.</p>
+                            <ul>
+                                <li>Install the userscript, then log into <strong>jannyai.com</strong> in that same browser</li>
+                                <li>Check <strong>Settings → Online → JannyAI</strong> for the Bridge and Account status, and use <strong>Refresh</strong> after logging in or installing the userscript</li>
+                                <li>Browsing and importing characters works without login; bookmarks and collections need the bridge plus a logged-in session</li>
+                            </ul>
+                            <p class="info-tip"><i class="fa-solid fa-lightbulb"></i> If Account status stays "Not logged in" after installing the userscript, make sure you're logged into jannyai.com in the same browser the userscript runs in, then hit Refresh.</p>
+                        </div>
                     </div>
 
                     <!-- Card Management -->
@@ -2519,28 +2529,24 @@ https://jannyai.com/characters/uuid_slug
                                 <div class="settings-group">
                                     <div class="settings-group-title"><i class="fa-solid fa-user-lock"></i> JannyAI Account Sync</div>
                                     <div class="settings-row">
-                                        <label for="jannySettingsCookieInput">Cookie header:</label>
-                                        <div class="settings-input-group">
-                                            <textarea id="jannySettingsCookieInput" class="glass-input" rows="3" placeholder="Full Cookie header once; later just cf_clearance=... to refresh Cloudflare" style="font-family: monospace; font-size: 12px; resize: vertical;" autocomplete="off" data-sensitive="true"></textarea>
-                                            <button id="jannySettingsValidateBtn" class="settings-verify-btn" title="Validate Session">
-                                                <i class="fa-solid fa-check"></i>
-                                            </button>
-                                        </div>
-                                        <span class="settings-hint">Paste the full Cookie header from a logged-in jannyai.com request once — it persists across restarts and is shared with your other devices (phone included). When Cloudflare expires later, paste just the fresh <code>cf_clearance=...</code> value: your login is kept and only the Cloudflare pass is swapped.</span>
-                                    </div>
-                                    <details class="settings-row">
-                                        <summary class="settings-hint" style="cursor: pointer;">Advanced: User-Agent</summary>
-                                        <input id="jannySettingsUserAgentInput" class="glass-input" type="text" placeholder="Auto-filled with this browser" autocomplete="off">
-                                        <span class="settings-hint">Cloudflare ties cf_clearance to the browser that solved it. Only change this if you copied the cookie from a different browser than the one you use for SillyTavern.</span>
-                                    </details>
-                                    <div class="settings-row" style="gap: 8px; flex-wrap: wrap;">
-                                        <button id="jannySettingsClearSessionBtn" class="settings-action-btn danger">
-                                            <i class="fa-solid fa-trash-can"></i> Clear Session
-                                        </button>
+                                        <span class="settings-hint">Bookmarks and collections ride a companion userscript (<code>extras/cl-janny-bridge.user.js</code>, installed in Tampermonkey or Violentmonkey): it makes JannyAI requests from your own browser, so Cloudflare and login are handled by the browser itself. Works on desktop and on Firefox for Android + Tampermonkey. Nothing to paste — just be logged into jannyai.com in this same browser.</span>
                                     </div>
                                     <div class="settings-row">
-                                        <span id="jannySettingsAccountHint" class="settings-hint">Bookmarks and collections require cl-helper. Finish login or Cloudflare in a normal JannyAI tab, then paste the matching Cookie header.</span>
+                                        <label>Bridge:</label>
+                                        <span id="jannySettingsBridgeStatus" class="settings-status-badge inactive"><i class="fa-solid fa-circle"></i> Checking&hellip;</span>
+                                    </div>
+                                    <div class="settings-row">
+                                        <label>Account:</label>
+                                        <span id="jannySettingsAccountStatus" class="settings-status-badge inactive"><i class="fa-solid fa-circle"></i> Unknown</span>
+                                    </div>
+                                    <div class="settings-row" style="gap: 8px;">
+                                        <button id="jannySettingsRefreshBtn" class="settings-action-btn">
+                                            <i class="fa-solid fa-arrows-rotate"></i> Refresh
+                                        </button>
                                         <a id="jannySettingsOpenJannyLink" class="settings-hint" href="https://jannyai.com/collections" target="_blank" rel="noopener noreferrer">Open JannyAI in a new tab</a>
+                                    </div>
+                                    <div class="settings-row">
+                                        <span id="jannySettingsAccountHint" class="settings-hint"></span>
                                     </div>
                                 </div>
                                 <div class="settings-group">

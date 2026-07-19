@@ -538,8 +538,6 @@ const DEFAULT_SETTINGS = {
     datacatToken: null,
     datacatPublicFeed: false,
     datacatReextractOnUpdate: false,
-    jannyCookie: null,
-    jannyUserAgent: null,
     janitoraiToken: null,
     janitoraiRefreshToken: null,
     botbooruToken: null,
@@ -1661,11 +1659,7 @@ function setupSettingsModal() {
     const datacatPluginBanner = document.getElementById('datacatPluginBanner');
     const datacatSettingsFields = document.getElementById('datacatSettingsFields');
     const datacatSessionStatus = document.getElementById('datacatSessionStatus');
-    const jannySettingsCookieInput = document.getElementById('jannySettingsCookieInput');
-    const jannySettingsUserAgentInput = document.getElementById('jannySettingsUserAgentInput');
-    const jannySettingsValidateBtn = document.getElementById('jannySettingsValidateBtn');
-    const jannySettingsClearSessionBtn = document.getElementById('jannySettingsClearSessionBtn');
-    const jannySettingsAccountHint = document.getElementById('jannySettingsAccountHint');
+    const jannySettingsRefreshBtn = document.getElementById('jannySettingsRefreshBtn');
     const minScoreSlider = document.getElementById('settingsMinScore');
     const minScoreValue = document.getElementById('minScoreValue');
     const possibleMatchScoreSlider = document.getElementById('settingsPossibleMatchScore');
@@ -2206,158 +2200,54 @@ function setupSettingsModal() {
         });
     }
 
-    function setJannySettingsAccountHint(message) {
-        if (jannySettingsAccountHint) jannySettingsAccountHint.textContent = message || '';
-    }
+    // JannyAI account sync now rides the cl-janny-bridge userscript (a page-side
+    // client exposed as window.clJannyBridge): no cookie to paste or persist,
+    // just report whether the userscript is present and whether it can see a
+    // logged-in jannyai.com session.
+    async function refreshJannySettingsAccountStatus() {
+        const bridgeEl = document.getElementById('jannySettingsBridgeStatus');
+        const accountEl = document.getElementById('jannySettingsAccountStatus');
+        const hintEl = document.getElementById('jannySettingsAccountHint');
+        if (!bridgeEl || !accountEl) return;
 
-    async function parseJannySettingsAccountResponse(resp) {
-        const payload = await resp.json().catch(() => null);
-        if (!resp.ok) throw new Error(payload?.error || `HTTP ${resp.status}`);
-        return payload || {};
-    }
-
-    async function readJannySettingsAccountJson(endpoint, method = 'GET', data = null) {
-        return parseJannySettingsAccountResponse(await apiRequest(endpoint, method, data));
-    }
-
-    function buildJannySettingsValidateEndpoint() {
-        return '/plugins/cl-helper/janny-validate';
-    }
-
-    async function readJannySettingsValidateResult() {
-        const resp = await apiRequest(buildJannySettingsValidateEndpoint());
-        const payload = await resp.json().catch(() => null);
-        if (!resp.ok && payload) return payload;
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-        return payload || {};
-    }
-
-    async function updateJannySettingsAccountStatus({ validate = false } = {}) {
-        if (!jannySettingsAccountHint) return { active: false, valid: false };
-        try {
-            let session = await readJannySettingsAccountJson('/plugins/cl-helper/janny-session');
-            if (!session.active) {
-                // cl-helper only holds the session in memory: after a server
-                // restart it comes up empty while the cookie setting persists.
-                // Re-push silently instead of asking for a fresh paste.
-                const stored = (getSetting('jannyCookie') || '').trim();
-                if (stored) {
-                    try {
-                        const userAgent = (getSetting('jannyUserAgent') || navigator.userAgent || '').trim();
-                        await parseJannySettingsAccountResponse(await apiRequest('/plugins/cl-helper/janny-set-cookie', 'POST', { cookie: stored, userAgent }));
-                        session = await readJannySettingsAccountJson('/plugins/cl-helper/janny-session');
-                    } catch { /* fall through to the paste hint */ }
-                }
-            }
-            if (!session.active) {
-                setJannySettingsAccountHint('Paste a logged-in jannyai.com Cookie header, then click the check button. Use the JannyAI link above to open a normal tab for login or cookie copying.');
-                return { active: false, valid: false };
-            }
-
-            if (!validate) {
-                setJannySettingsAccountHint(`Cookie stored (${session.cookieCount || 0} cookies). Click the check button to test bookmarks and collections access.`);
-                return { active: true, valid: false };
-            }
-
-            const result = await readJannySettingsValidateResult();
-            if (result.valid) {
-                setJannySettingsAccountHint('JannyAI bookmarks and collections are ready.');
-                return { active: true, valid: true };
-            }
-            if (result.cloudflare) {
-                setJannySettingsAccountHint('Cloudflare is blocking helper requests. cf_clearance only works from the device/network AND browser identity that solved it: solve Cloudflare on the same device that runs THIS SillyTavern server, paste the fresh cf_clearance=... value here (your login is kept), and make sure the Advanced User-Agent matches the browser you solved it in.');
-                return { active: true, valid: false, cloudflare: true };
-            }
-            setJannySettingsAccountHint(result.reason || 'JannyAI did not accept the stored cookie.');
-            return { active: true, valid: false };
-        } catch (err) {
-            setJannySettingsAccountHint(`cl-helper Janny route unavailable: ${err.message}`);
-            return { active: false, valid: false, error: err };
-        }
-    }
-
-    // A paste that is only a cf_clearance pair (or a bare clearance token)
-    // refreshes the Cloudflare pass inside the stored header instead of
-    // replacing the whole session — the sb-...-auth-token login is kept.
-    function mergeJannyClearanceIntoCookie(stored, pasted) {
-        const raw = String(pasted || '').replace(/^cookie\s*:\s*/i, '').trim().replace(/;+\s*$/, '');
-        const kept = String(stored || '').replace(/^cookie\s*:\s*/i, '').trim();
-        if (!kept) return raw;
-        const pairs = raw.split(';').map(s => s.trim()).filter(Boolean);
-        const clearanceOnly = pairs.length > 0 && pairs.every(p => /^cf_clearance\s*=/i.test(p));
-        const bareToken = pairs.length === 1 && !pairs[0].includes('=');
-        if (!clearanceOnly && !bareToken) return raw;
-        const clearance = bareToken ? `cf_clearance=${pairs[0]}` : pairs[pairs.length - 1];
-        const rest = kept.split(';').map(s => s.trim()).filter(p => p && !/^cf_clearance\s*=/i.test(p));
-        return rest.concat(clearance).join('; ');
-    }
-
-    async function saveJannySettingsAccountCookie() {
-        const pasted = (jannySettingsCookieInput?.value || '').trim();
-        if (!pasted) {
-            showToast('Paste a JannyAI Cookie header first', 'warning');
+        const bridge = window.clJannyBridge;
+        const available = !!bridge?.isAvailable?.();
+        bridgeEl.className = `settings-status-badge ${available ? 'active' : 'inactive'}`;
+        bridgeEl.innerHTML = `<i class="fa-solid fa-circle"></i> ${available ? 'Userscript detected' : 'Not detected'}`;
+        if (!available) {
+            accountEl.className = 'settings-status-badge inactive';
+            accountEl.innerHTML = '<i class="fa-solid fa-circle"></i> Unavailable';
+            if (hintEl) hintEl.textContent = 'Install extras/cl-janny-bridge.user.js in Tampermonkey or Violentmonkey, then reload this page.';
             return;
         }
-        const cookie = mergeJannyClearanceIntoCookie(getSetting('jannyCookie') || '', pasted);
-        const userAgent = (jannySettingsUserAgentInput?.value || navigator.userAgent || '').trim();
-        try {
-            await parseJannySettingsAccountResponse(await apiRequest('/plugins/cl-helper/janny-set-cookie', 'POST', { cookie, userAgent }));
-            // Persist so the session survives a server restart (cl-helper only
-            // holds it in memory); janny-browse re-pushes it on load.
-            setSetting('jannyCookie', cookie);
-            setSetting('jannyUserAgent', userAgent || null);
-            if (jannySettingsCookieInput) jannySettingsCookieInput.value = cookie;
-            showToast('JannyAI cookie saved', 'success');
-        } catch (err) {
-            showToast(`Could not save JannyAI cookie: ${err.message}`, 'error', 7000);
-            setJannySettingsAccountHint(err.message);
-            throw err;
-        }
-    }
 
-    async function validateJannySettingsAccount() {
-        if (jannySettingsValidateBtn) jannySettingsValidateBtn.disabled = true;
+        accountEl.className = 'settings-status-badge inactive';
+        accountEl.innerHTML = '<i class="fa-solid fa-circle"></i> Checking&hellip;';
         try {
-            // The check button always pushes what's in the box first (full
-            // header or a fresh cf_clearance), then validates. cl-helper only
-            // holds the session in memory, so "unchanged" input still needs a
-            // push after a server restart.
-            const pasted = (jannySettingsCookieInput?.value || '').trim();
-            if (pasted) {
-                try { await saveJannySettingsAccountCookie(); } catch { return; }
+            const res = await bridge.request('GET', 'https://jannyai.com/api/bookmark');
+            if (res.ok) {
+                accountEl.className = 'settings-status-badge active';
+                accountEl.innerHTML = '<i class="fa-solid fa-circle"></i> Logged in';
+                if (hintEl) hintEl.textContent = '';
+            } else if (res.status === 401 || res.status === 403) {
+                accountEl.className = 'settings-status-badge inactive';
+                accountEl.innerHTML = '<i class="fa-solid fa-circle"></i> Not logged in';
+                if (hintEl) hintEl.textContent = 'Log into jannyai.com in this same browser, then hit Refresh.';
+            } else {
+                accountEl.className = 'settings-status-badge inactive';
+                accountEl.innerHTML = `<i class="fa-solid fa-circle"></i> Error (HTTP ${res.status})`;
+                if (hintEl) hintEl.textContent = '';
             }
-            const result = await updateJannySettingsAccountStatus({ validate: true });
-            if (result.valid) showToast('JannyAI account session is valid', 'success');
-            else if (result.cloudflare) showToast('Cloudflare challenged the JannyAI helper request', 'warning', 7000);
-            else showToast('JannyAI account session is not valid yet', 'warning');
-        } finally {
-            if (jannySettingsValidateBtn) jannySettingsValidateBtn.disabled = false;
-        }
-    }
-
-    async function clearJannySettingsAccountCookie() {
-        if (jannySettingsClearSessionBtn) jannySettingsClearSessionBtn.disabled = true;
-        try {
-            await parseJannySettingsAccountResponse(await apiRequest('/plugins/cl-helper/janny-clear-session', 'POST', {}));
-            setSetting('jannyCookie', null);
-            setSetting('jannyUserAgent', null);
-            if (jannySettingsCookieInput) jannySettingsCookieInput.value = '';
-            showToast('JannyAI account session cleared', 'info');
-            await updateJannySettingsAccountStatus({ validate: false });
         } catch (err) {
-            showToast(`Could not clear JannyAI session: ${err.message}`, 'error', 7000);
-        } finally {
-            if (jannySettingsClearSessionBtn) jannySettingsClearSessionBtn.disabled = false;
+            accountEl.className = 'settings-status-badge inactive';
+            accountEl.innerHTML = '<i class="fa-solid fa-circle"></i> Error';
+            if (hintEl) hintEl.textContent = err.message;
         }
     }
 
-    jannySettingsValidateBtn?.addEventListener('click', (e) => {
+    jannySettingsRefreshBtn?.addEventListener('click', (e) => {
         e.preventDefault();
-        validateJannySettingsAccount();
-    });
-    jannySettingsClearSessionBtn?.addEventListener('click', (e) => {
-        e.preventDefault();
-        clearJannySettingsAccountCookie();
+        refreshJannySettingsAccountStatus();
     });
     // Open modal
     settingsBtn.onclick = () => {
@@ -2373,9 +2263,7 @@ function setupSettingsModal() {
         if (wyvernPasswordInput) wyvernPasswordInput.value = getSetting('wyvernPassword') || '';
         if (wyvernRememberCredsCheckbox) wyvernRememberCredsCheckbox.checked = getSetting('wyvernRememberCredentials') || false;
         if (datacatTokenInput) datacatTokenInput.value = getSetting('datacatToken') || '';
-        if (jannySettingsCookieInput) jannySettingsCookieInput.value = getSetting('jannyCookie') || '';
-        if (jannySettingsUserAgentInput) jannySettingsUserAgentInput.value = getSetting('jannyUserAgent') || navigator.userAgent || '';
-        updateJannySettingsAccountStatus();
+        refreshJannySettingsAccountStatus();
         const civitaiApiKeyInput = document.getElementById('settingsCivitaiApiKey');
         if (civitaiApiKeyInput) civitaiApiKeyInput.value = getSetting('civitaiApiKey') || '';
         const pixivCookieInput = document.getElementById('settingsPixivCookie');
@@ -3683,8 +3571,6 @@ function setupSettingsModal() {
             wyvernUid: preserveWyv ? getSetting('wyvernUid') : null,
             datacatToken: getSetting('datacatToken') || null,
             ctCookie: getSetting('ctCookie') || null,
-            jannyCookie: getSetting('jannyCookie') || null,
-            jannyUserAgent: getSetting('jannyUserAgent') || null,
         });
         
         const searchName = document.getElementById('searchName');
