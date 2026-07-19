@@ -1061,7 +1061,7 @@ export class BrowseView {
             this.eagerLoadVisibleImages(container);
             this.eagerPreloadImages(container);
             const images = Array.from(
-                container.querySelectorAll('.browse-card-image img')
+                container.querySelectorAll('.browse-card-image img[data-src], img.browse-decode-image[data-src]')
             ).filter(img => !img.dataset.observed);
             if (images.length === 0) return;
 
@@ -1099,7 +1099,7 @@ export class BrowseView {
         const preloadBottom = viewportHeight + 700;
         // :not(.loaded) keeps getBoundingClientRect off already-loaded cards; on a deep grid
         // this scan ran over every card ever appended and was the main forced-layout source.
-        const images = container.querySelectorAll('.browse-card-image:not(.loaded) img[data-src]');
+        const images = container.querySelectorAll('.browse-card-image:not(.loaded) img[data-src]:not([data-loaded]), img.browse-decode-image[data-src]:not([data-loaded])');
         for (const img of images) {
             if (img.dataset.failed) continue;
             const rect = img.getBoundingClientRect();
@@ -1118,7 +1118,7 @@ export class BrowseView {
      */
     eagerPreloadImages(container) {
         if (!container) return;
-        const images = container.querySelectorAll('.browse-card-image:not(.loaded) img[data-src]');
+        const images = container.querySelectorAll('.browse-card-image:not(.loaded) img[data-src]:not([data-loaded]), img.browse-decode-image[data-src]:not([data-loaded])');
         let loaded = 0;
         for (const img of images) {
             if (loaded >= this._preloadLimit) break;
@@ -1147,7 +1147,7 @@ export class BrowseView {
             const grid = document.getElementById(gridId);
             if (!grid) continue;
             this.eagerLoadVisibleImages(grid);
-            const imgs = grid.querySelectorAll('.browse-card-image img[data-observed]');
+            const imgs = grid.querySelectorAll('.browse-card-image img[data-observed], img.browse-decode-image[data-observed]');
             for (const img of imgs) delete img.dataset.observed;
             this.observeImages(grid);
         }
@@ -2088,19 +2088,53 @@ export class BrowseView {
     // ── Image loading ───────────────────────────────────────
 
     static loadImage(img, src) {
-        img.src = src;
+        if (!img || !src || img.dataset.loaded === '1' || img.dataset.loadingSrc === src) return;
+
         const container = img.closest('.browse-card-image');
-        if (!container || container.classList.contains('loaded')) return;
-        img.addEventListener('load', function onLoad() {
-            img.removeEventListener('load', onLoad);
-            container.classList.add('loaded');
-            container.classList.remove('load-failed');
-        });
-        img.addEventListener('error', function onError() {
-            img.removeEventListener('error', onError);
-            container.classList.add('load-failed');
-        });
-        BrowseView.adjustPortraitPosition(img);
+        img.dataset.loadingSrc = src;
+
+        const markLoaded = () => {
+            delete img.dataset.loadingSrc;
+            img.dataset.loaded = '1';
+            container?.classList.add('loaded');
+            container?.classList.remove('load-failed');
+        };
+        const markFailed = () => {
+            delete img.dataset.loadingSrc;
+            container?.classList.add('load-failed');
+        };
+
+        // Keep the transparent placeholder visible until the remote bitmap has
+        // fully decoded. Assigning src first exposes progressive PNG/WebP scan
+        // bands on large Janny avatars, especially on slower connections.
+        const preloader = new Image();
+        preloader.decoding = 'async';
+        if (img.fetchPriority) preloader.fetchPriority = img.fetchPriority;
+
+        let revealed = false;
+        const reveal = () => {
+            if (revealed || img.dataset.loadingSrc !== src) return;
+            revealed = true;
+            img.addEventListener('load', markLoaded, { once: true });
+            img.addEventListener('error', markFailed, { once: true });
+            img.src = src;
+            BrowseView.adjustPortraitPosition(img);
+        };
+        const revealThroughBrowser = () => {
+            // A decode rejection may mean either an unsupported decoder or a
+            // genuine image failure. Let the real element's existing fallback
+            // handler decide, preserving provider-specific error behavior.
+            reveal();
+        };
+
+        if (typeof preloader.decode === 'function') {
+            preloader.src = src;
+            preloader.decode().then(reveal).catch(revealThroughBrowser);
+        } else {
+            preloader.addEventListener('load', reveal, { once: true });
+            preloader.addEventListener('error', revealThroughBrowser, { once: true });
+            preloader.src = src;
+        }
     }
 
     // ── Portrait-aware position ─────────────────────────────

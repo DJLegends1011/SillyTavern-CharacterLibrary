@@ -3,6 +3,7 @@
 import { BrowseView } from '../browse-view.js';
 import CoreAPI from '../../core-api.js';
 import { IMG_PLACEHOLDER, formatNumber, BROWSE_PURIFY_CONFIG, skeletonLines, deferRender, deferCall, isMobileMode, finishBrowseImport } from '../provider-utils.js';
+import { orderJannyCollectionCharacters } from './janny-collection-order.js';
 import {
     JANNY_SEARCH_URL,
     JANNY_IMAGE_BASE,
@@ -1575,6 +1576,12 @@ function resolveJannyAvatarUrl(avatar) {
     return `${JANNY_IMAGE_BASE}${src}`;
 }
 
+function arrangeJannyCollectionCharacters(characters) {
+    return orderJannyCollectionCharacters(characters, {
+        randomize: getSetting('jannyRandomizeCollectionCards') === true,
+    });
+}
+
 function collectionIsPrivate(collection) {
     const raw = collection?.isPrivate ?? collection?.private ?? collection?.is_private;
     if (raw === undefined || raw === null || raw === '') return false;
@@ -1635,7 +1642,7 @@ async function hydrateJannyOwnedCollectionPreviews() {
                 previewCharacters = previewCharacters.concat(fetched.map(normalizeJannyCollectionCharacter).filter(Boolean));
             }
 
-            previewCharacters = previewCharacters.filter(c => c.avatar).slice(0, 4);
+            previewCharacters = arrangeJannyCollectionCharacters(previewCharacters.filter(c => c.avatar)).slice(0, 4);
             if (!previewCharacters.length) continue;
             collection.previewCharacters = previewCharacters;
             renderJannyOwnedCollectionsList();
@@ -1681,7 +1688,7 @@ function renderJannyCollectionPreviewCells(collection) {
     for (let i = 0; i < cellCount; i++) {
         const src = images[i];
         cells.push(src
-            ? `<span class="janny-collection-preview-cell"><img src="${escapeHtml(resolveJannyAvatarUrl(src))}" alt="" loading="lazy" onerror="this.remove()"></span>`
+            ? `<span class="janny-collection-preview-cell"><img class="browse-decode-image" data-src="${escapeHtml(resolveJannyAvatarUrl(src))}" src="${IMG_PLACEHOLDER}" alt="" decoding="async" fetchpriority="low" onerror="this.remove()"></span>`
             : `<span class="janny-collection-preview-cell janny-collection-preview-empty">${escapeHtml(initials)}</span>`);
     }
     return cells.join('');
@@ -1829,6 +1836,7 @@ function renderJannyPublicCollectionsList() {
         ? `<div class="browse-load-more"><button id="jannyPublicCollectionsLoadMoreBtn" class="glass-btn" ${jannyPublicCollectionsLoading ? 'disabled' : ''}><i class="fa-solid ${jannyPublicCollectionsLoading ? 'fa-spinner fa-spin' : 'fa-plus'}"></i> ${jannyPublicCollectionsLoading ? 'Loading...' : 'Load More'}</button></div>`
         : '';
     list.innerHTML = `<div class="janny-collection-card-grid">${cards}</div>${more}`;
+    jannyBrowseView.observeImages(list);
 }
 
 // Collector profile surface: a Janny user's other public collections
@@ -1885,6 +1893,7 @@ function renderJannyCollectorCollections() {
             ${body}
         </div>
     `;
+    jannyBrowseView.observeImages(panel);
 }
 
 async function loadJannyOwnedCollections(force = false) {
@@ -1933,6 +1942,7 @@ function renderJannyOwnedCollectionsList() {
         return;
     }
     list.innerHTML = `<div class="janny-collection-card-grid">${jannyOwnedCollections.map(c => createJannyCollectionCard(c, { owned: true })).join('')}</div>`;
+    jannyBrowseView.observeImages(list);
 }
 
 function getCollectionEntries(collection) {
@@ -2140,7 +2150,7 @@ async function openJannyPublicCollection(path) {
         const fetched = await fetchJannyPublicCharactersByIds(characterIds);
         if (token !== jannyCollectionDetailLoadToken || jannyActiveCollection?.kind !== 'public' || String(jannyActiveCollection.path || '') !== requestedPath) return;
         jannyActiveCollection = { kind: 'public', ...(data.collection || {}) };
-        jannyCollectionCharacters = fetched.map(normalizeJannyCollectionCharacter).filter(Boolean);
+        jannyCollectionCharacters = arrangeJannyCollectionCharacters(fetched.map(normalizeJannyCollectionCharacter).filter(Boolean));
         renderJannyCollectionDetail();
     } catch (err) {
         if (token !== jannyCollectionDetailLoadToken || jannyActiveCollection?.kind !== 'public' || String(jannyActiveCollection.path || '') !== requestedPath) return;
@@ -2170,7 +2180,7 @@ async function openJannyOwnedCollection(collectionId) {
         }
         if (token !== jannyCollectionDetailLoadToken || jannyActiveCollection?.kind !== 'owned' || String(jannyActiveCollection.id || '') !== requestedId) return;
         jannyActiveCollection = { kind: 'owned', ...collection };
-        jannyCollectionCharacters = chars;
+        jannyCollectionCharacters = arrangeJannyCollectionCharacters(chars);
         renderJannyCollectionDetail();
     } catch (err) {
         if (token !== jannyCollectionDetailLoadToken || jannyActiveCollection?.kind !== 'owned' || String(jannyActiveCollection.id || '') !== requestedId) return;
@@ -2234,7 +2244,7 @@ async function openJannyCollectionManage(collectionId) {
             chars = chars.concat(fetched.map(normalizeJannyCollectionCharacter).filter(Boolean));
         }
         if (token !== jannyCollectionManageLoadToken || String(jannyManageCollection?.collection?.id || '') !== requestedId) return;
-        jannyManageCollection.characters = chars;
+        jannyManageCollection.characters = arrangeJannyCollectionCharacters(chars);
         renderJannyCollectionManage();
     } catch (err) {
         if (token !== jannyCollectionManageLoadToken || String(jannyManageCollection?.collection?.id || '') !== requestedId) return;
@@ -2255,7 +2265,7 @@ function renderJannyCollectionManage({ loading = false } = {}) {
     const isPrivate = collectionIsPrivate(collection);
     const rows = jannyManageCollection.characters.map(c => `
         <div class="janny-manage-character-row" data-character-id="${escapeHtml(String(c.id))}">
-            <img src="${escapeHtml(resolveJannyAvatarUrl(c.avatar))}" alt="" loading="lazy" onerror="this.src='/img/ai4.png'">
+            <img class="browse-decode-image" data-src="${escapeHtml(resolveJannyAvatarUrl(c.avatar))}" src="${IMG_PLACEHOLDER}" alt="" decoding="async" fetchpriority="low" onerror="this.src='/img/ai4.png'">
             <div><strong>${escapeHtml(c.name || 'Unknown')}</strong>${c.creatorUsername ? `<span>${escapeHtml(c.creatorUsername)}</span>` : ''}</div>
             <button class="glass-btn icon-only janny-manage-character-remove" data-character-id="${escapeHtml(String(c.id))}" title="Remove from collection"><i class="fa-solid fa-xmark"></i></button>
         </div>
@@ -2292,6 +2302,7 @@ function renderJannyCollectionManage({ loading = false } = {}) {
             <div class="janny-manage-character-list">${rows || '<div class="browse-empty-state">No cards in this collection.</div>'}</div>
         </div>
     `;
+    jannyBrowseView.observeImages(panel);
 }
 
 async function saveJannyManagedCollection() {
@@ -2340,7 +2351,7 @@ async function addCharacterToManagedCollection() {
         await addJannyCharacterToCollection(jannyManageCollection.collection.id, id);
         const fetched = await fetchJannyCharactersByIds([id]);
         const normalized = fetched.map(normalizeJannyCollectionCharacter).filter(Boolean)[0] || { id, name: id, avatar: '' };
-        jannyManageCollection.characters.push(normalized);
+        jannyManageCollection.characters = arrangeJannyCollectionCharacters([...jannyManageCollection.characters, normalized]);
         updateOwnedCollectionCount(jannyManageCollection.collection.id, 1);
         if (input) input.value = '';
         renderJannyOwnedCollectionsList();
@@ -2747,7 +2758,16 @@ class JannyBrowseView extends BrowseView {
 
     // ── Lifecycle ───────────────────────────────────────────
 
-    _getImageGridIds() { return ['jannyGrid', 'jannyCollectionCharactersGrid']; }
+    _getImageGridIds() {
+        return [
+            'jannyGrid',
+            'jannyPublicCollectionsList',
+            'jannyOwnedCollectionsList',
+            'jannyCollectionCharactersGrid',
+            'jannyCollectorCollectionsPanel',
+            'jannyCollectionManagePanel',
+        ];
+    }
 
     canLoadMore() { return jannyHasMore && !jannyIsLoading; }
 

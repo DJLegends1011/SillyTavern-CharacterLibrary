@@ -6,6 +6,7 @@ const js = readFileSync(new URL('../modules/providers/janny/janny-browse.js', im
 const api = readFileSync(new URL('../modules/providers/janny/janny-api.js', import.meta.url), 'utf8');
 const css = readFileSync(new URL('../modules/providers/browse-shared.css', import.meta.url), 'utf8');
 const mobileCss = readFileSync(new URL('../app/library-mobile.css', import.meta.url), 'utf8');
+const browseViewJs = readFileSync(new URL('../modules/providers/browse-view.js', import.meta.url), 'utf8');
 
 test('Janny preview modal uses dropdown collection membership controls', () => {
     assert.match(js, /jannyCollectionDropdownBtn/);
@@ -90,4 +91,13 @@ test('Janny owned collection cards hydrate preview avatars after list load', () 
 test('Janny search token avoids Cloudflare-prone page scraping on normal provider boot', () => {
     assert.match(api, /let _cachedToken = JANNY_FALLBACK_TOKEN;/);
     assert.doesNotMatch(api, /fetchWithProxy\(`\$\{JANNY_SITE_BASE\}\/characters\/search`\)/);
+});
+
+test('Janny collection images stay hidden until their full bitmap has decoded', () => {
+    assert.match(js, /class="browse-decode-image" data-src=/);
+    assert.match(js, /jannyBrowseView\.observeImages\(list\)/);
+    assert.match(js, /jannyBrowseView\.observeImages\(panel\)/);
+    assert.match(browseViewJs, /img\.browse-decode-image\[data-src\]/);
+    assert.match(browseViewJs, /const preloader = new Image\(\);[\s\S]*preloader\.decode\(\)\.then\(reveal\)/);
+    assert.match(browseViewJs, /img\.src = src;[\s\S]*BrowseView\.adjustPortraitPosition/);
 });
