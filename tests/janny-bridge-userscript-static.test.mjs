@@ -35,3 +35,13 @@ test('janny bridge keeps the security guards', () => {
     assert.match(src, /@noframes/);
     assert.match(src, /finalUrl/);
 });
+
+test('janny bridge activates only on trusted local/LAN hosts (CSRF gate)', () => {
+    assert.ok(src.includes('isTrustedHost'), 'missing trusted-host gate');
+    assert.ok(src.includes('192.168.0.0/16'), 'missing private-LAN range');
+    assert.ok(src.includes('link-local'), 'missing link-local range');
+    assert.ok(
+        src.includes('!isTrustedHost(location.hostname) || !isCLPage'),
+        'activation must require a trusted host AND the CL marker',
+    );
+});

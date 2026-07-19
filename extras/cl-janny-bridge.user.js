@@ -24,6 +24,9 @@
  * Privileged context, deliberately locked down:
  *   - ONLY https://jannyai.com requests, and only the method+path pairs in isAllowed()
  *     below (bookmarks, collections, public collection pages). Anything else is refused.
+ *   - Unlike the read-only janitor bridge, this one exposes destructive writes (delete
+ *     bookmarks/collections), so activation is gated to a trusted LOCAL/LAN host: a
+ *     public site that copies the CL marker still can't wake the bridge. See isTrustedHost.
  *   - Only answers same-origin messages tagged by CL ('character-library-janny').
  *   - @connect jannyai.com makes the userscript manager enforce the host boundary too.
  */
@@ -35,9 +38,26 @@
     const SCRIPT_SRC = 'cl-janny-bridge';
     const JANNY_ORIGIN = 'https://jannyai.com';
 
+    // The bridge holds write access to your JannyAI account via ambient cookies, so it must
+    // wake up ONLY on your own SillyTavern, never on a public page that copied the CL marker.
+    // A self-hosted ST lives on loopback or a private LAN address; public hosts are refused.
+    // (If you reach CL through a public tunnel domain, add its host to this check.)
+    function isTrustedHost(host) {
+        const h = String(host || '').toLowerCase();
+        if (h === 'localhost' || h === '127.0.0.1' || h === '::1') return true;
+        if (/\.(local|lan|home|internal)$/.test(h)) return true;
+        if (/^10\./.test(h)) return true;                          // 10.0.0.0/8
+        if (/^192\.168\./.test(h)) return true;                    // 192.168.0.0/16
+        if (/^172\.(1[6-9]|2\d|3[01])\./.test(h)) return true;     // 172.16.0.0/12
+        if (/^169\.254\./.test(h)) return true;                    // IPv4 link-local
+        if (/^fe80:/.test(h) || /^f[cd][0-9a-f]{2}:/.test(h)) return true; // IPv6 link-local / ULA
+        return false;
+    }
+
     const isCLPage = /\/SillyTavern-CharacterLibrary\/app\/library\.html/i.test(location.pathname)
         || !!document.querySelector('meta[name="character-library"]');
-    if (!isCLPage) return;
+    // Require BOTH a trusted local/LAN host AND the CL marker before exposing any surface.
+    if (!isTrustedHost(location.hostname) || !isCLPage) return;
     console.debug('[CL-JannyBridge] active on Character Library page');
 
     const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
