@@ -1925,7 +1925,7 @@ function renderJannyOwnedCollectionsList() {
         return;
     }
     if (!jannyOwnedCollectionsLoaded) {
-        list.innerHTML = '<div class="browse-empty-state">Connect your JannyAI account to load your collections.</div>';
+        list.innerHTML = '<div class="browse-empty-state">Log into jannyai.com in this browser to load your collections.</div>';
         return;
     }
     if (!jannyOwnedCollections.length) {
@@ -1984,7 +1984,7 @@ function renderJannyCollectionDropdown() {
     if (!jannyCollectionDropdownOpen) return;
 
     if (!jannyAccountStatus.active) {
-        dropdown.innerHTML = '<div class="janny-collection-dropdown-title">Janny collections</div><div class="janny-collection-dropdown-empty">Connect your JannyAI account in Settings to use owned collections.</div>';
+        dropdown.innerHTML = '<div class="janny-collection-dropdown-title">Janny collections</div><div class="janny-collection-dropdown-empty">Log into jannyai.com in this browser (with the bridge userscript installed) to use owned collections.</div>';
         return;
     }
     if (!jannyOwnedCollectionsLoaded) {
