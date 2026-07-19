@@ -38,7 +38,7 @@ test('janny bridge keeps the security guards', () => {
 
 test('janny bridge can run inside Character Library embedded mode', () => {
     const metadata = src.slice(0, src.indexOf('// ==/UserScript=='));
-    assert.match(metadata, /@version\s+1\.0\.1/);
+    assert.match(metadata, /@version\s+1\.0\.2/);
     assert.doesNotMatch(metadata, /@noframes/);
     assert.match(src, /embedded iframe/);
 });
@@ -53,7 +53,7 @@ test('janny bridge activates only on trusted local/LAN hosts (CSRF gate)', () =>
     );
 });
 
-function executeUserscript({ pathname, hasMarker }) {
+function executeUserscript({ pathname, hasMarker, gmRequest }) {
     const messages = [];
     const listeners = [];
     const location = { origin: 'http://127.0.0.1:8001', hostname: '127.0.0.1', pathname };
@@ -71,6 +71,7 @@ function executeUserscript({ pathname, hasMarker }) {
         location,
         window,
         URL,
+        GM_xmlhttpRequest: gmRequest,
     };
 
     vm.runInNewContext(src, context);
@@ -86,6 +87,24 @@ test('actual userscript starts and announces inside the embedded Character Libra
     assert.equal(run.messages.length, 1);
     assert.equal(run.messages[0].message.source, 'cl-janny-bridge');
     assert.equal(run.messages[0].message.type, 'ready');
+});
+
+test('actual Janny request selects the JannyAI top-level cookie partition', () => {
+    let requestDetails = null;
+    const run = executeUserscript({
+        pathname: '/scripts/extensions/third-party/SillyTavern-CharacterLibrary/app/library.html',
+        hasMarker: true,
+        gmRequest: (details) => { requestDetails = details; },
+    });
+    run.listeners[0]({
+        origin: run.origin,
+        data: {
+            source: 'character-library-janny', type: 'fetch', id: 'probe',
+            method: 'GET', url: 'https://jannyai.com/api/bookmark',
+        },
+    });
+    assert.equal(requestDetails.method, 'GET');
+    assert.equal(requestDetails.cookiePartition.topLevelSite, 'https://jannyai.com');
 });
 
 test('actual userscript stays dormant on the top-level SillyTavern page', () => {

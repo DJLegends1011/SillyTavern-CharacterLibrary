@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Character Library - JannyAI Bridge
 // @namespace    https://github.com/Sillyanonymous/SillyTavern-CharacterLibrary
-// @version      1.0.1
+// @version      1.0.2
 // @description  Lets Character Library sync JannyAI bookmarks and collections by making the Cloudflare-gated requests from your own logged-in browser.
 // @author       DJLegends
 // @match        *://*/*
@@ -154,6 +154,9 @@
             method: String(method).toUpperCase(),
             url,
             headers,
+            // Tampermonkey 5.6+ otherwise selects cookies using the localhost sender frame.
+            // Explicitly use the same partition as a top-level jannyai.com tab.
+            cookiePartition: { topLevelSite: JANNY_ORIGIN },
             data: typeof body === 'string' && body ? body : undefined,
             timeout: 25000,
             onload: (r) => reply(id, r.status >= 200 && r.status < 400, r.status, r.responseText || '', r.finalUrl || ''),
