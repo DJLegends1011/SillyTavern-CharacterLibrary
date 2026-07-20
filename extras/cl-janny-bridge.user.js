@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Character Library - JannyAI Bridge
 // @namespace    https://github.com/Sillyanonymous/SillyTavern-CharacterLibrary
-// @version      2.0.0
+// @version      2.1.0
 // @description  Lets Character Library sync JannyAI bookmarks and collections using a pasted login token plus browser Cloudflare clearance.
 // @author       DJLegends
 // @match        *://*/*
@@ -9,6 +9,7 @@
 // @grant        GM_xmlhttpRequest
 // @grant        GM.xmlHttpRequest
 // @run-at       document-idle
+// @noframes
 // ==/UserScript==
 
 /*
@@ -24,8 +25,9 @@
  * page match so remote SillyTavern/Colab URLs work on Firefox mobile.
  *
  * FRAME NOTE
- * Character Library can run inside SillyTavern's same-origin iframe, so this script
- * intentionally does not use @noframes.
+ * Firefox mobile may only inject userscripts into the top page while Character
+ * Library is running inside SillyTavern's iframe. Like the maintainer bridge this
+ * script uses @noframes, then relays tagged messages to/from the child frame.
  */
 (function () {
     'use strict';
@@ -33,12 +35,6 @@
     const PAGE_SRC = 'character-library-janny';
     const SCRIPT_SRC = 'cl-janny-bridge';
     const JANNY_ORIGIN = 'https://jannyai.com';
-
-    const isCLPage = /\/SillyTavern-CharacterLibrary\/app\/library\.html/i.test(location.pathname)
-        || !!document.querySelector('meta[name="character-library"]');
-    // Match the maintainer bridge: the CL page marker is the activation gate.
-    if (!isCLPage) return;
-    console.debug('[CL-JannyBridge] active on Character Library page');
 
     const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
     const COLLECTION_PATH_RE = /^\/collections\/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}(?:_[^/?#]+)?$/i;
@@ -101,12 +97,21 @@
         ? GM_xmlhttpRequest
         : (typeof GM !== 'undefined' && GM.xmlHttpRequest ? GM.xmlHttpRequest.bind(GM) : null);
 
-    function reply(id, ok, status, body, finalUrl) {
-        window.postMessage({ source: SCRIPT_SRC, type: 'result', id, ok, status, body, finalUrl: finalUrl || '' }, location.origin);
+    function postToPage(targetWindow, targetOrigin, message) {
+        const target = targetWindow && typeof targetWindow.postMessage === 'function'
+            ? targetWindow
+            : window;
+        target.postMessage(message, targetOrigin || location.origin);
     }
 
-    function announce() {
-        window.postMessage({ source: SCRIPT_SRC, type: 'ready' }, location.origin);
+    function reply(targetWindow, targetOrigin, id, ok, status, body, finalUrl) {
+        postToPage(targetWindow, targetOrigin, {
+            source: SCRIPT_SRC, type: 'result', id, ok, status, body, finalUrl: finalUrl || '',
+        });
+    }
+
+    function announce(targetWindow, targetOrigin) {
+        postToPage(targetWindow, targetOrigin, { source: SCRIPT_SRC, type: 'ready' });
     }
 
     window.addEventListener('message', (e) => {
@@ -115,14 +120,18 @@
         if (e.origin !== location.origin) return;
         const msg = e.data;
         if (!msg || msg.source !== PAGE_SRC) return;
+        // When CL is embedded, e.source is its iframe WindowProxy. Replying to that
+        // exact window is what makes a top-page-only userscript work on Firefox mobile.
+        const replyWindow = e.source || window;
+        const replyOrigin = e.origin || location.origin;
 
-        if (msg.type === 'ping') { announce(); return; }
+        if (msg.type === 'ping') { announce(replyWindow, replyOrigin); return; }
         if (msg.type !== 'fetch') return;
 
         const { id, method, url, body, contentType, authToken } = msg;
         if (!id) return;
-        if (!gmRequest) { reply(id, false, 0, 'Userscript manager does not expose GM_xmlhttpRequest'); return; }
-        if (!isAllowed(method, url)) { reply(id, false, 0, 'Blocked: bridge only permits allowlisted JannyAI requests'); return; }
+        if (!gmRequest) { reply(replyWindow, replyOrigin, id, false, 0, 'Userscript manager does not expose GM_xmlhttpRequest'); return; }
+        if (!isAllowed(method, url)) { reply(replyWindow, replyOrigin, id, false, 0, 'Blocked: bridge only permits allowlisted JannyAI requests'); return; }
 
         const headers = { 'Accept': 'application/json,text/html;q=0.9,*/*;q=0.8' };
         if (typeof contentType === 'string' && contentType) headers['Content-Type'] = contentType;
@@ -137,11 +146,13 @@
             cookiePartition: { topLevelSite: JANNY_ORIGIN },
             data: typeof body === 'string' && body ? body : undefined,
             timeout: 25000,
-            onload: (r) => reply(id, r.status >= 200 && r.status < 400, r.status, r.responseText || '', r.finalUrl || ''),
-            onerror: () => reply(id, false, 0, 'Network error'),
-            ontimeout: () => reply(id, false, 0, 'Timed out'),
+            onload: (r) => reply(replyWindow, replyOrigin, id, r.status >= 200 && r.status < 400, r.status, r.responseText || '', r.finalUrl || ''),
+            onerror: () => reply(replyWindow, replyOrigin, id, false, 0, 'Network error'),
+            ontimeout: () => reply(replyWindow, replyOrigin, id, false, 0, 'Timed out'),
         });
     });
 
-    announce();
+    // Direct-tab CL can receive this immediately. Embedded CL will ping its parent,
+    // and the listener above answers directly into the requesting iframe.
+    announce(window, location.origin);
 })();

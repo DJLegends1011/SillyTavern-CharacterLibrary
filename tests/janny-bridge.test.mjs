@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 // exactly like the real page<->userscript channel.
 function makeFakeWindow() {
     const listeners = [];
+    const parentMessages = [];
     const win = {
         location: { origin: 'http://127.0.0.1:8001' },
         addEventListener(type, fn) { if (type === 'message') listeners.push(fn); },
@@ -12,6 +13,10 @@ function makeFakeWindow() {
             queueMicrotask(() => { for (const fn of [...listeners]) fn({ data, origin: win.location.origin }); });
         },
     };
+    win.parent = {
+        postMessage(data, targetOrigin) { parentMessages.push({ data, targetOrigin }); },
+    };
+    win._parentMessages = parentMessages;
     return win;
 }
 
@@ -103,6 +108,14 @@ test('initJannyBridge exposes window.clJannyBridge for the settings UI', () => {
     assert.equal(window.clJannyBridge.isAvailable(), true);
 });
 
+test('embedded bridge relays handshake and fetch messages to the top page', async () => {
+    assert.ok(window._parentMessages.some(entry => entry.data.type === 'ping'));
+    installFakeUserscript((msg) => {
+        window.postMessage({ source: 'cl-janny-bridge', type: 'result', id: msg.id, ok: true, status: 200, body: '{}', finalUrl: '' }, window.location.origin);
+    });
+    await jannyBridgeFetch('GET', 'https://jannyai.com/api/bookmark');
+    assert.ok(window._parentMessages.some(entry => entry.data.type === 'fetch'));
+});
 test('refresh re-pings the userscript and reports a fresh handshake', async () => {
     const before = pingCount;
     assert.equal(await refreshJannyBridgeAvailability(), true);

@@ -21,13 +21,14 @@ test('janny bridge uses its own message tags and allowlists the account surface'
     ]) assert.ok(src.includes(marker), `missing allowlist marker: ${marker}`);
 });
 
-test('janny bridge mirrors maintainer activation so remote mobile hosts work', () => {
+test('janny bridge uses a top-page relay so remote Firefox mobile hosts work', () => {
     const metadata = src.slice(0, src.indexOf('// ==/UserScript=='));
-    assert.match(metadata, /@version\s+2\.0\.0/);
+    assert.match(metadata, /@version\s+2\.1\.0/);
     assert.match(metadata, /@match\s+\*:\/\/\*\/\*/);
-    assert.doesNotMatch(metadata, /@noframes/);
+    assert.match(metadata, /@noframes/);
     assert.doesNotMatch(src, /isTrustedHost/);
-    assert.match(src, /if \(!isCLPage\) return/);
+    assert.doesNotMatch(src, /if \(!isCLPage\) return/);
+    assert.match(src, /e\.source \|\| window/);
 });
 
 test('janny bridge keeps same-origin and response guards', () => {
@@ -52,10 +53,10 @@ function executeUserscript({ pathname, hasMarker, gmRequest, hostname = '127.0.0
     return { listeners, messages, origin: location.origin };
 }
 
-test('actual userscript starts inside a remote Colab-style Character Library frame', () => {
+test('actual userscript starts on a remote Colab-style top page without a CL marker', () => {
     const run = executeUserscript({
-        pathname: '/scripts/extensions/third-party/SillyTavern-CharacterLibrary/app/library.html',
-        hasMarker: true,
+        pathname: '/',
+        hasMarker: false,
         hostname: 'random-id.trycloudflare.com',
         origin: 'https://random-id.trycloudflare.com',
     });
@@ -86,8 +87,17 @@ test('actual Janny request forwards the pasted bearer token and Janny cookie par
     assert.equal(requestDetails.cookiePartition.topLevelSite, 'https://jannyai.com');
 });
 
-test('actual userscript stays dormant without the Character Library marker', () => {
+test('top-page userscript answers a ping back into the requesting Character Library iframe', () => {
     const run = executeUserscript({ pathname: '/', hasMarker: false, hostname: 'public.example', origin: 'https://public.example' });
-    assert.equal(run.listeners.length, 0);
-    assert.equal(run.messages.length, 0);
+    const iframeMessages = [];
+    const iframeWindow = { postMessage(message, targetOrigin) { iframeMessages.push({ message, targetOrigin }); } };
+    run.listeners[0]({
+        origin: run.origin,
+        source: iframeWindow,
+        data: { source: 'character-library-janny', type: 'ping' },
+    });
+    assert.equal(iframeMessages.length, 1);
+    assert.equal(iframeMessages[0].message.source, 'cl-janny-bridge');
+    assert.equal(iframeMessages[0].message.type, 'ready');
+    assert.equal(iframeMessages[0].targetOrigin, run.origin);
 });

@@ -19,7 +19,17 @@ const pending = new Map(); // requestId -> { resolve, timer }
 const readyWaiters = new Set();
 
 function pingBridge() {
-    window.postMessage({ source: PAGE_SRC, type: 'ping' }, window.location.origin);
+    postBridgeMessage({ source: PAGE_SRC, type: 'ping' });
+}
+
+function postBridgeMessage(message) {
+    // Direct-tab mode talks to a userscript in this window. Embedded mode also sends
+    // to the outer SillyTavern page because Firefox mobile may inject @noframes
+    // userscripts there only. The top-page bridge replies to this iframe via e.source.
+    window.postMessage(message, window.location.origin);
+    if (window.parent && window.parent !== window) {
+        window.parent.postMessage(message, window.location.origin);
+    }
 }
 
 function handleMessage(e) {
@@ -102,6 +112,6 @@ export function jannyBridgeFetch(method, url, { body, contentType, authToken } =
             reject(new Error('JannyAI bridge request timed out'));
         }, REQUEST_TIMEOUT_MS);
         pending.set(id, { resolve, timer });
-        window.postMessage({ source: PAGE_SRC, type: 'fetch', id, method, url, body, contentType, authToken }, window.location.origin);
+        postBridgeMessage({ source: PAGE_SRC, type: 'fetch', id, method, url, body, contentType, authToken });
     });
 }
