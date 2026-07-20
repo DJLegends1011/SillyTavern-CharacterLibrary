@@ -1573,13 +1573,13 @@ https://jannyai.com/characters/uuid_slug
                         </div>
                         <div class="info-section" id="helpJannyBridge">
                             <h4><i class="fa-solid fa-broom"></i> JannyAI</h4>
-                            <p>Bookmarks and collections require you to be logged into jannyai.com, which sits behind Cloudflare. There's nothing to paste: install the companion <strong>userscript</strong> (<code>extras/cl-janny-bridge.user.js</code>, in Tampermonkey or Violentmonkey); it makes JannyAI requests from your own browser, so Cloudflare and your login are handled by the browser itself. Works on desktop and on Firefox for Android + Tampermonkey.</p>
+                            <p>JannyAI sits behind Cloudflare, so bookmarks and collections use the same split as the maintainer's JanitorAI Hampter bridge: Character Library stores your pasted Supabase login token, while the companion <strong>userscript</strong> (<code>extras/cl-janny-bridge.user.js</code>) makes the Cloudflare-cleared request. It works on desktop and Firefox for Android, including remote/Colab-hosted SillyTavern.</p>
                             <ul>
-                                <li>Install the userscript, then log into <strong>jannyai.com</strong> in that same browser</li>
-                                <li>Check <strong>Settings → Online → JannyAI</strong> for the Bridge and Account status, and use <strong>Refresh</strong> after logging in or installing the userscript</li>
-                                <li>Browsing and importing characters works without login; bookmarks and collections need the bridge plus a logged-in session</li>
+                                <li>Install the userscript in Tampermonkey or Violentmonkey and reload Character Library</li>
+                                <li>Under <strong>Settings → Online → JannyAI</strong>, paste the JannyAI auth cookie value or access-token JWT and select <strong>Save Login</strong></li>
+                                <li>After login is saved, jannyai.com does not need to remain open; browsing/importing remains available without an account</li>
                             </ul>
-                            <p class="info-tip"><i class="fa-solid fa-lightbulb"></i> If Account status stays "Not logged in" after installing the userscript, make sure you're logged into jannyai.com in the same browser the userscript runs in, then hit Refresh.</p>
+                            <p class="info-tip"><i class="fa-solid fa-lightbulb"></i> JannyAI access tokens currently last about seven days. If Account shows "Token expired" or "Token rejected," copy a fresh login token and save it again.</p>
                         </div>
                     </div>
 
@@ -2527,33 +2527,36 @@ https://jannyai.com/characters/uuid_slug
                             </summary>
                             <div class="settings-provider-body">
                                 <div class="settings-group">
-                                    <div class="settings-group-title"><i class="fa-solid fa-user-lock"></i> JannyAI Account Sync</div>
+                                    <div class="settings-group-title"><i class="fa-solid fa-user-lock"></i> JannyAI Login</div>
                                     <div class="settings-row">
-                                        <span class="settings-hint">Bookmarks and collections ride a companion userscript (<code>extras/cl-janny-bridge.user.js</code>, installed in Tampermonkey or Violentmonkey): it makes JannyAI requests from your own browser, so Cloudflare and login are handled by the browser itself. Works on desktop and on Firefox for Android + Tampermonkey. Nothing to paste — just be logged into jannyai.com in this same browser.</span>
+                                        <span class="settings-hint">Install <code>extras/cl-janny-bridge.user.js</code> in Tampermonkey or Violentmonkey, then paste your JannyAI Supabase login token below. This mirrors the maintainer's JanitorAI Hampter login: Character Library stores the token locally and the userscript handles Cloudflare. <strong>No JannyAI tab needs to stay open.</strong> Accepted formats: the full <code>sb-eenzcbluoctduymzksoq-auth-token</code> cookie (including split <code>.0</code>/<code>.1</code> chunks), its value, session JSON, the old <code>sb-access-token</code> value, or a bare access-token JWT.</span>
                                     </div>
                                     <div class="settings-row">
                                         <label>Bridge:</label>
                                         <span id="jannySettingsBridgeStatus" class="settings-status-badge inactive"><i class="fa-solid fa-circle"></i> Checking&hellip;</span>
                                     </div>
                                     <div class="settings-row">
-                                        <label>Account:</label>
-                                        <span id="jannySettingsAccountStatus" class="settings-status-badge inactive"><i class="fa-solid fa-circle"></i> Unknown</span>
-                                    </div>
-                                    <div class="settings-row">
-                                        <label for="jannyRandomizeCollectionCards">
-                                            <input type="checkbox" id="jannyRandomizeCollectionCards"> Randomize cards on collection refresh
-                                        </label>
-                                        <span class="settings-hint">Off by default: collection cards are sorted by newest character first. Turn this on to reshuffle cards whenever a collection is loaded or refreshed.</span>
+                                        <label>Login token:</label>
+                                        <div class="settings-input-group">
+                                            <input type="password" id="settingsJannyToken" placeholder="Paste JannyAI login token or auth cookie" autocomplete="off" spellcheck="false" data-sensitive="true">
+                                            <button id="toggleJannyTokenVisibility" class="glass-btn icon-only" title="Show/Hide"><i class="fa-solid fa-eye"></i></button>
+                                        </div>
                                     </div>
                                     <div class="settings-row" style="gap: 8px;">
-                                        <button id="jannySettingsRefreshBtn" class="settings-action-btn">
-                                            <i class="fa-solid fa-arrows-rotate"></i> Refresh
-                                        </button>
-                                        <a id="jannySettingsOpenJannyLink" class="settings-hint" href="https://jannyai.com/collections" target="_blank" rel="noopener noreferrer">Open JannyAI in a new tab</a>
+                                        <button id="saveJannyTokenBtn" class="settings-action-btn primary"><i class="fa-solid fa-right-to-bracket"></i> Save Login</button>
+                                        <button id="clearJannyTokenBtn" class="settings-action-btn danger"><i class="fa-solid fa-right-from-bracket"></i> Log Out</button>
+                                        <button id="jannySettingsRefreshBtn" class="settings-action-btn"><i class="fa-solid fa-arrows-rotate"></i> Refresh</button>
                                     </div>
                                     <div class="settings-row">
-                                        <span id="jannySettingsAccountHint" class="settings-hint"></span>
+                                        <label>Account:</label>
+                                        <span id="jannySettingsAccountStatus" class="settings-status-badge inactive"><i class="fa-solid fa-circle"></i> Not logged in</span>
                                     </div>
+                                    <div class="settings-row">
+                                        <label for="jannyRandomizeCollectionCards"><input type="checkbox" id="jannyRandomizeCollectionCards"> Randomize cards on collection refresh</label>
+                                        <span class="settings-hint">Off by default: collection cards are sorted by newest character first. Turn this on to reshuffle cards whenever a collection is loaded or refreshed.</span>
+                                    </div>
+                                    <div class="settings-row"><a id="jannySettingsOpenJannyLink" class="settings-hint" href="https://jannyai.com/" target="_blank" rel="noopener noreferrer">Open JannyAI to copy a fresh token</a></div>
+                                    <div class="settings-row"><span id="jannySettingsAccountHint" class="settings-hint">The saved token works after the JannyAI tab is closed. JannyAI access tokens currently last about seven days; paste a fresh one when it expires.</span></div>
                                 </div>
                                 <div class="settings-group">
                                     <div class="settings-group-title"><i class="fa-solid fa-ban"></i> Exclude Tags</div>

@@ -11,77 +11,53 @@ test('janny bridge userscript is scoped to jannyai.com only', () => {
     assert.match(src, /https:\/\/jannyai\.com/);
 });
 
-test('janny bridge uses its own message tags (no cross-talk with the janitor bridge)', () => {
+test('janny bridge uses its own message tags and allowlists the account surface', () => {
     assert.match(src, /'character-library-janny'/);
     assert.match(src, /'cl-janny-bridge'/);
-    assert.doesNotMatch(src, /'cl-janitor-bridge'/);
-});
-
-test('janny bridge allowlists the account + public collection surface', () => {
     for (const marker of [
-        '/api/bookmark',
-        '/api/get-characters',
-        '/api/collections/mine',
-        '/collections/form/add-collection',
-        '/collections/form/edit-collection',
-        '/collections/form/delete-collection',
-        'collectors',
-    ]) {
-        assert.ok(src.includes(marker), `missing allowlist marker: ${marker}`);
-    }
+        '/api/bookmark', '/api/get-characters', '/api/collections/mine',
+        '/collections/form/add-collection', '/collections/form/edit-collection',
+        '/collections/form/delete-collection', 'collectors',
+    ]) assert.ok(src.includes(marker), `missing allowlist marker: ${marker}`);
 });
 
-test('janny bridge keeps the security guards', () => {
+test('janny bridge mirrors maintainer activation so remote mobile hosts work', () => {
+    const metadata = src.slice(0, src.indexOf('// ==/UserScript=='));
+    assert.match(metadata, /@version\s+2\.0\.0/);
+    assert.match(metadata, /@match\s+\*:\/\/\*\/\*/);
+    assert.doesNotMatch(metadata, /@noframes/);
+    assert.doesNotMatch(src, /isTrustedHost/);
+    assert.match(src, /if \(!isCLPage\) return/);
+});
+
+test('janny bridge keeps same-origin and response guards', () => {
     assert.match(src, /e\.origin !== location\.origin/);
     assert.match(src, /finalUrl/);
 });
 
-test('janny bridge can run inside Character Library embedded mode', () => {
-    const metadata = src.slice(0, src.indexOf('// ==/UserScript=='));
-    assert.match(metadata, /@version\s+1\.0\.2/);
-    assert.doesNotMatch(metadata, /@noframes/);
-    assert.match(src, /embedded iframe/);
-});
-
-test('janny bridge activates only on trusted local/LAN hosts (CSRF gate)', () => {
-    assert.ok(src.includes('isTrustedHost'), 'missing trusted-host gate');
-    assert.ok(src.includes('192.168.0.0/16'), 'missing private-LAN range');
-    assert.ok(src.includes('link-local'), 'missing link-local range');
-    assert.ok(
-        src.includes('!isTrustedHost(location.hostname) || !isCLPage'),
-        'activation must require a trusted host AND the CL marker',
-    );
-});
-
-function executeUserscript({ pathname, hasMarker, gmRequest }) {
+function executeUserscript({ pathname, hasMarker, gmRequest, hostname = '127.0.0.1', origin = 'http://127.0.0.1:8001' }) {
     const messages = [];
     const listeners = [];
-    const location = { origin: 'http://127.0.0.1:8001', hostname: '127.0.0.1', pathname };
+    const location = { origin, hostname, pathname };
     const window = {
-        addEventListener(type, handler) {
-            if (type === 'message') listeners.push(handler);
-        },
-        postMessage(message, targetOrigin) {
-            messages.push({ message, targetOrigin });
-        },
+        addEventListener(type, handler) { if (type === 'message') listeners.push(handler); },
+        postMessage(message, targetOrigin) { messages.push({ message, targetOrigin }); },
     };
     const context = {
         console: { debug() {} },
         document: { querySelector: () => hasMarker ? {} : null },
-        location,
-        window,
-        URL,
-        GM_xmlhttpRequest: gmRequest,
+        location, window, URL, GM_xmlhttpRequest: gmRequest,
     };
-
     vm.runInNewContext(src, context);
     return { listeners, messages, origin: location.origin };
 }
 
-test('actual userscript starts and announces inside the embedded Character Library frame', () => {
+test('actual userscript starts inside a remote Colab-style Character Library frame', () => {
     const run = executeUserscript({
         pathname: '/scripts/extensions/third-party/SillyTavern-CharacterLibrary/app/library.html',
         hasMarker: true,
+        hostname: 'random-id.trycloudflare.com',
+        origin: 'https://random-id.trycloudflare.com',
     });
     assert.equal(run.listeners.length, 1);
     assert.equal(run.messages.length, 1);
@@ -89,26 +65,29 @@ test('actual userscript starts and announces inside the embedded Character Libra
     assert.equal(run.messages[0].message.type, 'ready');
 });
 
-test('actual Janny request selects the JannyAI top-level cookie partition', () => {
+test('actual Janny request forwards the pasted bearer token and Janny cookie partition', () => {
     let requestDetails = null;
     const run = executeUserscript({
         pathname: '/scripts/extensions/third-party/SillyTavern-CharacterLibrary/app/library.html',
         hasMarker: true,
+        hostname: 'random-id.trycloudflare.com',
+        origin: 'https://random-id.trycloudflare.com',
         gmRequest: (details) => { requestDetails = details; },
     });
     run.listeners[0]({
         origin: run.origin,
         data: {
             source: 'character-library-janny', type: 'fetch', id: 'probe',
-            method: 'GET', url: 'https://jannyai.com/api/bookmark',
+            method: 'GET', url: 'https://jannyai.com/api/bookmark', authToken: 'mobile-login-token',
         },
     });
     assert.equal(requestDetails.method, 'GET');
+    assert.equal(requestDetails.headers.Authorization, 'Bearer mobile-login-token');
     assert.equal(requestDetails.cookiePartition.topLevelSite, 'https://jannyai.com');
 });
 
-test('actual userscript stays dormant on the top-level SillyTavern page', () => {
-    const run = executeUserscript({ pathname: '/', hasMarker: false });
+test('actual userscript stays dormant without the Character Library marker', () => {
+    const run = executeUserscript({ pathname: '/', hasMarker: false, hostname: 'public.example', origin: 'https://public.example' });
     assert.equal(run.listeners.length, 0);
     assert.equal(run.messages.length, 0);
 });

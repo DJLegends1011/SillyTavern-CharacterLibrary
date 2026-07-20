@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Character Library - JannyAI Bridge
 // @namespace    https://github.com/Sillyanonymous/SillyTavern-CharacterLibrary
-// @version      1.0.2
-// @description  Lets Character Library sync JannyAI bookmarks and collections by making the Cloudflare-gated requests from your own logged-in browser.
+// @version      2.0.0
+// @description  Lets Character Library sync JannyAI bookmarks and collections using a pasted login token plus browser Cloudflare clearance.
 // @author       DJLegends
 // @match        *://*/*
 // @connect      jannyai.com
@@ -12,28 +12,21 @@
 // ==/UserScript==
 
 /*
- * WHY THIS EXISTS
- * CL's page cannot send your jannyai.com cookies cross-origin, so Cloudflare blocks its
- * direct requests and login is impossible. GM_xmlhttpRequest is CORS-exempt: it carries
- * your browser's own jannyai cookies (cf_clearance AND the sb-...-auth-token session
- * chunks), so being logged into jannyai.com in this browser IS the login. Nothing is
- * pasted or stored.
+ * This is the JannyAI counterpart to the maintainer's JanitorAI Hampter bridge.
+ * Character Library supplies the pasted Supabase access token in an Authorization
+ * header; GM_xmlhttpRequest supplies the browser's Cloudflare clearance. The user
+ * does not need to keep jannyai.com open or stay logged into it in another tab.
  *
  * SECURITY
- * Privileged context, deliberately locked down:
- *   - ONLY https://jannyai.com requests, and only the method+path pairs in isAllowed()
- *     below (bookmarks, collections, public collection pages). Anything else is refused.
- *   - Unlike the read-only janitor bridge, this one exposes destructive writes (delete
- *     bookmarks/collections), so activation is gated to a trusted LOCAL/LAN host: a
- *     public site that copies the CL marker still can't wake the bridge. See isTrustedHost.
- *   - Only answers same-origin messages tagged by CL ('character-library-janny').
- *   - @connect jannyai.com makes the userscript manager enforce the host boundary too.
+ * The bridge only accepts same-origin messages from Character Library and only
+ * permits the exact jannyai.com method/path pairs in isAllowed(). @connect enforces
+ * the host boundary as well. It intentionally follows the maintainer bridge's broad
+ * page match so remote SillyTavern/Colab URLs work on Firefox mobile.
  *
  * FRAME NOTE
- * Character Library normally runs inside SillyTavern's same-origin embedded iframe.
- * Do not add @noframes: that prevents the userscript from ever reaching library.html.
+ * Character Library can run inside SillyTavern's same-origin iframe, so this script
+ * intentionally does not use @noframes.
  */
-
 (function () {
     'use strict';
 
@@ -41,26 +34,10 @@
     const SCRIPT_SRC = 'cl-janny-bridge';
     const JANNY_ORIGIN = 'https://jannyai.com';
 
-    // The bridge holds write access to your JannyAI account via ambient cookies, so it must
-    // wake up ONLY on your own SillyTavern, never on a public page that copied the CL marker.
-    // A self-hosted ST lives on loopback or a private LAN address; public hosts are refused.
-    // (If you reach CL through a public tunnel domain, add its host to this check.)
-    function isTrustedHost(host) {
-        const h = String(host || '').toLowerCase();
-        if (h === 'localhost' || h === '127.0.0.1' || h === '::1') return true;
-        if (/\.(local|lan|home|internal)$/.test(h)) return true;
-        if (/^10\./.test(h)) return true;                          // 10.0.0.0/8
-        if (/^192\.168\./.test(h)) return true;                    // 192.168.0.0/16
-        if (/^172\.(1[6-9]|2\d|3[01])\./.test(h)) return true;     // 172.16.0.0/12
-        if (/^169\.254\./.test(h)) return true;                    // IPv4 link-local
-        if (/^fe80:/.test(h) || /^f[cd][0-9a-f]{2}:/.test(h)) return true; // IPv6 link-local / ULA
-        return false;
-    }
-
     const isCLPage = /\/SillyTavern-CharacterLibrary\/app\/library\.html/i.test(location.pathname)
         || !!document.querySelector('meta[name="character-library"]');
-    // Require BOTH a trusted local/LAN host AND the CL marker before exposing any surface.
-    if (!isTrustedHost(location.hostname) || !isCLPage) return;
+    // Match the maintainer bridge: the CL page marker is the activation gate.
+    if (!isCLPage) return;
     console.debug('[CL-JannyBridge] active on Character Library page');
 
     const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -142,13 +119,14 @@
         if (msg.type === 'ping') { announce(); return; }
         if (msg.type !== 'fetch') return;
 
-        const { id, method, url, body, contentType } = msg;
+        const { id, method, url, body, contentType, authToken } = msg;
         if (!id) return;
         if (!gmRequest) { reply(id, false, 0, 'Userscript manager does not expose GM_xmlhttpRequest'); return; }
         if (!isAllowed(method, url)) { reply(id, false, 0, 'Blocked: bridge only permits allowlisted JannyAI requests'); return; }
 
         const headers = { 'Accept': 'application/json,text/html;q=0.9,*/*;q=0.8' };
         if (typeof contentType === 'string' && contentType) headers['Content-Type'] = contentType;
+        if (typeof authToken === 'string' && authToken) headers['Authorization'] = `Bearer ${authToken}`;
 
         gmRequest({
             method: String(method).toUpperCase(),

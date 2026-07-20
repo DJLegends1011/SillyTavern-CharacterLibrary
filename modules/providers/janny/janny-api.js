@@ -59,9 +59,9 @@ export function resolveTagNames(tagIds) {
 // ACCOUNT SYNC (bookmarks + collections via the userscript bridge)
 // ========================================
 // All jannyai.com account and public-collection requests ride the companion userscript
-// (extras/cl-janny-bridge.user.js): GM_xmlhttpRequest carries the browser's own jannyai
-// cookies, so Cloudflare passes and being logged into jannyai.com IS the login. No
-// cookies are captured, stored, or relayed through cl-helper.
+// (extras/cl-janny-bridge.user.js). GM_xmlhttpRequest supplies Cloudflare clearance;
+// Character Library supplies the saved Supabase JWT as a Bearer token. This matches
+// the maintainer's Hampter bridge and needs no open JannyAI tab.
 
 import { isJannyBridgeAvailable, jannyBridgeFetch } from './janny-bridge.js';
 import {
@@ -82,7 +82,8 @@ async function jannyBridgeRequest(method, path, { json, form } = {}) {
     if (json !== undefined) { body = JSON.stringify(json); contentType = 'application/json'; }
     if (form !== undefined) { body = new URLSearchParams(form).toString(); contentType = 'application/x-www-form-urlencoded'; }
 
-    const res = await jannyBridgeFetch(method, `${JANNY_SITE_BASE}${path}`, { body, contentType });
+    const authToken = (await window.getValidJannyToken?.()) || '';
+    const res = await jannyBridgeFetch(method, `${JANNY_SITE_BASE}${path}`, { body, contentType, authToken });
     if (!res.ok) {
         const err = new Error(`JannyAI HTTP ${res.status}`);
         err.status = res.status;
@@ -122,7 +123,7 @@ export async function probeJannyAccount() {
             bridge: true,
             active: false,
             cloudflare: !!err.cloudflare,
-            reason: err.code === 'JANNY_LOGIN_REQUIRED' ? 'Not logged into jannyai.com in this browser' : err.message,
+            reason: err.code === 'JANNY_LOGIN_REQUIRED' ? 'JannyAI login token is missing or expired' : err.message,
         };
     }
 }

@@ -1,10 +1,8 @@
 // JannyAI userscript bridge (transport for account sync + public collection pages).
 //
-// CL's page cannot send jannyai.com cookies cross-origin, so Cloudflare blocks direct
-// fetches and cookie-based login can't ride them at all. The companion userscript
-// (extras/cl-janny-bridge.user.js) closes the gap: GM_xmlhttpRequest is CORS-exempt and
-// carries the browser's own jannyai cookies — cf_clearance AND the sb-...-auth-token
-// session chunks — so being logged into jannyai.com in this browser IS the login.
+// Character Library supplies a saved Supabase bearer token; the companion userscript
+// supplies Cloudflare-capable transport. This mirrors the maintainer's Hampter bridge:
+// no JannyAI tab or ambient Janny login session needs to remain open.
 //
 // Pure postMessage transport, mirroring datacat/janitor-bridge.js but with write support
 // (method/body/contentType) and finalUrl surfaced for redirect-answering form POSTs.
@@ -92,7 +90,7 @@ export function refreshJannyBridgeAvailability() {
 
 // Resolves { ok, status, body, finalUrl }; rejects on transport failure (no bridge /
 // timeout) so callers can surface an install-the-userscript state.
-export function jannyBridgeFetch(method, url, { body, contentType } = {}) {
+export function jannyBridgeFetch(method, url, { body, contentType, authToken } = {}) {
     return new Promise((resolve, reject) => {
         if (!bridgeReady) {
             reject(new Error('JannyAI bridge not available'));
@@ -104,6 +102,6 @@ export function jannyBridgeFetch(method, url, { body, contentType } = {}) {
             reject(new Error('JannyAI bridge request timed out'));
         }, REQUEST_TIMEOUT_MS);
         pending.set(id, { resolve, timer });
-        window.postMessage({ source: PAGE_SRC, type: 'fetch', id, method, url, body, contentType }, window.location.origin);
+        window.postMessage({ source: PAGE_SRC, type: 'fetch', id, method, url, body, contentType, authToken }, window.location.origin);
     });
 }

@@ -530,7 +530,7 @@ Providers with Following support include a **Followed Creators Manager** panel f
 <details>
 <summary><h3>JanitorAI</h3></summary>
 
-**Auth:** None required for browsing. Optional account sync uses a companion userscript bridge (see below) — nothing to paste.
+**Auth:** None required for browsing. Optional account sync uses a pasted JannyAI login token plus a companion userscript bridge (see below).
 
 - Browse and search the full JanitorAI character catalog
 - Filter by tags, token count, NSFW toggle
@@ -543,15 +543,13 @@ No gallery downloads or version history (JanitorAI doesn't expose these APIs).
 
 #### JannyAI Account Sync
 
-JannyAI's bookmark and collection endpoints sit behind Cloudflare and use HttpOnly cookies, so Character Library can't read your login directly. Instead of pasting anything, a companion **userscript** bridges the request through your own browser:
+JannyAI's bookmark and collection endpoints sit behind Cloudflare. Account sync deliberately mirrors the maintainer's JanitorAI Hampter flow: Character Library stores a pasted Supabase access token and a companion **userscript** carries the request through Cloudflare:
 
 1. Install a userscript manager (Tampermonkey or Violentmonkey)
-2. Add `extras/cl-janny-bridge.user.js` from this repository
-3. Log into [jannyai.com](https://jannyai.com) in that same browser
-4. Open Settings > Online > JannyAI and check the **Bridge** and **Account** status; hit **Refresh** after installing the userscript or logging in
+2. Add `extras/cl-janny-bridge.user.js` from this repository and reload Character Library
+3. Open Settings > Online > JannyAI, paste the JannyAI auth cookie value or access-token JWT, and select **Save Login**
 
-Being logged into jannyai.com in that browser *is* the login: the userscript reads your existing session cookies and makes the request for you, so there's nothing to copy or paste, and cl-helper is not involved. Tested on desktop; also works on Firefox for Android with Tampermonkey. If Account status stays "Not logged in", confirm you're logged into jannyai.com in the same browser the userscript runs in, then hit Refresh. Bookmark adds are guarded at JannyAI's current 220-bookmark UI limit; if your account is already full, remove one bookmark before adding another.
-
+The JannyAI tab does not need to remain open after the token is saved, and remote/Colab-hosted SillyTavern works on Firefox for Android. Character Library accepts the full split `sb-eenzcbluoctduymzksoq-auth-token.0`/`.1` cookie header, its combined value, raw Supabase session JSON, the old `sb-access-token` value, or a bare JWT. JannyAI access tokens currently last about seven days; paste a fresh one when Account reports that it expired or was rejected. cl-helper is not involved. Bookmark adds remain guarded at JannyAI's current 220-bookmark UI limit.
 </details>
 
 <details>

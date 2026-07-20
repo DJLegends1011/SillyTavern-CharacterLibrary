@@ -13,6 +13,7 @@ function makeFakeWindow() {
     return win;
 }
 globalThis.window = makeFakeWindow();
+window.getValidJannyToken = async () => 'stored-janny-token';
 
 // Warm up the shared provider module graph via its real entry point (core-api.js) first.
 // Importing janny-api.js as the very first module in the graph hits a pre-existing
@@ -64,6 +65,7 @@ test('addJannyBookmarks POSTs a JSON characterIDs body', async () => {
     });
     await api.addJannyBookmarks(['aaaaaaaa-1111-4111-8111-111111111111']);
     assert.equal(seen.contentType, 'application/json');
+    assert.equal(seen.authToken, 'stored-janny-token');
     assert.deepEqual(JSON.parse(seen.body), { characterIDs: ['aaaaaaaa-1111-4111-8111-111111111111'] });
 });
 

@@ -540,6 +540,7 @@ const DEFAULT_SETTINGS = {
     datacatReextractOnUpdate: false,
     janitoraiToken: null,
     janitoraiRefreshToken: null,
+    jannyToken: null,
     botbooruToken: null,
     botbooruUsername: null,
     botbooruPassword: null,
@@ -1661,6 +1662,10 @@ function setupSettingsModal() {
     const datacatSettingsFields = document.getElementById('datacatSettingsFields');
     const datacatSessionStatus = document.getElementById('datacatSessionStatus');
     const jannySettingsRefreshBtn = document.getElementById('jannySettingsRefreshBtn');
+    const jannyTokenInput = document.getElementById('settingsJannyToken');
+    const toggleJannyTokenVisibility = document.getElementById('toggleJannyTokenVisibility');
+    const saveJannyTokenBtn = document.getElementById('saveJannyTokenBtn');
+    const clearJannyTokenBtn = document.getElementById('clearJannyTokenBtn');
     const jannyRandomizeCollectionCardsCheckbox = document.getElementById('jannyRandomizeCollectionCards');
     const minScoreSlider = document.getElementById('settingsMinScore');
     const minScoreValue = document.getElementById('minScoreValue');
@@ -2202,10 +2207,8 @@ function setupSettingsModal() {
         });
     }
 
-    // JannyAI account sync now rides the cl-janny-bridge userscript (a page-side
-    // client exposed as window.clJannyBridge): no cookie to paste or persist,
-    // just report whether the userscript is present and whether it can see a
-    // logged-in jannyai.com session.
+    // JannyAI login mirrors the maintainer's Hampter token UI: CL owns the saved
+    // bearer token and the userscript owns only the Cloudflare-capable transport.
     async function refreshJannySettingsAccountStatus() {
         const bridgeEl = document.getElementById('jannySettingsBridgeStatus');
         const accountEl = document.getElementById('jannySettingsAccountStatus');
@@ -2220,42 +2223,84 @@ function setupSettingsModal() {
             : !!bridge?.isAvailable?.();
         bridgeEl.className = `settings-status-badge ${available ? 'active' : 'inactive'}`;
         bridgeEl.innerHTML = `<i class="fa-solid fa-circle"></i> ${available ? 'Userscript detected' : 'Not detected'}`;
+
+        const status = window.jannySessionStatus?.() || { loggedIn: !!getSetting('jannyToken') };
+        if (!status.loggedIn) {
+            accountEl.className = 'settings-status-badge inactive';
+            accountEl.innerHTML = `<i class="fa-solid fa-circle"></i> ${getSetting('jannyToken') ? 'Token expired' : 'Not logged in'}`;
+            if (hintEl) hintEl.textContent = available
+                ? 'Paste a fresh JannyAI login token above. No JannyAI tab needs to stay open.'
+                : 'Install/update extras/cl-janny-bridge.user.js, reload Character Library, then paste your token.';
+            return;
+        }
         if (!available) {
             accountEl.className = 'settings-status-badge inactive';
-            accountEl.innerHTML = '<i class="fa-solid fa-circle"></i> Unavailable';
-            if (hintEl) hintEl.textContent = 'Install or update extras/cl-janny-bridge.user.js in Tampermonkey or Violentmonkey, reload Character Library, then try Refresh.';
+            accountEl.innerHTML = '<i class="fa-solid fa-circle"></i> Login saved; bridge unavailable';
+            if (hintEl) hintEl.textContent = 'The token is saved, but the userscript is not active on this Character Library page.';
             return;
         }
 
         accountEl.className = 'settings-status-badge inactive';
         accountEl.innerHTML = '<i class="fa-solid fa-circle"></i> Checking&hellip;';
         try {
-            const res = await bridge.request('GET', 'https://jannyai.com/api/bookmark');
-            if (res.ok) {
-                accountEl.className = 'settings-status-badge active';
-                accountEl.innerHTML = '<i class="fa-solid fa-circle"></i> Logged in';
-                if (hintEl) hintEl.textContent = '';
-            } else if (res.status === 401 || res.status === 403) {
-                accountEl.className = 'settings-status-badge inactive';
-                accountEl.innerHTML = '<i class="fa-solid fa-circle"></i> Not logged in';
-                if (hintEl) hintEl.textContent = 'Log into jannyai.com in this same browser, then hit Refresh.';
-            } else {
-                accountEl.className = 'settings-status-badge inactive';
-                accountEl.innerHTML = `<i class="fa-solid fa-circle"></i> Error (HTTP ${res.status})`;
-                if (hintEl) hintEl.textContent = '';
+            const authToken = (await window.getValidJannyToken?.()) || '';
+            const res = await bridge.request('GET', 'https://jannyai.com/api/bookmark', { authToken });
+            if (!res.ok) throw Object.assign(new Error(`JannyAI HTTP ${res.status}`), { status: res.status });
+            accountEl.className = 'settings-status-badge active';
+            accountEl.innerHTML = `<i class="fa-solid fa-circle-check"></i> Logged in${status.email ? ' as ' + status.email : ''}`;
+            if (hintEl) {
+                const expiry = status.expMs ? new Date(status.expMs).toLocaleString() : '';
+                hintEl.textContent = expiry
+                    ? `Token saved locally; expires ${expiry}. No JannyAI tab needs to stay open.`
+                    : 'Token saved locally. No JannyAI tab needs to stay open.';
             }
         } catch (err) {
             accountEl.className = 'settings-status-badge inactive';
-            accountEl.innerHTML = '<i class="fa-solid fa-circle"></i> Error';
-            if (hintEl) hintEl.textContent = err.message;
+            accountEl.innerHTML = `<i class="fa-solid fa-circle"></i> ${err.status === 401 || err.status === 403 ? 'Token rejected' : 'Connection error'}`;
+            if (hintEl) hintEl.textContent = err.status === 401 || err.status === 403
+                ? 'Copy a fresh JannyAI login token and save it again.'
+                : err.message;
         }
     }
 
+    toggleJannyTokenVisibility?.addEventListener('click', (e) => {
+        e.preventDefault();
+        if (!jannyTokenInput) return;
+        const hidden = jannyTokenInput.type === 'password';
+        jannyTokenInput.type = hidden ? 'text' : 'password';
+        toggleJannyTokenVisibility.innerHTML = `<i class="fa-solid fa-eye${hidden ? '-slash' : ''}"></i>`;
+    });
+    saveJannyTokenBtn?.addEventListener('click', async (e) => {
+        e.preventDefault();
+        const raw = (jannyTokenInput?.value || '').trim();
+        if (!raw) { showToast('Paste your JannyAI login token first', 'warning'); return; }
+        const original = saveJannyTokenBtn.innerHTML;
+        saveJannyTokenBtn.disabled = true;
+        saveJannyTokenBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Saving...';
+        try {
+            const result = await window.jannySetSession?.(raw);
+            if (!result?.ok) throw new Error(result?.error || 'Could not save JannyAI login');
+            jannyTokenInput.value = '';
+            await refreshJannySettingsAccountStatus();
+            showToast(`Logged in to JannyAI${result.email ? ' as ' + result.email : ''}`, 'success');
+        } catch (err) {
+            showToast(err.message, 'error');
+        } finally {
+            saveJannyTokenBtn.disabled = false;
+            saveJannyTokenBtn.innerHTML = original;
+        }
+    });
+    clearJannyTokenBtn?.addEventListener('click', (e) => {
+        e.preventDefault();
+        window.jannyLogout?.();
+        if (jannyTokenInput) jannyTokenInput.value = '';
+        refreshJannySettingsAccountStatus();
+        showToast('Logged out of JannyAI', 'info');
+    });
     jannySettingsRefreshBtn?.addEventListener('click', (e) => {
         e.preventDefault();
         refreshJannySettingsAccountStatus();
-    });
-    // Open modal
+    });    // Open modal
     settingsBtn.onclick = () => {
         chubTokenInput.value = getSetting('chubToken') || '';
         rememberTokenCheckbox.checked = getSetting('chubRememberToken') || false;

@@ -79,10 +79,11 @@ test('fetch forwards body and contentType for writes', async () => {
         window.postMessage({ source: 'cl-janny-bridge', type: 'result', id: msg.id, ok: true, status: 200, body: '{}', finalUrl: '' }, window.location.origin);
     });
     await jannyBridgeFetch('POST', 'https://jannyai.com/api/bookmark', {
-        body: '{"characterIDs":["x"]}', contentType: 'application/json',
+        body: '{"characterIDs":["x"]}', contentType: 'application/json', authToken: 'saved-token',
     });
     assert.equal(seen.body, '{"characterIDs":["x"]}');
     assert.equal(seen.contentType, 'application/json');
+    assert.equal(seen.authToken, 'saved-token');
 });
 
 test('replies from unknown sources are ignored', async () => {
