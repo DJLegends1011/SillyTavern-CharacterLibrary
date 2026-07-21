@@ -2664,6 +2664,77 @@ https://jannyai.com/characters/uuid_slug
                                     </div>
                                 </div>
                                 <div class="settings-group">
+                                    <div class="settings-group-title"><i class="fa-solid fa-user-lock"></i> Account Sync</div>
+                                    <div class="settings-row">
+                                        <label>Status:</label>
+                                        <div class="settings-input-group">
+                                            <span id="datacatAccountStatus" class="settings-status-badge inactive"><i class="fa-solid fa-circle"></i> Signed out</span>
+                                        </div>
+                                    </div>
+                                    <div class="settings-row">
+                                        <label>Email:</label>
+                                        <div class="settings-input-group">
+                                            <input type="email" id="settingsDatacatAccountEmail" class="glass-input" placeholder="you@example.com" autocomplete="username">
+                                        </div>
+                                    </div>
+                                    <div class="settings-row">
+                                        <label>Password:</label>
+                                        <div class="settings-input-group">
+                                            <input type="password" id="settingsDatacatAccountPassword" class="glass-input" placeholder="DataCat password" autocomplete="current-password" data-sensitive="true">
+                                        </div>
+                                    </div>
+                                    <div class="settings-row" style="gap: 8px;">
+                                        <button id="datacatAccountLoginBtn" class="settings-action-btn primary">
+                                            <i class="fa-solid fa-right-to-bracket"></i> Login
+                                        </button>
+                                        <button id="datacatAccountLogoutBtn" class="settings-action-btn danger" style="display: none;">
+                                            <i class="fa-solid fa-right-from-bracket"></i> Logout
+                                        </button>
+                                    </div>
+                                    <div class="settings-row">
+                                        <label>Account Token:</label>
+                                        <div class="settings-input-group">
+                                            <input type="password" id="settingsDatacatAccountToken" class="glass-input" placeholder="Paste DataCat session token" autocomplete="off" data-sensitive="true">
+                                        </div>
+                                    </div>
+                                    <p class="settings-hint">Made your DataCat account with Google? Paste your account token here to connect.</p>
+                                    <div class="settings-row" style="gap: 8px;">
+                                        <button id="datacatAccountTokenConnectBtn" class="settings-action-btn">
+                                            <i class="fa-solid fa-link"></i> Connect Token
+                                        </button>
+                                        <button id="datacatAccountOpenLoginBtn" class="settings-action-btn">
+                                            <i class="fa-solid fa-up-right-from-square"></i> Open DataCat Login
+                                        </button>
+                                    </div>
+                                    <div class="settings-row">
+                                        <label class="settings-checkbox-label">
+                                            <input type="checkbox" id="datacatUseAccountExtractionCheckbox">
+                                            <span>Use account session for extraction</span>
+                                        </label>
+                                    </div>
+                                    <div class="settings-row">
+                                        <label class="settings-checkbox-label">
+                                            <input type="checkbox" id="datacatSyncYoursCheckbox">
+                                            <span>Sync save buttons to DataCat Yours</span>
+                                        </label>
+                                    </div>
+                                    <div class="settings-row">
+                                        <span class="settings-hint">Sign in with your DataCat email and password, or paste your account session token. Character Library stores only the returned account session token, never your password. Vault and Cart are not part of this branch.</span>
+                                    </div>
+                                </div>
+                                <div class="settings-group">
+                                    <div class="settings-group-title"><i class="fa-solid fa-folder-tree"></i> Folder Order</div>
+                                    <div class="settings-row">
+                                        <span class="settings-hint">Reorder how your DataCat folders appear in Character Library (folder picker and Yours filter). Client-side only &mdash; DataCat doesn't support folder ordering yet.</span>
+                                    </div>
+                                    <div class="settings-row">
+                                        <button id="datacatFolderOrderLoadBtn" class="settings-action-btn"><i class="fa-solid fa-rotate"></i> Load Folders</button>
+                                        <button id="datacatFolderOrderResetBtn" class="settings-action-btn" style="display: none;"><i class="fa-solid fa-arrow-rotate-left"></i> Reset Order</button>
+                                    </div>
+                                    <div id="datacatFolderOrderStatus" class="settings-row" style="display: none;"></div>
+                                    <div id="datacatFolderOrderList" class="settings-row datacat-folder-order-list"></div>
+                                </div>
+                                <div class="settings-group">
                                     <div class="settings-group-title"><i class="fa-solid fa-cloud-arrow-down"></i> Extraction</div>
                                     <div class="settings-row">
                                         <label class="settings-checkbox-label">

@@ -1,4 +1,4 @@
-﻿// DatacatBrowseView -- DataCat browse/search UI for the Online tab
+// DatacatBrowseView -- DataCat browse/search UI for the Online tab
 //
 // Data sources:
 //   - DataCat API: recent browse, creator browse, faceted tag filtering
@@ -15,10 +15,13 @@ import {
     resolveTagNames,
     checkDcPluginAvailable,
     initDcSession,
+    restoreDatacatAccount,
     fetchDatacatCharacter,
     fetchDatacatDownload,
     fetchDatacatCreator,
     fetchDatacatCreatorCharacters,
+    fetchDatacatYoursCharacters,
+    fetchDatacatFolderCharacters,
     fetchRecentPublic,
     fetchFreshCharacters,
     fetchFacetedTags,
@@ -29,10 +32,26 @@ import {
     searchSaucepan,
     fetchSaucepanCompanion,
     fetchSaucepanCompanionsOfUser,
+    fetchDatacatYoursStatus,
+    setDatacatYoursSaved,
+    fetchDatacatFollowing,
+    setDatacatFollow,
+    mapDatacatFollowRow,
+    isDatacatYoursCollectableHit,
+    isDatacatYoursSavedHit,
+    DATACAT_EXTERNAL_PREINDEX_SOURCES,
     JANNY_TAG_MAP,
     pickRecoveryVariant,
     stripDatacatMarkers,
 } from './datacat-api.js';
+import {
+    initDatacatFolderPicker,
+    openDatacatFolderPicker,
+    closeDatacatFolderPicker,
+    syncDatacatFolderPickerMainRow,
+    normalizeDatacatYoursFolderSelection,
+    buildDatacatYoursFolderFetchOptions,
+} from './datacat-folder-picker.js';
 
 const {
     onElement: on,
@@ -88,8 +107,25 @@ let datacatCreatorSortMode = 'chat_count';
 
 let datacatFilterHideOwned = false;
 let datacatFilterHidePossible = false;
+let datacatFilterOnlyYours = false;
 let datacatFilterHideJanitor = false;
 let datacatFilterHideSaucepan = false;
+// "Only DataCat Yours" folder sub-filter: 'all' | 'main' | a custom folder id string.
+// Reset to 'all' whenever the Only Yours filter is turned off (see the
+// datacatFilterOnlyYours checkbox handler below).
+let datacatYoursFolderSel = 'all';
+// Ordered custom folders returned by the provider layer. Re-fetched each time
+// the Only Yours filter is switched on so Settings order changes are reflected.
+let datacatYoursFoldersCache = [];
+const datacatYoursStateById = new Map();
+const datacatYoursPendingIds = new Set();
+// External-search rows (Hampter/Meili/Saucepan) carry no DataCat collectability
+// flags, so the listing alone can't tell us whether the character exists on
+// DataCat. We probe /dc-yours/{id}/status lazily (as cards scroll into view) and
+// cache the verdict here: true = exists on DataCat (show ⭐), false = absent (no ⭐),
+// null = probe in flight. `.has(id)` blocks duplicate probes.
+const datacatExternalCollectableById = new Map();
+let datacatYoursProbeObserver = null;
 
 // Fresh endpoint pagination
 let datacatFreshLimit24 = 80;
@@ -116,6 +152,11 @@ let datacatFollowingLoading = false;
 let datacatFollowingSort = 'newest';
 let datacatFollowingDisplayLimit = 60;
 let datacatFollowingFiltered = [];
+// Live per-creator follow state from the account (server truth), keyed
+// `${source}:${id}`. Seeded from creator profiles and the following list; lets
+// the button reflect site state without re-reading the local cache list.
+const datacatFollowStateCache = new Map();
+let datacatFollowSyncPending = false;
 
 let view; // module-scoped BrowseView instance reference (set once in constructor)
 
@@ -223,6 +264,251 @@ function getSourceKind(hit) {
     return hit?.primary_content_source_kind === 'saucepan' ? 'saucepan' : 'janitor';
 }
 
+function isDatacatYoursSyncEnabled() {
+    return !!(getSetting('datacatAccountToken') && getSetting('datacatSyncYours') !== false);
+}
+
+function normalizeDatacatCollected(hit) {
+    return hit?.isCollected === true || hit?.viewer_is_collected === true || hit?.is_collected === true || hit?.collected === true;
+}
+
+function getDatacatYoursState(characterId, hit = null) {
+    const id = String(characterId || '').trim();
+    if (!id) return false;
+    if (datacatYoursStateById.has(id)) return datacatYoursStateById.get(id) === true;
+    return normalizeDatacatCollected(hit);
+}
+
+function isDatacatYoursFilteredHit(hit) {
+    const id = getCharId(hit);
+    const state = String(id || '').trim() && datacatYoursStateById.has(String(id).trim())
+        ? getDatacatYoursState(id, hit)
+        : null;
+    return isDatacatYoursSavedHit(hit, state);
+}
+
+function canShowDatacatYoursControl(characterId, hit = null) {
+    const id = String(characterId || '').trim();
+    if (!id || !isDatacatYoursSyncEnabled()) return false;
+    // Confirmed-present external-search rows take precedence over the listing gate.
+    if (datacatExternalCollectableById.get(id) === true) return true;
+    // _fullCharacter / positive listing flags / non-external public rows.
+    if (isDatacatYoursCollectableHit(hit)) return true;
+    // Unproven (or confirmed-absent) external-search row: no ⭐ until/unless the
+    // lazy probe finds it on DataCat.
+    return false;
+}
+
+function isDatacatExternalSearchHit(hit) {
+    return DATACAT_EXTERNAL_PREINDEX_SOURCES.has(String(hit?._source || '').trim().toLowerCase());
+}
+
+function findDatacatHitById(characterId) {
+    const id = String(characterId || '').trim();
+    if (!id) return null;
+    return datacatCharacters.find(c => String(getCharId(c)) === id)
+        || datacatFollowingCharacters.find(c => String(getCharId(c)) === id)
+        || null;
+}
+
+// Like findDatacatHitById, but also falls back to the currently-previewed
+// character. Direct previews (opened via URL/window.openDatacatCharPreview)
+// live only in datacatSelectedChar, not in either list, so callers that need
+// to act on "whatever character is on screen" (e.g. the folder picker) must
+// consider it too. The id check keeps this from returning a stale preview
+// for an unrelated characterId.
+function findDatacatHitOrSelected(characterId) {
+    const id = String(characterId || '').trim();
+    const selected = datacatSelectedChar && String(getCharId(datacatSelectedChar)) === id ? datacatSelectedChar : null;
+    return findDatacatHitById(id) || selected;
+}
+
+// Lazily verify whether an external-search character exists on DataCat. On a
+// positive result, cache it, sync the saved state, and reveal the card ⭐.
+// A negative result is cached so the ⭐ stays hidden and we never re-probe.
+function probeDatacatExternalCollectable(characterId, hit = null) {
+    const id = String(characterId || '').trim();
+    if (!id || datacatExternalCollectableById.has(id)) return;
+    if (!isDatacatYoursSyncEnabled() || !isDatacatExternalSearchHit(hit)) return;
+    datacatExternalCollectableById.set(id, null); // in-flight: blocks re-probe, keeps ⭐ hidden
+    fetchDatacatYoursStatus(id).then(result => {
+        if (result?.ok) {
+            datacatExternalCollectableById.set(id, true);
+            setDatacatYoursState(id, result.collected === true);
+            updateDatacatCardYoursControl(id, hit);
+        } else {
+            datacatExternalCollectableById.set(id, false);
+        }
+    }).catch(() => {
+        datacatExternalCollectableById.delete(id); // transient failure: allow a later retry
+    });
+}
+
+// IntersectionObserver: probe external-search cards only as they near the viewport,
+// so we don't fire dozens of /status requests up front (matters on mobile).
+function observeDatacatYoursProbes(grid) {
+    if (!grid || !isDatacatYoursSyncEnabled()) return;
+    if (typeof IntersectionObserver === 'undefined') return;
+    if (!datacatYoursProbeObserver) {
+        datacatYoursProbeObserver = new IntersectionObserver((entries, obs) => {
+            for (const entry of entries) {
+                if (!entry.isIntersecting) continue;
+                obs.unobserve(entry.target);
+                const id = entry.target.dataset.datacatId;
+                probeDatacatExternalCollectable(id, findDatacatHitById(id));
+            }
+        }, { rootMargin: '200px' });
+    }
+    grid.querySelectorAll('.browse-card[data-datacat-probe="1"]').forEach(card => {
+        datacatYoursProbeObserver.observe(card);
+    });
+}
+
+function renderDatacatYoursCardButton(characterId, saved) {
+    return `<button type="button" class="datacat-yours-btn${saved ? ' saved' : ''}" data-datacat-yours-id="${escapeHtml(String(characterId))}" title="${saved ? 'Saved to DataCat Yours' : 'Save to DataCat Yours'}">${saved ? '<i class="fa-solid fa-star"></i>' : '<i class="fa-regular fa-star"></i>'}</button>`;
+}
+
+function setDatacatYoursState(characterId, saved) {
+    const id = String(characterId || '').trim();
+    if (!id) return;
+    datacatYoursStateById.set(id, saved === true);
+    for (const gridId of ['datacatGrid', 'datacatFollowingGrid']) {
+        const grid = document.getElementById(gridId);
+        const card = grid?.querySelector(`[data-datacat-id="${id}"]`);
+        const btn = card?.querySelector('.datacat-yours-btn');
+        if (!btn) continue;
+        btn.classList.toggle('saved', saved === true);
+        btn.title = saved ? 'Saved to DataCat Yours' : 'Save to DataCat Yours';
+        btn.innerHTML = saved ? '<i class="fa-solid fa-star"></i>' : '<i class="fa-regular fa-star"></i>';
+    }
+    const modalBtn = document.getElementById('datacatYoursBtn');
+    if (modalBtn?.dataset?.datacatId === id) {
+        modalBtn.classList.toggle('saved', saved === true);
+        modalBtn.innerHTML = saved ? '<i class="fa-solid fa-star"></i> Saved' : '<i class="fa-regular fa-star"></i> Save';
+        modalBtn.title = saved ? 'Saved to DataCat Yours' : 'Save to DataCat Yours';
+    }
+    syncDatacatFolderPickerMainRow(id, saved === true);
+}
+
+function refreshDatacatOnlyYoursFilterIfActive() {
+    if (!datacatFilterOnlyYours) return;
+    if (datacatViewMode === 'following') {
+        renderFollowing();
+    } else {
+        renderGrid(datacatCharacters, false);
+    }
+}
+
+function updateDatacatCardYoursControl(characterId, hit = null) {
+    const id = String(characterId || '').trim();
+    if (!id) return;
+
+    for (const gridId of ['datacatGrid', 'datacatFollowingGrid']) {
+        const grid = document.getElementById(gridId);
+        const card = grid?.querySelector(`[data-datacat-id="${id}"]`);
+        const image = card?.querySelector('.browse-card-image');
+        if (!image) continue;
+
+        const existing = image.querySelector('.datacat-yours-btn');
+        if (!canShowDatacatYoursControl(id, hit)) {
+            existing?.remove();
+            continue;
+        }
+
+        const saved = getDatacatYoursState(id, hit);
+        const html = renderDatacatYoursCardButton(id, saved);
+        if (existing) {
+            existing.outerHTML = html;
+        } else {
+            image.insertAdjacentHTML('beforeend', html);
+        }
+    }
+}
+
+function syncDatacatCollectableCharacter(characterId, character) {
+    const id = String(characterId || '').trim();
+    if (!id || !character || typeof character !== 'object') return;
+
+    const apply = (entry) => {
+        if (!entry || String(getCharId(entry)) !== id) return;
+        entry._fullCharacter = character;
+        entry.isFullyExtractedInDb = true;
+        entry.is_fully_extracted_in_db = true;
+        entry.hasPartialExtraction = false;
+        entry.has_partial_extraction = false;
+        if (character.isCollected === true || character.viewer_is_collected === true || character.is_collected === true) {
+            entry.isCollected = true;
+            entry.viewer_is_collected = true;
+            entry.is_collected = true;
+        }
+    };
+
+    datacatCharacters.forEach(apply);
+    datacatFollowingCharacters.forEach(apply);
+    updateDatacatCardYoursControl(id, character);
+}
+
+function updateDatacatModalYoursControl(characterId, hit = null, { refresh = false } = {}) {
+    const id = String(characterId || '').trim();
+    const btn = document.getElementById('datacatYoursBtn');
+    if (!btn) return;
+
+    btn.dataset.datacatId = id;
+    btn.disabled = false;
+
+    const eligible = canShowDatacatYoursControl(id, hit);
+
+    const folderBtn = document.getElementById('datacatFolderBtn');
+    if (folderBtn) {
+        folderBtn.dataset.datacatId = id;
+        folderBtn.style.display = eligible ? '' : 'none';
+    }
+
+    if (!eligible) {
+        btn.style.display = 'none';
+        return;
+    }
+
+    btn.style.display = '';
+    setDatacatYoursState(id, getDatacatYoursState(id, hit));
+    if (refresh) {
+        fetchDatacatYoursStatus(id).then(result => {
+            if (result?.ok) setDatacatYoursState(id, result.collected === true);
+        }).catch(() => {});
+    }
+}
+
+async function toggleDatacatYours(characterId, hit = null) {
+    const id = String(characterId || '').trim();
+    if (!id) return;
+    if (!isDatacatYoursSyncEnabled()) {
+        showToast('Sign in to DataCat in Settings to sync Yours', 'warning');
+        return;
+    }
+    if (!canShowDatacatYoursControl(id, hit)) {
+        showToast('Extract this character first; DataCat saves extracted account characters to Yours automatically.', 'info');
+        return;
+    }
+    if (datacatYoursPendingIds.has(id)) return;
+
+    const wasSaved = getDatacatYoursState(id, hit);
+    const nextSaved = !wasSaved;
+    datacatYoursPendingIds.add(id);
+    setDatacatYoursState(id, nextSaved);
+    try {
+        const result = await setDatacatYoursSaved(id, nextSaved);
+        if (!result?.ok) throw new Error(result?.error || result?.reason || 'DataCat save failed');
+        setDatacatYoursState(id, result.collected === true);
+        refreshDatacatOnlyYoursFilterIfActive();
+        showToast(result.collected ? 'Saved to DataCat Yours' : 'Removed from DataCat Yours', 'success');
+    } catch (err) {
+        setDatacatYoursState(id, wasSaved);
+        showToast(`DataCat Yours sync failed: ${err.message}`, 'error');
+    } finally {
+        datacatYoursPendingIds.delete(id);
+    }
+}
+
 // ========================================
 // CARD RENDERING
 // ========================================
@@ -295,12 +581,24 @@ function createDatacatCard(hit) {
     }
 
     const cardClass = inLibrary ? 'browse-card in-library' : possibleMatch ? 'browse-card possible-library' : 'browse-card';
+    const canSyncYours = canShowDatacatYoursControl(charId, hit);
+    const savedToYours = getDatacatYoursState(charId, hit);
+    const yoursBtn = canSyncYours
+        ? renderDatacatYoursCardButton(charId, savedToYours)
+        : '';
+    // External-search card whose DataCat existence is still unknown: tag it so the
+    // probe observer checks it on scroll (and reveals the ⭐ only if it's on DataCat).
+    const needsYoursProbe = isDatacatYoursSyncEnabled()
+        && isDatacatExternalSearchHit(hit)
+        && !canSyncYours
+        && !datacatExternalCollectableById.has(charId);
 
     return `
-        <div class="${cardClass}" data-datacat-id="${escapeHtml(String(charId))}" ${desc ? `title="${escapeHtml(desc)}"` : ''}>
+        <div class="${cardClass}" data-datacat-id="${escapeHtml(String(charId))}"${needsYoursProbe ? ' data-datacat-probe="1"' : ''} ${desc ? `title="${escapeHtml(desc)}"` : ''}>
             <div class="browse-card-image">
                 <img data-src="${escapeHtml(avatarUrl)}" src="${IMG_PLACEHOLDER}" alt="${escapeHtml(name)}" decoding="async" fetchpriority="low" onerror="this.dataset.failed='1';this.src='/img/ai4.png'">
                 ${nsfwBadge}
+                ${yoursBtn}
                 ${sourceBadges.length > 0 ? `<div class="browse-feature-badges browse-feature-badges-tl">${sourceBadges.join('')}</div>` : ''}
                 ${badges.length > 0 ? `<div class="browse-feature-badges">${badges.join('')}</div>` : ''}
             </div>
@@ -325,7 +623,10 @@ function createDatacatCard(hit) {
 
 function observeNewCards() {
     const grid = document.getElementById('datacatGrid');
-    if (grid) datacatBrowseView.observeImages(grid);
+    if (grid) {
+        datacatBrowseView.observeImages(grid);
+        observeDatacatYoursProbes(grid);
+    }
 }
 
 // ========================================
@@ -351,9 +652,10 @@ function advanceDatacatPage() {
         saucepanCurrentPage++;
     } else {
         const parsed = parseSortMode(datacatSortMode);
-        // Mirrors isFreshMode: tag-filtered or searched fresh sorts load via the offset endpoint,
-        // so growing the fresh limits for them advanced nothing (the old stall) - they ride the offset
-        if (parsed && datacatActiveTagIds.size === 0 && !datacatSearchQuery) {
+        // Mirrors isFreshMode: tag-filtered, searched, or Yours-filtered fresh sorts load via the
+        // offset endpoint, so growing the fresh limits for them advanced nothing (the old stall) -
+        // they ride the offset
+        if (parsed && !datacatFilterOnlyYours && datacatActiveTagIds.size === 0 && !datacatSearchQuery) {
             if (parsed.window === '24h') datacatFreshLimit24 += FRESH_PAGE_INCREMENT;
             else datacatFreshLimitWeek += FRESH_PAGE_INCREMENT;
         }
@@ -379,6 +681,17 @@ function renderGrid(characters, append = false) {
     }
     if (datacatFilterHidePossible) {
         filtered = filtered.filter(c => !isCharPossibleMatchObj(c));
+    }
+    if (datacatFilterOnlyYours) {
+        // isDatacatYoursFilteredHit relies on the "saved" flags (isCollected etc.)
+        // that fetchDatacatYoursCharacters forcibly stamps on every hit ('all').
+        // fetchDatacatFolderCharacters (the 'main'/folder routes) proxies DataCat's
+        // raw /api/characters?mainOnly=1|folderId=X response and does NOT stamp
+        // those flags, so re-checking them here would wrongly drop results the
+        // server already scoped correctly. Skip the client-side re-check in that case.
+        if (datacatYoursFolderSel === 'all') {
+            filtered = filtered.filter(c => isDatacatYoursFilteredHit(c));
+        }
     }
     if (datacatFilterHideJanitor) {
         filtered = filtered.filter(c => getSourceKind(c) !== 'janitor');
@@ -541,6 +854,18 @@ async function loadCharacters(append = false) {
                     if (typeof t === 'string' && t) saucepanDiscoveredTags.add(t);
                 }
             }
+        } else if (datacatFilterOnlyYours) {
+            const common = {
+                limit: PAGE_SIZE,
+                offset: datacatCurrentOffset,
+                tagIds: [...datacatActiveTagIds],
+            };
+            const folderOptions = buildDatacatYoursFolderFetchOptions(datacatYoursFolderSel, common);
+            const data = folderOptions
+                ? await fetchDatacatFolderCharacters(folderOptions)
+                : await fetchDatacatYoursCharacters(common);
+            list = data?.characters || [];
+            total = data?.count ?? data?.totalCount ?? list.length;
         } else {
             const tagIds = [...datacatActiveTagIds];
             const parsed = parseSortMode(datacatSortMode);
@@ -577,7 +902,7 @@ async function loadCharacters(append = false) {
         if (!delegatesInitialized) return;
 
         const freshParsed = parseSortMode(datacatSortMode);
-        const isFreshMode = datacatBrowseMode !== 'creator' && freshParsed && datacatActiveTagIds.size === 0 && !datacatSearchQuery;
+        const isFreshMode = datacatBrowseMode !== 'creator' && !datacatFilterOnlyYours && freshParsed && datacatActiveTagIds.size === 0 && !datacatSearchQuery;
         const isMeili = isJannySortMode(datacatSortMode);
         const isHampter = isHampterSortMode(datacatSortMode);
         const isSaucepan = isSaucepanSortMode(datacatSortMode);
@@ -1356,6 +1681,10 @@ async function browseCreator(creatorId, opts = {}) {
         const creator = await fetchDatacatCreator(creatorId);
         if (creator) {
             datacatCreatorName = creator.userName || creatorId;
+            // Seed the button from the account's real follow state when synced.
+            if (isDatacatFollowSyncEnabled() && typeof creator.isFollowed === 'boolean') {
+                setFollowState(creatorId, source, creator.isFollowed);
+            }
         } else {
             datacatCreatorName = creatorId;
         }
@@ -1764,7 +2093,10 @@ async function startExtraction(janitorUrl, janitorId, source = 'janitor') {
     extractionStartTime = Date.now();
 
     try {
-        const result = await submitExtraction(janitorUrl, { publicFeed: getSetting('datacatPublicFeed') === true });
+        const result = await submitExtraction(janitorUrl, {
+            publicFeed: getSetting('datacatPublicFeed') === true,
+            useAccount: getSetting('datacatUseAccountForExtraction') !== false,
+        });
 
         if (result.queued || result.started) {
             extractBtn.innerHTML = '<i class="fa-solid fa-hourglass-half"></i> Extracting...';
@@ -1992,7 +2324,10 @@ async function startModalExtraction(charId, source = 'janitor') {
     extractionStartTime = Date.now();
 
     try {
-        const result = await submitExtraction(sourceUrl, { publicFeed: getSetting('datacatPublicFeed') === true });
+        const result = await submitExtraction(sourceUrl, {
+            publicFeed: getSetting('datacatPublicFeed') === true,
+            useAccount: getSetting('datacatUseAccountForExtraction') !== false,
+        });
 
         if (result.queued || result.started) {
             importBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Extracting...';
@@ -2123,26 +2458,96 @@ function saveFollowedCreators() {
     setSetting('datacatFollowedCreators', datacatFollowedCreators);
 }
 
-function isCreatorFollowed(creatorId, source = 'datacat') {
+// Sync is active whenever a DataCat account token is configured. When off, the
+// local list is the source of truth (logged-out / per-device behavior).
+function isDatacatFollowSyncEnabled() {
+    return !!getSetting('datacatAccountToken');
+}
+
+function setFollowState(creatorId, source, followed) {
+    datacatFollowStateCache.set(`${source}:${creatorId}`, followed);
+}
+
+function localHasFollow(creatorId, source) {
     return datacatFollowedCreators.some(c => c.id === creatorId && (c.source || 'datacat') === source);
 }
 
-function followCreator(creatorId, creatorName, source = 'datacat') {
-    if (isCreatorFollowed(creatorId, source)) return;
+function localAddFollow(creatorId, creatorName, source) {
+    if (localHasFollow(creatorId, source)) return;
     datacatFollowedCreators.push({ id: creatorId, name: creatorName || creatorId, source });
     saveFollowedCreators();
-    updateFollowButton(creatorId, source);
-    showToast(`Followed ${creatorName || 'creator'}`, 'success');
 }
 
-function unfollowCreator(creatorId, source = 'datacat') {
+function localRemoveFollow(creatorId, source) {
     const idx = datacatFollowedCreators.findIndex(c => c.id === creatorId && (c.source || 'datacat') === source);
-    if (idx === -1) return;
+    if (idx === -1) return null;
     const name = datacatFollowedCreators[idx].name;
     datacatFollowedCreators.splice(idx, 1);
     saveFollowedCreators();
+    return name;
+}
+
+function isCreatorFollowed(creatorId, source = 'datacat') {
+    const key = `${source}:${creatorId}`;
+    if (datacatFollowStateCache.has(key)) return datacatFollowStateCache.get(key);
+    return localHasFollow(creatorId, source);
+}
+
+async function followCreator(creatorId, creatorName, source = 'datacat') {
+    if (isCreatorFollowed(creatorId, source) || datacatFollowSyncPending) return;
+
+    // Optimistic: update local cache + button immediately, reconcile with server.
+    setFollowState(creatorId, source, true);
+    localAddFollow(creatorId, creatorName, source);
     updateFollowButton(creatorId, source);
-    showToast(`Unfollowed ${name || 'creator'}`, 'info');
+
+    if (!isDatacatFollowSyncEnabled()) {
+        showToast(`Followed ${creatorName || 'creator'}`, 'success');
+        return;
+    }
+
+    datacatFollowSyncPending = true;
+    try {
+        const result = await setDatacatFollow(creatorId, true);
+        if (!result?.ok) throw new Error(result?.error || 'DataCat sync failed');
+        setFollowState(creatorId, source, result.following !== false);
+        showToast(`Followed ${creatorName || 'creator'} on DataCat`, 'success');
+    } catch (err) {
+        setFollowState(creatorId, source, false);
+        localRemoveFollow(creatorId, source);
+        updateFollowButton(creatorId, source);
+        showToast(`Follow failed: ${err.message}`, 'error');
+    } finally {
+        datacatFollowSyncPending = false;
+    }
+}
+
+async function unfollowCreator(creatorId, source = 'datacat') {
+    if (!isCreatorFollowed(creatorId, source) || datacatFollowSyncPending) return;
+
+    const name = localRemoveFollow(creatorId, source) || creatorId;
+    setFollowState(creatorId, source, false);
+    updateFollowButton(creatorId, source);
+
+    if (!isDatacatFollowSyncEnabled()) {
+        showToast(`Unfollowed ${name}`, 'info');
+        return;
+    }
+
+    datacatFollowSyncPending = true;
+    try {
+        const result = await setDatacatFollow(creatorId, false);
+        if (!result?.ok) throw new Error(result?.error || 'DataCat sync failed');
+        setFollowState(creatorId, source, result.following === true);
+        showToast(`Unfollowed ${name} on DataCat`, 'info');
+    } catch (err) {
+        setFollowState(creatorId, source, true);
+        localAddFollow(creatorId, name, source);
+        updateFollowButton(creatorId, source);
+        showToast(`Unfollow failed: ${err.message}`, 'error');
+    } finally {
+        datacatFollowSyncPending = false;
+    }
 }
 
 function updateFollowButton(creatorId, source = datacatCreatorSource) {
@@ -2207,6 +2612,51 @@ async function switchDatacatViewMode(mode) {
     }
 }
 
+// Read the account's full followed-creator list (both sources, paginated),
+// mapped to CL's {id, name, source} shape. `ok` is false only when no source
+// responded, so callers can fall back to the local cache on transient failure.
+async function fetchAllFollowedFromAccount() {
+    const creators = [];
+    let anyOk = false;
+    for (const sourceKind of ['janitor', 'saucepan']) {
+        let offset = 0;
+        const limit = 50;
+        while (true) {
+            const data = await fetchDatacatFollowing({ sourceKind, limit, offset });
+            if (!data?.ok) break;
+            anyOk = true;
+            const list = Array.isArray(data.list) ? data.list : [];
+            for (const row of list) {
+                const mapped = mapDatacatFollowRow(row);
+                if (mapped) creators.push(mapped);
+            }
+            const total = Number(data.total) || 0;
+            offset += limit;
+            if (list.length < limit || offset >= total) break;
+        }
+    }
+    return { ok: anyOk, creators };
+}
+
+// One-time push of any pre-sync local follows up to the account, so existing
+// per-device follows survive the switch to account-backed sync.
+async function migrateLocalFollowsToAccount(accountCreators) {
+    if (getSetting('datacatFollowMigrated')) return;
+    const have = new Set(accountCreators.map(c => `${c.source}:${c.id}`));
+    const localOnly = datacatFollowedCreators.filter(c => !have.has(`${c.source || 'datacat'}:${c.id}`));
+    for (const c of localOnly) {
+        try {
+            const result = await setDatacatFollow(c.id, true);
+            if (result?.ok) {
+                accountCreators.push({ id: c.id, name: c.name || c.id, source: c.source || 'datacat' });
+            }
+        } catch (e) {
+            debugLog('[DatacatFollowing] migration follow failed:', c.id, e.message);
+        }
+    }
+    setSetting('datacatFollowMigrated', true);
+}
+
 async function loadFollowingCharacters(forceRefresh = false) {
     if (datacatFollowingLoading) return;
     datacatFollowingLoading = true;
@@ -2219,6 +2669,22 @@ async function loadFollowingCharacters(forceRefresh = false) {
     }
 
     loadFollowedCreators();
+
+    // When signed in, the account's follow list is the source of truth; mirror
+    // it into the local cache (for logged-out fallback) and rebuild state.
+    if (isDatacatFollowSyncEnabled()) {
+        const { ok, creators } = await fetchAllFollowedFromAccount();
+        if (ok) {
+            await migrateLocalFollowsToAccount(creators);
+            datacatFollowStateCache.clear();
+            for (const c of creators) setFollowState(c.id, c.source, true);
+            datacatFollowedCreators = creators.map(c => ({ id: c.id, name: c.name, source: c.source }));
+            saveFollowedCreators();
+            debugLog('[DatacatFollowing] account list:', datacatFollowedCreators.length, 'creators (synced)');
+        } else {
+            debugLog('[DatacatFollowing] account fetch failed; using', datacatFollowedCreators.length, 'local creators (fallback)');
+        }
+    }
 
     if (datacatFollowedCreators.length === 0) {
         renderFollowingEmpty('no_follows');
@@ -2375,6 +2841,16 @@ function sortFollowingCharacters(characters) {
 }
 
 function _handleFollowingCardClick(e) {
+    const yoursBtn = e.target.closest('.datacat-yours-btn');
+    if (yoursBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        const charId = yoursBtn.dataset.datacatYoursId;
+        const hit = charId ? datacatFollowingCharacters.find(c => String(getCharId(c)) === charId) : null;
+        toggleDatacatYours(charId, hit);
+        return;
+    }
+
     const authorLink = e.target.closest('.browse-card-creator-link');
     if (authorLink) {
         e.stopPropagation();
@@ -2416,6 +2892,9 @@ function renderFollowing(append = false) {
     if (datacatFilterHidePossible) {
         filtered = filtered.filter(c => !isCharPossibleMatchObj(c));
     }
+    if (datacatFilterOnlyYours) {
+        filtered = filtered.filter(c => isDatacatYoursFilteredHit(c));
+    }
     if (datacatFilterHideJanitor) {
         filtered = filtered.filter(c => getSourceKind(c) !== 'janitor');
     }
@@ -2440,7 +2919,7 @@ function renderFollowing(append = false) {
             <div class="chub-timeline-empty">
                 <i class="fa-solid fa-filter"></i>
                 <h3>No Matching Characters</h3>
-                <p>No characters match your current NSFW filter setting.</p>
+                <p>No characters match your current DataCat filters.</p>
             </div>
         `;
         datacatBrowseView.updateLoadMoreVisibility('datacatFollowingLoadMore', false, false);
@@ -2453,11 +2932,13 @@ function renderFollowing(append = false) {
         if (newSlice.length > 0) {
             grid.insertAdjacentHTML('beforeend', newSlice.map(c => createDatacatCard(c)).join(''));
             datacatBrowseView.observeImages(grid);
+            observeDatacatYoursProbes(grid);
         }
     } else {
         const page = sorted.slice(0, datacatFollowingDisplayLimit);
         grid.innerHTML = page.map(c => createDatacatCard(c)).join('');
         datacatBrowseView.observeImages(grid);
+        observeDatacatYoursProbes(grid);
     }
 
     const hasMore = datacatFollowingDisplayLimit < sorted.length;
@@ -2520,6 +3001,10 @@ function openPreviewModal(hit) {
             openBtn.href = `${DATACAT_API_BASE}/characters/${charId}`;
             openBtn.title = 'Open on DataCat';
         }
+    }
+    const yoursBtn = document.getElementById('datacatYoursBtn');
+    if (yoursBtn) {
+        updateDatacatModalYoursControl(charId, hit, { refresh: canShowDatacatYoursControl(charId, hit) });
     }
 
     // Stats (adapt to available data)
@@ -2705,6 +3190,16 @@ async function fetchAndPopulateDetails(hit, token) {
         if (!character) {
             const saucepanDetail = await saucepanDetailPromise;
             const lockedDef = isSaucepanHit && saucepanDetail && saucepanDetail.open_definition === false;
+            updateDatacatModalYoursControl(charId, {
+                ...hit,
+                isFullyExtractedInDb: false,
+                hasPartialExtraction: true,
+            });
+            updateDatacatCardYoursControl(charId, {
+                ...hit,
+                isFullyExtractedInDb: false,
+                hasPartialExtraction: true,
+            });
             showExtractionCTA(isSaucepanHit
                 ? 'This Saucepan character has not been extracted to DataCat yet.'
                 : 'Character definition is hidden or unavailable.',
@@ -2716,6 +3211,8 @@ async function fetchAndPopulateDetails(hit, token) {
         if (datacatSelectedChar && getCharId(datacatSelectedChar) === charId) {
             datacatSelectedChar._fullCharacter = character;
         }
+        syncDatacatCollectableCharacter(charId, character);
+        updateDatacatModalYoursControl(charId, character, { refresh: true });
 
         // The listing row only knew the 640px card variant; upgrade the avatar viewer to the
         // true original now that the detail payload is here.
@@ -2951,6 +3448,16 @@ async function fetchAndPopulateDetails(hit, token) {
         if (token === datacatDetailFetchToken) {
             const defLoading = document.getElementById('datacatCharDefinitionLoading');
             if (defLoading) defLoading.style.display = 'none';
+            updateDatacatModalYoursControl(charId, {
+                ...hit,
+                isFullyExtractedInDb: false,
+                hasPartialExtraction: true,
+            });
+            updateDatacatCardYoursControl(charId, {
+                ...hit,
+                isFullyExtractedInDb: false,
+                hasPartialExtraction: true,
+            });
             showExtractionCTA('Could not load character definition.');
         }
     }
@@ -3114,6 +3621,7 @@ function cleanupDatacatCharModal() {
 }
 
 function closePreviewModal() {
+    closeDatacatFolderPicker();
     datacatDetailFetchToken++;
     datacatDetailFetchPromise = null;
     cleanupDatacatCharModal();
@@ -3308,11 +3816,40 @@ function updateNsfwToggle() {
 function updateDatacatFiltersButtonState() {
     const btn = document.getElementById('datacatFiltersBtn');
     if (!btn) return;
-    const count = [datacatFilterHideOwned, datacatFilterHidePossible, datacatFilterHideJanitor, datacatFilterHideSaucepan].filter(Boolean).length;
+    const count = [datacatFilterHideOwned, datacatFilterHidePossible, datacatFilterOnlyYours, datacatFilterHideJanitor, datacatFilterHideSaucepan].filter(Boolean).length;
     btn.classList.toggle('has-filters', count > 0);
     btn.innerHTML = count > 0
         ? `<i class="fa-solid fa-sliders"></i> Features (${count})`
         : '<i class="fa-solid fa-sliders"></i> <span>Features</span>';
+}
+
+function renderDatacatYoursFolderOptions() {
+    const select = document.getElementById('datacatYoursFolderSelect');
+    if (!select) return;
+    datacatYoursFolderSel = normalizeDatacatYoursFolderSelection(datacatYoursFolderSel, datacatYoursFoldersCache);
+    select.innerHTML = '<option value="all">All Yours</option><option value="main">Main only</option>'
+        + datacatYoursFoldersCache.map(folder => '<option value="' + escapeHtml(String(folder.id)) + '">' + escapeHtml(folder.title || 'Untitled folder') + '</option>').join('');
+    select.value = datacatYoursFolderSel;
+    select._customSelect?.refresh?.();
+}
+function updateDatacatYoursFolderBar() {
+    document.getElementById('datacatYoursFolderBar')?.classList.toggle('hidden', !datacatFilterOnlyYours);
+}
+async function loadDatacatYoursFolders() {
+    try {
+        const res = await window.datacatGetSettingsFolders?.();
+        if (!res?.ok) throw new Error(res?.error || 'Could not load DataCat folders');
+        datacatYoursFoldersCache = Array.isArray(res.folders) ? res.folders : [];
+    } catch (err) {
+        datacatYoursFoldersCache = [];
+        debugLog('[DatacatBrowse] Folder sub-filter list unavailable:', err?.message || err);
+    }
+    renderDatacatYoursFolderOptions();
+}
+function resetDatacatYoursPagination() {
+    datacatCurrentOffset = 0;
+    datacatFreshLimit24 = 80;
+    datacatFreshLimitWeek = 20;
 }
 
 // ========================================
@@ -3340,10 +3877,27 @@ function initDatacatView() {
         CoreAPI.initCustomSelect?.(creatorSortEl);
     }
 
+    const yoursFolderSelect = document.getElementById('datacatYoursFolderSelect');
+    if (yoursFolderSelect) {
+        CoreAPI.initCustomSelect?.(yoursFolderSelect);
+        renderDatacatYoursFolderOptions();
+    }
+    updateDatacatYoursFolderBar();
+
     // Grid card click --> open preview (delegation)
     const grid = document.getElementById('datacatGrid');
     if (grid) {
         grid.addEventListener('click', (e) => {
+            const yoursBtn = e.target.closest('.datacat-yours-btn');
+            if (yoursBtn) {
+                e.preventDefault();
+                e.stopPropagation();
+                const charId = yoursBtn.dataset.datacatYoursId;
+                const hit = charId ? datacatCharacters.find(c => String(getCharId(c)) === charId) : null;
+                toggleDatacatYours(charId, hit);
+                return;
+            }
+
             const authorLink = e.target.closest('.browse-card-creator-link');
             if (authorLink) {
                 e.stopPropagation();
@@ -3473,6 +4027,7 @@ function initDatacatView() {
     const dcFilterCheckboxes = [
         { id: 'datacatFilterHideOwned', setter: (v) => datacatFilterHideOwned = v, getter: () => datacatFilterHideOwned },
         { id: 'datacatFilterHidePossible', setter: (v) => datacatFilterHidePossible = v, getter: () => datacatFilterHidePossible },
+        { id: 'datacatFilterOnlyYours', setter: (v) => datacatFilterOnlyYours = v, getter: () => datacatFilterOnlyYours },
         { id: 'datacatFilterHideJanitor', setter: (v) => datacatFilterHideJanitor = v, getter: () => datacatFilterHideJanitor },
         { id: 'datacatFilterHideSaucepan', setter: (v) => datacatFilterHideSaucepan = v, getter: () => datacatFilterHideSaucepan },
     ];
@@ -3486,12 +4041,28 @@ function initDatacatView() {
         document.getElementById(id)?.addEventListener('change', (e) => {
             setter(e.target.checked);
             updateDatacatFiltersButtonState();
-            if (datacatViewMode === 'following') {
-                renderFollowing();
-            } else {
-                renderGrid(datacatCharacters, false);
+            if (id === 'datacatFilterOnlyYours') {
+                if (e.target.checked) void loadDatacatYoursFolders();
+                else {
+                    datacatYoursFolderSel = 'all';
+                    renderDatacatYoursFolderOptions();
+                }
+                updateDatacatYoursFolderBar();
             }
+            if (datacatViewMode === 'following') renderFollowing();
+            else if (id === 'datacatFilterOnlyYours') {
+                resetDatacatYoursPagination();
+                loadCharacters(false);
+            } else renderGrid(datacatCharacters, false);
         });
+    });
+
+    on('datacatYoursFolderSelect', 'change', () => {
+        const select = document.getElementById('datacatYoursFolderSelect');
+        if (!select || !datacatFilterOnlyYours) return;
+        datacatYoursFolderSel = normalizeDatacatYoursFolderSelection(select.value, datacatYoursFoldersCache);
+        resetDatacatYoursPagination();
+        loadCharacters(false);
     });
 
     // Sort mode
@@ -3722,6 +4293,42 @@ function ensureModalEventsAttached() {
         } else if (datacatSelectedChar) {
             importCharacter(datacatSelectedChar);
         }
+    });
+
+    on('datacatYoursBtn', 'click', () => {
+        const btn = document.getElementById('datacatYoursBtn');
+        const charId = btn?.dataset?.datacatId;
+        const hit = charId ? (
+            datacatCharacters.find(c => String(getCharId(c)) === charId)
+            || datacatFollowingCharacters.find(c => String(getCharId(c)) === charId)
+            || datacatSelectedChar
+        ) : null;
+        toggleDatacatYours(charId, hit);
+    });
+
+    initDatacatFolderPicker({
+        getMainSaved: (id) => getDatacatYoursState(id, findDatacatHitOrSelected(id)),
+        toggleMain: (id) => toggleDatacatYours(id, findDatacatHitOrSelected(id)),
+    });
+
+    on('datacatFolderBtn', 'click', () => {
+        const btn = document.getElementById('datacatFolderBtn');
+        const charId = btn?.dataset?.datacatId;
+        if (!charId) return;
+        const hit = findDatacatHitOrSelected(charId);
+        if (!isDatacatYoursSyncEnabled()) {
+            showToast('Sign in to DataCat in Settings to use folders', 'warning');
+            return;
+        }
+        if (!canShowDatacatYoursControl(charId, hit)) {
+            showToast('Extract this character first; DataCat folders hold extracted account characters.', 'info');
+            return;
+        }
+        openDatacatFolderPicker({
+            anchor: btn,
+            characterId: charId,
+            characterName: hit?.name || 'character',
+        });
     });
 
     const modalOverlay = document.getElementById('datacatCharModal');
@@ -4009,6 +4616,7 @@ const datacatBrowseView = new (class DatacatBrowseView extends BrowseView {
                     <div class="dropdown-section-title">Library:</div>
                     <label class="filter-checkbox"><input type="checkbox" id="datacatFilterHideOwned"> <i class="fa-solid fa-check"></i> Hide Owned Characters</label>
                     <label class="filter-checkbox"><input type="checkbox" id="datacatFilterHidePossible"> <i class="fa-solid fa-check" style="color: #f0a500;"></i> Hide Possible Matches</label>
+                    <label class="filter-checkbox"><input type="checkbox" id="datacatFilterOnlyYours"> <i class="fa-solid fa-star" style="color: var(--accent, #ec4899);"></i> Only DataCat Yours</label>
                     <div id="datacatFilterSourceSection">
                         <div class="dropdown-section-title">Source:</div>
                         <label class="filter-checkbox"><input type="checkbox" id="datacatFilterHideJanitor"> <i class="fa-solid fa-cat"></i> Hide JanitorAI</label>
@@ -4081,6 +4689,14 @@ const datacatBrowseView = new (class DatacatBrowseView extends BrowseView {
                     </div>
                 </div>
 
+                <div id="datacatYoursFolderBar" class="datacat-yours-folder-bar hidden">
+                    <span class="datacat-yours-folder-label"><i class="fa-solid fa-folder-open"></i> Yours folder</span>
+                    <select id="datacatYoursFolderSelect" class="glass-select cl-select-fluid" title="Filter DataCat Yours by folder">
+                        <option value="all">All Yours</option>
+                        <option value="main">Main only</option>
+                    </select>
+                </div>
+
                 <!-- Results Grid -->
                 <div id="datacatGrid" class="browse-grid"></div>
 
@@ -4134,6 +4750,12 @@ const datacatBrowseView = new (class DatacatBrowseView extends BrowseView {
                     </div>
                 </div>
                 <div class="modal-controls">
+                    <button id="datacatYoursBtn" class="action-btn secondary datacat-yours-modal-btn" title="Save to DataCat Yours" style="display: none;">
+                        <i class="fa-regular fa-star"></i> Save
+                    </button>
+                    <button id="datacatFolderBtn" class="action-btn secondary datacat-folder-modal-btn" title="Save to folder" style="display: none;">
+                        <i class="fa-solid fa-folder-plus"></i> Folder
+                    </button>
                     <a id="datacatOpenInBrowserBtn" href="#" target="_blank" class="action-btn secondary" title="Open on DataCat">
                         <i class="fa-solid fa-external-link"></i> Open
                     </a>
@@ -4302,6 +4924,20 @@ const datacatBrowseView = new (class DatacatBrowseView extends BrowseView {
                     </div>
                 `;
                 return;
+            }
+
+            // Re-arm the saved DataCat *account* session in cl-helper so account
+            // actions (Yours / follow) work right after startup, the same way
+            // chub/chartavern restore their session on view entry. cl-helper's
+            // in-memory account store is wiped on ST restart; re-pushing the saved
+            // token here restores it. Best-effort and non-blocking -- the browse
+            // grid below uses the anonymous session and doesn't depend on this.
+            if (getSetting('datacatAccountToken')) {
+                restoreDatacatAccount().then(res => {
+                    if (!(res?.ok || res?.valid)) {
+                        debugLog('[Datacat] account session restore on init failed:', res?.reason || res?.error || 'unknown');
+                    }
+                }).catch(() => {});
             }
 
             const savedToken = getSetting('datacatToken') || null;

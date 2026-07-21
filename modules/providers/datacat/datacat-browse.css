@@ -48,6 +48,34 @@
     border-radius: var(--radius-sm);
 }
 
+.datacat-yours-btn {
+    position: absolute;
+    bottom: 8px;
+    right: 8px;
+    z-index: 3;
+    width: 30px;
+    height: 30px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 999px;
+    background: rgba(0, 0, 0, 0.58);
+    color: rgba(255, 255, 255, 0.85);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: transform 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+
+.datacat-yours-btn:hover {
+    transform: scale(1.05);
+    background: rgba(0, 0, 0, 0.78);
+}
+
+.datacat-yours-btn.saved,
+.datacat-yours-modal-btn.saved {
+    color: var(--cl-favorite-gold, #ffd43b);
+}
+
 
 #datacatFollowCreatorBtn {
     background: linear-gradient(135deg, rgba(var(--cl-error-bright-rgb), 0.2), rgba(var(--cl-error-bright-darker-rgb), 0.2));
@@ -75,10 +103,42 @@
 }
 
 
+.datacat-yours-folder-bar {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    margin-bottom: var(--space-md);
+    padding: 8px 10px;
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-md);
+    background: rgba(var(--accent-rgb), 0.06);
+}
+.datacat-yours-folder-bar.hidden { display: none; }
+.datacat-yours-folder-label {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-xs);
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+.datacat-yours-folder-bar .custom-select-container,
+.datacat-yours-folder-bar .custom-select-trigger { min-width: 180px; }
+
 /* Mobile overrides */
 
 html.cl-mobile #datacatCreatorSortSelect, html.cl-mobile [data-select-id="datacatCreatorSortSelect"] { min-width: 0; flex: 1; font-size: var(--font-sm); }
 html.cl-mobile [data-select-id="datacatCreatorSortSelect"] .custom-select-trigger { min-width: 0; }
+
+html.cl-mobile .datacat-yours-folder-bar {
+    align-items: stretch;
+    flex-direction: column;
+    gap: var(--space-xs);
+}
+html.cl-mobile .datacat-yours-folder-bar .custom-select-container,
+html.cl-mobile .datacat-yours-folder-bar .custom-select-trigger {
+    width: 100%;
+    min-width: 0;
+}
 
 
 
@@ -427,6 +487,132 @@ html.cl-mobile .datacat-lorebook-row { padding: var(--space-sm) var(--space-sm-m
 html.cl-mobile .datacat-lorebook-author { font-size: var(--font-xs); }
 html.cl-mobile .datacat-lorebook-desc { font-size: var(--font-xs); }
 
+/* ===== DataCat folder picker ===== */
+.datacat-folder-picker-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 10006;
+    background: transparent;
+}
+.datacat-folder-picker {
+    position: fixed;
+    z-index: 10007; /* above the preview modal (10005) but below toasts (10010) */
+    min-width: 240px;
+    max-width: 320px;
+    max-height: 55vh;
+    overflow-y: auto;
+    padding: 8px;
+    border-radius: 12px;
+    background: rgba(24, 26, 32, 0.97);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+}
+.datacat-folder-picker-heading {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    opacity: 0.6;
+    padding: 4px 8px 8px;
+}
+.datacat-folder-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    min-height: 40px;
+    padding: 8px 10px;
+    border: none;
+    border-radius: 8px;
+    background: transparent;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+.datacat-folder-row:hover { background: rgba(255, 255, 255, 0.07); }
+.datacat-folder-row.busy { opacity: 0.55; pointer-events: none; }
+.datacat-folder-row-icon { opacity: 0.7; width: 16px; text-align: center; }
+.datacat-folder-row-title {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.datacat-folder-row-check { visibility: hidden; color: var(--accent-color, #4a9eff); }
+.datacat-folder-row.checked .datacat-folder-row-check { visibility: visible; }
+.datacat-folder-create-row {
+    display: flex;
+    gap: 6px;
+    padding: 8px 4px 2px;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    margin-top: 6px;
+}
+.datacat-folder-create-input {
+    flex: 1;
+    min-width: 0;
+    padding: 8px 10px;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    background: rgba(0, 0, 0, 0.3);
+    color: inherit;
+}
+.datacat-folder-create-btn {
+    padding: 8px 12px;
+    border: none;
+    border-radius: 8px;
+    background: var(--accent-color, #4a9eff);
+    color: #fff;
+    cursor: pointer;
+}
+.datacat-folder-create-btn:disabled { opacity: 0.4; cursor: default; }
+.datacat-folder-picker-error { padding: 10px; font-size: 0.9rem; opacity: 0.85; }
+.datacat-folder-picker-loading { padding: 16px; text-align: center; opacity: 0.7; }
+.datacat-folder-retry-btn {
+    margin: 0 10px 8px;
+    padding: 6px 12px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 8px;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+}
+
+/* Mobile: bottom sheet inside the viewport, big touch targets */
+html.cl-mobile .datacat-folder-picker {
+    left: 12px !important;
+    right: 12px;
+    top: auto !important;
+    bottom: 12px;
+    max-width: none;
+    max-height: 60vh;
+}
+html.cl-mobile .datacat-folder-row { min-height: 44px; }
+
+/* ===== DataCat folder order settings ===== */
+.datacat-folder-order-list { display: flex; flex-direction: column; gap: 4px; width: 100%; }
+.datacat-folder-order-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.05);
+}
+.datacat-folder-order-row .datacat-folder-order-title {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.datacat-folder-order-row button {
+    background: transparent;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 6px;
+    color: inherit;
+    min-width: 32px;
+    min-height: 32px;
+    cursor: pointer;
+}
+.datacat-folder-order-row button:disabled { opacity: 0.3; cursor: default; }
 /* --- Avatar restore tool --- */
 .datacat-restore-body { display: flex; flex-direction: column; gap: var(--space-md); }
 .datacat-restore-hint { color: var(--text-secondary); font-size: var(--font-sm); margin: 0; }

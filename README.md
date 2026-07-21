@@ -645,6 +645,8 @@ DataCat can extract character definitions from JanitorAI URLs, including private
 
 Extraction is handled entirely by DataCat's servers. The `appearOnPublicFeed` option in Settings controls whether extracted characters appear on DataCat's public feed.
 
+**Account sync (optional):** Sign into DataCat in Settings > Online > DataCat to use your DataCat account session for extraction and to sync save/unsave actions from Character Library to DataCat's **Yours** collection. Anonymous browsing and extraction still work without login. Vault uploads and Cart mirroring are not managed by Character Library yet.
+
 #### Setup
 1. Ensure the [cl-helper plugin](#cl-helper-plugin-not-detected) is installed and detected (required for session proxying)
 2. Enable DataCat in Settings > Online > Providers
