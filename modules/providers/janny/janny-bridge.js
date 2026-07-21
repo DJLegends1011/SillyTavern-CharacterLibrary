@@ -79,21 +79,23 @@ export function isJannyBridgeAvailable() {
     return bridgeReady;
 }
 
-// Re-run the handshake and wait briefly for a fresh ready reply. A timeout resets the
-// stale ready flag so Settings reports the userscript's current state.
+// Re-run the handshake and wait briefly for a fresh ready reply. Once a userscript
+// announces itself, keep that availability sticky for this page session; this mirrors
+// the maintainer's JanitorAI bridge and avoids false negatives from a missed refresh ping.
 export function refreshJannyBridgeAvailability() {
     if (!initialized) initJannyBridge();
+    const wasReady = bridgeReady;
 
     return new Promise((resolve) => {
         let timer;
         const finish = (available) => {
             clearTimeout(timer);
             readyWaiters.delete(finish);
-            bridgeReady = available;
-            resolve(available);
+            bridgeReady = available || wasReady;
+            resolve(bridgeReady);
         };
         readyWaiters.add(finish);
-        timer = setTimeout(() => finish(false), HANDSHAKE_TIMEOUT_MS);
+        timer = setTimeout(() => finish(wasReady), HANDSHAKE_TIMEOUT_MS);
         pingBridge();
     });
 }

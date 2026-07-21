@@ -47,15 +47,15 @@ function exposeJannySession() {
         if (claims.expMs && claims.expMs <= Date.now()) {
             return { ok: false, error: 'That JannyAI login token has expired. Copy a fresh one.' };
         }
-        if (!isJannyBridgeAvailable()) {
-            return { ok: false, error: 'JannyAI userscript bridge not detected. Install/update it and reload Character Library.' };
-        }
-        const probe = await jannyBridgeFetch('GET', `${JANNY_SITE_BASE}/api/bookmark`, { authToken: pair.access_token });
-        if (!probe.ok) {
-            const message = probe.status === 401 || probe.status === 403
-                ? 'JannyAI rejected that login token. Copy a fresh token and try again.'
-                : `Could not verify JannyAI login (HTTP ${probe.status || 0}).`;
-            return { ok: false, error: message };
+        // Mirror JanitorAI login: token storage is independent from the optional
+        // Cloudflare bridge. If the bridge is present, use it to catch a rejected
+        // token early; if not, save the parsed token and let account actions ask
+        // for the bridge when they actually need Cloudflare-gated transport.
+        if (isJannyBridgeAvailable()) {
+            const probe = await jannyBridgeFetch('GET', `${JANNY_SITE_BASE}/api/bookmark`, { authToken: pair.access_token });
+            if (!probe.ok && (probe.status === 401 || probe.status === 403)) {
+                return { ok: false, error: 'JannyAI rejected that login token. Copy a fresh token and try again.' };
+            }
         }
         CoreAPI.setSetting('jannyToken', pair.access_token);
         return { ok: true, email: claims.email, expMs: claims.expMs };
