@@ -8,6 +8,7 @@
 import { BrowseView } from '../browse-view.js';
 import CoreAPI from '../../core-api.js';
 import { IMG_PLACEHOLDER, formatNumber, BROWSE_PURIFY_CONFIG, skeletonLines, deferRender, deferCall, isMobileMode, finishBrowseImport } from '../provider-utils.js';
+import { createBookmarkModule } from '../bookmark-module.js';
 import {
     DATACAT_API_BASE,
     resolveDatacatAvatarUrl,
@@ -510,6 +511,58 @@ async function toggleDatacatYours(characterId, hit = null) {
 }
 
 // ========================================
+// BOOKMARKS (local-only) — shared factory
+// ========================================
+
+const datacatBookmarks = createBookmarkModule({
+    prefix: 'datacat',
+    settingsKey: 'datacatBookmarks',
+    logLabel: '[DatacatBrowse]',
+    getId: (hit) => {
+        const id = hit && getCharId(hit);
+        return id ? String(id) : '';
+    },
+    dataAttrKey: 'datacatId',
+    gridId: 'datacatGrid',
+    modalBtnId: 'datacatCharBookmarkBtn',
+    checkboxId: 'datacatFilterMyBookmarks',
+    buildSnapshot: (hit) => ({
+        character_id: String(getCharId(hit)),
+        name: hit.name || '',
+        description: hit.description || '',
+        avatar: hit.avatar || '',
+        tags: Array.isArray(hit.tags) ? hit.tags.slice() : [],
+        creator_id: getCreatorId(hit),
+        creator_name: getCreatorName(hit),
+        created_at: hit.createdAt || hit.created_at || '',
+        is_nsfw: isNsfw(hit),
+        chat_count: getChatCount(hit),
+        message_count: getMsgCount(hit),
+        total_tokens: getTotalTokens(hit),
+    }),
+    sortModes: {
+        oldest: (a, b) => (a.bookmarkedAt || 0) - (b.bookmarkedAt || 0),
+        chat_count: (a, b) => (b.chat_count || 0) - (a.chat_count || 0),
+    },
+    getSortMode: () => datacatSortMode,
+    getSelectedChar: () => datacatSelectedChar,
+    resetBookmarkState: (sorted) => {
+        datacatCharacters = sorted;
+        datacatHasMore = false;
+        datacatCurrentOffset = 0;
+        datacatGridRenderedCount = 0;
+    },
+    renderGrid: (items) => renderGrid(items, false),
+    onEmpty: () => updateLoadMore(),
+    onFilterToggle: (on) => {
+        updateDatacatFiltersButtonState();
+        datacatCurrentOffset = 0;
+        if (on) datacatBookmarks.renderBookmarksView();
+        else loadCharacters(false);
+    },
+});
+
+// ========================================
 // CARD RENDERING
 // ========================================
 
@@ -592,6 +645,7 @@ function createDatacatCard(hit) {
         && isDatacatExternalSearchHit(hit)
         && !canSyncYours
         && !datacatExternalCollectableById.has(charId);
+    const bookmarkBtn = datacatBookmarks.renderCardBtn(hit);
 
     return `
         <div class="${cardClass}" data-datacat-id="${escapeHtml(String(charId))}"${needsYoursProbe ? ' data-datacat-probe="1"' : ''} ${desc ? `title="${escapeHtml(desc)}"` : ''}>
@@ -612,6 +666,7 @@ function createDatacatCard(hit) {
             <div class="browse-card-footer">
                 ${statsHtml}
                 ${dateInfo}
+                ${bookmarkBtn}
             </div>
         </div>
     `;
@@ -3072,7 +3127,10 @@ function openPreviewModal(hit) {
     const galleryLabel = document.getElementById('datacatCharGalleryLabel');
     if (galleryLabel) galleryLabel.textContent = '';
 
-    // Import button - neutral loading state until definition fetch resolves
+    // Bookmark button state
+    datacatBookmarks.syncModalState(hit);
+
+    // Import button — neutral loading state until definition fetch resolves
     const importBtn = document.getElementById('datacatImportBtn');
     delete importBtn.dataset.extractId;
     delete importBtn.dataset.extractPhase;
@@ -3816,7 +3874,7 @@ function updateNsfwToggle() {
 function updateDatacatFiltersButtonState() {
     const btn = document.getElementById('datacatFiltersBtn');
     if (!btn) return;
-    const count = [datacatFilterHideOwned, datacatFilterHidePossible, datacatFilterOnlyYours, datacatFilterHideJanitor, datacatFilterHideSaucepan].filter(Boolean).length;
+    const count = [datacatFilterHideOwned, datacatFilterHidePossible, datacatFilterOnlyYours, datacatFilterHideJanitor, datacatFilterHideSaucepan, datacatBookmarks.filterMyBookmarks].filter(Boolean).length;
     btn.classList.toggle('has-filters', count > 0);
     btn.innerHTML = count > 0
         ? `<i class="fa-solid fa-sliders"></i> Features (${count})`
@@ -3897,6 +3955,7 @@ function initDatacatView() {
                 toggleDatacatYours(charId, hit);
                 return;
             }
+            if (datacatBookmarks.handleGridClick(e, datacatCharacters)) return;
 
             const authorLink = e.target.closest('.browse-card-creator-link');
             if (authorLink) {
@@ -4065,6 +4124,9 @@ function initDatacatView() {
         loadCharacters(false);
     });
 
+    // Bookmarks filter — switches the grid into local-only bookmark view
+    datacatBookmarks.attachFilterCheckbox();
+
     // Sort mode
     on('datacatSortSelect', 'change', () => {
         const el = document.getElementById('datacatSortSelect');
@@ -4096,7 +4158,11 @@ function initDatacatView() {
         }
         updateOpenDefToggleVisibility();
         updateSourceFilterVisibility();
-        loadCharacters(false);
+        if (datacatBookmarks.filterMyBookmarks) {
+            datacatBookmarks.renderBookmarksView();
+        } else {
+            loadCharacters(false);
+        }
     });
 
     // Creator banner sort
@@ -4255,6 +4321,8 @@ function ensureModalEventsAttached() {
             }
         });
     }
+
+    datacatBookmarks.attachModalBtn();
 
     const creatorLink = document.getElementById('datacatCharCreator');
     if (creatorLink) {
@@ -4622,6 +4690,9 @@ const datacatBrowseView = new (class DatacatBrowseView extends BrowseView {
                         <label class="filter-checkbox"><input type="checkbox" id="datacatFilterHideJanitor"> <i class="fa-solid fa-cat"></i> Hide JanitorAI</label>
                         <label class="filter-checkbox"><input type="checkbox" id="datacatFilterHideSaucepan"> <i class="fa-solid fa-bowl-food"></i> Hide Saucepan</label>
                     </div>
+                    <hr style="margin: 8px 0; border-color: var(--glass-border);">
+                    <div class="dropdown-section-title">Bookmarks:</div>
+                    ${datacatBookmarks.renderFilterCheckbox()}
                 </div>
             </div>
 
@@ -4756,6 +4827,7 @@ const datacatBrowseView = new (class DatacatBrowseView extends BrowseView {
                     <button id="datacatFolderBtn" class="action-btn secondary datacat-folder-modal-btn" title="Save to folder" style="display: none;">
                         <i class="fa-solid fa-folder-plus"></i> Folder
                     </button>
+                    ${datacatBookmarks.renderModalBtn()}
                     <a id="datacatOpenInBrowserBtn" href="#" target="_blank" class="action-btn secondary" title="Open on DataCat">
                         <i class="fa-solid fa-external-link"></i> Open
                     </a>
@@ -4944,7 +5016,11 @@ const datacatBrowseView = new (class DatacatBrowseView extends BrowseView {
             const token = await initDcSession(savedToken);
             if (token) {
                 if (token !== savedToken) setSetting('datacatToken', token);
-                loadCharacters(false);
+                if (datacatBookmarks.filterMyBookmarks) {
+                    datacatBookmarks.renderBookmarksView();
+                } else {
+                    loadCharacters(false);
+                }
             } else {
                 const g = document.getElementById('datacatGrid');
                 if (g) g.innerHTML = `
