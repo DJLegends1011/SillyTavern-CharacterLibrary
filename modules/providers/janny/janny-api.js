@@ -12,7 +12,7 @@ export const JANNY_IMAGE_BASE = 'https://image.jannyai.com/bot-avatars/';
 export const JANNY_SITE_BASE = 'https://jannyai.com';
 export const JANNY_FALLBACK_TOKEN = '88a6463b66e04fb07ba87ee3db06af337f492ce511d93df6e2d2968cb2ff2b30';
 
-// Tag ID → name mapping (JannyAI uses numeric IDs internally)
+// Tag ID -> name mapping (JannyAI uses numeric IDs internally)
 export const TAG_MAP = {
     1: 'Male', 2: 'Female', 3: 'Non-binary', 4: 'Celebrity', 5: 'OC',
     6: 'Fictional', 7: 'Real', 8: 'Game', 9: 'Anime', 10: 'Historical',
@@ -58,10 +58,10 @@ export function resolveTagNames(tagIds) {
 // ========================================
 // ACCOUNT SYNC (bookmarks + collections via the userscript bridge)
 // ========================================
-// All jannyai.com account and public-collection requests ride the companion userscript
-// (extras/cl-janny-bridge.user.js). GM_xmlhttpRequest supplies Cloudflare clearance;
-// Character Library supplies the saved Supabase JWT as a Bearer token. This matches
-// the maintainer's Hampter bridge and needs no open JannyAI tab.
+// Account requests ride the companion userscript (extras/cl-janny-bridge.user.js).
+// GM_xmlhttpRequest supplies Cloudflare clearance; Character Library supplies the
+// saved Supabase JWT as a Bearer token. This matches the maintainer's Hampter
+// bridge and needs no open JannyAI tab.
 
 import { isJannyBridgeAvailable, jannyBridgeFetch } from './janny-bridge.js';
 import {
@@ -92,6 +92,50 @@ async function jannyBridgeRequest(method, path, { json, form } = {}) {
         throw err;
     }
     return res;
+}
+
+function createJannyPublicPageError(status, body = '') {
+    const err = new Error(status ? `JannyAI HTTP ${status}` : 'JannyAI direct fetch failed');
+    err.code = 'JANNY_BLOCKED';
+    err.status = status || 0;
+    err.cloudflare = detectJannyCloudflareBody(err.status, body);
+    return err;
+}
+
+async function jannyPublicPageRequest(path) {
+    const url = `${JANNY_SITE_BASE}${path}`;
+
+    // Same transport shape as the JanitorAI Hampter flow: bridge first when it
+    // exists, direct browser fetch as the best-effort fallback when it does not.
+    if (isJannyBridgeAvailable()) {
+        let res = null;
+        try {
+            res = await jannyBridgeFetch('GET', url);
+        } catch {
+            res = null;
+        }
+        if (res) {
+            if (!res.ok) throw createJannyPublicPageError(res.status, res.body);
+            return res;
+        }
+    }
+
+    let response = null;
+    try {
+        response = await fetch(url, { headers: { Accept: 'text/html,application/xhtml+xml' } });
+    } catch {
+        response = null;
+    }
+    if (!response) throw createJannyPublicPageError(0);
+
+    let body = '';
+    try {
+        body = await response.text();
+    } catch {
+        throw createJannyPublicPageError(0);
+    }
+    if (!response.ok) throw createJannyPublicPageError(response.status, body);
+    return { ok: true, status: response.status, body, finalUrl: response.url || url };
 }
 
 function parseJsonBody(res) {
@@ -213,25 +257,25 @@ export async function deleteJannyCollection(id) {
 }
 
 // ========================================
-// PUBLIC COLLECTIONS (HTML pages via the bridge, parsed client-side)
+// PUBLIC COLLECTIONS (HTML pages via optional bridge/direct fetch, parsed client-side)
 // ========================================
 
 export async function fetchJannyPublicCollections({ sort = 'latest', page = 1 } = {}) {
     const params = new URLSearchParams({ sort: String(sort), page: String(page) });
-    const res = await jannyBridgeRequest('GET', `/collections?${params}`);
+    const res = await jannyPublicPageRequest(`/collections?${params}`);
     return { ok: true, status: res.status, ...parseJannyPublicCollectionsPage(res.body) };
 }
 
 export async function fetchJannyCollectorCollections(name) {
     const validation = validateJannyCollectorName(name);
     if (!validation.ok) throw new Error(validation.error);
-    const res = await jannyBridgeRequest('GET', `/collectors/${encodeURIComponent(validation.name)}`);
+    const res = await jannyPublicPageRequest(`/collectors/${encodeURIComponent(validation.name)}`);
     return { ok: true, status: res.status, ...parseJannyPublicCollectionsPage(res.body) };
 }
 
 export async function fetchJannyPublicCollection(path) {
     const validation = validateJannyPublicCollectionPath(path);
     if (!validation.ok) throw new Error(validation.error);
-    const res = await jannyBridgeRequest('GET', validation.path);
+    const res = await jannyPublicPageRequest(validation.path);
     return { ok: true, status: res.status, ...parseJannyPublicCollectionDetailPage(res.body, validation.path) };
 }
