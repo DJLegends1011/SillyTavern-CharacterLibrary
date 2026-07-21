@@ -1941,9 +1941,24 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
             if (realBtn) { realBtn.click(); setTimeout(syncGenericNsfwState, 100); }
         });
 
+        // Collections (e.g. Janny account collections) - only shown when the active
+        // provider's mobileFilterIds exposes a 'collections' id (hidden toolbar button).
+        const genericCollectionsChip = createChip('<i class="fa-solid fa-layer-group"></i> Collections');
+        genericCollectionsChip.style.display = 'none';
+        genericCollectionsChip.addEventListener('click', () => {
+            const ids = window.ProviderRegistry?.getActiveMobileFilterIds?.();
+            const realBtn = ids?.collections ? document.getElementById(ids.collections) : null;
+            if (realBtn) { close(); setTimeout(() => realBtn.click(), 300); }
+        });
+        function syncGenericCollectionsVisibility() {
+            const ids = window.ProviderRegistry?.getActiveMobileFilterIds?.();
+            genericCollectionsChip.style.display = ids?.collections ? '' : 'none';
+        }
+
         genericFilterRow.appendChild(genericTagsChip);
         genericFilterRow.appendChild(genericFeaturesChip);
         genericFilterRow.appendChild(genericNsfwChip);
+        genericFilterRow.appendChild(genericCollectionsChip);
         genericFilterSection.appendChild(genericFilterRow);
         genericSection.appendChild(genericFilterSection);
 
@@ -2054,6 +2069,7 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
                     genericProviderLabel.textContent = prov ? prov.name : 'Online';
                     genericSortChip._syncLabel();
                     syncGenericNsfwState();
+                    syncGenericCollectionsVisibility();
                 }
 
                 if (hasModeToggle) {

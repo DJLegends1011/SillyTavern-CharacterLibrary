@@ -3329,6 +3329,117 @@ html.cl-mobile .cl-modal-close::before {
    PHONE  (max-width: 480px)
    Overrides on top of the shared block
    ======================================== */
+
+    /* ====================================================================
+       JannyAI collections panel (mobile)
+       Collections entry reachable via the mobile settings sheet chip; the
+       panel renders in #onlineView (not the hidden .filters-wrapper). Ported
+       to the v6.5.0 html.cl-mobile single-source-of-truth convention.
+       ==================================================================== */
+
+    /* JannyAI collections panel renders in #onlineView (not .filters-wrapper), so its
+       "create collection" row shares the .browse-search-bar class - re-show just that
+       one, but only while its surface toggle hasn't .hidden it. */
+    html.cl-mobile #onlineView #jannyCollectionsSection .browse-search-bar:not(.hidden) {
+        display: flex !important;
+    }
+
+    html.cl-mobile #jannyCollectionsSection .browse-search-bar {
+        padding: var(--space-sm-md);
+    }
+    /* Header ("Browse") and per-collection ("Open" / "Add Current") action
+       rows: wrap + fill so buttons get full-width touch targets instead of squeezing
+       side-by-side at ~380px. */
+    html.cl-mobile #jannyCollectionsSection .browse-author-banner-actions {
+        flex-wrap: wrap;
+        width: 100%;
+    }
+    html.cl-mobile #jannyCollectionsSection .browse-author-banner-actions .glass-btn {
+        flex: 1 1 auto;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: var(--touch-target-min);
+    }
+    html.cl-mobile #jannyCollectionsSection .browse-author-banner-content {
+        min-width: 0;
+    }
+    html.cl-mobile #jannyCollectionsSection .browse-author-banner-content span {
+        white-space: normal;
+    }
+
+    /* ---- JannyAI collections dropdown / sheet ---- */
+    html.cl-browse-quick-import.cl-mobile #jannyCharModal .mobile-more-actions-btn {
+        display: inline-flex;
+    }
+
+    html.cl-mobile #jannyCharModal .janny-collection-caret {
+        display: none;
+    }
+
+    html.cl-mobile #jannyCharModal .janny-collection-dropdown {
+        position: fixed;
+        left: 0;
+        right: 0;
+        top: auto;
+        bottom: 0;
+        width: 100%;
+        min-width: 0;
+        max-height: min(88vh, 620px);
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        padding: 12px 14px calc(14px + env(safe-area-inset-bottom));
+        border-radius: 18px 18px 0 0;
+        border: 1px solid var(--glass-border);
+        border-bottom: 0;
+        background: var(--cl-glass-bg, var(--card-bg));
+        box-shadow: 0 -18px 42px rgba(0, 0, 0, 0.45);
+        z-index: 10010;
+    }
+
+    html.cl-mobile #jannyCharModal .janny-collection-dropdown::before {
+        content: '';
+        display: block;
+        width: 42px;
+        height: 4px;
+        margin: 0 auto 10px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.22);
+    }
+
+    html.cl-mobile #jannyCharModal .janny-collection-toggle-row {
+        min-height: var(--touch-target-min);
+    }
+
+    html.cl-mobile #jannyCollectionsSection .janny-collection-card-grid {
+        grid-template-columns: 1fr;
+    }
+
+    html.cl-mobile #jannyCollectionsSection .janny-collection-card {
+        grid-template-columns: 88px minmax(0, 1fr);
+    }
+
+    html.cl-mobile #jannyCollectionsSection .janny-collection-toolbar,
+    html.cl-mobile #jannyCollectionsSection .janny-collection-segmented {
+        width: 100%;
+        flex-wrap: wrap;
+    }
+
+    html.cl-mobile #jannyCollectionsSection .janny-collection-segmented .glass-btn,
+    html.cl-mobile #jannyCollectionsSection .janny-collection-toolbar .glass-btn {
+        flex: 1 1 auto;
+        justify-content: center;
+        min-height: var(--touch-target-min);
+    }
+
+    html.cl-mobile #jannyCollectionsSection .janny-collection-manage {
+        gap: var(--space-md);
+    }
+
+    html.cl-mobile #jannyCollectionsSection .janny-manage-character-row {
+        grid-template-columns: 44px minmax(0, 1fr) auto;
+    }
+
 @media screen and (max-width: 480px) {
 
     /* Topbar */

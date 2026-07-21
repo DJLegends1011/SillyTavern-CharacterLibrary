@@ -532,15 +532,26 @@ Providers with Following support include a **Followed Creators Manager** panel f
 <details>
 <summary><h3>JanitorAI</h3></summary>
 
-**Auth:** None required. Uses a public API key automatically.
+**Auth:** None required for browsing. Optional account sync uses a pasted JannyAI login token plus a companion userscript bridge (see below).
 
 - Browse and search the full JanitorAI character catalog
 - Filter by tags, token count, NSFW toggle
 - In-app character preview with card details
 - Character linking and card updates
+- Optional account sync: save/remove online JannyAI bookmarks from the preview modal
+- Optional collections panel: browse your JannyAI collections, preview/download cards in a collection, create a collection, and add bookmarked cards to a collection
 
 No gallery downloads or version history (JanitorAI doesn't expose these APIs).
 
+#### JannyAI Account Sync
+
+JannyAI's bookmark and collection endpoints sit behind Cloudflare. Account sync deliberately mirrors the maintainer's JanitorAI Hampter flow: Character Library stores a pasted Supabase access token and a companion **userscript** carries the request through Cloudflare:
+
+1. Install a userscript manager (Tampermonkey or Violentmonkey)
+2. Add `extras/cl-janny-bridge.user.js` from this repository and reload Character Library
+3. Open Settings > Online > JannyAI, paste the JannyAI auth cookie value or access-token JWT, and select **Save Login**
+
+The JannyAI tab does not need to remain open after the token is saved, and remote/Colab-hosted SillyTavern works on Firefox for Android. Character Library accepts the full split `sb-eenzcbluoctduymzksoq-auth-token.0`/`.1` cookie header, its combined value, raw Supabase session JSON, the old `sb-access-token` value, or a bare JWT. JannyAI access tokens currently last about seven days; paste a fresh one when Account reports that it expired or was rejected. cl-helper is not involved. Bookmark adds remain guarded at JannyAI's current 220-bookmark UI limit.
 </details>
 
 <details>
@@ -790,7 +801,7 @@ The full app is optimized for mobile with:
 
 ### cl-helper plugin not detected
 
-The **cl-helper** plugin is required for Pygmalion login, Botbooru login, CharacterTavern NSFW access, DataCat session proxying, the Pixiv and Dropbox gallery extractors, Imgchest password-protected posts, Civitai API-key requests, and the disk-cached avatar/gallery thumbnails. It ships with Character Library in the `extras/cl-helper/` folder but needs to be placed in SillyTavern's plugins directory:
+The **cl-helper** plugin is required for Pygmalion login, Botbooru login, CharacterTavern NSFW access, DataCat session proxying, the Pixiv and Dropbox gallery extractors, Imgchest password-protected posts, Civitai API-key requests, and the disk-cached avatar/gallery thumbnails. JannyAI account sync does not need it — it uses a companion userscript bridge instead (see the JanitorAI provider section above). It ships with Character Library in the `extras/cl-helper/` folder but needs to be placed in SillyTavern's plugins directory:
 
 1. Copy (or symlink) the `extras/cl-helper` folder into your SillyTavern **plugins** directory:
    ```

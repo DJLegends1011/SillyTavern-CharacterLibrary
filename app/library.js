@@ -546,6 +546,7 @@ const DEFAULT_SETTINGS = {
     datacatSyncYours: true,
     janitoraiToken: null,
     janitoraiRefreshToken: null,
+    jannyToken: null,
     botbooruToken: null,
     botbooruUsername: null,
     botbooruPassword: null,
@@ -586,6 +587,7 @@ const DEFAULT_SETTINGS = {
 
     // ---- Online / Browse ----
     possibleMatchMinScore: 65,
+    jannyRandomizeCollectionCards: false,
 
     // ---- Gallery & Media ----
     includeProviderGallery: true,
@@ -1681,6 +1683,12 @@ function setupSettingsModal() {
     const datacatFolderOrderResetBtn = document.getElementById('datacatFolderOrderResetBtn');
     const datacatFolderOrderStatus = document.getElementById('datacatFolderOrderStatus');
     const datacatFolderOrderList = document.getElementById('datacatFolderOrderList');
+    const jannySettingsRefreshBtn = document.getElementById('jannySettingsRefreshBtn');
+    const jannyTokenInput = document.getElementById('settingsJannyToken');
+    const toggleJannyTokenVisibility = document.getElementById('toggleJannyTokenVisibility');
+    const saveJannyTokenBtn = document.getElementById('saveJannyTokenBtn');
+    const clearJannyTokenBtn = document.getElementById('clearJannyTokenBtn');
+    const jannyRandomizeCollectionCardsCheckbox = document.getElementById('jannyRandomizeCollectionCards');
     const minScoreSlider = document.getElementById('settingsMinScore');
     const minScoreValue = document.getElementById('minScoreValue');
     const possibleMatchScoreSlider = document.getElementById('settingsPossibleMatchScore');
@@ -2223,7 +2231,100 @@ function setupSettingsModal() {
         });
     }
 
-    // Open modal
+    // JannyAI login mirrors the maintainer's Hampter token UI: CL owns the saved
+    // bearer token and the userscript owns only the Cloudflare-capable transport.
+    async function refreshJannySettingsAccountStatus() {
+        const bridgeEl = document.getElementById('jannySettingsBridgeStatus');
+        const accountEl = document.getElementById('jannySettingsAccountStatus');
+        const hintEl = document.getElementById('jannySettingsAccountHint');
+        if (!bridgeEl || !accountEl) return;
+
+        const bridge = window.clJannyBridge;
+        bridgeEl.className = 'settings-status-badge inactive';
+        bridgeEl.innerHTML = '<i class="fa-solid fa-circle"></i> Checking&hellip;';
+        const available = typeof bridge?.refresh === 'function'
+            ? await bridge.refresh()
+            : !!bridge?.isAvailable?.();
+        bridgeEl.className = `settings-status-badge ${available ? 'active' : 'inactive'}`;
+        bridgeEl.innerHTML = `<i class="fa-solid fa-circle"></i> ${available ? 'Userscript detected' : 'Not detected'}`;
+
+        const status = window.jannySessionStatus?.() || { loggedIn: !!getSetting('jannyToken') };
+        if (!status.loggedIn) {
+            accountEl.className = 'settings-status-badge inactive';
+            accountEl.innerHTML = `<i class="fa-solid fa-circle"></i> ${getSetting('jannyToken') ? 'Token expired' : 'Not logged in'}`;
+            if (hintEl) hintEl.textContent = available
+                ? 'Paste a fresh JannyAI login token above. No JannyAI tab needs to stay open.'
+                : 'Install/update extras/cl-janny-bridge.user.js, reload Character Library, then paste your token.';
+            return;
+        }
+        if (!available) {
+            accountEl.className = 'settings-status-badge inactive';
+            accountEl.innerHTML = '<i class="fa-solid fa-circle"></i> Login saved; bridge unavailable';
+            if (hintEl) hintEl.textContent = 'The token is saved, but the userscript is not active on this Character Library page.';
+            return;
+        }
+
+        accountEl.className = 'settings-status-badge inactive';
+        accountEl.innerHTML = '<i class="fa-solid fa-circle"></i> Checking&hellip;';
+        try {
+            const authToken = (await window.getValidJannyToken?.()) || '';
+            const res = await bridge.request('GET', 'https://jannyai.com/api/bookmark', { authToken });
+            if (!res.ok) throw Object.assign(new Error(`JannyAI HTTP ${res.status}`), { status: res.status });
+            accountEl.className = 'settings-status-badge active';
+            accountEl.innerHTML = `<i class="fa-solid fa-circle-check"></i> Logged in${status.email ? ' as ' + status.email : ''}`;
+            if (hintEl) {
+                const expiry = status.expMs ? new Date(status.expMs).toLocaleString() : '';
+                hintEl.textContent = expiry
+                    ? `Token saved locally; expires ${expiry}. No JannyAI tab needs to stay open.`
+                    : 'Token saved locally. No JannyAI tab needs to stay open.';
+            }
+        } catch (err) {
+            accountEl.className = 'settings-status-badge inactive';
+            accountEl.innerHTML = `<i class="fa-solid fa-circle"></i> ${err.status === 401 || err.status === 403 ? 'Token rejected' : 'Connection error'}`;
+            if (hintEl) hintEl.textContent = err.status === 401 || err.status === 403
+                ? 'Copy a fresh JannyAI login token and save it again.'
+                : err.message;
+        }
+    }
+
+    toggleJannyTokenVisibility?.addEventListener('click', (e) => {
+        e.preventDefault();
+        if (!jannyTokenInput) return;
+        const hidden = jannyTokenInput.type === 'password';
+        jannyTokenInput.type = hidden ? 'text' : 'password';
+        toggleJannyTokenVisibility.innerHTML = `<i class="fa-solid fa-eye${hidden ? '-slash' : ''}"></i>`;
+    });
+    saveJannyTokenBtn?.addEventListener('click', async (e) => {
+        e.preventDefault();
+        const raw = (jannyTokenInput?.value || '').trim();
+        if (!raw) { showToast('Paste your JannyAI login token first', 'warning'); return; }
+        const original = saveJannyTokenBtn.innerHTML;
+        saveJannyTokenBtn.disabled = true;
+        saveJannyTokenBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Saving...';
+        try {
+            const result = await window.jannySetSession?.(raw);
+            if (!result?.ok) throw new Error(result?.error || 'Could not save JannyAI login');
+            jannyTokenInput.value = '';
+            await refreshJannySettingsAccountStatus();
+            showToast(`Logged in to JannyAI${result.email ? ' as ' + result.email : ''}`, 'success');
+        } catch (err) {
+            showToast(err.message, 'error');
+        } finally {
+            saveJannyTokenBtn.disabled = false;
+            saveJannyTokenBtn.innerHTML = original;
+        }
+    });
+    clearJannyTokenBtn?.addEventListener('click', (e) => {
+        e.preventDefault();
+        window.jannyLogout?.();
+        if (jannyTokenInput) jannyTokenInput.value = '';
+        refreshJannySettingsAccountStatus();
+        showToast('Logged out of JannyAI', 'info');
+    });
+    jannySettingsRefreshBtn?.addEventListener('click', (e) => {
+        e.preventDefault();
+        refreshJannySettingsAccountStatus();
+    });    // Open modal
     settingsBtn.onclick = () => {
         chubTokenInput.value = getSetting('chubToken') || '';
         rememberTokenCheckbox.checked = getSetting('chubRememberToken') || false;
@@ -2237,6 +2338,8 @@ function setupSettingsModal() {
         if (wyvernPasswordInput) wyvernPasswordInput.value = getSetting('wyvernPassword') || '';
         if (wyvernRememberCredsCheckbox) wyvernRememberCredsCheckbox.checked = getSetting('wyvernRememberCredentials') || false;
         if (datacatTokenInput) datacatTokenInput.value = getSetting('datacatToken') || '';
+        if (jannyRandomizeCollectionCardsCheckbox) jannyRandomizeCollectionCardsCheckbox.checked = getSetting('jannyRandomizeCollectionCards') === true;
+        refreshJannySettingsAccountStatus();
         const civitaiApiKeyInput = document.getElementById('settingsCivitaiApiKey');
         if (civitaiApiKeyInput) civitaiApiKeyInput.value = getSetting('civitaiApiKey') || '';
         const pixivCookieInput = document.getElementById('settingsPixivCookie');
@@ -3258,6 +3361,7 @@ function setupSettingsModal() {
             wyvernRememberCredentials: wyvernRememberCredsCheckbox ? wyvernRememberCredsCheckbox.checked : false,
             duplicateMinScore: parseInt(minScoreSlider.value),
             possibleMatchMinScore: possibleMatchScoreSlider ? parseInt(possibleMatchScoreSlider.value) : 65,
+            jannyRandomizeCollectionCards: jannyRandomizeCollectionCardsCheckbox ? jannyRandomizeCollectionCardsCheckbox.checked : false,
             importDirectDownloads: importDirectDownloadsCheckbox ? importDirectDownloadsCheckbox.checked : false,
             searchInName: searchNameCheckbox.checked,
             searchInListingName: searchListingNameCheckbox ? searchListingNameCheckbox.checked : true,
@@ -3444,6 +3548,9 @@ function setupSettingsModal() {
         if (possibleMatchScoreSlider) {
             possibleMatchScoreSlider.value = DEFAULT_SETTINGS.possibleMatchMinScore;
             if (possibleMatchScoreValue) possibleMatchScoreValue.textContent = String(DEFAULT_SETTINGS.possibleMatchMinScore);
+        }
+        if (jannyRandomizeCollectionCardsCheckbox) {
+            jannyRandomizeCollectionCardsCheckbox.checked = DEFAULT_SETTINGS.jannyRandomizeCollectionCards;
         }
         if (importDirectDownloadsCheckbox) {
             importDirectDownloadsCheckbox.checked = DEFAULT_SETTINGS.importDirectDownloads;

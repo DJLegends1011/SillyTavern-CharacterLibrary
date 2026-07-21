@@ -7,6 +7,8 @@ import { ProviderBase } from '../provider-interface.js';
 import CoreAPI from '../../core-api.js';
 import { assignGalleryId, importFromPng, proxyEncode } from '../provider-utils.js';
 import jannyBrowseView from './janny-browse.js';
+import { initJannyBridge, isJannyBridgeAvailable, jannyBridgeFetch } from './janny-bridge.js';
+import { parseJannySession, decodeJannyClaims } from './janny-auth.js';
 import {
     JANNY_SEARCH_URL,
     JANNY_IMAGE_BASE,
@@ -15,10 +17,51 @@ import {
     fetchWithProxy,
     slugify,
     stripHtml,
-    resolveTagNames
+    resolveTagNames,
 } from './janny-api.js';
 
 let api = null;
+
+function getStoredJannyToken() {
+    const token = CoreAPI.getSetting('jannyToken') || '';
+    if (!token) return '';
+    const { expMs } = decodeJannyClaims(token);
+    return !expMs || expMs > Date.now() ? token : '';
+}
+
+function exposeJannySession() {
+    window.getValidJannyToken = async () => getStoredJannyToken();
+    window.jannySessionStatus = () => {
+        const token = CoreAPI.getSetting('jannyToken') || '';
+        if (!token) return { loggedIn: false };
+        const { email, expMs } = decodeJannyClaims(token);
+        return { loggedIn: !expMs || expMs > Date.now(), email, expMs };
+    };
+    window.jannySetSession = async (pasted) => {
+        const pair = parseJannySession(pasted);
+        if (!pair) return { ok: false, error: 'Could not find a JannyAI login token in that value.' };
+        const claims = decodeJannyClaims(pair.access_token);
+        if (claims.issuer && !claims.issuer.includes('eenzcbluoctduymzksoq.supabase.co/auth/v1')) {
+            return { ok: false, error: 'That token belongs to a different site, not JannyAI.' };
+        }
+        if (claims.expMs && claims.expMs <= Date.now()) {
+            return { ok: false, error: 'That JannyAI login token has expired. Copy a fresh one.' };
+        }
+        // Mirror JanitorAI login: token storage is independent from the optional
+        // Cloudflare bridge. If the bridge is present, use it to catch a rejected
+        // token early; if not, save the parsed token and let account actions ask
+        // for the bridge when they actually need Cloudflare-gated transport.
+        if (isJannyBridgeAvailable()) {
+            const probe = await jannyBridgeFetch('GET', `${JANNY_SITE_BASE}/api/bookmark`, { authToken: pair.access_token });
+            if (!probe.ok && (probe.status === 401 || probe.status === 403)) {
+                return { ok: false, error: 'JannyAI rejected that login token. Copy a fresh token and try again.' };
+            }
+        }
+        CoreAPI.setSetting('jannyToken', pair.access_token);
+        return { ok: true, email: claims.email, expMs: claims.expMs };
+    };
+    window.jannyLogout = () => CoreAPI.setSetting('jannyToken', null);
+}
 
 // ========================================
 // CONSTANTS
@@ -423,6 +466,9 @@ class JannyProvider extends ProviderBase {
     async init(coreAPI) {
         super.init(coreAPI);
         api = coreAPI;
+        // Listen for the JannyAI bridge userscript (passive, free when absent)
+        initJannyBridge();
+        exposeJannySession();
     }
 
     // ── View ────────────────────────────────────────────────
