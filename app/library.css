@@ -1093,15 +1093,6 @@ body {
     letter-spacing: 0.2px;
 }
 
-.cl-loading .cl-loading-substatus {
-    font-size: var(--font-sm);
-    color: var(--text-muted);
-    max-width: 380px;
-    text-align: center;
-    line-height: 1.4;
-    margin-top: calc(var(--space-2xs) * -1);
-}
-
 .cl-loading .cl-loading-bar {
     width: 160px;
     height: 2px;
@@ -8491,6 +8482,8 @@ html:not(.cl-mobile) .settings-row[data-platform="mobile"] { display: none !impo
 .provider-order-item .provider-order-defaults {
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
+    justify-content: flex-end;
     gap: var(--space-sm);
     margin-left: auto;
     flex-shrink: 0;
@@ -8516,6 +8509,21 @@ html:not(.cl-mobile) .settings-row[data-platform="mobile"] { display: none !impo
 
 .provider-order-item .provider-order-defaults select:focus {
     border-color: var(--accent);
+}
+
+.provider-order-item .provider-default-hide {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-xs);
+    font-size: var(--font-xs);
+    color: var(--text-secondary);
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.provider-order-item .provider-default-hide input {
+    cursor: pointer;
+    margin: 0;
 }
 
 

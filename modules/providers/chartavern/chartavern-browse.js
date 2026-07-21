@@ -1010,8 +1010,10 @@ function updateCtFiltersButton() {
     const btn = document.getElementById('ctFiltersBtn');
     if (!btn) return;
 
-    const active = ctFilterHideOwned || ctFilterHidePossible || ctFilterHasLorebook || ctFilterIsOC;
-    btn.classList.toggle('has-filters', active);
+    const count = [ctFilterHideOwned, ctFilterHidePossible, ctFilterHasLorebook, ctFilterIsOC].filter(Boolean).length;
+    btn.classList.toggle('has-filters', count > 0);
+    const span = btn.querySelector('span');
+    if (span) span.textContent = count > 0 ? `Features (${count})` : 'Features';
 }
 
 // ========================================
@@ -1907,6 +1909,17 @@ class ChartavernBrowseView extends BrowseView {
             const el = document.getElementById('ctSortSelect');
             if (el) el.value = defaults.sort;
         }
+        if (defaults.hideOwned) {
+            ctFilterHideOwned = true;
+            const el = document.getElementById('ctFilterHideOwned');
+            if (el) el.checked = true;
+        }
+        if (defaults.hidePossible) {
+            ctFilterHidePossible = true;
+            const el = document.getElementById('ctFilterHidePossible');
+            if (el) el.checked = true;
+        }
+        if (defaults.hideOwned || defaults.hidePossible) updateCtFiltersButton();
     }
 
     activate(container, options = {}) {

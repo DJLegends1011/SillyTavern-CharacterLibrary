@@ -161,6 +161,17 @@ async function errorBodySnippet(resp) {
 }
 
 /**
+ * Encode a URL for the /proxy/ path. encodeURIComponent leaves the sub-delims
+ * !'()* literal; some reverse proxies/WAFs 403 literal parens as injection
+ * patterns (postimg "(1)" filenames are the common trigger), so escape them too.
+ * @param {string} url
+ * @returns {string}
+ */
+export function proxyEncode(url) {
+    return encodeURIComponent(url).replace(/[!'()*]/g, c => '%' + c.charCodeAt(0).toString(16).toUpperCase());
+}
+
+/**
  * Fetch with automatic CORS proxy fallback.
  * Remembers origins that need proxying to avoid redundant direct attempts.
  * @param {string} url
@@ -182,7 +193,7 @@ export async function fetchWithProxy(url, opts = {}) {
             return directResponse;
         }
     }
-    const r = await fetch(`/proxy/${encodeURIComponent(url)}`, opts);
+    const r = await fetch(`/proxy/${proxyEncode(url)}`, opts);
     if (!r.ok) {
         const t = await r.text().catch(() => '');
         if (r.status === 404 && t.includes('CORS proxy is disabled')) {

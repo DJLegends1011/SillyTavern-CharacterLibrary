@@ -903,8 +903,10 @@ function updateJannyFiltersButton() {
     const btn = document.getElementById('jannyFiltersBtn');
     if (!btn) return;
 
-    const active = jannyShowLowQuality || jannyFilterHideOwned || jannyFilterHidePossible;
-    btn.classList.toggle('has-filters', active);
+    const count = [jannyShowLowQuality, jannyFilterHideOwned, jannyFilterHidePossible].filter(Boolean).length;
+    btn.classList.toggle('has-filters', count > 0);
+    const span = btn.querySelector('span');
+    if (span) span.textContent = count > 0 ? `Features (${count})` : 'Features';
 }
 
 // ========================================
@@ -1503,6 +1505,17 @@ class JannyBrowseView extends BrowseView {
             const el = document.getElementById('jannySortSelect');
             if (el) el.value = defaults.sort;
         }
+        if (defaults.hideOwned) {
+            jannyFilterHideOwned = true;
+            const el = document.getElementById('jannyFilterHideOwned');
+            if (el) el.checked = true;
+        }
+        if (defaults.hidePossible) {
+            jannyFilterHidePossible = true;
+            const el = document.getElementById('jannyFilterHidePossible');
+            if (el) el.checked = true;
+        }
+        if (defaults.hideOwned || defaults.hidePossible) updateJannyFiltersButton();
     }
 
     activate(container, options = {}) {

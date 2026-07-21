@@ -627,6 +627,7 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
             '.cl-modal.cl-modal-drawer.visible .cl-modal-content',
             '.mobile-sheet-overlay:not(.hidden) .mobile-sheet',
             '.mobile-fixed-popup:not(.hidden)',
+            '.ccss-sidebar.drawer-open',
         ].join(', ');
 
         document.addEventListener('touchstart', (e) => {
@@ -1971,6 +1972,20 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
         chatsSortSection.appendChild(chatsSortChip);
         chatsSection.appendChild(chatsSortSection);
 
+        // Card density; mirrors the real control's hidden state (flat list only, hidden in grouped view)
+        const chatsDensitySection = createSection('Card Density');
+        const chatsDensityChip = createSettingsSelectChip(() => document.getElementById('chatsDensitySelect'), 'Card Density');
+        chatsDensitySection.appendChild(chatsDensityChip);
+        chatsSection.appendChild(chatsDensitySection);
+
+        function syncChatsDensity() {
+            const real = document.getElementById('chatsDensitySelect');
+            const holder = real ? (real._customSelect?.container || real) : null;
+            const show = !!holder && !holder.classList.contains('hidden');
+            if (show) chatsDensityChip._syncLabel();
+            chatsDensitySection.style.display = show ? '' : 'none';
+        }
+
         // Grouping toggle
         const groupSection = createSection('View');
         const groupRow = document.createElement('div');
@@ -1989,6 +2004,7 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
                     groupedChip.classList.toggle('active', b.classList.contains('active'));
                 }
             });
+            syncChatsDensity();
         }
 
         flatChip.addEventListener('click', () => {
@@ -2742,7 +2758,7 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
             } else if (target.id === 'datacatCharAvatar') {
                 if (target.src.endsWith('/img/ai4.png')) return;
                 e.stopPropagation();
-                openAvatarViewer(target.src);
+                openAvatarViewer(target.dataset.full || target.src, target.src);
             } else if (target.id === 'botbooruCharAvatar') {
                 if (target.src.endsWith('/img/ai4.png')) return;
                 e.stopPropagation();
@@ -2763,13 +2779,18 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
         const overlay = document.createElement('div');
         overlay.className = 'mobile-avatar-viewer';
 
+        // Same spinner contract as the desktop viewer; reveal delay keeps fast opens flash-free
+        const spinner = document.createElement('div');
+        spinner.className = 'mobile-av-spinner';
+        spinner.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
+
         const img = document.createElement('img');
         img.alt = 'Avatar';
-        if (fallbackSrc) {
-            img.onerror = () => { img.onerror = null; img.src = fallbackSrc; };
-        }
+        img.onload = () => spinner.remove();
+        img.onerror = () => { img.onerror = null; spinner.remove(); if (fallbackSrc) img.src = fallbackSrc; };
         img.src = src;
 
+        overlay.appendChild(spinner);
         overlay.appendChild(img);
         overlay.addEventListener('click', () => closeAvatarViewer());
         document.body.appendChild(overlay);

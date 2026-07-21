@@ -301,6 +301,25 @@ async function createNewChat(char) {
 // TOP-LEVEL CHATS VIEW
 // ========================================
 
+// Read on view enter rather than module init so the settings load cant race us.
+function syncChatCardDensity() {
+    const density = CoreAPI.getSetting('chatCardDensity') || 'comfortable';
+    const view = document.getElementById('chatsView');
+    if (view) {
+        view.classList.toggle('chat-density-spacious', density === 'spacious');
+        view.classList.toggle('chat-density-compact', density === 'compact');
+        view.classList.toggle('chat-density-minimal', density === 'minimal');
+    }
+    const sel = document.getElementById('chatsDensitySelect');
+    if (sel && sel.value !== density) {
+        sel.value = density;
+        sel._customSelect?.update?.();
+    }
+    // Density only styles the flat cards list; hide the control in grouped view.
+    const holder = sel ? (sel._customSelect?.container || sel) : null;
+    if (holder) holder.classList.toggle('hidden', currentGrouping === 'grouped');
+}
+
 function initChatsView() {
     // Capture-phase load delegate populates the seen-Set independent of promoteCachedChatAvatars's per-img listener-add timing, which races with the parser on mobile and would otherwise leak fades into re-renders. Set key is the raw src attribute so it matches what promote reads on detached <template> content.
     const chatsView = document.getElementById('chatsView');
@@ -317,10 +336,13 @@ function initChatsView() {
 
     // Register chats lazy-load: load on first visit
     CoreAPI.onViewEnter('chats', () => {
+        syncChatCardDensity();
         if (allChats.length === 0) {
             loadAllChats();
         }
     });
+    // Lazy import races switchView's synchronous enter callbacks: the first chats entry fires them before this registration exists, so catch up.
+    if (CoreAPI.getCurrentView() === 'chats') syncChatCardDensity();
 
     CoreAPI.onViewExit('chats', () => {
         disconnectObservers();
@@ -332,12 +354,19 @@ function initChatsView() {
         renderChats();
     });
 
+    // Card density (persisted; class-only, cards restyle via CSS)
+    CoreAPI.onElement('chatsDensitySelect', 'change', (e) => {
+        CoreAPI.setSetting('chatCardDensity', e.target.value);
+        syncChatCardDensity();
+    });
+
     // Grouping Toggle - just re-render, don't reload
     document.querySelectorAll('.grouping-btn').forEach(btn => {
         btn.addEventListener('click', () => {
             document.querySelectorAll('.grouping-btn').forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
             currentGrouping = btn.dataset.group;
+            syncChatCardDensity();
             renderChats();
         });
     });
@@ -756,7 +785,7 @@ function closePreviewMarkers(text) {
     let out = text;
     // Strip images from previews: rendered <img> blow out the fixed card layout. Drop markdown
     // images (keep nothing, the alt text is rarely meaningful here) and any raw <img> tags.
-    out = out.replace(/!\[[^\]]*\]\([^)]*\)/g, '').replace(/<img\b[^>]*>/gi, '');
+    out = out.replace(/!\[[^\]]*\]\((?:(?:[^()]|\([^()]*\))*|[^)]*)\)/g, '').replace(/<img\b[^>]*>/gi, '');
     for (const m of ['```', '~~', '**', '__', '`', '*', '_']) {
         if ((out.split(m).length - 1) % 2 === 1) out += m;
     }

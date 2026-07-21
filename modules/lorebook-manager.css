@@ -1449,16 +1449,29 @@ html.cl-mobile .lb-sidebar {
 }
 /* Restores the sidebar's removed top padding; scrolls away with the actions. */
 html.cl-mobile .lb-sidebar-actions { padding-top: var(--space-lg); }
+/* In flow by default (scrolls away naturally); .lb-pinned floats it back in on scroll-up. */
 html.cl-mobile .lb-sidebar-tools {
+    background: var(--bg-primary);
+}
+/* The floating state shared by all three bars: sticky, slide-in on arrival, slide-out via
+   .lb-toolbar-hidden before the JS unfloats. Breathing room on top so it doesn't sit flush. */
+html.cl-mobile .lb-sidebar-tools.lb-pinned,
+html.cl-mobile .lb-entries-toolbar.lb-pinned,
+html.cl-mobile .lb-link-head.lb-pinned {
     position: sticky;
     top: 0;
     z-index: 5;
-    background: var(--bg-primary);
-    transition: transform 0.25s ease;
+    padding-top: var(--space-xs);
+    animation: lbToolbarIn 0.2s ease;
+    transition: transform 0.2s ease;
 }
-/* Breathing room above the search only when pinned, so it doesn't stack on the normal gap. */
-html.cl-mobile .lb-sidebar-tools.lb-pinned { padding-top: var(--space-xs); }
-html.cl-mobile .lb-sidebar-tools.lb-toolbar-hidden { transform: translateY(-100%); }
+html.cl-mobile .lb-sidebar-tools.lb-toolbar-hidden,
+html.cl-mobile .lb-entries-toolbar.lb-toolbar-hidden,
+html.cl-mobile .lb-link-head.lb-toolbar-hidden { transform: translateY(-100%); }
+@keyframes lbToolbarIn {
+    from { transform: translateY(-100%); }
+    to { transform: translateY(0); }
+}
 html.cl-mobile .lb-world-list { overflow: visible; flex: 0 0 auto; }
 
 html.cl-mobile .lb-content {
@@ -1481,22 +1494,16 @@ html.cl-mobile .lb-entries {
     padding-right: var(--space-md);
 }
 
-/* Mobile: the whole editor scrolls (in .lb-content) so the head scrolls away. The toolbar is
-   sticky AND auto-hides on scroll-down / reveals on scroll-up (class toggled by JS), so it
-   gets out of the way too. .lb-editor/.lb-entries flow at natural height so .lb-content scrolls
-   them and the toolbar stays sticky across the full content. */
+/* Mobile: the whole editor scrolls (in .lb-content) so the head and toolbar scroll away
+   naturally; scrolling up floats the toolbar back in (.lb-pinned, shared rules above).
+   .lb-editor/.lb-entries flow at natural height so .lb-content scrolls them. */
 html.cl-mobile .lb-editor { flex: 0 0 auto; overflow: visible; }
 html.cl-mobile .lb-entries { flex: 0 0 auto; overflow: visible; }
 html.cl-mobile .lb-entries-toolbar {
-    position: sticky;
-    top: 0;
-    z-index: 5;
-    /* Opaque (not the translucent --modal-bg) so entries scrolling under the pinned toolbar
+    /* Opaque (not the translucent --modal-bg) so entries scrolling under the floated toolbar
        don't bleed through; --bg-primary is the closest solid tone to the modal background. */
     background: var(--bg-primary);
-    transition: transform 0.25s ease;
 }
-html.cl-mobile .lb-entries-toolbar.lb-toolbar-hidden { transform: translateY(-100%); }
 
 /* Slim the outer "Lorebooks" bar so it doesn't double up with the editor's own head. */
 html.cl-mobile .lb-header { padding: var(--space-sm) var(--space-md); }
@@ -1630,9 +1637,9 @@ html.cl-mobile .lb-world-list {
     padding-bottom: max(var(--space-lg), env(safe-area-inset-bottom));
 }
 
-/* The modal body scrolls (vertical padding zeroed so the sticky header pins flush) and the list
-   flows inside it. The header is a sticky overlay that auto-hides on scroll-down / reveals on
-   scroll-up via translateY, so showing/hiding it never reflows the list: rows scroll under it. */
+/* The modal body scrolls (vertical padding zeroed so the floated header pins flush) and the list
+   flows inside it. The header scrolls away naturally on the way down and floats back in on
+   scroll-up (.lb-pinned, shared rules in the world-list section). */
 html.cl-mobile .lb-link-body {
     overflow-y: auto;
     padding-top: 0;
@@ -1640,15 +1647,8 @@ html.cl-mobile .lb-link-body {
 }
 html.cl-mobile .lb-link-mode-hint { margin-top: var(--space-md); }
 html.cl-mobile .lb-link-head {
-    position: sticky;
-    top: 0;
-    z-index: 5;
-    background: var(--bg-secondary); /* match the mobile cl-modal body so the pinned bar blends in */
-    transition: transform 0.25s ease;
+    background: var(--bg-secondary); /* match the mobile cl-modal body so the floated bar blends in */
 }
-html.cl-mobile .lb-link-head.lb-link-head-hidden { transform: translateY(-100%); }
-/* Breathing room above the search only when pinned (bg fills it), matching the world list. */
-html.cl-mobile .lb-link-head.lb-pinned { padding-top: var(--space-xs); }
 
 /* Link picker: let the tools row wrap so search + filter don't crowd. */
 html.cl-mobile .lb-link-tools {
