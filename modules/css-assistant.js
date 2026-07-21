@@ -175,7 +175,9 @@ Layout / Chrome (defined in library.css; no !important needed):
   .card-tags             Container for tags on a card.
   .favorite-indicator    Star/heart icon shown on .char-card.is-favorite.
   .modal-glass           Full-viewport detail panel (character detail, character creator, chat preview). NOT gallery viewer (that's .gv-modal).
-  .modal-sidebar         Right-side info pane inside the character detail modal.
+  .modal-sidebar         Right-side info pane inside the character detail modal. Hidden on mobile (display:none), so styling it under html.cl-mobile is a no-op.
+  .tab-nav               The character detail modal's tab bar (container of the .tab-btn buttons). Desktop background is rgba(0,0,0,0.2); on mobile it is sticky with a hardcoded dark background (#141414). To retheme the mobile bar, target "html.cl-mobile #charModal .tab-nav" with !important.
+  .tab-btn               The detail modal's tab buttons (Details/Edit/Chats/Gallery/Related/...). Already follow var(--accent) (active text + bottom border, plus rgba(var(--accent-rgb),0.05) active background) and var(--text-secondary), so they retheme automatically; no per-button rules needed for a token retheme.
   .tab-pane              Tab content panes inside the character detail modal. Use .tab-pane.active for the visible one.
   .char-modal-nav        Prev/Next chevron buttons on the sides of the character detail modal (desktop only; mobile uses swipe). Mirrors the gallery viewer's .gv-nav: a plain dark capsule (rgba(0,0,0,0.5)) with a white chevron, flush to the modal edge and half-rounded toward center, background lightens on hover. Not accent-coupled. Variants: .char-modal-nav-prev, .char-modal-nav-next. Icon glyph is a ::before pseudo using Font Awesome 6 Free. Component-scoped vars for per-component theming (override on .char-modal-nav itself): --cmn-bg (rgba(0,0,0,0.5)), --cmn-bg-hover (rgba(255,255,255,0.1)), --cmn-border (1px solid rgba(255,255,255,0.1)), --cmn-color (#fff), --cmn-width (50px), --cmn-height (80px), --cmn-icon-size (var(--font-2xl)), --cmn-icon-prev ('\\f053' = fa-chevron-left, override with any FA6 unicode), --cmn-icon-next ('\\f054' = fa-chevron-right), --cmn-disabled-opacity (0.3). Hidden on mobile via library-mobile.css; gated on the enableCharDetailNav setting.
   .toast / .toast-container  Toast notifications. Variants: .toast.success, .toast.error, .toast.warning, .toast.info.
@@ -278,7 +280,6 @@ Loaders & progress (CL does NOT use native <progress> elements):
                            .cl-loading .cl-loading-icon          Wrapper for the rotating icon (sized 48x48).
                            .cl-loading .cl-loading-icon i        The FontAwesome icon itself. Has color: var(--accent) and a drop-shadow filter derived from --accent. Recolor: ".cl-loading .cl-loading-icon i { color: <color>; filter: drop-shadow(0 0 10px ...); }".
                            .cl-loading .cl-loading-label         Main status text.
-                           .cl-loading .cl-loading-substatus     Secondary status text.
                            .cl-loading .cl-loading-bar > span    Animated indeterminate progress bar inside the loader.
                          CSS border-rotation tricks (border-top-color on .cl-loading) do NOT produce a spinner: the rotation is on the FontAwesome icon, not the container.
   .cl-spinner-inline > i   Inline spinner used in grid/list slots. The <i> child is the rotating FontAwesome icon (uses fa-spin). To recolor: ".cl-spinner-inline i { color: <color>; }".

@@ -5,7 +5,7 @@
 
 import { ProviderBase } from '../provider-interface.js';
 import CoreAPI from '../../core-api.js';
-import { assignGalleryId, importFromPng } from '../provider-utils.js';
+import { assignGalleryId, importFromPng, proxyEncode } from '../provider-utils.js';
 import jannyBrowseView from './janny-browse.js';
 import {
     JANNY_SEARCH_URL,
@@ -175,7 +175,7 @@ function isPuterAvailable() {
 // ── SillyTavern proxy helper ────────────────────────────────
 
 async function stProxyFetchHtml(url) {
-    const proxyUrl = `/proxy/${encodeURIComponent(url)}`;
+    const proxyUrl = `/proxy/${proxyEncode(url)}`;
     const r = await fetch(proxyUrl, {
         headers: {
             'Accept': 'text/html,application/xhtml+xml,*/*',

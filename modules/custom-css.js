@@ -328,7 +328,6 @@ function buildModalHTML() {
                             <div class="mobile-sheet-handle"></div>
                             <div class="ccss-sidebar-header">
                                 <span class="ccss-drawer-title">Snippets</span>
-                                <button class="ccss-drawer-close" id="ccssDrawerCloseBtn" title="Close" aria-label="Close snippets drawer"><i class="fa-solid fa-xmark"></i></button>
                                 <button class="cl-btn cl-btn-primary ccss-sidebar-new" id="ccssNewBtn"><i class="fa-solid fa-plus"></i> New</button>
                             </div>
                             <div class="ccss-snippet-list" id="ccssSnippetList"></div>
@@ -337,8 +336,9 @@ function buildModalHTML() {
                         <div class="ccss-editor">
                             <!-- Mobile-only drawer trigger; shows the active snippet name -->
                             <button class="ccss-drawer-trigger" id="ccssDrawerTrigger" type="button">
-                                <i class="fa-solid fa-bars"></i>
+                                <i class="fa-solid fa-layer-group"></i>
                                 <span class="ccss-drawer-trigger-label" id="ccssDrawerTriggerLabel">Snippets</span>
+                                <i class="fa-solid fa-chevron-down ccss-drawer-trigger-caret"></i>
                             </button>
                             <div class="ccss-editor-form" id="ccssEditorForm" hidden>
                                 <div class="ccss-editor-meta">
@@ -419,6 +419,7 @@ function setActiveMode(mode) {
     });
     modal.querySelector('.ccss-pane-snippets').hidden = mode !== MODE_SNIPPETS;
     modal.querySelector('.ccss-pane-raw').hidden = mode !== MODE_RAW;
+    modal.classList.toggle('ccss-mode-raw', mode === MODE_RAW);
     if (mode !== MODE_SNIPPETS) closeDrawer();
 
     const isSnippets = mode === MODE_SNIPPETS;
@@ -812,7 +813,6 @@ function injectModal() {
     });
 
     document.getElementById('ccssDrawerTrigger')?.addEventListener('click', openDrawer);
-    document.getElementById('ccssDrawerCloseBtn')?.addEventListener('click', () => closeDrawer());
     document.getElementById('ccssDrawerScrim')?.addEventListener('click', () => closeDrawer());
 
     // Flipping back to desktop while the drawer is open at body level needs a force-restore.

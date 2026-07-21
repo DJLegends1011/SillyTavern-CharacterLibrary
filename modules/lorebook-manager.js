@@ -2,6 +2,7 @@
 // duplicate/import/export) via ST's /worldinfo helpers. Character-embedded books edit in the detail modal.
 
 import CoreAPI from './core-api.js';
+import { proxyEncode } from './providers/provider-utils.js';
 
 const esc = (s) => CoreAPI.escapeHtml(String(s ?? ''));
 
@@ -1574,7 +1575,7 @@ function openLinkPicker(initialMode = 'characters', { manage = false } = {}) {
     const hideEl = document.getElementById('lbLinkHideLinked');
     if (hideEl) hideEl.checked = false;
     populateLinkPlaylistFilter();
-    document.getElementById('lbLinkHead')?.classList.remove('lb-link-head-hidden', 'lb-pinned'); // start expanded + unpinned; a prior session may have left either
+    document.getElementById('lbLinkHead')?.classList.remove('lb-toolbar-hidden', 'lb-pinned'); // start expanded + unpinned; a prior session may have left either
     syncLinkModeUI();
     setLinkApplyButton();
     renderLinkList();
@@ -2156,24 +2157,47 @@ async function applyUnlinks() {
 // EVENTS
 // ========================================
 
-// Hide a sticky toolbar on scroll-down, reveal on scroll-up, but only once it's pinned (its head has
-// scrolled past) so it never leaves a gap. 6px deadband for jitter; toolbar re-queried each scroll.
+// App-bar float: in flow on the way down (scrolls away naturally), floats back in (sticky lb-pinned)
+// on an up-run while deep, slides out + unfloats on the next down-run. Not scroll-linked on purpose:
+// scroll events lag the compositor thread, so pixel-tracking jitters at slow speeds.
+function createToolbarAutoHide(getToolbar, getHeadH) {
+    let lastY = null, lastEl = null, downRun = 0, upRun = 0, hideTimer = 0;
+    const showFloat = (el) => {
+        clearTimeout(hideTimer); hideTimer = 0;
+        el.classList.remove('lb-toolbar-hidden');
+        el.classList.add('lb-pinned');
+    };
+    const hideFloat = (el, instant) => {
+        if (!el.classList.contains('lb-pinned')) return;
+        if (instant) { clearTimeout(hideTimer); hideTimer = 0; el.classList.remove('lb-pinned', 'lb-toolbar-hidden'); return; }
+        if (hideTimer) return;
+        el.classList.add('lb-toolbar-hidden');
+        hideTimer = setTimeout(() => { hideTimer = 0; el.classList.remove('lb-pinned', 'lb-toolbar-hidden'); }, 220);
+    };
+    return (y) => {
+        const toolbar = getToolbar();
+        if (!toolbar) return;
+        // A re-rendered toolbar node starts fresh (inline, runs reset).
+        if (toolbar !== lastEl) { lastEl = toolbar; lastY = null; downRun = 0; upRun = 0; clearTimeout(hideTimer); hideTimer = 0; }
+        const dy = lastY === null ? 0 : y - lastY;
+        lastY = y;
+        if (dy > 0) { downRun += dy; upRun = 0; } else if (dy < 0) { upRun -= dy; downRun = 0; }
+        const slotTop = getHeadH();
+        if (y <= slotTop) { hideFloat(toolbar, true); return; }  // natural slot at/below the top edge: pure inline
+        const floating = toolbar.classList.contains('lb-pinned');
+        if (!floating && y < slotTop + toolbar.offsetHeight) return;  // partially scrolled into view: let it move naturally
+        if (!floating && upRun > 8) showFloat(toolbar);
+        else if (floating && downRun > 16) hideFloat(toolbar, false);
+    };
+}
+
 function attachAutoHideToolbar(scrollEl, toolbarSel, headSel) {
     if (!scrollEl) return;
-    let lastY = 0;
-    scrollEl.addEventListener('scroll', () => {
-        const y = scrollEl.scrollTop;
-        const toolbar = scrollEl.querySelector(toolbarSel);
-        if (toolbar) {
-            const head = scrollEl.querySelector(headSel);
-            const pinned = y > (head ? head.offsetHeight : 48);
-            // lb-pinned gates stuck-to-top styling so it never stacks onto the normal in-flow spacing.
-            toolbar.classList.toggle('lb-pinned', pinned);
-            if (!pinned || y < lastY - 6) toolbar.classList.remove('lb-toolbar-hidden');
-            else if (y > lastY + 6) toolbar.classList.add('lb-toolbar-hidden');
-        }
-        lastY = y;
-    }, { passive: true });
+    const autoHide = createToolbarAutoHide(
+        () => scrollEl.querySelector(toolbarSel),
+        () => { const h = scrollEl.querySelector(headSel); return h ? h.offsetHeight : 48; },
+    );
+    scrollEl.addEventListener('scroll', () => autoHide(scrollEl.scrollTop), { passive: true });
 }
 
 function attachEvents() {
@@ -2292,18 +2316,13 @@ function attachEvents() {
     // The link list repaints its in-view rows on scroll (coalesced to one rAF). On mobile the modal body
     // is the scroller and the search/controls header is a sticky overlay that auto-hides on scroll-down /
     // reveals on scroll-up (translateY, no list reflow). Attach to both; only the active scroller fires.
-    let linkLastY = 0;
+    const linkAutoHide = createToolbarAutoHide(
+        () => document.getElementById('lbLinkHead'),
+        () => document.querySelector('#lbLinkModal .lb-link-body .lb-link-mode-hint')?.offsetHeight || 0,
+    );
     const onLinkScroll = (e) => {
         const scroller = e.currentTarget;
-        const head = document.getElementById('lbLinkHead');
-        if (head && scroller.classList.contains('lb-link-body')) {
-            const y = scroller.scrollTop;
-            const hint = scroller.querySelector('.lb-link-mode-hint');
-            head.classList.toggle('lb-pinned', y > (hint ? hint.offsetHeight : 0)); // stuck once the hint scrolls past
-            if (y < 8 || y < linkLastY - 6) head.classList.remove('lb-link-head-hidden');
-            else if (y > linkLastY + 6) head.classList.add('lb-link-head-hidden');
-            linkLastY = y;
-        }
+        if (scroller.classList.contains('lb-link-body')) linkAutoHide(scroller.scrollTop);
         if (vlistActive && !vlistRaf) vlistRaf = requestAnimationFrame(() => { vlistRaf = 0; paintVList(); });
     };
     document.getElementById('lbLinkList')?.addEventListener('scroll', onLinkScroll, { passive: true });
@@ -2640,7 +2659,7 @@ async function aiProxyFetch(url, opts = {}) {
         if (!direct.ok) throw new Error(`HTTP ${direct.status}`);
         return direct;
     }
-    const r = await fetch(`/proxy/${encodeURIComponent(url)}`, opts);
+    const r = await fetch(`/proxy/${proxyEncode(url)}`, opts);
     if (!r.ok) {
         if (r.status === 404) {
             const t = await r.text().catch(() => '');

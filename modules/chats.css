@@ -518,6 +518,39 @@
 
 /* Size variants matching existing avatar sizes */
 .chat-card-avatar-size { width: 50px; height: 50px; }
+
+/* --- Card density variants (chatCardDensity setting, class stamped on #chatsView) --- */
+
+.chat-density-spacious .chat-card-header { padding: 16px; }
+.chat-density-spacious .chat-card-avatar,
+.chat-density-spacious .chat-card-avatar-fallback,
+.chat-density-spacious .chat-card-avatar-size,
+.chat-density-spacious .chat-card-header > .chat-avatar-wrap { width: 60px; height: 60px; }
+.chat-density-spacious .chat-card-body { padding: 16px; }
+.chat-density-spacious .chat-card-preview {
+    -webkit-line-clamp: 5;
+    line-clamp: 5;
+    min-height: 100px;
+    padding: 12px;
+}
+.chat-density-spacious .chat-card-footer { padding: 12px 16px; }
+
+.chat-density-compact .chat-card-header { padding: 8px 10px; }
+.chat-density-compact .chat-card-avatar,
+.chat-density-compact .chat-card-avatar-fallback,
+.chat-density-compact .chat-card-avatar-size,
+.chat-density-compact .chat-card-header > .chat-avatar-wrap { width: 40px; height: 40px; }
+.chat-density-compact .chat-card-body { padding: 8px 10px; }
+.chat-density-compact .chat-card-preview {
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    min-height: 0;
+    padding: 6px 8px;
+}
+.chat-density-compact .chat-card-footer { padding: 6px 10px; }
+
+/* Minimal: header + footer only */
+.chat-density-minimal .chat-card-body { display: none; }
 .chat-group-avatar-size { width: 45px; height: 45px; }
 .chat-preview-avatar-size { width: 50px; height: 50px; }
 
@@ -1324,7 +1357,7 @@ html.cl-mobile .chat-card-chat-name {
     font-size: var(--font-2xs);
 }
 html.cl-mobile .chat-card-body {
-    padding: 0 10px 8px;
+    padding: 8px 10px;
     gap: var(--space-xs);
 }
 html.cl-mobile .chat-card-preview {
@@ -1332,14 +1365,28 @@ html.cl-mobile .chat-card-preview {
     line-height: 1.4 !important;
     padding: 6px 8px !important;
     min-height: 0 !important;
-    max-height: 3.2em !important;
-    display: block !important;
-    -webkit-line-clamp: unset !important;
-    line-clamp: unset !important;
-    -webkit-box-orient: unset !important;
-    overflow: hidden !important;
+    /* Inherits the desktop -webkit-box clamp; 2 whole lines instead of the old 3.2em mid-glyph clip. */
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
     border-radius: var(--radius-md);
     word-break: break-word;
+}
+/* Compact density tightens further on phones: one preview line. */
+html.cl-mobile .chat-density-compact .chat-card-preview {
+    -webkit-line-clamp: 1;
+    line-clamp: 1;
+}
+/* Spacious on phones: bigger avatar and header, four preview lines. */
+html.cl-mobile .chat-density-spacious .chat-card-header {
+    padding: 10px 12px;
+}
+html.cl-mobile .chat-density-spacious .chat-card-avatar,
+html.cl-mobile .chat-density-spacious .chat-card-avatar-fallback,
+html.cl-mobile .chat-density-spacious .chat-card-avatar-size,
+html.cl-mobile .chat-density-spacious .chat-card-header > .chat-avatar-wrap { width: 44px; height: 44px; }
+html.cl-mobile .chat-density-spacious .chat-card-preview {
+    -webkit-line-clamp: 4;
+    line-clamp: 4;
 }
 html.cl-mobile .chat-card-footer {
     padding: 6px 10px;

@@ -291,7 +291,6 @@
 }
 /* Drawer-only elements are mobile-only. Hidden on desktop. */
 .ccss-drawer-trigger,
-.ccss-drawer-close,
 .ccss-drawer-title,
 .ccss-drawer-scrim,
 .ccss-sidebar .mobile-sheet-handle { display: none; }
@@ -399,9 +398,13 @@
     flex-shrink: 0;
 }
 
+/* Full-viewport modal: drop the desktop 85vh cap and let the body fill between header and footer. */
 html.cl-mobile .custom-css-modal .cl-modal-body.ccss-body {
     padding: var(--space-md);
     gap: var(--space-md);
+    flex: 1;
+    min-height: 0;
+    max-height: none;
 }
 
 /* --- Toolbar --- */
@@ -419,15 +422,19 @@ html.cl-mobile .custom-css-guidelines { display: none; }
 /* --- Snippets pane: editor takes the whole pane; sidebar becomes a bottom sheet
        (canonical .mobile-sheet pattern, inherits layout from library-mobile.css). --- */
 html.cl-mobile .ccss-snippets-layout {
-    display: block;
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 420px;
 }
 
 /* Drawer trigger button (mobile-only) shows above the editor.
    Doubles as "you're editing X" indicator via .ccss-drawer-trigger-label. */
 html.cl-mobile .ccss-drawer-trigger {
-    display: inline-flex;
+    display: flex;
     align-items: center;
     gap: var(--space-sm);
+    width: 100%;
     background: var(--bg-secondary);
     border: 1px solid var(--glass-border);
     color: var(--text-primary);
@@ -436,16 +443,21 @@ html.cl-mobile .ccss-drawer-trigger {
     font-size: var(--font-md);
     cursor: pointer;
     min-height: var(--touch-target-min);
-    align-self: flex-start;
-    max-width: 100%;
 }
 html.cl-mobile .ccss-drawer-trigger:hover { border-color: var(--accent); }
 html.cl-mobile .ccss-drawer-trigger-label {
+    flex: 1;
+    min-width: 0;
+    text-align: left;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    max-width: 70vw;
     font-weight: 500;
+}
+html.cl-mobile .ccss-drawer-trigger-caret {
+    flex-shrink: 0;
+    opacity: 0.55;
+    font-size: var(--font-sm);
 }
 
 /* Scrim behind the sheet. Tap to close. */
@@ -491,6 +503,7 @@ html.cl-mobile .ccss-sidebar .mobile-sheet-handle {
     display: block;
     width: 40px;
     height: 4px;
+    flex-shrink: 0;
     background: var(--text-faint);
     opacity: 0.4;
     border-radius: var(--radius-2xs);
@@ -502,7 +515,7 @@ html.cl-mobile .ccss-snippet-list {
     overflow: visible;
 }
 
-/* Sheet header: title on the left, close on the right, New button on its own row */
+/* Sheet header: title row, New button on its own full-width row */
 html.cl-mobile .ccss-sidebar-header {
     flex-direction: row !important;
     flex-wrap: wrap;
@@ -516,20 +529,6 @@ html.cl-mobile .ccss-drawer-title {
     font-weight: 600;
     color: var(--text-primary);
 }
-html.cl-mobile .ccss-drawer-close {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    background: none;
-    border: none;
-    color: var(--text-secondary);
-    cursor: pointer;
-    min-width: var(--touch-target-min);
-    min-height: var(--touch-target-min);
-    font-size: var(--font-lg);
-    border-radius: var(--radius-sm);
-}
-html.cl-mobile .ccss-drawer-close:hover { color: var(--text-primary); background: rgba(255,255,255,0.05); }
 html.cl-mobile .ccss-sidebar-new {
     flex-basis: 100%;
     order: 99;
@@ -559,6 +558,8 @@ html.cl-mobile .ccss-editor {
     display: flex;
     flex-direction: column;
     gap: var(--space-md);
+    flex: 1;
+    min-height: 0;
 }
 
 html.cl-mobile .ccss-editor-form {
@@ -570,6 +571,8 @@ html.cl-mobile .ccss-editor-form {
         "css  css  css"
         "enabled save delete";
     gap: var(--space-md);
+    flex: 1;
+    min-height: 0;
 }
 /* the bare .ccss-editor-form[hidden] hide loses to the prefixed display:grid above without this */
 html.cl-mobile .ccss-editor-form[hidden] { display: none; }
@@ -628,8 +631,17 @@ html.cl-mobile .cl-modal-footer.ccss-footer {
 html.cl-mobile .ccss-footer-actions {
     flex-wrap: wrap;
     width: 100%;
-    justify-content: flex-end;
+    gap: var(--space-sm);
 }
+/* Snippets mode: Close/Apply side by side. Raw mode: the three secondaries share the top row, Apply Raw full-width beneath. */
 html.cl-mobile .ccss-footer-actions .cl-btn {
+    flex: 1 1 40%;
     min-height: var(--touch-target-min);
+}
+html.cl-mobile .ccss-mode-raw .ccss-footer-actions .cl-btn {
+    flex: 1 1 auto;
+}
+html.cl-mobile .ccss-mode-raw .ccss-footer-actions .cl-btn-primary {
+    flex-basis: 100%;
+    order: 99;
 }
