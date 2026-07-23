@@ -2765,7 +2765,7 @@ class JannyBrowseView extends BrowseView {
                                 class="browse-meta-action"
                                 title="Save to Janny bookmarks"
                                 aria-label="Save to Janny bookmarks"
-                            ><i class="fa-regular fa-bookmark"></i></button> â€¢
+                            ><i class="fa-regular fa-bookmark"></i></button> •
                             ${jannyBookmarks.renderMetaAction()}
                         </p>
                     </div>

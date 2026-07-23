@@ -136,4 +136,15 @@ test('DataCat and Janny preserve their provider actions beside one Local Backup 
         assert.doesNotMatch(source, /modal-controls[\s\S]{0,1200}renderModalBtn/);
         assert.doesNotMatch(source, /<div class="dropdown-section-title">Bookmarks:<\/div>/);
     }
+    const literalBullet = String.fromCodePoint(0x2022);
+    assert.match(
+        datacatBrowseSource,
+        new RegExp(`id="datacatFolderBtn"[\\s\\S]{0,300}<\\/button> ${literalBullet}\\s*\\$\\{datacatBookmarks\\.renderMetaAction\\(\\)\\}`),
+    );
+    assert.match(
+        jannyBrowseSource,
+        new RegExp(`id="jannyBookmarkBtn"[\\s\\S]{0,300}<\\/button> ${literalBullet}\\s*\\$\\{jannyBookmarks\\.renderMetaAction\\(\\)\\}`),
+    );
+    assert.doesNotMatch(datacatBrowseSource, /\u00e2\u20ac\u00a2/);
+    assert.doesNotMatch(jannyBrowseSource, /\u00e2\u20ac\u00a2/);
 });

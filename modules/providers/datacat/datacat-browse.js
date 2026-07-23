@@ -4662,7 +4662,7 @@ const datacatBrowseView = new (class DatacatBrowseView extends BrowseView {
                                 title="Save to folder"
                                 aria-label="Save to folder"
                                 style="display: none;"
-                            ><i class="fa-regular fa-heart"></i></button> â€¢
+                            ><i class="fa-regular fa-heart"></i></button> •
                             ${datacatBookmarks.renderMetaAction()}
                         </p>
                     </div>
