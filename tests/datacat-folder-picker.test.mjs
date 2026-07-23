@@ -11,6 +11,7 @@ import {
     formatDatacatFolderSuccess,
     formatDatacatFolderRemoval,
 } from '../modules/providers/datacat/datacat-folder-picker.js';
+import { buildDatacatFolderCharactersPath } from '../modules/providers/datacat/datacat-api.js';
 
 describe('filterPickerFolders', () => {
     it('drops reserved/system folders and keeps customs in API order', () => {
@@ -125,8 +126,17 @@ describe('DataCat Yours folder sub-filter helpers', () => {
     it('routes Main and custom folders through the folder endpoint options', () => {
         const common = { limit: 60, offset: 120, tagIds: ['7'] };
         assert.equal(buildDatacatYoursFolderFetchOptions('all', common), null);
-        assert.deepEqual(buildDatacatYoursFolderFetchOptions('main', common), { ...common, mainOnly: true });
+        assert.deepEqual(buildDatacatYoursFolderFetchOptions('main', common), { ...common, folderId: 'main' });
         assert.deepEqual(buildDatacatYoursFolderFetchOptions(2359, common), { ...common, folderId: '2359' });
+    });
+
+    it('scopes Main through the folder-character path', () => {
+        const common = { limit: 60, offset: 120, tagIds: ['7'] };
+        const path = buildDatacatFolderCharactersPath(buildDatacatYoursFolderFetchOptions('main', common));
+        const params = new URL(path, 'https://example.test').searchParams;
+
+        assert.equal(params.get('mainOnly'), '1');
+        assert.equal(params.has('folderId'), false);
     });
 });
 

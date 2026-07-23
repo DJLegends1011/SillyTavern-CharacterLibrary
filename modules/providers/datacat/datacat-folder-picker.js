@@ -92,12 +92,12 @@ export function normalizeDatacatYoursFolderSelection(selection, folders = []) {
  * Yours selection keeps its dedicated endpoint, so this returns null for it.
  * @param {string|number|null|undefined} selection
  * @param {{limit?: number, offset?: number, tagIds?: Array}} common
- * @returns {{limit?: number, offset?: number, tagIds?: Array, mainOnly?: boolean, folderId?: string}|null}
+ * @returns {{limit?: number, offset?: number, tagIds?: Array, folderId?: string}|null}
  */
 export function buildDatacatYoursFolderFetchOptions(selection, common = {}) {
     const value = String(selection ?? 'all').trim() || 'all';
     if (value === 'all') return null;
-    if (value === 'main') return { ...common, mainOnly: true };
+    if (value === 'main') return { ...common, folderId: 'main' };
     return { ...common, folderId: value };
 }
 
