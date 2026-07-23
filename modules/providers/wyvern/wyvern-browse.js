@@ -428,8 +428,6 @@ class WyvernBrowseView extends BrowseView {
                     <div class="dropdown-section-title">Library:</div>
                     <label class="filter-checkbox"><input type="checkbox" id="wyvernFilterHideOwned"> <i class="fa-solid fa-check"></i> Hide Owned Characters</label>
                     <label class="filter-checkbox"><input type="checkbox" id="wyvernFilterHidePossible"> <i class="fa-solid fa-check" style="color: #f0a500;"></i> Hide Possible Matches</label>
-                    <hr style="margin: 8px 0; border-color: var(--glass-border);">
-                    <div class="dropdown-section-title">Bookmarks:</div>
                     ${wyvernBookmarks.renderFilterCheckbox()}
                 </div>
             </div>
@@ -593,12 +591,12 @@ class WyvernBrowseView extends BrowseView {
                         <p class="browse-char-meta">
                             by <a id="wyvernCharCreator" class="browse-meta-identity" href="#" title="Click to see all characters by this author">Creator</a> •
                             <span id="wyvernCharMessages" title="Messages"><i class="fa-solid fa-message"></i> 0</span> •
-                            <span id="wyvernCharLikes" title="Likes"><i class="fa-solid fa-heart"></i> 0</span>
+                            <span id="wyvernCharLikes" title="Likes"><i class="fa-solid fa-heart"></i> 0</span> •
+                            ${wyvernBookmarks.renderMetaAction()}
                         </p>
                     </div>
                 </div>
                 <div class="modal-controls">
-                    ${wyvernBookmarks.renderModalBtn()}
                     <a id="wyvernOpenInBrowserBtn" href="#" target="_blank" class="action-btn secondary" title="Open on Wyvern">
                         <i class="fa-solid fa-external-link"></i> Open
                     </a>

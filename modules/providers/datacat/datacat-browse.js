@@ -4524,14 +4524,13 @@ const datacatBrowseView = new (class DatacatBrowseView extends BrowseView {
                     <hr style="margin: 8px 0; border-color: var(--glass-border);">
                     <div class="dropdown-section-title">Library:</div>
                     <label class="filter-checkbox"><input type="checkbox" id="datacatFilterHideOwned"> <i class="fa-solid fa-check"></i> Hide Owned Characters</label>
-                    <label class="filter-checkbox"><input type="checkbox" id="datacatFilterHidePossible"> <i class="fa-solid fa-check" style="color: #f0a500;"></i> Hide Possible Matches</label>                    <div id="datacatFilterSourceSection">
+                    <label class="filter-checkbox"><input type="checkbox" id="datacatFilterHidePossible"> <i class="fa-solid fa-check" style="color: #f0a500;"></i> Hide Possible Matches</label>
+                    ${datacatBookmarks.renderFilterCheckbox()}
+                    <div id="datacatFilterSourceSection">
                         <div class="dropdown-section-title">Source:</div>
                         <label class="filter-checkbox"><input type="checkbox" id="datacatFilterHideJanitor"> <i class="fa-solid fa-cat"></i> Hide JanitorAI</label>
                         <label class="filter-checkbox"><input type="checkbox" id="datacatFilterHideSaucepan"> <i class="fa-solid fa-bowl-food"></i> Hide Saucepan</label>
                     </div>
-                    <hr style="margin: 8px 0; border-color: var(--glass-border);">
-                    <div class="dropdown-section-title">Bookmarks:</div>
-                    ${datacatBookmarks.renderFilterCheckbox()}
                 </div>
             </div>
 
@@ -4663,12 +4662,12 @@ const datacatBrowseView = new (class DatacatBrowseView extends BrowseView {
                                 title="Save to folder"
                                 aria-label="Save to folder"
                                 style="display: none;"
-                            ><i class="fa-regular fa-heart"></i></button>
+                            ><i class="fa-regular fa-heart"></i></button> â€¢
+                            ${datacatBookmarks.renderMetaAction()}
                         </p>
                     </div>
                 </div>
                 <div class="modal-controls">
-                    ${datacatBookmarks.renderModalBtn()}
                     <a id="datacatOpenInBrowserBtn" href="#" target="_blank" class="action-btn secondary" title="Open on DataCat">
                         <i class="fa-solid fa-external-link"></i> Open
                     </a>

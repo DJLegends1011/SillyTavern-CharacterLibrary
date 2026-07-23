@@ -2638,8 +2638,6 @@ class JannyBrowseView extends BrowseView {
                     <div class="dropdown-section-title">Library:</div>
                     <label class="filter-checkbox"><input type="checkbox" id="jannyFilterHideOwned"> <i class="fa-solid fa-check"></i> Hide Owned Characters</label>
                     <label class="filter-checkbox"><input type="checkbox" id="jannyFilterHidePossible"> <i class="fa-solid fa-check" style="color: #f0a500;"></i> Hide Possible Matches</label>
-                    <hr style="margin: 8px 0; border-color: var(--glass-border);">
-                    <div class="dropdown-section-title">Bookmarks:</div>
                     ${jannyBookmarks.renderFilterCheckbox()}
                 </div>
             </div>
@@ -2767,12 +2765,12 @@ class JannyBrowseView extends BrowseView {
                                 class="browse-meta-action"
                                 title="Save to Janny bookmarks"
                                 aria-label="Save to Janny bookmarks"
-                            ><i class="fa-regular fa-bookmark"></i></button>
+                            ><i class="fa-regular fa-bookmark"></i></button> â€¢
+                            ${jannyBookmarks.renderMetaAction()}
                         </p>
                     </div>
                 </div>
                 <div class="modal-controls">
-                    ${jannyBookmarks.renderModalBtn()}
                     <a id="jannyOpenInBrowserBtn" href="#" target="_blank" class="action-btn secondary" title="Open on JannyAI">
                         <i class="fa-solid fa-external-link"></i> Open
                     </a>
