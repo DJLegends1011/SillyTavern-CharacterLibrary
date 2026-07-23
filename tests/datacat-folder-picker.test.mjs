@@ -4,9 +4,12 @@ import { describe, it } from 'node:test';
 import {
     filterPickerFolders,
     buildPickerModel,
+    hasDatacatFolderMembership,
     applyDatacatFolderOrder,
     normalizeDatacatYoursFolderSelection,
     buildDatacatYoursFolderFetchOptions,
+    formatDatacatFolderSuccess,
+    formatDatacatFolderRemoval,
 } from '../modules/providers/datacat/datacat-folder-picker.js';
 
 describe('filterPickerFolders', () => {
@@ -60,6 +63,14 @@ describe('buildPickerModel', () => {
     });
 });
 
+describe('hasDatacatFolderMembership', () => {
+    it('is active for Main or any custom folder', () => {
+        assert.equal(hasDatacatFolderMembership({ collected: true, folderIds: [] }), true);
+        assert.equal(hasDatacatFolderMembership({ collected: false, folderIds: [2359] }), true);
+        assert.equal(hasDatacatFolderMembership({ collected: false, folderIds: [] }), false);
+        assert.equal(hasDatacatFolderMembership(), false);
+    });
+});
 describe('applyDatacatFolderOrder', () => {
     const folders = [
         { id: '2359', title: 'marvel smut' },
@@ -116,5 +127,14 @@ describe('DataCat Yours folder sub-filter helpers', () => {
         assert.equal(buildDatacatYoursFolderFetchOptions('all', common), null);
         assert.deepEqual(buildDatacatYoursFolderFetchOptions('main', common), { ...common, mainOnly: true });
         assert.deepEqual(buildDatacatYoursFolderFetchOptions(2359, common), { ...common, folderId: '2359' });
+    });
+});
+
+describe('DataCat folder notifications', () => {
+    it('uses exact destination-aware copy', () => {
+        assert.equal(formatDatacatFolderSuccess('WIFE!!!'), 'Saved to "WIFE!!!"');
+        assert.equal(formatDatacatFolderSuccess(''), 'Saved to "Main"');
+        assert.equal(formatDatacatFolderRemoval('WIFE!!!'), 'Removed from "WIFE!!!"');
+        assert.equal(formatDatacatFolderRemoval(''), 'Removed from "Main"');
     });
 });
