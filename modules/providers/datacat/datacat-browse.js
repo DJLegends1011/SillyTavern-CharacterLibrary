@@ -39,7 +39,6 @@ import {
     mapDatacatFollowRow,
     isDatacatYoursCollectableHit,
     isDatacatYoursSavedHit,
-    DATACAT_EXTERNAL_PREINDEX_SOURCES,
     JANNY_TAG_MAP,
     pickRecoveryVariant,
     stripDatacatMarkers,
@@ -49,6 +48,7 @@ import {
     openDatacatFolderPicker,
     closeDatacatFolderPicker,
     syncDatacatFolderPickerMainRow,
+    hasDatacatFolderMembership,
     normalizeDatacatYoursFolderSelection,
     buildDatacatYoursFolderFetchOptions,
 } from './datacat-folder-picker.js';
@@ -119,13 +119,6 @@ let datacatYoursFolderSel = 'all';
 let datacatYoursFoldersCache = [];
 const datacatYoursStateById = new Map();
 const datacatYoursPendingIds = new Set();
-// External-search rows (Hampter/Meili/Saucepan) carry no DataCat collectability
-// flags, so the listing alone can't tell us whether the character exists on
-// DataCat. We probe /dc-yours/{id}/status lazily (as cards scroll into view) and
-// cache the verdict here: true = exists on DataCat (show ⭐), false = absent (no ⭐),
-// null = probe in flight. `.has(id)` blocks duplicate probes.
-const datacatExternalCollectableById = new Map();
-let datacatYoursProbeObserver = null;
 
 // Fresh endpoint pagination
 let datacatFreshLimit24 = 80;
@@ -289,18 +282,7 @@ function isDatacatYoursFilteredHit(hit) {
 
 function canShowDatacatYoursControl(characterId, hit = null) {
     const id = String(characterId || '').trim();
-    if (!id || !isDatacatYoursSyncEnabled()) return false;
-    // Confirmed-present external-search rows take precedence over the listing gate.
-    if (datacatExternalCollectableById.get(id) === true) return true;
-    // _fullCharacter / positive listing flags / non-external public rows.
-    if (isDatacatYoursCollectableHit(hit)) return true;
-    // Unproven (or confirmed-absent) external-search row: no ⭐ until/unless the
-    // lazy probe finds it on DataCat.
-    return false;
-}
-
-function isDatacatExternalSearchHit(hit) {
-    return DATACAT_EXTERNAL_PREINDEX_SOURCES.has(String(hit?._source || '').trim().toLowerCase());
+    return !!(id && isDatacatYoursSyncEnabled() && isDatacatYoursCollectableHit(hit));
 }
 
 function findDatacatHitById(characterId) {
@@ -323,105 +305,31 @@ function findDatacatHitOrSelected(characterId) {
     return findDatacatHitById(id) || selected;
 }
 
-// Lazily verify whether an external-search character exists on DataCat. On a
-// positive result, cache it, sync the saved state, and reveal the card ⭐.
-// A negative result is cached so the ⭐ stays hidden and we never re-probe.
-function probeDatacatExternalCollectable(characterId, hit = null) {
-    const id = String(characterId || '').trim();
-    if (!id || datacatExternalCollectableById.has(id)) return;
-    if (!isDatacatYoursSyncEnabled() || !isDatacatExternalSearchHit(hit)) return;
-    datacatExternalCollectableById.set(id, null); // in-flight: blocks re-probe, keeps ⭐ hidden
-    fetchDatacatYoursStatus(id).then(result => {
-        if (result?.ok) {
-            datacatExternalCollectableById.set(id, true);
-            setDatacatYoursState(id, result.collected === true);
-            updateDatacatCardYoursControl(id, hit);
-        } else {
-            datacatExternalCollectableById.set(id, false);
-        }
-    }).catch(() => {
-        datacatExternalCollectableById.delete(id); // transient failure: allow a later retry
-    });
-}
-
-// IntersectionObserver: probe external-search cards only as they near the viewport,
-// so we don't fire dozens of /status requests up front (matters on mobile).
-function observeDatacatYoursProbes(grid) {
-    if (!grid || !isDatacatYoursSyncEnabled()) return;
-    if (typeof IntersectionObserver === 'undefined') return;
-    if (!datacatYoursProbeObserver) {
-        datacatYoursProbeObserver = new IntersectionObserver((entries, obs) => {
-            for (const entry of entries) {
-                if (!entry.isIntersecting) continue;
-                obs.unobserve(entry.target);
-                const id = entry.target.dataset.datacatId;
-                probeDatacatExternalCollectable(id, findDatacatHitById(id));
-            }
-        }, { rootMargin: '200px' });
-    }
-    grid.querySelectorAll('.browse-card[data-datacat-probe="1"]').forEach(card => {
-        datacatYoursProbeObserver.observe(card);
-    });
-}
-
-function renderDatacatYoursCardButton(characterId, saved) {
-    return `<button type="button" class="datacat-yours-btn${saved ? ' saved' : ''}" data-datacat-yours-id="${escapeHtml(String(characterId))}" title="${saved ? 'Saved to DataCat Yours' : 'Save to DataCat Yours'}">${saved ? '<i class="fa-solid fa-star"></i>' : '<i class="fa-regular fa-star"></i>'}</button>`;
-}
-
 function setDatacatYoursState(characterId, saved) {
     const id = String(characterId || '').trim();
     if (!id) return;
     datacatYoursStateById.set(id, saved === true);
-    for (const gridId of ['datacatGrid', 'datacatFollowingGrid']) {
-        const grid = document.getElementById(gridId);
-        const card = grid?.querySelector(`[data-datacat-id="${id}"]`);
-        const btn = card?.querySelector('.datacat-yours-btn');
-        if (!btn) continue;
-        btn.classList.toggle('saved', saved === true);
-        btn.title = saved ? 'Saved to DataCat Yours' : 'Save to DataCat Yours';
-        btn.innerHTML = saved ? '<i class="fa-solid fa-star"></i>' : '<i class="fa-regular fa-star"></i>';
-    }
-    const modalBtn = document.getElementById('datacatYoursBtn');
-    if (modalBtn?.dataset?.datacatId === id) {
-        modalBtn.classList.toggle('saved', saved === true);
-        modalBtn.innerHTML = saved ? '<i class="fa-solid fa-star"></i> Saved' : '<i class="fa-regular fa-star"></i> Save';
-        modalBtn.title = saved ? 'Saved to DataCat Yours' : 'Save to DataCat Yours';
-    }
     syncDatacatFolderPickerMainRow(id, saved === true);
 }
 
+function setDatacatFolderActionState(characterId, saved) {
+    const id = String(characterId || '').trim();
+    const btn = document.getElementById('datacatFolderBtn');
+    if (!id || btn?.dataset?.datacatId !== id) return;
+
+    btn.classList.toggle('favorited', saved === true);
+    btn.innerHTML = saved
+        ? '<i class="fa-solid fa-heart"></i>'
+        : '<i class="fa-regular fa-heart"></i>';
+    btn.title = 'Save to folder';
+    btn.setAttribute('aria-label', 'Save to folder');
+}
 function refreshDatacatOnlyYoursFilterIfActive() {
     if (!datacatFilterOnlyYours) return;
     if (datacatViewMode === 'following') {
         renderFollowing();
     } else {
         renderGrid(datacatCharacters, false);
-    }
-}
-
-function updateDatacatCardYoursControl(characterId, hit = null) {
-    const id = String(characterId || '').trim();
-    if (!id) return;
-
-    for (const gridId of ['datacatGrid', 'datacatFollowingGrid']) {
-        const grid = document.getElementById(gridId);
-        const card = grid?.querySelector(`[data-datacat-id="${id}"]`);
-        const image = card?.querySelector('.browse-card-image');
-        if (!image) continue;
-
-        const existing = image.querySelector('.datacat-yours-btn');
-        if (!canShowDatacatYoursControl(id, hit)) {
-            existing?.remove();
-            continue;
-        }
-
-        const saved = getDatacatYoursState(id, hit);
-        const html = renderDatacatYoursCardButton(id, saved);
-        if (existing) {
-            existing.outerHTML = html;
-        } else {
-            image.insertAdjacentHTML('beforeend', html);
-        }
     }
 }
 
@@ -445,39 +353,28 @@ function syncDatacatCollectableCharacter(characterId, character) {
 
     datacatCharacters.forEach(apply);
     datacatFollowingCharacters.forEach(apply);
-    updateDatacatCardYoursControl(id, character);
 }
 
-function updateDatacatModalYoursControl(characterId, hit = null, { refresh = false } = {}) {
+function updateDatacatModalFolderControl(characterId, hit = null, { refresh = false } = {}) {
     const id = String(characterId || '').trim();
-    const btn = document.getElementById('datacatYoursBtn');
+    const btn = document.getElementById('datacatFolderBtn');
     if (!btn) return;
 
     btn.dataset.datacatId = id;
     btn.disabled = false;
-
     const eligible = canShowDatacatYoursControl(id, hit);
+    btn.style.display = eligible ? '' : 'none';
+    if (!eligible) return;
 
-    const folderBtn = document.getElementById('datacatFolderBtn');
-    if (folderBtn) {
-        folderBtn.dataset.datacatId = id;
-        folderBtn.style.display = eligible ? '' : 'none';
-    }
+    setDatacatFolderActionState(id, getDatacatYoursState(id, hit));
+    if (!refresh) return;
 
-    if (!eligible) {
-        btn.style.display = 'none';
-        return;
-    }
-
-    btn.style.display = '';
-    setDatacatYoursState(id, getDatacatYoursState(id, hit));
-    if (refresh) {
-        fetchDatacatYoursStatus(id).then(result => {
-            if (result?.ok) setDatacatYoursState(id, result.collected === true);
-        }).catch(() => {});
-    }
+    fetchDatacatYoursStatus(id).then(result => {
+        if (!result?.ok) return;
+        setDatacatYoursState(id, result.collected === true);
+        setDatacatFolderActionState(id, hasDatacatFolderMembership(result));
+    }).catch(() => {});
 }
-
 async function toggleDatacatYours(characterId, hit = null) {
     const id = String(characterId || '').trim();
     if (!id) return;
@@ -581,24 +478,11 @@ function createDatacatCard(hit) {
     }
 
     const cardClass = inLibrary ? 'browse-card in-library' : possibleMatch ? 'browse-card possible-library' : 'browse-card';
-    const canSyncYours = canShowDatacatYoursControl(charId, hit);
-    const savedToYours = getDatacatYoursState(charId, hit);
-    const yoursBtn = canSyncYours
-        ? renderDatacatYoursCardButton(charId, savedToYours)
-        : '';
-    // External-search card whose DataCat existence is still unknown: tag it so the
-    // probe observer checks it on scroll (and reveals the ⭐ only if it's on DataCat).
-    const needsYoursProbe = isDatacatYoursSyncEnabled()
-        && isDatacatExternalSearchHit(hit)
-        && !canSyncYours
-        && !datacatExternalCollectableById.has(charId);
-
     return `
-        <div class="${cardClass}" data-datacat-id="${escapeHtml(String(charId))}"${needsYoursProbe ? ' data-datacat-probe="1"' : ''} ${desc ? `title="${escapeHtml(desc)}"` : ''}>
+        <div class="${cardClass}" data-datacat-id="${escapeHtml(String(charId))}" ${desc ? `title="${escapeHtml(desc)}"` : ''}>
             <div class="browse-card-image">
                 <img data-src="${escapeHtml(avatarUrl)}" src="${IMG_PLACEHOLDER}" alt="${escapeHtml(name)}" decoding="async" fetchpriority="low" onerror="this.dataset.failed='1';this.src='/img/ai4.png'">
                 ${nsfwBadge}
-                ${yoursBtn}
                 ${sourceBadges.length > 0 ? `<div class="browse-feature-badges browse-feature-badges-tl">${sourceBadges.join('')}</div>` : ''}
                 ${badges.length > 0 ? `<div class="browse-feature-badges">${badges.join('')}</div>` : ''}
             </div>
@@ -625,7 +509,6 @@ function observeNewCards() {
     const grid = document.getElementById('datacatGrid');
     if (grid) {
         datacatBrowseView.observeImages(grid);
-        observeDatacatYoursProbes(grid);
     }
 }
 
@@ -2841,16 +2724,6 @@ function sortFollowingCharacters(characters) {
 }
 
 function _handleFollowingCardClick(e) {
-    const yoursBtn = e.target.closest('.datacat-yours-btn');
-    if (yoursBtn) {
-        e.preventDefault();
-        e.stopPropagation();
-        const charId = yoursBtn.dataset.datacatYoursId;
-        const hit = charId ? datacatFollowingCharacters.find(c => String(getCharId(c)) === charId) : null;
-        toggleDatacatYours(charId, hit);
-        return;
-    }
-
     const authorLink = e.target.closest('.browse-card-creator-link');
     if (authorLink) {
         e.stopPropagation();
@@ -2932,13 +2805,11 @@ function renderFollowing(append = false) {
         if (newSlice.length > 0) {
             grid.insertAdjacentHTML('beforeend', newSlice.map(c => createDatacatCard(c)).join(''));
             datacatBrowseView.observeImages(grid);
-            observeDatacatYoursProbes(grid);
         }
     } else {
         const page = sorted.slice(0, datacatFollowingDisplayLimit);
         grid.innerHTML = page.map(c => createDatacatCard(c)).join('');
         datacatBrowseView.observeImages(grid);
-        observeDatacatYoursProbes(grid);
     }
 
     const hasMore = datacatFollowingDisplayLimit < sorted.length;
@@ -3002,10 +2873,7 @@ function openPreviewModal(hit) {
             openBtn.title = 'Open on DataCat';
         }
     }
-    const yoursBtn = document.getElementById('datacatYoursBtn');
-    if (yoursBtn) {
-        updateDatacatModalYoursControl(charId, hit, { refresh: canShowDatacatYoursControl(charId, hit) });
-    }
+    updateDatacatModalFolderControl(charId, hit, { refresh: canShowDatacatYoursControl(charId, hit) });
 
     // Stats (adapt to available data)
     const chatsEl = document.getElementById('datacatCharChats');
@@ -3190,12 +3058,7 @@ async function fetchAndPopulateDetails(hit, token) {
         if (!character) {
             const saucepanDetail = await saucepanDetailPromise;
             const lockedDef = isSaucepanHit && saucepanDetail && saucepanDetail.open_definition === false;
-            updateDatacatModalYoursControl(charId, {
-                ...hit,
-                isFullyExtractedInDb: false,
-                hasPartialExtraction: true,
-            });
-            updateDatacatCardYoursControl(charId, {
+            updateDatacatModalFolderControl(charId, {
                 ...hit,
                 isFullyExtractedInDb: false,
                 hasPartialExtraction: true,
@@ -3212,7 +3075,7 @@ async function fetchAndPopulateDetails(hit, token) {
             datacatSelectedChar._fullCharacter = character;
         }
         syncDatacatCollectableCharacter(charId, character);
-        updateDatacatModalYoursControl(charId, character, { refresh: true });
+        updateDatacatModalFolderControl(charId, character, { refresh: true });
 
         // The listing row only knew the 640px card variant; upgrade the avatar viewer to the
         // true original now that the detail payload is here.
@@ -3448,12 +3311,7 @@ async function fetchAndPopulateDetails(hit, token) {
         if (token === datacatDetailFetchToken) {
             const defLoading = document.getElementById('datacatCharDefinitionLoading');
             if (defLoading) defLoading.style.display = 'none';
-            updateDatacatModalYoursControl(charId, {
-                ...hit,
-                isFullyExtractedInDb: false,
-                hasPartialExtraction: true,
-            });
-            updateDatacatCardYoursControl(charId, {
+            updateDatacatModalFolderControl(charId, {
                 ...hit,
                 isFullyExtractedInDb: false,
                 hasPartialExtraction: true,
@@ -3888,16 +3746,6 @@ function initDatacatView() {
     const grid = document.getElementById('datacatGrid');
     if (grid) {
         grid.addEventListener('click', (e) => {
-            const yoursBtn = e.target.closest('.datacat-yours-btn');
-            if (yoursBtn) {
-                e.preventDefault();
-                e.stopPropagation();
-                const charId = yoursBtn.dataset.datacatYoursId;
-                const hit = charId ? datacatCharacters.find(c => String(getCharId(c)) === charId) : null;
-                toggleDatacatYours(charId, hit);
-                return;
-            }
-
             const authorLink = e.target.closest('.browse-card-creator-link');
             if (authorLink) {
                 e.stopPropagation();
@@ -4295,20 +4143,10 @@ function ensureModalEventsAttached() {
         }
     });
 
-    on('datacatYoursBtn', 'click', () => {
-        const btn = document.getElementById('datacatYoursBtn');
-        const charId = btn?.dataset?.datacatId;
-        const hit = charId ? (
-            datacatCharacters.find(c => String(getCharId(c)) === charId)
-            || datacatFollowingCharacters.find(c => String(getCharId(c)) === charId)
-            || datacatSelectedChar
-        ) : null;
-        toggleDatacatYours(charId, hit);
-    });
-
     initDatacatFolderPicker({
         getMainSaved: (id) => getDatacatYoursState(id, findDatacatHitOrSelected(id)),
-        toggleMain: (id) => toggleDatacatYours(id, findDatacatHitOrSelected(id)),
+        toggleMain: (id, options = {}) => toggleDatacatYours(id, findDatacatHitOrSelected(id), options),
+        setAnyFolderSaved: (id, saved) => setDatacatFolderActionState(id, saved),
     });
 
     on('datacatFolderBtn', 'click', () => {
@@ -4613,11 +4451,12 @@ const datacatBrowseView = new (class DatacatBrowseView extends BrowseView {
                     <i class="fa-solid fa-sliders"></i> <span>Features</span>
                 </button>
                 <div id="datacatFiltersDropdown" class="dropdown-menu browse-features-dropdown hidden" style="width: 240px;">
+                    <div class="dropdown-section-title">Personal <span style="font-size: 0.8em; opacity: 0.6;">(requires login)</span>:</div>
+                    <label class="filter-checkbox"><input type="checkbox" id="datacatFilterOnlyYours"> <i class="fa-solid fa-heart" style="color: #e74c3c;"></i> My Folders</label>
+                    <hr style="margin: 8px 0; border-color: var(--glass-border);">
                     <div class="dropdown-section-title">Library:</div>
                     <label class="filter-checkbox"><input type="checkbox" id="datacatFilterHideOwned"> <i class="fa-solid fa-check"></i> Hide Owned Characters</label>
-                    <label class="filter-checkbox"><input type="checkbox" id="datacatFilterHidePossible"> <i class="fa-solid fa-check" style="color: #f0a500;"></i> Hide Possible Matches</label>
-                    <label class="filter-checkbox"><input type="checkbox" id="datacatFilterOnlyYours"> <i class="fa-solid fa-star" style="color: var(--accent, #ec4899);"></i> Only DataCat Yours</label>
-                    <div id="datacatFilterSourceSection">
+                    <label class="filter-checkbox"><input type="checkbox" id="datacatFilterHidePossible"> <i class="fa-solid fa-check" style="color: #f0a500;"></i> Hide Possible Matches</label>                    <div id="datacatFilterSourceSection">
                         <div class="dropdown-section-title">Source:</div>
                         <label class="filter-checkbox"><input type="checkbox" id="datacatFilterHideJanitor"> <i class="fa-solid fa-cat"></i> Hide JanitorAI</label>
                         <label class="filter-checkbox"><input type="checkbox" id="datacatFilterHideSaucepan"> <i class="fa-solid fa-bowl-food"></i> Hide Saucepan</label>
@@ -4745,17 +4584,19 @@ const datacatBrowseView = new (class DatacatBrowseView extends BrowseView {
                     <div>
                         <h2 id="datacatCharName">Character Name</h2>
                         <p class="browse-char-meta">
-                            by <a id="datacatCharCreator" href="#" class="creator-link browse-meta-identity" title="Click to browse this creator's characters">Creator</a>
+                            by <a id="datacatCharCreator" href="#" class="creator-link browse-meta-identity" title="Click to browse this creator's characters">Creator</a> •
+                            <button
+                                type="button"
+                                id="datacatFolderBtn"
+                                class="browse-meta-action"
+                                title="Save to folder"
+                                aria-label="Save to folder"
+                                style="display: none;"
+                            ><i class="fa-regular fa-heart"></i></button>
                         </p>
                     </div>
                 </div>
                 <div class="modal-controls">
-                    <button id="datacatYoursBtn" class="action-btn secondary datacat-yours-modal-btn" title="Save to DataCat Yours" style="display: none;">
-                        <i class="fa-regular fa-star"></i> Save
-                    </button>
-                    <button id="datacatFolderBtn" class="action-btn secondary datacat-folder-modal-btn" title="Save to folder" style="display: none;">
-                        <i class="fa-solid fa-folder-plus"></i> Folder
-                    </button>
                     <a id="datacatOpenInBrowserBtn" href="#" target="_blank" class="action-btn secondary" title="Open on DataCat">
                         <i class="fa-solid fa-external-link"></i> Open
                     </a>

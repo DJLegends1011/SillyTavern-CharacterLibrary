@@ -21,10 +21,15 @@ export function filterPickerFolders(folders) {
  * @param {{folders?: Array, collected?: boolean, folderIds?: Array}} opts
  * @returns {{collected: boolean, mainChecked: boolean, rows: {id: string, title: string, checked: boolean}[]}}
  */
+export function hasDatacatFolderMembership({ collected = false, folderIds = [] } = {}) {
+    return collected === true || (Array.isArray(folderIds) && folderIds.length > 0);
+}
+
 export function buildPickerModel({ folders = [], collected = false, folderIds = [] } = {}) {
     const memberIds = new Set((Array.isArray(folderIds) ? folderIds : []).map(v => String(v)));
     return {
         collected: collected === true,
+        anySaved: hasDatacatFolderMembership({ collected, folderIds }),
         mainChecked: collected === true && memberIds.size === 0,
         rows: folders.map(f => ({ id: f.id, title: f.title, checked: memberIds.has(String(f.id)) })),
     };
@@ -94,7 +99,11 @@ import {
 
 const { showToast, escapeHtml, getSetting } = CoreAPI;
 
-let _hooks = { getMainSaved: () => false, toggleMain: async () => {} };
+let _hooks = {
+    getMainSaved: () => false,
+    toggleMain: async () => {},
+    setAnyFolderSaved: () => {},
+};
 let _folderCache = null;   // filtered [{id,title}] or null
 let _openEl = null;
 let _backdropEl = null;
@@ -141,6 +150,7 @@ function renderPickerBody(el, model, characterId, characterName) {
             <input type="text" class="datacat-folder-create-input" placeholder="New folder name" maxlength="120">
             <button type="button" class="datacat-folder-create-btn" disabled>Save</button>
         </div>`;
+    _hooks.setAnyFolderSaved(characterId, model.anySaved);
     wireRows(el, characterId, characterName);
 }
 
@@ -201,11 +211,13 @@ async function ensureCollected(el, characterId) {
     return true;
 }
 
-function syncMainRowFromFolders(el) {
+function syncMainRowFromFolders(el, characterId = _openCharId) {
+    const customRows = [...el.querySelectorAll('.datacat-folder-row:not([data-folder-id="__main__"])')];
+    const hasCustomFolder = customRows.some(row => row.classList.contains('checked'));
+    const collected = el.dataset.collected === 'true';
     const mainRow = el.querySelector('.datacat-folder-row[data-folder-id="__main__"]');
-    const hasCustomFolder = [...el.querySelectorAll('.datacat-folder-row:not([data-folder-id="__main__"])')]
-        .some(row => row.classList.contains('checked'));
-    mainRow?.classList.toggle('checked', el.dataset.collected === 'true' && !hasCustomFolder);
+    mainRow?.classList.toggle('checked', collected && !hasCustomFolder);
+    _hooks.setAnyFolderSaved(characterId, collected || hasCustomFolder);
 }
 
 /**

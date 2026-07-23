@@ -4,6 +4,7 @@ import { describe, it } from 'node:test';
 import {
     filterPickerFolders,
     buildPickerModel,
+    hasDatacatFolderMembership,
     applyDatacatFolderOrder,
     normalizeDatacatYoursFolderSelection,
     buildDatacatYoursFolderFetchOptions,
@@ -60,6 +61,14 @@ describe('buildPickerModel', () => {
     });
 });
 
+describe('hasDatacatFolderMembership', () => {
+    it('is active for Main or any custom folder', () => {
+        assert.equal(hasDatacatFolderMembership({ collected: true, folderIds: [] }), true);
+        assert.equal(hasDatacatFolderMembership({ collected: false, folderIds: [2359] }), true);
+        assert.equal(hasDatacatFolderMembership({ collected: false, folderIds: [] }), false);
+        assert.equal(hasDatacatFolderMembership(), false);
+    });
+});
 describe('applyDatacatFolderOrder', () => {
     const folders = [
         { id: '2359', title: 'marvel smut' },

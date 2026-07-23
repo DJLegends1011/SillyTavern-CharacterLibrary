@@ -2430,3 +2430,46 @@ html.cl-mobile .browse-char-body { padding: 8px; gap: var(--space-sm); }
     html.cl-mobile .browse-card { contain-intrinsic-size: 120px 190px; }
 
 }
+
+/* Compact actions displayed beside creator/provider metadata in detail modals. */
+.browse-meta-action {
+    appearance: none;
+    border: 0;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 24px;
+    min-height: 24px;
+    padding: 3px 5px;
+    border-radius: var(--radius-sm);
+    color: inherit;
+    font: inherit;
+    line-height: inherit;
+    background: transparent;
+    vertical-align: middle;
+    transition: background 0.2s ease, opacity 0.2s ease;
+}
+
+.browse-meta-action:hover {
+    background: rgba(255, 100, 100, 0.15);
+}
+
+.browse-meta-action i {
+    color: #ff6b6b;
+    transition: transform 0.2s ease;
+}
+
+.browse-meta-action:hover i {
+    transform: scale(1.15);
+}
+
+.browse-meta-action.favorited {
+    background: rgba(255, 100, 100, 0.1);
+}
+
+.browse-meta-action:disabled,
+.browse-meta-action.loading {
+    pointer-events: none;
+    opacity: 0.6;
+}
