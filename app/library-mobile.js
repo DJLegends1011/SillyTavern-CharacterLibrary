@@ -3758,9 +3758,36 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
                 menu.appendChild(item);
             });
 
+            const modal = controls.closest('.browse-char-modal');
+            modal?.querySelectorAll('.browse-meta-action').forEach(metaAction => {
+                if (metaAction.hidden || metaAction.style.display === 'none' || getComputedStyle(metaAction).display === 'none') return;
+
+                const item = document.createElement('button');
+                item.type = 'button';
+                item.className = 'mobile-more-actions-item';
+
+                const icon = metaAction.querySelector('i')?.cloneNode(true);
+                if (icon) item.appendChild(icon);
+                const label = metaAction.title || metaAction.getAttribute('aria-label') || 'Action';
+                item.append(` ${label}`);
+                item.title = label;
+
+                if (metaAction.disabled || metaAction.classList.contains('disabled')) {
+                    item.disabled = true;
+                    item.classList.add('disabled');
+                }
+
+                item.addEventListener('click', (ev) => {
+                    ev.stopPropagation();
+                    closeMenu();
+                    metaAction.click();
+                });
+                menu.appendChild(item);
+            });
+
             // The favorite heart lives in the header meta line, which is hidden on
             // mobile; providers that support favoriting mark it with .browse-fav-toggle
-            const favBtn = controls.closest('.browse-char-modal')?.querySelector('.browse-fav-toggle');
+            const favBtn = modal?.querySelector('.browse-fav-toggle:not(.browse-meta-action)');
             if (favBtn) {
                 const faved = favBtn.classList.contains('favorited');
                 const item = document.createElement('button');
