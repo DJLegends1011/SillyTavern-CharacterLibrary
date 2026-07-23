@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace oversized provider save/bookmark actions with compact metadata icons, remove DataCat's grid star and duplicate save notifications, and integrate each source-branch fix into `aio-v6.7.0` with the correct prefix.
+**Goal:** Replace oversized provider save/bookmark actions with compact metadata icons, merge DataCat save and folder management into one heart, align Features filters with the maintainer grouping, remove duplicate DataCat notifications, and integrate each source-branch fix into `aio-v6.7.0` with the correct prefix.
 
-**Architecture:** Keep account mutations and local-backup persistence in their existing provider modules. Add one compact metadata-action presentation contract and a generic mobile overflow mirror, then let DataCat, JannyAI, and `bookmark-module.js` supply their own icon, state, tooltip, and click behavior. Develop and test each feature on its original source branch before applying it to AIO as a separate prefixed commit.
+**Architecture:** Keep account mutations and local-backup persistence in their existing provider modules. Add one compact metadata-action presentation contract and a generic mobile overflow mirror; DataCat's heart delegates to its folder picker and derives state from Main/custom-folder membership, while JannyAI and `bookmark-module.js` retain their own mutations. Develop and test each feature on its original source branch before applying it to AIO as a separate prefixed commit.
 
 **Tech Stack:** Browser-native JavaScript modules, HTML template literals, CSS, Node.js `node:test`, Git worktrees, and the in-app browser for desktop/mobile verification.
 
@@ -14,10 +14,12 @@
 - AIO integration target is `aio-v6.7.0`.
 - AIO commit prefixes are `[datacat-account-sync]`, `[jannyai-account-sync]`, and `[extended-bookmarks]`.
 - DataCat's provider-native save appears only in character details, never on grid cards, on desktop and mobile.
-- DataCat's provider-native save icon is a regular/solid heart.
-- DataCat emits one success notification per save action using `Saved to "<folder name>"`.
-- JannyAI's account bookmark is a compact regular/solid bookmark in character details.
-- Local Backup becomes compact only for CharacterTavern, DataCat, JannyAI, Pygmalion, and Wyvern.
+- DataCat exposes one provider-native `datacatFolderBtn` heart in character details; clicking it opens the existing folder picker.
+- DataCat's heart is solid for Main or any custom-folder membership, regular when no membership exists, and always uses tooltip/ARIA label `Save to folder`.
+- DataCat emits one success notification per folder action using `Saved to "<folder name>"`.
+- DataCat Features places `My Folders` under `Personal (requires login)`.
+- JannyAI's account bookmark is a compact regular/solid bookmark in character details, with `My Bookmarks` under `Personal (requires login)` in Features.
+- Local Backup becomes compact only for CharacterTavern, DataCat, JannyAI, Pygmalion, and Wyvern; its `Local Backups` filter sits under `Library` with no standalone `Bookmarks` section.
 - Local Backup grid icons and persisted backup behavior remain unchanged.
 - ChubAI, BotBooru, MasqueradeAI, provider APIs, authentication, and data models are not changed.
 - Folder, Add to Collection, Open, Import, and Close remain separate actions.
@@ -26,9 +28,9 @@
 
 ## File Map
 
-- `modules/providers/datacat/datacat-browse.js`: DataCat detail heart, save state, grid-star removal, and direct Yours mutation.
+- `modules/providers/datacat/datacat-browse.js`: DataCat detail folder heart, aggregate saved state, Features grouping, grid-star removal, and internal Main mutation.
 - `modules/providers/datacat/datacat-browse.css`: remove obsolete grid-star styles.
-- `modules/providers/datacat/datacat-folder-picker.js`: one-toast folder-save behavior and destination-name formatting.
+- `modules/providers/datacat/datacat-folder-picker.js`: aggregate membership reporting, one-toast folder-save behavior, and destination-name formatting.
 - `modules/providers/janny/janny-browse.js`: compact account bookmark markup and state.
 - `modules/providers/bookmark-module.js`: shared compact Local Backup renderer and state synchronization.
 - `modules/providers/browse-shared.css`: compact metadata-action visual contract.
@@ -43,30 +45,35 @@
 
 ---
 
-### Task 1: DataCat detail heart and grid-star removal
+### Task 1: DataCat unified folder heart, aggregate state, and Features grouping
 
 **Branch/worktree:** `codex/datacat-account-sync` in `.worktrees/compact-datacat`
 
 **Files:**
 - Create: `tests/datacat-compact-save-ux-static.test.mjs`
+- Modify: `tests/datacat-folder-picker.test.mjs`
 - Modify: `modules/providers/datacat/datacat-browse.js:128-683`
 - Modify: `modules/providers/datacat/datacat-browse.js:2898-2907`
 - Modify: `modules/providers/datacat/datacat-browse.js:3225-3270`
 - Modify: `modules/providers/datacat/datacat-browse.js:3480-3525`
 - Modify: `modules/providers/datacat/datacat-browse.js:3945-3957`
-- Modify: `modules/providers/datacat/datacat-browse.js:4818-4837`
+- Modify: `modules/providers/datacat/datacat-browse.js:4335-4400`
+- Modify: `modules/providers/datacat/datacat-browse.js:4740-4840`
+- Modify: `modules/providers/datacat/datacat-folder-picker.js:20-30`
+- Modify: `modules/providers/datacat/datacat-folder-picker.js:97-224`
 - Modify: `modules/providers/datacat/datacat-browse.css:51-77`
 - Modify: `modules/providers/browse-shared.css`
 - Modify: `app/library-mobile.js:3738-3780`
 
 **Interfaces:**
-- Consumes: `setDatacatYoursSaved(characterId, saved)`, `fetchDatacatYoursStatus(characterId)`, `isDatacatYoursCollectableHit(hit)`, and the existing `#datacatYoursBtn` click listener.
-- Produces: one detail-only `button#datacatYoursBtn.browse-meta-action`, active class `favorited`, and generic mobile discovery through `.browse-meta-action`.
+- Consumes: `fetchDatacatYoursStatus(characterId)`, `isDatacatYoursCollectableHit(hit)`, and `openDatacatFolderPicker({ anchor, characterId, characterName })`.
+- Produces: `hasDatacatFolderMembership(status): boolean`, `setDatacatFolderActionState(characterId, saved): void`, hook `setAnyFolderSaved(characterId, saved): void`, and one `button#datacatFolderBtn.browse-meta-action`.
 
-- [ ] **Step 1: Write the failing DataCat UX contract**
+- [ ] **Step 1: Write the failing DataCat detail/filter contract**
+
+Create `tests/datacat-compact-save-ux-static.test.mjs`:
 
 ```js
-// tests/datacat-compact-save-ux-static.test.mjs
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
@@ -84,30 +91,39 @@ const mobile = await readFile(
     'utf8',
 );
 
-test('DataCat Yours is a detail-only compact heart', () => {
+test('DataCat exposes one detail-only folder heart', () => {
     assert.match(
         browse,
-        /<p class="browse-char-meta">[\s\S]{0,700}id="datacatYoursBtn"[\s\S]{0,250}browse-meta-action[\s\S]{0,250}fa-regular fa-heart/,
+        /<p class="browse-char-meta">[\s\S]{0,700}id="datacatFolderBtn"[\s\S]{0,250}browse-meta-action[\s\S]{0,250}title="Save to folder"[\s\S]{0,250}fa-regular fa-heart/,
     );
-    assert.doesNotMatch(
-        browse,
-        /<div class="modal-controls">[\s\S]{0,500}id="datacatYoursBtn"/,
-    );
+    assert.doesNotMatch(browse, /id="datacatYoursBtn"/);
     assert.doesNotMatch(browse, /class="datacat-yours-btn/);
     assert.doesNotMatch(browse, /data-datacat-probe=/);
     assert.doesNotMatch(browse, /renderDatacatYoursCardButton/);
     assert.doesNotMatch(browse, /observeDatacatYoursProbes/);
 });
 
-test('DataCat heart state updates icon, tooltip, and accessible label', () => {
+test('DataCat folder heart opens the existing picker', () => {
+    assert.match(browse, /on\('datacatFolderBtn', 'click',[\s\S]{0,900}openDatacatFolderPicker\(\{/);
+    assert.match(browse, /anchor: btn/);
+    assert.doesNotMatch(browse, /on\('datacatYoursBtn', 'click'/);
+});
+
+test('DataCat folder state controls regular and solid hearts', () => {
+    assert.match(browse, /function setDatacatFolderActionState\(characterId, saved\)/);
     assert.match(browse, /classList\.toggle\('favorited', saved === true\)/);
+    assert.match(browse, /fa-solid fa-heart/);
+    assert.match(browse, /fa-regular fa-heart/);
+    assert.match(browse, /hasDatacatFolderMembership\(result\)/);
+    assert.match(browse, /setAnyFolderSaved: \(id, saved\) => setDatacatFolderActionState\(id, saved\)/);
+});
+
+test('DataCat Features follows maintainer Personal and Library grouping', () => {
     assert.match(
         browse,
-        /saved \? '<i class="fa-solid fa-heart"><\/i>' : '<i class="fa-regular fa-heart"><\/i>'/,
+        /Personal <span[^>]*>\(requires login\)<\/span>:[\s\S]{0,500}id="datacatFilterOnlyYours"[\s\S]{0,180}fa-solid fa-heart[\s\S]{0,120}My Folders[\s\S]{0,500}<div class="dropdown-section-title">Library:<\/div>/,
     );
-    assert.match(browse, /Remove from DataCat Yours/);
-    assert.match(browse, /Save to DataCat Yours/);
-    assert.match(browse, /setAttribute\('aria-label', title\)/);
+    assert.doesNotMatch(browse, /id="datacatFilterOnlyYours"[^>]*>[\s\S]{0,220}Only DataCat Yours<\/label>/);
 });
 
 test('compact metadata actions have shared desktop and mobile treatment', () => {
@@ -120,19 +136,92 @@ test('compact metadata actions have shared desktop and mobile treatment', () => 
 });
 ```
 
-- [ ] **Step 2: Run the focused test and confirm it fails**
+Extend the import in `tests/datacat-folder-picker.test.mjs` with
+`hasDatacatFolderMembership`, then append:
 
-Run:
-
-```powershell
-node --test tests/datacat-compact-save-ux-static.test.mjs
+```js
+describe('hasDatacatFolderMembership', () => {
+    it('is active for Main or any custom folder', () => {
+        assert.equal(hasDatacatFolderMembership({ collected: true, folderIds: [] }), true);
+        assert.equal(hasDatacatFolderMembership({ collected: false, folderIds: [2359] }), true);
+        assert.equal(hasDatacatFolderMembership({ collected: false, folderIds: [] }), false);
+        assert.equal(hasDatacatFolderMembership(), false);
+    });
+});
 ```
 
-Expected: FAIL because DataCat still renders `.datacat-yours-btn`, the modal Save button is in `.modal-controls`, and `.browse-meta-action` does not exist.
+- [ ] **Step 2: Run the focused tests and confirm they fail**
 
-- [ ] **Step 3: Add the shared compact metadata-action CSS**
+```powershell
+node --test tests/datacat-compact-save-ux-static.test.mjs tests/datacat-folder-picker.test.mjs
+```
 
-Append this exact shared contract to `modules/providers/browse-shared.css`:
+Expected: FAIL because the modal still has separate Save and Folder buttons,
+the grid star and old Features label still exist, and the aggregate helper is
+not exported.
+
+- [ ] **Step 3: Add the aggregate folder-membership helper and hook**
+
+In `modules/providers/datacat/datacat-folder-picker.js`, add:
+
+```js
+export function hasDatacatFolderMembership({ collected = false, folderIds = [] } = {}) {
+    return collected === true || (Array.isArray(folderIds) && folderIds.length > 0);
+}
+```
+
+Return `anySaved` from `buildPickerModel`:
+
+```js
+export function buildPickerModel({ folders = [], collected = false, folderIds = [] } = {}) {
+    const memberIds = new Set((Array.isArray(folderIds) ? folderIds : []).map(v => String(v)));
+    return {
+        collected: collected === true,
+        anySaved: hasDatacatFolderMembership({ collected, folderIds }),
+        mainChecked: collected === true && memberIds.size === 0,
+        rows: folders.map(f => ({ id: f.id, title: f.title, checked: memberIds.has(String(f.id)) })),
+    };
+}
+```
+
+Expand the default hook contract:
+
+```js
+let _hooks = {
+    getMainSaved: () => false,
+    toggleMain: async () => {},
+    setAnyFolderSaved: () => {},
+};
+```
+
+At the end of `renderPickerBody`, publish the loaded aggregate state before
+wiring the rows:
+
+```js
+_hooks.setAnyFolderSaved(characterId, model.anySaved);
+wireRows(el, characterId, characterName);
+```
+
+Replace `syncMainRowFromFolders` with:
+
+```js
+function syncMainRowFromFolders(el, characterId = _openCharId) {
+    const customRows = [...el.querySelectorAll('.datacat-folder-row:not([data-folder-id="__main__"])')];
+    const hasCustomFolder = customRows.some(row => row.classList.contains('checked'));
+    const collected = el.dataset.collected === 'true';
+    const mainRow = el.querySelector('.datacat-folder-row[data-folder-id="__main__"]');
+    mainRow?.classList.toggle('checked', collected && !hasCustomFolder);
+    _hooks.setAnyFolderSaved(characterId, collected || hasCustomFolder);
+}
+```
+
+Every existing success and rollback path already calls
+`syncMainRowFromFolders`; keep those calls so optimistic and authoritative
+states update the heart.
+
+- [ ] **Step 4: Add the shared compact metadata-action CSS**
+
+Append this exact block to `modules/providers/browse-shared.css`:
 
 ```css
 /* Compact actions displayed beside creator/provider metadata in detail modals. */
@@ -179,137 +268,155 @@ Append this exact shared contract to `modules/providers/browse-shared.css`:
 }
 ```
 
-- [ ] **Step 4: Replace DataCat's grid-aware eligibility and state code**
+- [ ] **Step 5: Replace the two modal controls with one folder heart**
 
-Delete these grid-only declarations and functions from
-`modules/providers/datacat/datacat-browse.js`:
-
-```js
-const datacatExternalCollectableById = new Map();
-let datacatYoursProbeObserver = null;
-function isDatacatExternalSearchHit(hit) { /* delete the whole function */ }
-function probeDatacatExternalCollectable(characterId, hit = null) { /* delete */ }
-function observeDatacatYoursProbes(grid) { /* delete */ }
-function renderDatacatYoursCardButton(characterId, saved) { /* delete */ }
-function updateDatacatCardYoursControl(characterId, hit = null) { /* delete */ }
-```
-
-Replace `canShowDatacatYoursControl` and `setDatacatYoursState` with:
+Import `hasDatacatFolderMembership` from `datacat-folder-picker.js`.
+Keep `setDatacatYoursState` as Main/Yours state only:
 
 ```js
-function canShowDatacatYoursControl(characterId, hit = null) {
-    const id = String(characterId || '').trim();
-    return !!(id && isDatacatYoursSyncEnabled() && isDatacatYoursCollectableHit(hit));
-}
-
 function setDatacatYoursState(characterId, saved) {
     const id = String(characterId || '').trim();
     if (!id) return;
     datacatYoursStateById.set(id, saved === true);
-
-    const modalBtn = document.getElementById('datacatYoursBtn');
-    if (modalBtn?.dataset?.datacatId === id) {
-        const title = saved ? 'Remove from DataCat Yours' : 'Save to DataCat Yours';
-        modalBtn.classList.toggle('favorited', saved === true);
-        modalBtn.innerHTML = saved
-            ? '<i class="fa-solid fa-heart"></i>'
-            : '<i class="fa-regular fa-heart"></i>';
-        modalBtn.title = title;
-        modalBtn.setAttribute('aria-label', title);
-    }
-
     syncDatacatFolderPickerMainRow(id, saved === true);
 }
 ```
 
-Remove every call to `updateDatacatCardYoursControl(...)`. Keep
-`syncDatacatCollectableCharacter(...)`, but end it after updating the matching
-in-memory entries:
+Add the aggregate UI updater:
 
 ```js
-function syncDatacatCollectableCharacter(characterId, character) {
+function setDatacatFolderActionState(characterId, saved) {
     const id = String(characterId || '').trim();
-    if (!id || !character || typeof character !== 'object') return;
+    const btn = document.getElementById('datacatFolderBtn');
+    if (!id || btn?.dataset?.datacatId !== id) return;
 
-    const apply = (entry) => {
-        if (!entry || String(getCharId(entry)) !== id) return;
-        entry._fullCharacter = character;
-        entry.isFullyExtractedInDb = true;
-        entry.is_fully_extracted_in_db = true;
-        entry.hasPartialExtraction = false;
-        entry.has_partial_extraction = false;
-        if (character.isCollected === true || character.viewer_is_collected === true || character.is_collected === true) {
-            entry.isCollected = true;
-            entry.viewer_is_collected = true;
-            entry.is_collected = true;
-        }
-    };
-
-    datacatCharacters.forEach(apply);
-    datacatFollowingCharacters.forEach(apply);
+    btn.classList.toggle('favorited', saved === true);
+    btn.innerHTML = saved
+        ? '<i class="fa-solid fa-heart"></i>'
+        : '<i class="fa-regular fa-heart"></i>';
+    btn.title = 'Save to folder';
+    btn.setAttribute('aria-label', 'Save to folder');
 }
 ```
 
-- [ ] **Step 5: Remove the DataCat star from every grid-card path**
-
-In `createDatacatCard`, remove `canSyncYours`, `savedToYours`, `yoursBtn`,
-`needsYoursProbe`, the `data-datacat-probe` attribute, and `${yoursBtn}`.
-On the standalone DataCat source branch, leave its existing footer content
-(`statsHtml` and `dateInfo`) unchanged. The final card opening must begin:
+Replace `updateDatacatModalYoursControl` with:
 
 ```js
-return `
-    <div class="${cardClass}" data-datacat-id="${escapeHtml(String(charId))}" ${desc ? `title="${escapeHtml(desc)}"` : ''}>
-        <div class="browse-card-image">
-            <img data-src="${escapeHtml(avatarUrl)}" src="${IMG_PLACEHOLDER}" alt="${escapeHtml(name)}" decoding="async" fetchpriority="low" onerror="this.dataset.failed='1';this.src='/img/ai4.png'">
-            ${nsfwBadge}
-            ${sourceBadges.length > 0 ? `<div class="browse-feature-badges browse-feature-badges-tl">${sourceBadges.join('')}</div>` : ''}
-            ${badges.length > 0 ? `<div class="browse-feature-badges">${badges.join('')}</div>` : ''}
-        </div>
+function updateDatacatModalFolderControl(characterId, hit = null, { refresh = false } = {}) {
+    const id = String(characterId || '').trim();
+    const btn = document.getElementById('datacatFolderBtn');
+    if (!btn) return;
+
+    btn.dataset.datacatId = id;
+    btn.disabled = false;
+    const eligible = canShowDatacatYoursControl(id, hit);
+    btn.style.display = eligible ? '' : 'none';
+    if (!eligible) return;
+
+    setDatacatFolderActionState(id, getDatacatYoursState(id, hit));
+    if (!refresh) return;
+
+    fetchDatacatYoursStatus(id).then(result => {
+        if (!result?.ok) return;
+        setDatacatYoursState(id, result.collected === true);
+        setDatacatFolderActionState(id, hasDatacatFolderMembership(result));
+    }).catch(() => {});
+}
 ```
 
-The standalone DataCat source branch does not declare `datacatBookmarks`; do
-not introduce a Local Backup reference there. The required result is that no
-DataCat Yours control is rendered on the grid.
+Replace every call to `updateDatacatModalYoursControl(...)` with
+`updateDatacatModalFolderControl(...)` using the same arguments.
 
-Remove the `.datacat-yours-btn` branch from both the primary grid click
-delegation and `_handleFollowingCardClick`. The standalone source branch has
-no Local Backup grid handler to preserve.
-
-Remove `observeDatacatYoursProbes(grid)` from `observeNewCards`,
-`renderFollowing`, and any post-render callback.
-
-- [ ] **Step 6: Move the DataCat save control into character metadata**
-
-Replace the DataCat header template with:
+In `renderModals`, use this metadata fragment:
 
 ```html
 <p class="browse-char-meta">
     by <a id="datacatCharCreator" href="#" class="creator-link browse-meta-identity" title="Click to browse this creator's characters">Creator</a> •
     <button
         type="button"
-        id="datacatYoursBtn"
+        id="datacatFolderBtn"
         class="browse-meta-action"
-        title="Save to DataCat Yours"
-        aria-label="Save to DataCat Yours"
+        title="Save to folder"
+        aria-label="Save to folder"
         style="display: none;"
     ><i class="fa-regular fa-heart"></i></button>
 </p>
 ```
 
-Delete the old `#datacatYoursBtn.action-btn` block from `.modal-controls`.
-Keep `#datacatFolderBtn`, Open, Import, and Close in their existing order. The
-AIO integration later preserves its separate Local Backup control until the
-extended-bookmarks commit moves that control into metadata.
+Delete both `#datacatYoursBtn` and the old labelled
+`#datacatFolderBtn.action-btn` from `.modal-controls`. Keep Open, Import, and
+Close in their existing order. Delete the `on('datacatYoursBtn', ...)` event;
+keep the existing `on('datacatFolderBtn', ...)` handler that validates account
+and eligibility before calling `openDatacatFolderPicker`.
 
-Delete `.datacat-yours-btn` and `.datacat-yours-modal-btn.saved` rules from
-`modules/providers/datacat/datacat-browse.css`; `.browse-meta-action` owns the
-new visual state.
+Add the aggregate hook to the existing picker initialization:
 
-- [ ] **Step 7: Mirror compact metadata actions into the mobile overflow**
+```js
+initDatacatFolderPicker({
+    getMainSaved: (id) => getDatacatYoursState(id, findDatacatHitOrSelected(id)),
+    toggleMain: (id, options = {}) => toggleDatacatYours(id, findDatacatHitOrSelected(id), options),
+    setAnyFolderSaved: (id, saved) => setDatacatFolderActionState(id, saved),
+});
+```
 
-In `app/library-mobile.js`, insert this block before the existing
-`.browse-fav-toggle` fallback:
+Delete `.datacat-yours-modal-btn.saved` and the obsolete labelled
+`.datacat-folder-modal-btn` presentation rules from
+`modules/providers/datacat/datacat-browse.css`.
+
+- [ ] **Step 6: Remove the DataCat star from every grid-card path**
+
+Delete these declarations and functions from
+`modules/providers/datacat/datacat-browse.js`:
+
+```js
+const datacatExternalCollectableById = new Map();
+let datacatYoursProbeObserver = null;
+function isDatacatExternalSearchHit(hit) { /* delete the complete function */ }
+function probeDatacatExternalCollectable(characterId, hit = null) { /* delete the complete function */ }
+function observeDatacatYoursProbes(grid) { /* delete the complete function */ }
+function renderDatacatYoursCardButton(characterId, saved) { /* delete the complete function */ }
+function updateDatacatCardYoursControl(characterId, hit = null) { /* delete the complete function */ }
+```
+
+Replace `canShowDatacatYoursControl` with:
+
+```js
+function canShowDatacatYoursControl(characterId, hit = null) {
+    const id = String(characterId || '').trim();
+    return !!(id && isDatacatYoursSyncEnabled() && isDatacatYoursCollectableHit(hit));
+}
+```
+
+Remove every call to `updateDatacatCardYoursControl(...)`. Keep
+`syncDatacatCollectableCharacter(...)`, but end it after its two in-memory
+array updates.
+
+In `createDatacatCard`, remove `canSyncYours`, `savedToYours`, `yoursBtn`,
+`needsYoursProbe`, the `data-datacat-probe` attribute, and `${yoursBtn}`. Leave
+`statsHtml` and `dateInfo` unchanged. Remove the `.datacat-yours-btn` branch
+from both grid click delegations and remove all calls to
+`observeDatacatYoursProbes(...)`. Delete `.datacat-yours-btn` CSS.
+
+- [ ] **Step 7: Rename and regroup the DataCat Features filter**
+
+Replace the beginning of `#datacatFiltersDropdown` with:
+
+```html
+<div class="dropdown-section-title">Personal <span style="font-size: 0.8em; opacity: 0.6;">(requires login)</span>:</div>
+<label class="filter-checkbox"><input type="checkbox" id="datacatFilterOnlyYours"> <i class="fa-solid fa-heart" style="color: #e74c3c;"></i> My Folders</label>
+<hr style="margin: 8px 0; border-color: var(--glass-border);">
+<div class="dropdown-section-title">Library:</div>
+<label class="filter-checkbox"><input type="checkbox" id="datacatFilterHideOwned"> <i class="fa-solid fa-check"></i> Hide Owned Characters</label>
+<label class="filter-checkbox"><input type="checkbox" id="datacatFilterHidePossible"> <i class="fa-solid fa-check" style="color: #f0a500;"></i> Hide Possible Matches</label>
+```
+
+Keep the existing Source section after Library. Keep the
+`datacatYoursFolderBar` All Yours/Main/custom-folder selector and all existing
+filter event logic unchanged.
+
+- [ ] **Step 8: Mirror compact metadata actions into the mobile overflow**
+
+In `app/library-mobile.js`, insert before the existing favorite fallback:
 
 ```js
 const modal = controls.closest('.browse-char-modal');
@@ -336,21 +443,20 @@ modal?.querySelectorAll('.browse-meta-action').forEach(metaAction => {
     });
     menu.appendChild(item);
 });
-```
 
-Change the old favorite lookup so ChubAI and BotBooru are not duplicated:
-
-```js
 const favBtn = modal?.querySelector('.browse-fav-toggle:not(.browse-meta-action)');
 ```
 
-- [ ] **Step 8: Run focused DataCat verification**
+Keep the existing Chub/BotBooru favorite fallback after the final line. On
+mobile, the cloned action clicks `datacatFolderBtn`; the folder picker already
+uses its bottom-sheet positioning path and ignores desktop anchor geometry.
 
-Run:
+- [ ] **Step 9: Run focused DataCat verification**
 
 ```powershell
 node --test tests/datacat-compact-save-ux-static.test.mjs tests/datacat-folder-picker.test.mjs tests/datacat-account-retry.test.mjs
 node --check modules/providers/datacat/datacat-browse.js
+node --check modules/providers/datacat/datacat-folder-picker.js
 node --check app/library-mobile.js
 git diff --check
 ```
@@ -358,31 +464,29 @@ git diff --check
 Expected: all tests PASS, syntax checks exit 0, and `git diff --check` prints
 nothing.
 
-- [ ] **Step 9: Commit the DataCat presentation change**
+- [ ] **Step 10: Commit the DataCat presentation and Features change**
 
 ```powershell
-git add app/library-mobile.js modules/providers/browse-shared.css modules/providers/datacat/datacat-browse.js modules/providers/datacat/datacat-browse.css tests/datacat-compact-save-ux-static.test.mjs
-git commit -m "fix(datacat): move Yours save into detail metadata"
+git add app/library-mobile.js modules/providers/browse-shared.css modules/providers/datacat/datacat-browse.js modules/providers/datacat/datacat-browse.css modules/providers/datacat/datacat-folder-picker.js tests/datacat-compact-save-ux-static.test.mjs tests/datacat-folder-picker.test.mjs
+git commit -m "fix(datacat): unify folder saves behind the heart"
 ```
-
 ---
 
-### Task 2: DataCat single destination notification
+### Task 2: DataCat single destination notification and explicit Main mutation
 
 **Branch/worktree:** `codex/datacat-account-sync` in `.worktrees/compact-datacat`
 
 **Files:**
 - Modify: `tests/datacat-folder-picker.test.mjs`
+- Modify: `tests/datacat-compact-save-ux-static.test.mjs`
 - Modify: `modules/providers/datacat/datacat-folder-picker.js:97-299`
-- Modify: `modules/providers/datacat/datacat-browse.js:482-510`
+- Modify: `modules/providers/datacat/datacat-browse.js:482-530`
 
 **Interfaces:**
-- Consumes: folder-picker hook `toggleMain(characterId, options)`.
-- Produces: `formatDatacatFolderSuccess(folderName): string`,
-  `formatDatacatFolderRemoval(folderName): string`, and
-  `toggleDatacatYours(characterId, hit, { notify, destinationName })`.
+- Consumes: aggregate hook `setAnyFolderSaved(characterId, saved)` from Task 1 and provider API `setDatacatYoursSaved(characterId, saved)`.
+- Produces: `formatDatacatFolderSuccess(folderName): string`, `formatDatacatFolderRemoval(folderName): string`, `setDatacatMainMembership(characterId, saved): Promise<{ok: boolean, collected?: boolean, error?: string}>`, and folder-picker hook `setMainSaved(characterId, saved)`.
 
-- [ ] **Step 1: Add failing notification-copy tests**
+- [ ] **Step 1: Add failing notification and obsolete-copy tests**
 
 Extend the import in `tests/datacat-folder-picker.test.mjs`:
 
@@ -393,6 +497,7 @@ import {
     applyDatacatFolderOrder,
     normalizeDatacatYoursFolderSelection,
     buildDatacatYoursFolderFetchOptions,
+    hasDatacatFolderMembership,
     formatDatacatFolderSuccess,
     formatDatacatFolderRemoval,
 } from '../modules/providers/datacat/datacat-folder-picker.js';
@@ -402,23 +507,42 @@ Append:
 
 ```js
 describe('DataCat folder notifications', () => {
-    it('uses the site-style destination message', () => {
+    it('uses exact destination-aware copy', () => {
         assert.equal(formatDatacatFolderSuccess('WIFE!!!'), 'Saved to "WIFE!!!"');
         assert.equal(formatDatacatFolderSuccess(''), 'Saved to "Main"');
         assert.equal(formatDatacatFolderRemoval('WIFE!!!'), 'Removed from "WIFE!!!"');
+        assert.equal(formatDatacatFolderRemoval(''), 'Removed from "Main"');
     });
 });
 ```
 
-- [ ] **Step 2: Run the test and confirm it fails**
+Add `folderPicker` to `tests/datacat-compact-save-ux-static.test.mjs`:
 
-Run:
+```js
+const folderPicker = await readFile(
+    new URL('../modules/providers/datacat/datacat-folder-picker.js', import.meta.url),
+    'utf8',
+);
 
-```powershell
-node --test tests/datacat-folder-picker.test.mjs
+test('DataCat folder mutations own one destination notification', () => {
+    assert.match(folderPicker, /formatDatacatFolderSuccess\(title\)/);
+    assert.match(folderPicker, /formatDatacatFolderRemoval\(title\)/);
+    assert.match(folderPicker, /setMainSaved\(characterId, next\)/);
+    assert.doesNotMatch(folderPicker, /Created \$\{title\}\./);
+    assert.doesNotMatch(folderPicker, /Added \$\{characterName\}/);
+    assert.doesNotMatch(folderPicker, /Moved ['"`] \+ characterName/);
+    assert.doesNotMatch(folderPicker, /toggleMain/);
+});
 ```
 
-Expected: FAIL because the two formatter exports do not exist.
+- [ ] **Step 2: Run the focused tests and confirm they fail**
+
+```powershell
+node --test tests/datacat-folder-picker.test.mjs tests/datacat-compact-save-ux-static.test.mjs
+```
+
+Expected: FAIL because the formatters and explicit `setMainSaved` hook do not
+exist and the picker still contains overlapping success copy.
 
 - [ ] **Step 3: Add exact destination-message helpers**
 
@@ -438,41 +562,131 @@ export function formatDatacatFolderRemoval(folderName) {
 }
 ```
 
-- [ ] **Step 4: Make nested Main collection silent**
+- [ ] **Step 4: Replace toggle-only Main mutation with an explicit result contract**
 
-Change the default hook contract and `ensureCollected`:
+In `modules/providers/datacat/datacat-browse.js`, replace
+`toggleDatacatYours` with:
+
+```js
+async function setDatacatMainMembership(characterId, saved, hit = null) {
+    const id = String(characterId || '').trim();
+    if (!id) return { ok: false, error: 'Missing DataCat character id' };
+    if (!isDatacatYoursSyncEnabled()) {
+        return { ok: false, error: 'Sign in to DataCat in Settings to use folders' };
+    }
+    if (!canShowDatacatYoursControl(id, hit)) {
+        return { ok: false, error: 'Extract this character first; DataCat folders hold extracted account characters.' };
+    }
+    if (datacatYoursPendingIds.has(id)) {
+        return { ok: false, error: 'DataCat folder update already in progress' };
+    }
+
+    const wasSaved = getDatacatYoursState(id, hit);
+    datacatYoursPendingIds.add(id);
+    setDatacatYoursState(id, saved === true);
+    try {
+        const result = await setDatacatYoursSaved(id, saved === true);
+        if (!result?.ok) throw new Error(result?.error || result?.reason || 'DataCat save failed');
+        const collected = result.collected === true;
+        setDatacatYoursState(id, collected);
+        refreshDatacatOnlyYoursFilterIfActive();
+        return { ok: true, collected };
+    } catch (err) {
+        setDatacatYoursState(id, wasSaved);
+        return { ok: false, error: err.message };
+    } finally {
+        datacatYoursPendingIds.delete(id);
+    }
+}
+```
+
+Update picker initialization:
+
+```js
+initDatacatFolderPicker({
+    getMainSaved: (id) => getDatacatYoursState(id, findDatacatHitOrSelected(id)),
+    setMainSaved: (id, saved) => setDatacatMainMembership(id, saved, findDatacatHitOrSelected(id)),
+    setAnyFolderSaved: (id, saved) => setDatacatFolderActionState(id, saved),
+});
+```
+
+No provider mutation helper emits a success or error toast; the picker is the
+single notification owner.
+
+- [ ] **Step 5: Make the folder picker use explicit Main state**
+
+Replace the default hooks with:
 
 ```js
 let _hooks = {
     getMainSaved: () => false,
-    toggleMain: async (_characterId, _options = {}) => {},
+    setMainSaved: async (_characterId, saved) => ({ ok: true, collected: saved === true }),
+    setAnyFolderSaved: () => {},
 };
+```
 
+Replace `ensureCollected` with:
+
+```js
 async function ensureCollected(el, characterId) {
     if (_hooks.getMainSaved(characterId)) {
         el.dataset.collected = 'true';
         return true;
     }
-    await _hooks.toggleMain(characterId, { notify: false });
-    const mainSaved = _hooks.getMainSaved(characterId);
-    el.dataset.collected = mainSaved ? 'true' : 'false';
-    if (!mainSaved) {
-        showToast('DataCat folder sync failed: could not save to Yours first', 'error');
-        return false;
-    }
+
+    const result = await _hooks.setMainSaved(characterId, true);
+    if (!result?.ok) throw new Error(result?.error || 'Could not save to Main');
+    const collected = result.collected === true || _hooks.getMainSaved(characterId);
+    el.dataset.collected = collected ? 'true' : 'false';
+    if (!collected) throw new Error('DataCat did not save the character to Main');
     return true;
 }
 ```
 
-- [ ] **Step 5: Replace overlapping folder success toasts**
-
-Use exactly one success toast for each completed user action:
+In the Main-row branch of `wireRows`, keep the existing custom-folder removal
+loop, then use these two terminal paths:
 
 ```js
-// Moving from custom folders to Main
-showToast(formatDatacatFolderSuccess('Main'), 'success');
+if (customRows.length > 0) {
+    for (const customRow of customRows) {
+        const res = await setDatacatFolderMembership(customRow.dataset.folderId, characterId, false);
+        if (!res?.ok) throw new Error(res?.error || 'DataCat folder update failed');
+        customRow.classList.remove('checked');
+    }
+    el.dataset.collected = 'true';
+    syncMainRowFromFolders(el, characterId);
+    showToast(formatDatacatFolderSuccess('Main'), 'success');
+} else {
+    const result = await _hooks.setMainSaved(characterId, next);
+    if (!result?.ok) throw new Error(result?.error || 'DataCat Main update failed');
+    el.dataset.collected = result.collected === true ? 'true' : 'false';
+    syncMainRowFromFolders(el, characterId);
+    showToast(
+        result.collected === true
+            ? formatDatacatFolderSuccess('Main')
+            : formatDatacatFolderRemoval('Main'),
+        'success',
+    );
+}
+```
 
-// Adding/removing a custom folder membership
+The surrounding `catch` remains the only error notification:
+
+```js
+} catch (err) {
+    row.classList.toggle('checked', wasChecked);
+    syncMainRowFromFolders(el, characterId);
+    showToast(`DataCat folder sync failed: ${err.message}`, 'error');
+} finally {
+    row.classList.remove('busy');
+}
+```
+
+- [ ] **Step 6: Replace custom-folder and create-flow success messages**
+
+After a custom-folder membership succeeds, use:
+
+```js
 const title = row.querySelector('.datacat-folder-row-title')?.textContent || 'folder';
 showToast(
     next ? formatDatacatFolderSuccess(title) : formatDatacatFolderRemoval(title),
@@ -497,69 +711,10 @@ showToast(formatDatacatFolderSuccess(title), 'success');
 if (_openEl === el) await loadAndRender(el, characterId, characterName);
 ```
 
-Remove the old `Created ${title}.`, `Added ${characterName} to ${title}.`,
-`Moved ${characterName} to Main.`, and
-`${next ? 'Added' : 'Removed'} ...` success messages.
-
-- [ ] **Step 6: Give direct heart saves the same one-toast contract**
-
-Import `formatDatacatFolderSuccess` and `formatDatacatFolderRemoval` into
-`datacat-browse.js`, then replace `toggleDatacatYours` with:
-
-```js
-async function toggleDatacatYours(
-    characterId,
-    hit = null,
-    { notify = true, destinationName = 'Main' } = {},
-) {
-    const id = String(characterId || '').trim();
-    if (!id) return;
-    if (!isDatacatYoursSyncEnabled()) {
-        showToast('Sign in to DataCat in Settings to sync Yours', 'warning');
-        return;
-    }
-    if (!canShowDatacatYoursControl(id, hit)) {
-        showToast('Extract this character first; DataCat saves extracted account characters to Yours automatically.', 'info');
-        return;
-    }
-    if (datacatYoursPendingIds.has(id)) return;
-
-    const wasSaved = getDatacatYoursState(id, hit);
-    const nextSaved = !wasSaved;
-    datacatYoursPendingIds.add(id);
-    setDatacatYoursState(id, nextSaved);
-    try {
-        const result = await setDatacatYoursSaved(id, nextSaved);
-        if (!result?.ok) throw new Error(result?.error || result?.reason || 'DataCat save failed');
-        setDatacatYoursState(id, result.collected === true);
-        refreshDatacatOnlyYoursFilterIfActive();
-        if (notify) {
-            showToast(
-                result.collected
-                    ? formatDatacatFolderSuccess(destinationName)
-                    : formatDatacatFolderRemoval(destinationName),
-                'success',
-            );
-        }
-    } catch (err) {
-        setDatacatYoursState(id, wasSaved);
-        showToast(`DataCat Yours sync failed: ${err.message}`, 'error');
-    } finally {
-        datacatYoursPendingIds.delete(id);
-    }
-}
-```
-
-Pass picker options through the existing hook:
-
-```js
-toggleMain: (id, options = {}) =>
-    toggleDatacatYours(id, findDatacatHitOrSelected(id), options),
-```
+Remove `Created ${title}.`, `Added ${characterName} to ${title}.`,
+`Moved ${characterName} to Main.`, and the old Added/Removed sentence copy.
 
 - [ ] **Step 7: Run focused notification verification**
-
-Run:
 
 ```powershell
 node --test tests/datacat-folder-picker.test.mjs tests/datacat-compact-save-ux-static.test.mjs tests/datacat-account-retry.test.mjs
@@ -568,15 +723,15 @@ node --check modules/providers/datacat/datacat-browse.js
 git diff --check
 ```
 
-Expected: all tests PASS and both syntax checks exit 0.
+Expected: all tests PASS, both syntax checks exit 0, and every completed folder
+mutation produces one destination-specific success toast.
 
 - [ ] **Step 8: Commit the DataCat notification change**
 
 ```powershell
-git add modules/providers/datacat/datacat-folder-picker.js modules/providers/datacat/datacat-browse.js tests/datacat-folder-picker.test.mjs
+git add modules/providers/datacat/datacat-folder-picker.js modules/providers/datacat/datacat-browse.js tests/datacat-folder-picker.test.mjs tests/datacat-compact-save-ux-static.test.mjs
 git commit -m "fix(datacat): coalesce folder save notifications"
 ```
-
 ---
 
 ### Task 3: JannyAI compact account bookmark
@@ -587,6 +742,7 @@ git commit -m "fix(datacat): coalesce folder save notifications"
 - Create: `tests/janny-compact-bookmark-ux-static.test.mjs`
 - Modify: `modules/providers/janny/janny-browse.js:1588-1640`
 - Modify: `modules/providers/janny/janny-browse.js:2752-2774`
+- Modify: `modules/providers/janny/janny-browse.js:3150-3190`
 - Modify: `modules/providers/browse-shared.css`
 - Modify: `app/library-mobile.js:3738-3780`
 
@@ -594,7 +750,8 @@ git commit -m "fix(datacat): coalesce folder save notifications"
 - Consumes: `jannyBookmarkIds`, `JANNY_BOOKMARK_UI_LIMIT`,
   `toggleSelectedJannyBookmark()`, and existing Janny account APIs.
 - Produces: `button#jannyBookmarkBtn.browse-meta-action`, active class
-  `favorited`, state-aware title/ARIA label, and generic mobile discovery.
+  `favorited`, state-aware title/ARIA label, generic mobile discovery, and
+  `My Bookmarks` under `Personal (requires login)` in Features.
 
 - [ ] **Step 1: Write the failing JannyAI UX contract**
 
@@ -643,6 +800,15 @@ test('Janny compact bookmark is available through mobile overflow', () => {
     assert.match(mobile, /querySelectorAll\('\.browse-meta-action'\)/);
     assert.match(mobile, /metaAction\.click\(\)/);
 });
+
+test('Janny account filter follows maintainer Personal and Library grouping', () => {
+    assert.match(
+        browse,
+        /Personal <span[^>]*>\(requires login\)<\/span>:[\s\S]{0,500}id="jannyFilterOnlyBookmarked"[\s\S]{0,180}fa-solid fa-bookmark[\s\S]{0,120}My Bookmarks[\s\S]{0,500}<div class="dropdown-section-title">Library:<\/div>/,
+    );
+    assert.doesNotMatch(browse, /id="jannyFilterOnlyBookmarked"[^>]*>[\s\S]{0,220}Only Bookmarked<\/label>/);
+    assert.doesNotMatch(browse, /<div class="dropdown-section-title">Account:<\/div>/);
+});
 ```
 
 - [ ] **Step 2: Run the focused test and confirm it fails**
@@ -654,7 +820,8 @@ node --test tests/janny-compact-bookmark-ux-static.test.mjs
 ```
 
 Expected: FAIL because Janny Bookmark is still a labelled `.action-btn` in
-`.modal-controls`.
+`.modal-controls` and the account filter is still labelled `Only Bookmarked`
+under `Account`.
 
 - [ ] **Step 3: Add the compact metadata-action CSS and mobile mirror**
 
@@ -804,7 +971,25 @@ if (btn) btn.classList.remove('loading');
 updateJannyBookmarkButton();
 ```
 
-- [ ] **Step 6: Run focused Janny verification**
+- [ ] **Step 6: Rename and regroup the JannyAI Features filter**
+
+In `#jannyFiltersDropdown`, keep the Content section first, then replace the
+old Library/Account tail with:
+
+```html
+<hr style="margin: 8px 0; border-color: var(--glass-border);">
+<div class="dropdown-section-title">Personal <span style="font-size: 0.8em; opacity: 0.6;">(requires login)</span>:</div>
+<label class="filter-checkbox"><input type="checkbox" id="jannyFilterOnlyBookmarked"> <i class="fa-solid fa-bookmark"></i> My Bookmarks</label>
+<hr style="margin: 8px 0; border-color: var(--glass-border);">
+<div class="dropdown-section-title">Library:</div>
+<label class="filter-checkbox"><input type="checkbox" id="jannyFilterHideOwned"> <i class="fa-solid fa-check"></i> Hide Owned Characters</label>
+<label class="filter-checkbox"><input type="checkbox" id="jannyFilterHidePossible"> <i class="fa-solid fa-check" style="color: #f0a500;"></i> Hide Possible Matches</label>
+```
+
+Delete the old `Account:` heading and `Only Bookmarked` copy. Keep the checkbox
+ID and all `jannyFilterOnlyBookmarked` loading/account-gating logic unchanged.
+
+- [ ] **Step 7: Run focused Janny verification**
 
 Run:
 
@@ -818,7 +1003,7 @@ git diff --check
 Expected: all tests PASS, syntax checks exit 0, and the collection-control tests
 remain unchanged.
 
-- [ ] **Step 7: Commit the JannyAI presentation change**
+- [ ] **Step 8: Commit the JannyAI presentation and Features change**
 
 ```powershell
 git add app/library-mobile.js modules/providers/browse-shared.css modules/providers/janny/janny-browse.js tests/janny-compact-bookmark-ux-static.test.mjs
@@ -846,7 +1031,8 @@ git commit -m "fix(janny): compact the account bookmark action"
 - Consumes: bookmark factory configuration, `toggle(hitOrId)`,
   `syncModalState(hit)`, and each provider's existing modal event wiring.
 - Produces: `renderMetaAction(): string`, compact Local Backup markup with
-  `.browse-meta-action.cl-bookmark-btn`, and unchanged grid `renderCardBtn()`.
+  `.browse-meta-action.cl-bookmark-btn`, unchanged grid `renderCardBtn()`, and
+  `Local Backups` inside each supported provider's `Library` group.
 
 - [ ] **Step 1: Replace the Local Backup contract test with exact provider scope**
 
@@ -899,6 +1085,26 @@ test('Local Backup detail action is compact on exactly the original five provide
     assert.match(mobileSource, /querySelectorAll\('\.browse-meta-action'\)/);
 });
 
+test('Local Backup filters live under Library with no Bookmarks section', () => {
+    const supported = [
+        [chartavernBrowseSource, 'ctBookmarks'],
+        [datacatBrowseSource, 'datacatBookmarks'],
+        [jannyBrowseSource, 'jannyBookmarks'],
+        [pygmalionBrowseSource, 'pygBookmarks'],
+        [wyvernBrowseSource, 'wyvernBookmarks'],
+    ];
+
+    for (const [source, factoryName] of supported) {
+        assert.match(
+            source,
+            new RegExp(`<div class="dropdown-section-title">Library:<\\/div>[\\s\\S]{0,900}\\$\\{${factoryName}\\.renderFilterCheckbox\\(\\)\\}`),
+        );
+        assert.doesNotMatch(source, /<div class="dropdown-section-title">Bookmarks:<\/div>/);
+    }
+
+    assert.match(bookmarkModuleSource, /filterLabel\s*=\s*'Local Backups'/);
+});
+
 test('Local Backup grid treatment and persistence stay unchanged', () => {
     assert.match(bookmarkModuleSource, /\bfunction\s+renderCardBtn\b/);
     assert.match(bookmarkModuleSource, /browse-card-stat \$\{BOOKMARK_CLASS\}/);
@@ -916,8 +1122,9 @@ Run:
 node --test tests/extended-bookmarks-contract.test.mjs
 ```
 
-Expected: FAIL because the factory still exposes `renderModalBtn()` and all five
-providers place it in `.modal-controls`.
+Expected: FAIL because the factory still exposes `renderModalBtn()`, all five
+providers place it in `.modal-controls`, and their filters remain under a
+standalone `Bookmarks` section.
 
 - [ ] **Step 3: Replace the shared modal renderer with a metadata renderer**
 
@@ -1002,7 +1209,61 @@ Use this placement in Wyvern:
 Remove `${...Bookmarks.renderModalBtn()}` from each provider's
 `.modal-controls`. Do not add Local Backup to any other provider.
 
-- [ ] **Step 5: Replace modal Local Backup CSS with shared compact-action CSS**
+- [ ] **Step 5: Move each Local Backup filter into Library**
+
+In CharacterTavern, make the Library block end with:
+
+```html
+<div class="dropdown-section-title">Library:</div>
+<label class="filter-checkbox"><input type="checkbox" id="ctFilterHideOwned"> <i class="fa-solid fa-check"></i> Hide Owned Characters</label>
+<label class="filter-checkbox"><input type="checkbox" id="ctFilterHidePossible"> <i class="fa-solid fa-check" style="color: #f0a500;"></i> Hide Possible Matches</label>
+${ctBookmarks.renderFilterCheckbox()}
+```
+
+In DataCat, make the Library block contain:
+
+```html
+<div class="dropdown-section-title">Library:</div>
+<label class="filter-checkbox"><input type="checkbox" id="datacatFilterHideOwned"> <i class="fa-solid fa-check"></i> Hide Owned Characters</label>
+<label class="filter-checkbox"><input type="checkbox" id="datacatFilterHidePossible"> <i class="fa-solid fa-check" style="color: #f0a500;"></i> Hide Possible Matches</label>
+${datacatBookmarks.renderFilterCheckbox()}
+```
+
+Keep DataCat's Source section after this block.
+
+In JannyAI, make the Library block end with:
+
+```html
+<div class="dropdown-section-title">Library:</div>
+<label class="filter-checkbox"><input type="checkbox" id="jannyFilterHideOwned"> <i class="fa-solid fa-check"></i> Hide Owned Characters</label>
+<label class="filter-checkbox"><input type="checkbox" id="jannyFilterHidePossible"> <i class="fa-solid fa-check" style="color: #f0a500;"></i> Hide Possible Matches</label>
+${jannyBookmarks.renderFilterCheckbox()}
+```
+
+In Pygmalion, make the Library block end with:
+
+```html
+<div class="dropdown-section-title">Library:</div>
+<label class="filter-checkbox"><input type="checkbox" id="pygFilterHideOwned"> <i class="fa-solid fa-check"></i> Hide Owned Characters</label>
+<label class="filter-checkbox"><input type="checkbox" id="pygFilterHidePossible"> <i class="fa-solid fa-check" style="color: #f0a500;"></i> Hide Possible Matches</label>
+${pygBookmarks.renderFilterCheckbox()}
+```
+
+In Wyvern, make the Library block end with:
+
+```html
+<div class="dropdown-section-title">Library:</div>
+<label class="filter-checkbox"><input type="checkbox" id="wyvernFilterHideOwned"> <i class="fa-solid fa-check"></i> Hide Owned Characters</label>
+<label class="filter-checkbox"><input type="checkbox" id="wyvernFilterHidePossible"> <i class="fa-solid fa-check" style="color: #f0a500;"></i> Hide Possible Matches</label>
+${wyvernBookmarks.renderFilterCheckbox()}
+```
+
+For all five providers, delete the separator and
+`<div class="dropdown-section-title">Bookmarks:</div>` that formerly wrapped
+the filter. Keep `filterLabel = 'Local Backups'` in
+`modules/providers/bookmark-module.js`.
+
+- [ ] **Step 6: Replace modal Local Backup CSS with shared compact-action CSS**
 
 Delete the `.action-btn.cl-bookmark-btn` rules. Add this shared compact-action
 contract:
@@ -1062,7 +1323,7 @@ Then add:
 
 Keep every `.browse-card-footer .cl-bookmark-btn` rule unchanged.
 
-- [ ] **Step 6: Add the generic mobile mirror**
+- [ ] **Step 7: Add the generic mobile mirror**
 
 Insert this exact code before the existing Chub/BotBooru favorite fallback in
 `app/library-mobile.js`:
@@ -1100,7 +1361,7 @@ Keep Chub/BotBooru behavior unchanged with:
 const favBtn = modal?.querySelector('.browse-fav-toggle:not(.browse-meta-action)');
 ```
 
-- [ ] **Step 7: Run focused Local Backup verification**
+- [ ] **Step 8: Run focused Local Backup verification**
 
 Run:
 
@@ -1119,7 +1380,7 @@ git diff --check
 Expected: the contract test PASSes, all syntax checks exit 0, and no whitespace
 errors are reported.
 
-- [ ] **Step 8: Commit the Local Backup presentation change**
+- [ ] **Step 9: Commit the Local Backup presentation and Features change**
 
 ```powershell
 git add app/library-mobile.js modules/providers/bookmark-module.js modules/providers/browse-shared.css modules/providers/chartavern/chartavern-browse.js modules/providers/datacat/datacat-browse.js modules/providers/janny/janny-browse.js modules/providers/pygmalion/pygmalion-browse.js modules/providers/wyvern/wyvern-browse.js tests/extended-bookmarks-contract.test.mjs
@@ -1146,7 +1407,7 @@ git commit -m "fix(bookmarks): compact local backup detail actions"
 Run:
 
 ```powershell
-$datacatUiCommit = git log codex/datacat-account-sync --format=%H --grep='^fix(datacat): move Yours save into detail metadata$' -n 1
+$datacatUiCommit = git log codex/datacat-account-sync --format=%H --grep='^fix(datacat): unify folder saves behind the heart$' -n 1
 $datacatToastCommit = git log codex/datacat-account-sync --format=%H --grep='^fix(datacat): coalesce folder save notifications$' -n 1
 $datacatUiCommit
 $datacatToastCommit
@@ -1185,7 +1446,7 @@ removed.
 
 ```powershell
 git add app/library-mobile.js modules/providers/browse-shared.css modules/providers/datacat/datacat-browse.js modules/providers/datacat/datacat-browse.css modules/providers/datacat/datacat-folder-picker.js tests/datacat-compact-save-ux-static.test.mjs tests/datacat-folder-picker.test.mjs
-git commit -m "[datacat-account-sync] Compact DataCat save UX"
+git commit -m "[datacat-account-sync] Unify DataCat folder-heart UX"
 ```
 
 ---
@@ -1219,14 +1480,16 @@ resolved files.
 After the cherry-pick:
 
 - DataCat metadata still contains exactly one
-  `button#datacatYoursBtn.browse-meta-action` with a heart icon.
+  `button#datacatFolderBtn.browse-meta-action` with tooltip `Save to folder`.
+- DataCat contains no `#datacatYoursBtn` and no second Folder action.
+- DataCat Features contains `My Folders` under `Personal (requires login)`.
 - Janny metadata contains exactly one
   `button#jannyBookmarkBtn.browse-meta-action` with a bookmark icon.
+- Janny Features contains `My Bookmarks` under `Personal (requires login)`.
 - Janny's Add to Collection control remains in `.modal-controls`.
 - The existing `${jannyBookmarks.renderModalBtn()}` Local Backup control
   remains in `.modal-controls` until the extended-bookmarks integration
   migrates the factory and all five consumers.
-- No second DataCat Yours or Janny account bookmark is introduced.
 
 - [ ] **Step 3: Run the JannyAI AIO suite**
 
@@ -1272,19 +1535,31 @@ Expected: one non-empty commit ID. Resolve expected DataCat/Janny template
 conflicts by retaining both provider-native compact actions and exactly one
 `${...Bookmarks.renderMetaAction()}` in each metadata line.
 
-- [ ] **Step 2: Enforce the final combined DataCat and Janny markup**
+- [ ] **Step 2: Enforce the final combined DataCat and Janny markup and filters**
 
-DataCat must contain:
+DataCat metadata must contain:
 
 ```html
 <p class="browse-char-meta">
     by <a id="datacatCharCreator" href="#" class="creator-link browse-meta-identity" title="Click to browse this creator's characters">Creator</a> •
-    <button type="button" id="datacatYoursBtn" class="browse-meta-action" title="Save to DataCat Yours" aria-label="Save to DataCat Yours" style="display: none;"><i class="fa-regular fa-heart"></i></button> •
+    <button type="button" id="datacatFolderBtn" class="browse-meta-action" title="Save to folder" aria-label="Save to folder" style="display: none;"><i class="fa-regular fa-heart"></i></button> •
     ${datacatBookmarks.renderMetaAction()}
 </p>
 ```
 
-JannyAI must contain:
+Its Features groups must contain:
+
+```html
+<div class="dropdown-section-title">Personal <span style="font-size: 0.8em; opacity: 0.6;">(requires login)</span>:</div>
+<label class="filter-checkbox"><input type="checkbox" id="datacatFilterOnlyYours"> <i class="fa-solid fa-heart" style="color: #e74c3c;"></i> My Folders</label>
+<hr style="margin: 8px 0; border-color: var(--glass-border);">
+<div class="dropdown-section-title">Library:</div>
+<label class="filter-checkbox"><input type="checkbox" id="datacatFilterHideOwned"> <i class="fa-solid fa-check"></i> Hide Owned Characters</label>
+<label class="filter-checkbox"><input type="checkbox" id="datacatFilterHidePossible"> <i class="fa-solid fa-check" style="color: #f0a500;"></i> Hide Possible Matches</label>
+${datacatBookmarks.renderFilterCheckbox()}
+```
+
+JannyAI metadata must contain:
 
 ```html
 <p class="browse-char-meta">
@@ -1294,8 +1569,21 @@ JannyAI must contain:
 </p>
 ```
 
+Its Personal and Library groups must contain:
+
+```html
+<div class="dropdown-section-title">Personal <span style="font-size: 0.8em; opacity: 0.6;">(requires login)</span>:</div>
+<label class="filter-checkbox"><input type="checkbox" id="jannyFilterOnlyBookmarked"> <i class="fa-solid fa-bookmark"></i> My Bookmarks</label>
+<hr style="margin: 8px 0; border-color: var(--glass-border);">
+<div class="dropdown-section-title">Library:</div>
+<label class="filter-checkbox"><input type="checkbox" id="jannyFilterHideOwned"> <i class="fa-solid fa-check"></i> Hide Owned Characters</label>
+<label class="filter-checkbox"><input type="checkbox" id="jannyFilterHidePossible"> <i class="fa-solid fa-check" style="color: #f0a500;"></i> Hide Possible Matches</label>
+${jannyBookmarks.renderFilterCheckbox()}
+```
+
 Neither provider may contain a second Local Backup button in
-`.modal-controls`.
+`.modal-controls`, and neither Features menu may contain a `Bookmarks:`
+section.
 
 - [ ] **Step 3: Run the complete automated suite**
 
@@ -1355,12 +1643,19 @@ At the normal desktop viewport:
 2. Confirm no DataCat Yours star overlays any grid card.
 3. Confirm the Local Backup floppy-disk icon remains in card footers.
 4. Open an eligible character.
-5. Confirm the metadata line contains a heart and Local Backup icon.
-6. Confirm Folder, Open, Import, and Close remain in the action area.
-7. Toggle the heart and verify regular/solid state and one
+5. Confirm the metadata line contains one heart with tooltip `Save to folder`
+   and one separate Local Backup icon.
+6. Confirm there is no second Save or Folder action; Open, Import, and Close
+   remain in the action area.
+7. Click the heart and confirm it opens the existing folder picker.
+8. Save to Main and verify a solid heart and exactly one
    `Saved to "Main"` notification.
-8. Save to a custom folder and verify exactly one
-   `Saved to "<folder name>"` notification.
+9. Save to a custom folder, remove Main if the picker permits it, and confirm
+   the heart remains solid with exactly one `Saved to "<folder name>"` toast.
+10. Remove the character from every destination and confirm the heart becomes
+    regular.
+11. Open Features and confirm `My Folders` is under
+    `Personal (requires login)` and the folder sub-selector still works.
 
 - [ ] **Step 3: Verify JannyAI desktop behavior**
 
@@ -1370,6 +1665,8 @@ At the normal desktop viewport:
 4. Confirm Add to Collection, Open, Import, and Close remain separate.
 5. Toggle the account bookmark and verify regular/solid icon, tooltip, and
    existing bookmark-limit behavior.
+6. Open Features and confirm `My Bookmarks` is under
+   `Personal (requires login)`.
 
 - [ ] **Step 4: Verify Local Backup provider scope**
 
@@ -1381,8 +1678,9 @@ Open one character detail in each provider:
 - Pygmalion
 - Wyvern
 
-Expected: each has one compact Local Backup icon in metadata and no labelled
-Local Backup action button.
+Expected: each has one compact Local Backup icon in metadata, no labelled
+Local Backup action button, and `Local Backups` inside the existing `Library`
+group with no standalone `Bookmarks` section.
 
 Check ChubAI, BotBooru, and MasqueradeAI.
 
@@ -1400,8 +1698,10 @@ as 390×844:
 4. Open the existing kebab/overflow menu.
 5. Confirm each compact metadata action appears once with its current icon and
    tooltip-derived label.
-6. Activate each item and verify it delegates to the hidden metadata control.
-7. Confirm ChubAI/BotBooru Favorite still appears once through the legacy
+6. Activate the DataCat `Save to folder` item and confirm the folder-picker
+   bottom sheet opens.
+7. Activate the other items and verify they delegate to their metadata controls.
+8. Confirm ChubAI/BotBooru Favorite still appears once through the legacy
    `.browse-fav-toggle` fallback.
 
 - [ ] **Step 6: Run final automated verification**
