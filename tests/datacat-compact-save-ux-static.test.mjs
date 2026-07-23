@@ -58,3 +58,9 @@ test('compact metadata actions have shared desktop and mobile treatment', () => 
     assert.match(mobile, /metaAction\.title \|\| metaAction\.getAttribute\('aria-label'\)/);
     assert.match(mobile, /metaAction\.click\(\)/);
 });
+test('mobile overflow omits hidden metadata actions', () => {
+    assert.match(
+        mobile,
+        /metaAction\.hidden \|\| metaAction\.style\.display === 'none' \|\| getComputedStyle\(metaAction\)\.display === 'none'/,
+    );
+});

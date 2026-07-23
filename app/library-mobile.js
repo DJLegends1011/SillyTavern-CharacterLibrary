@@ -3744,6 +3744,7 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
 
             const modal = controls.closest('.browse-char-modal');
             modal?.querySelectorAll('.browse-meta-action').forEach(metaAction => {
+                if (metaAction.hidden || metaAction.style.display === 'none' || getComputedStyle(metaAction).display === 'none') return;
                 const item = document.createElement('button');
                 item.type = 'button';
                 item.className = 'mobile-more-actions-item';
