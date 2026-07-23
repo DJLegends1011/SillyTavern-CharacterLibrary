@@ -1695,8 +1695,6 @@ class ChartavernBrowseView extends BrowseView {
                     <div class="dropdown-section-title">Library:</div>
                     <label class="filter-checkbox"><input type="checkbox" id="ctFilterHideOwned"> <i class="fa-solid fa-check"></i> Hide Owned Characters</label>
                     <label class="filter-checkbox"><input type="checkbox" id="ctFilterHidePossible"> <i class="fa-solid fa-check" style="color: #f0a500;"></i> Hide Possible Matches</label>
-                    <hr style="margin: 8px 0; border-color: var(--glass-border);">
-                    <div class="dropdown-section-title">Bookmarks:</div>
                     ${ctBookmarks.renderFilterCheckbox()}
                 </div>
             </div>
@@ -1843,12 +1841,12 @@ class ChartavernBrowseView extends BrowseView {
                     <div>
                         <h2 id="ctCharName">Character Name</h2>
                         <p class="browse-char-meta">
-                            by <a id="ctCharCreator" class="browse-meta-identity" href="#" title="Click to see all characters by this author">Creator</a>
+                            by <a id="ctCharCreator" class="browse-meta-identity" href="#" title="Click to see all characters by this author">Creator</a> •
+                            ${ctBookmarks.renderMetaAction()}
                         </p>
                     </div>
                 </div>
                 <div class="modal-controls">
-                    ${ctBookmarks.renderModalBtn()}
                     <a id="ctOpenInBrowserBtn" href="#" target="_blank" class="action-btn secondary" title="Open on CharacterTavern">
                         <i class="fa-solid fa-external-link"></i> Open
                     </a>

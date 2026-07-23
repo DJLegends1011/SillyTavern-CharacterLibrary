@@ -2468,33 +2468,49 @@ html.cl-mobile .browse-char-body { padding: 8px; gap: var(--space-sm); }
     font-weight: 900;
 }
 
-/* Modal variant — sibling action-btns have text labels so they grow taller
-   than an icon-only button; match their box dimensions explicitly. */
-.action-btn.cl-bookmark-btn {
+/* Compact actions displayed beside creator/provider metadata in detail modals. */
+.browse-meta-action {
+    appearance: none;
+    border: 0;
+    cursor: pointer;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    align-self: stretch;
-    padding-left: 12px;
-    padding-right: 12px;
-    min-width: 44px;
-    line-height: 1;
+    min-width: 24px;
+    min-height: 24px;
+    padding: 3px 5px;
+    border-radius: var(--radius-sm);
+    color: inherit;
+    font: inherit;
+    line-height: inherit;
+    background: transparent;
+    vertical-align: middle;
+    transition: background 0.2s ease, opacity 0.2s ease;
 }
 
-.action-btn.cl-bookmark-btn i {
+.browse-meta-action:hover {
+    background: rgba(255, 100, 100, 0.15);
+}
+
+.browse-meta-action i {
     color: #ff6b6b;
     transition: transform 0.2s ease;
 }
 
-.action-btn.cl-bookmark-btn:hover i {
+.browse-meta-action:hover i {
     transform: scale(1.15);
 }
 
-.action-btn.cl-bookmark-btn.favorited i {
-    font-weight: 900;
+.browse-meta-action.favorited {
+    background: rgba(255, 100, 100, 0.1);
 }
 
-.action-btn.cl-bookmark-btn.favorited {
-    background: rgba(255, 107, 107, 0.12);
-    border-color: rgba(255, 107, 107, 0.35);
+.browse-meta-action:disabled,
+.browse-meta-action.loading {
+    pointer-events: none;
+    opacity: 0.6;
+}
+
+.browse-meta-action.cl-bookmark-btn i {
+    color: #ff6b6b;
 }

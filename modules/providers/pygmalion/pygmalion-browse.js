@@ -2607,8 +2607,6 @@ class PygmalionBrowseView extends BrowseView {
                     <div class="dropdown-section-title">Library:</div>
                     <label class="filter-checkbox"><input type="checkbox" id="pygFilterHideOwned"> <i class="fa-solid fa-check"></i> Hide Owned Characters</label>
                     <label class="filter-checkbox"><input type="checkbox" id="pygFilterHidePossible"> <i class="fa-solid fa-check" style="color: #f0a500;"></i> Hide Possible Matches</label>
-                    <hr style="margin: 8px 0; border-color: var(--glass-border);">
-                    <div class="dropdown-section-title">Bookmarks:</div>
                     ${pygBookmarks.renderFilterCheckbox()}
                 </div>
             </div>
@@ -2776,12 +2774,12 @@ class PygmalionBrowseView extends BrowseView {
                         <h2 id="pygCharName">Character Name</h2>
                         <p class="browse-char-meta">
                             by <a id="pygCharCreator" class="browse-meta-identity" href="#" title="Click to see all characters by this author">Creator</a>
-                            <a id="pygCreatorExternal" href="#" target="_blank" class="creator-external-link" title="Open author's Pygmalion profile"><i class="fa-solid fa-external-link"></i></a>
+                            <a id="pygCreatorExternal" href="#" target="_blank" class="creator-external-link" title="Open author's Pygmalion profile"><i class="fa-solid fa-external-link"></i></a> •
+                            ${pygBookmarks.renderMetaAction()}
                         </p>
                     </div>
                 </div>
                 <div class="modal-controls">
-                    ${pygBookmarks.renderModalBtn()}
                     <a id="pygOpenInBrowserBtn" href="#" target="_blank" class="action-btn secondary" title="Open on Pygmalion">
                         <i class="fa-solid fa-external-link"></i> Open
                     </a>

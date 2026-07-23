@@ -61,8 +61,6 @@ function camelToKebab(s) {
  *     FontAwesome icon name for inactive local backup controls.
  * @param {string} [config.activeIconClass=config.iconClass]
  *     FontAwesome icon name for active local backup controls.
- * @param {string} [config.modalLabel='Local Backup']
- *     Button text for the modal local backup action.
  * @param {string} [config.filterLabel='Local Backups']
  *     Checkbox label for the local backup filter.
  * @param {string} [config.actionTitle='Save local backup bookmark']
@@ -96,7 +94,6 @@ export function createBookmarkModule(config) {
         onFilterToggle,
         iconClass = 'fa-floppy-disk',
         activeIconClass = iconClass,
-        modalLabel = 'Local Backup',
         filterLabel = 'Local Backups',
         actionTitle = 'Save local backup bookmark',
         removeTitle = 'Remove local backup bookmark',
@@ -176,7 +173,9 @@ export function createBookmarkModule(config) {
         const selector = `.${legacyClass}[data-${dataAttrKebab}="${CSS.escape(safeId)}"]`;
         document.querySelectorAll(selector).forEach(btn => {
             btn.classList.toggle('favorited', favorited);
-            btn.title = favorited ? removeTitle : actionTitle;
+            const title = favorited ? removeTitle : actionTitle;
+            btn.title = title;
+            btn.setAttribute('aria-label', title);
             setIconState(btn.querySelector('i'), favorited);
         });
 
@@ -185,7 +184,9 @@ export function createBookmarkModule(config) {
             const modalBtn = document.getElementById(modalBtnId);
             if (modalBtn) {
                 modalBtn.classList.toggle('favorited', favorited);
-                modalBtn.title = favorited ? removeTitle : actionTitle;
+                const title = favorited ? removeTitle : actionTitle;
+                modalBtn.title = title;
+                modalBtn.setAttribute('aria-label', title);
                 setIconState(modalBtn.querySelector('i'), favorited);
             }
         }
@@ -196,7 +197,9 @@ export function createBookmarkModule(config) {
         if (!modalBtn) return;
         const fav = isBookmarked(getId(hit));
         modalBtn.classList.toggle('favorited', fav);
-        modalBtn.title = fav ? removeTitle : actionTitle;
+        const title = fav ? removeTitle : actionTitle;
+        modalBtn.title = title;
+        modalBtn.setAttribute('aria-label', title);
         setIconState(modalBtn.querySelector('i'), fav);
     }
 
@@ -269,8 +272,16 @@ export function createBookmarkModule(config) {
         return `<span class="browse-card-stat ${BOOKMARK_CLASS} ${legacyClass}${fav ? ' favorited' : ''}" data-${dataAttrKebab}="${escapeHtml(String(id))}" title="${escapeHtml(fav ? removeTitle : actionTitle)}">${renderIcon(fav)}</span>`;
     }
 
-    function renderModalBtn() {
-        return `<button id="${modalBtnId}" class="action-btn secondary ${BOOKMARK_CLASS} ${legacyClass}" title="${escapeHtml(actionTitle)}">${renderIcon(false)} ${escapeHtml(modalLabel)}</button>`;
+    function renderMetaAction() {
+        return `
+            <button
+                type="button"
+                id="${modalBtnId}"
+                class="browse-meta-action ${BOOKMARK_CLASS} ${legacyClass}"
+                title="${escapeHtml(actionTitle)}"
+                aria-label="${escapeHtml(actionTitle)}"
+            >${renderIcon(false)}</button>
+        `;
     }
 
     function renderFilterCheckbox() {
@@ -338,7 +349,7 @@ export function createBookmarkModule(config) {
         updateSnapshot,
         renderBookmarksView,
         renderCardBtn,
-        renderModalBtn,
+        renderMetaAction,
         renderFilterCheckbox,
         handleGridClick,
         attachModalBtn,
