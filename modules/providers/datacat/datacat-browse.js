@@ -375,32 +375,32 @@ function updateDatacatModalFolderControl(characterId, hit = null, { refresh = fa
         setDatacatFolderActionState(id, hasDatacatFolderMembership(result));
     }).catch(() => {});
 }
-async function toggleDatacatYours(characterId, hit = null) {
+async function setDatacatMainMembership(characterId, saved, hit = null) {
     const id = String(characterId || '').trim();
-    if (!id) return;
+    if (!id) return { ok: false, error: 'Missing DataCat character id' };
     if (!isDatacatYoursSyncEnabled()) {
-        showToast('Sign in to DataCat in Settings to sync Yours', 'warning');
-        return;
+        return { ok: false, error: 'Sign in to DataCat in Settings to use folders' };
     }
     if (!canShowDatacatYoursControl(id, hit)) {
-        showToast('Extract this character first; DataCat saves extracted account characters to Yours automatically.', 'info');
-        return;
+        return { ok: false, error: 'Extract this character first; DataCat folders hold extracted account characters.' };
     }
-    if (datacatYoursPendingIds.has(id)) return;
+    if (datacatYoursPendingIds.has(id)) {
+        return { ok: false, error: 'DataCat folder update already in progress' };
+    }
 
     const wasSaved = getDatacatYoursState(id, hit);
-    const nextSaved = !wasSaved;
     datacatYoursPendingIds.add(id);
-    setDatacatYoursState(id, nextSaved);
+    setDatacatYoursState(id, saved === true);
     try {
-        const result = await setDatacatYoursSaved(id, nextSaved);
+        const result = await setDatacatYoursSaved(id, saved === true);
         if (!result?.ok) throw new Error(result?.error || result?.reason || 'DataCat save failed');
-        setDatacatYoursState(id, result.collected === true);
+        const collected = result.collected === true;
+        setDatacatYoursState(id, collected);
         refreshDatacatOnlyYoursFilterIfActive();
-        showToast(result.collected ? 'Saved to DataCat Yours' : 'Removed from DataCat Yours', 'success');
+        return { ok: true, collected };
     } catch (err) {
         setDatacatYoursState(id, wasSaved);
-        showToast(`DataCat Yours sync failed: ${err.message}`, 'error');
+        return { ok: false, error: err.message };
     } finally {
         datacatYoursPendingIds.delete(id);
     }
@@ -4145,7 +4145,7 @@ function ensureModalEventsAttached() {
 
     initDatacatFolderPicker({
         getMainSaved: (id) => getDatacatYoursState(id, findDatacatHitOrSelected(id)),
-        toggleMain: (id, options = {}) => toggleDatacatYours(id, findDatacatHitOrSelected(id), options),
+        setMainSaved: (id, saved) => setDatacatMainMembership(id, saved, findDatacatHitOrSelected(id)),
         setAnyFolderSaved: (id, saved) => setDatacatFolderActionState(id, saved),
     });
 

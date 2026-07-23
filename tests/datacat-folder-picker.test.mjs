@@ -8,6 +8,8 @@ import {
     applyDatacatFolderOrder,
     normalizeDatacatYoursFolderSelection,
     buildDatacatYoursFolderFetchOptions,
+    formatDatacatFolderSuccess,
+    formatDatacatFolderRemoval,
 } from '../modules/providers/datacat/datacat-folder-picker.js';
 
 describe('filterPickerFolders', () => {
@@ -125,5 +127,14 @@ describe('DataCat Yours folder sub-filter helpers', () => {
         assert.equal(buildDatacatYoursFolderFetchOptions('all', common), null);
         assert.deepEqual(buildDatacatYoursFolderFetchOptions('main', common), { ...common, mainOnly: true });
         assert.deepEqual(buildDatacatYoursFolderFetchOptions(2359, common), { ...common, folderId: '2359' });
+    });
+});
+
+describe('DataCat folder notifications', () => {
+    it('uses exact destination-aware copy', () => {
+        assert.equal(formatDatacatFolderSuccess('WIFE!!!'), 'Saved to "WIFE!!!"');
+        assert.equal(formatDatacatFolderSuccess(''), 'Saved to "Main"');
+        assert.equal(formatDatacatFolderRemoval('WIFE!!!'), 'Removed from "WIFE!!!"');
+        assert.equal(formatDatacatFolderRemoval(''), 'Removed from "Main"');
     });
 });

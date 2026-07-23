@@ -6,6 +6,10 @@ const browse = await readFile(
     new URL('../modules/providers/datacat/datacat-browse.js', import.meta.url),
     'utf8',
 );
+const folderPicker = await readFile(
+    new URL('../modules/providers/datacat/datacat-folder-picker.js', import.meta.url),
+    'utf8',
+);
 const css = await readFile(
     new URL('../modules/providers/browse-shared.css', import.meta.url),
     'utf8',
@@ -40,6 +44,16 @@ test('DataCat folder state controls regular and solid hearts', () => {
     assert.match(browse, /fa-regular fa-heart/);
     assert.match(browse, /hasDatacatFolderMembership\(result\)/);
     assert.match(browse, /setAnyFolderSaved: \(id, saved\) => setDatacatFolderActionState\(id, saved\)/);
+});
+
+test('DataCat folder mutations own one destination notification', () => {
+    assert.match(folderPicker, /formatDatacatFolderSuccess\(title\)/);
+    assert.match(folderPicker, /formatDatacatFolderRemoval\(title\)/);
+    assert.match(folderPicker, /setMainSaved\(characterId, next\)/);
+    assert.doesNotMatch(folderPicker, /Created \$\{title\}\./);
+    assert.doesNotMatch(folderPicker, /Added \$\{characterName\}/);
+    assert.doesNotMatch(folderPicker, /Moved ['"`] \+ characterName/);
+    assert.doesNotMatch(folderPicker, /toggleMain/);
 });
 
 test('DataCat Features follows maintainer Personal and Library grouping', () => {

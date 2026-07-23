@@ -8,6 +8,18 @@
  * @param {Array} folders raw folders from fetchDatacatFolders()
  * @returns {{id: string, title: string}[]}
  */
+function normalizedFolderName(folderName) {
+    return String(folderName || '').trim() || 'Main';
+}
+
+export function formatDatacatFolderSuccess(folderName) {
+    return `Saved to "${normalizedFolderName(folderName)}"`;
+}
+
+export function formatDatacatFolderRemoval(folderName) {
+    return `Removed from "${normalizedFolderName(folderName)}"`;
+}
+
 export function filterPickerFolders(folders) {
     if (!Array.isArray(folders)) return [];
     return folders
@@ -101,7 +113,7 @@ const { showToast, escapeHtml, getSetting } = CoreAPI;
 
 let _hooks = {
     getMainSaved: () => false,
-    toggleMain: async () => {},
+    setMainSaved: async (_characterId, saved) => ({ ok: true, collected: saved === true }),
     setAnyFolderSaved: () => {},
 };
 let _folderCache = null;   // filtered [{id,title}] or null
@@ -201,13 +213,12 @@ async function ensureCollected(el, characterId) {
         el.dataset.collected = 'true';
         return true;
     }
-    await _hooks.toggleMain(characterId);
-    const mainSaved = _hooks.getMainSaved(characterId);
-    el.dataset.collected = mainSaved ? 'true' : 'false';
-    if (!mainSaved) {
-        showToast('DataCat folder sync failed: could not save to Yours first', 'error');
-        return false;
-    }
+
+    const result = await _hooks.setMainSaved(characterId, true);
+    if (!result?.ok) throw new Error(result?.error || 'Could not save to Main');
+    const collected = result.collected === true || _hooks.getMainSaved(characterId);
+    el.dataset.collected = collected ? 'true' : 'false';
+    if (!collected) throw new Error('DataCat did not save the character to Main');
     return true;
 }
 
@@ -252,12 +263,19 @@ function wireRows(el, characterId, characterName) {
                             customRow.classList.remove('checked');
                         }
                         el.dataset.collected = 'true';
-                        syncMainRowFromFolders(el);
-                        showToast('Moved ' + characterName + ' to Main.', 'success');
+                        syncMainRowFromFolders(el, characterId);
+                        showToast(formatDatacatFolderSuccess('Main'), 'success');
                     } else {
-                        await _hooks.toggleMain(characterId);
-                        el.dataset.collected = _hooks.getMainSaved(characterId) ? 'true' : 'false';
-                        syncMainRowFromFolders(el);
+                        const result = await _hooks.setMainSaved(characterId, next);
+                        if (!result?.ok) throw new Error(result?.error || 'DataCat Main update failed');
+                        el.dataset.collected = result.collected === true ? 'true' : 'false';
+                        syncMainRowFromFolders(el, characterId);
+                        showToast(
+                            result.collected === true
+                                ? formatDatacatFolderSuccess('Main')
+                                : formatDatacatFolderRemoval('Main'),
+                            'success',
+                        );
                     }
                 } else {
                     if (next) {
@@ -274,7 +292,10 @@ function wireRows(el, characterId, characterName) {
                     if (!res?.ok) throw new Error(res?.error || 'DataCat folder update failed');
                     syncMainRowFromFolders(el);
                     const title = row.querySelector('.datacat-folder-row-title')?.textContent || 'folder';
-                    showToast(`${next ? 'Added' : 'Removed'} ${characterName} ${next ? 'to' : 'from'} ${title}.`, 'success');
+                    showToast(
+                        next ? formatDatacatFolderSuccess(title) : formatDatacatFolderRemoval(title),
+                        'success',
+                    );
                 }
             } catch (err) {
                 row.classList.toggle('checked', wasChecked); // revert
@@ -298,13 +319,15 @@ function wireRows(el, characterId, characterName) {
         try {
             const res = await createDatacatFolder({ title });
             if (!res?.ok) throw new Error(res?.error || 'DataCat folder create failed');
-            showToast(`Created ${title}.`, 'success');
             invalidateDatacatFolderCache();
             const newId = res.folder?.id != null ? String(res.folder.id) : null;
-            if (newId && await ensureCollected(el, characterId)) {
-                const addRes = await setDatacatFolderMembership(newId, characterId, true);
-                if (addRes?.ok) showToast(`Added ${characterName} to ${title}.`, 'success');
-            }
+            if (!newId) throw new Error('DataCat did not return the new folder id');
+            if (!await ensureCollected(el, characterId)) return;
+
+            const addRes = await setDatacatFolderMembership(newId, characterId, true);
+            if (!addRes?.ok) throw new Error(addRes?.error || 'DataCat folder update failed');
+            showToast(formatDatacatFolderSuccess(title), 'success');
+
             if (_openEl === el) await loadAndRender(el, characterId, characterName);
         } catch (err) {
             createBtn.disabled = false; // keep input for retry
