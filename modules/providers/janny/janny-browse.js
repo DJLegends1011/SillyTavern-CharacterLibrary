@@ -1590,23 +1590,31 @@ function updateJannyBookmarkButton() {
     if (!btn || !jannySelectedChar?.id) return;
     const id = String(jannySelectedChar.id);
     const isBookmarked = jannyBookmarkIds.has(id);
-    const atLimit = !isBookmarked && (jannyBookmarkTotalCount || jannyBookmarkIds.size) >= JANNY_BOOKMARK_UI_LIMIT;
-    btn.disabled = false;
-    btn.classList.toggle('primary', !isBookmarked);
-    btn.classList.toggle('secondary', isBookmarked);
-    btn.title = atLimit
+    const atLimit = !isBookmarked
+        && (jannyBookmarkTotalCount || jannyBookmarkIds.size) >= JANNY_BOOKMARK_UI_LIMIT;
+    const title = atLimit
         ? `Janny bookmark UI is at its max (${JANNY_BOOKMARK_UI_LIMIT}). Remove one on Janny first, or use collections.`
         : (isBookmarked ? 'Remove from Janny bookmarks' : 'Save to Janny bookmarks');
+
+    btn.disabled = false;
+    btn.classList.toggle('favorited', isBookmarked);
+    btn.title = title;
+    btn.setAttribute('aria-label', title);
     btn.innerHTML = isBookmarked
-        ? '<i class="fa-solid fa-bookmark"></i> Bookmarked'
-        : '<i class="fa-regular fa-bookmark"></i> Bookmark';
+        ? '<i class="fa-solid fa-bookmark"></i>'
+        : '<i class="fa-regular fa-bookmark"></i>';
 }
 
 async function toggleSelectedJannyBookmark() {
     if (!jannySelectedChar?.id) return;
     if (!await ensureJannyAccountReady()) return;
     const btn = document.getElementById('jannyBookmarkBtn');
-    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Syncing...'; }
+    if (btn) {
+        btn.disabled = true;
+        btn.classList.add('loading');
+        btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
+        btn.setAttribute('aria-label', 'Syncing Janny bookmark');
+    }
 
     try {
         if (!jannyBookmarksLoaded) await loadJannyBookmarks(true);
@@ -1632,6 +1640,7 @@ async function toggleSelectedJannyBookmark() {
     } catch (err) {
         showToast(`Janny bookmark sync failed: ${describeJannyAccountError(err)}`, 'error', 8000);
     } finally {
+        if (btn) btn.classList.remove('loading');
         updateJannyBookmarkButton();
     }
 }
@@ -2623,14 +2632,15 @@ class JannyBrowseView extends BrowseView {
                     <div class="dropdown-section-title">Content:</div>
                     <label class="filter-checkbox"><input type="checkbox" id="jannyFilterLowQuality"> <i class="fa-solid fa-filter-circle-xmark"></i> Show Low-Quality</label>
                     <hr style="margin: 8px 0; border-color: var(--glass-border);">
+                    <div class="dropdown-section-title">Personal <span style="font-size: 0.8em; opacity: 0.6;">(requires login)</span>:</div>
+                    <label class="filter-checkbox"><input type="checkbox" id="jannyFilterOnlyBookmarked"> <i class="fa-solid fa-bookmark"></i> My Bookmarks</label>
+                    <hr style="margin: 8px 0; border-color: var(--glass-border);">
                     <div class="dropdown-section-title">Library:</div>
                     <label class="filter-checkbox"><input type="checkbox" id="jannyFilterHideOwned"> <i class="fa-solid fa-check"></i> Hide Owned Characters</label>
                     <label class="filter-checkbox"><input type="checkbox" id="jannyFilterHidePossible"> <i class="fa-solid fa-check" style="color: #f0a500;"></i> Hide Possible Matches</label>
                     <hr style="margin: 8px 0; border-color: var(--glass-border);">
                     <div class="dropdown-section-title">Bookmarks:</div>
                     ${jannyBookmarks.renderFilterCheckbox()}
-                    <div class="dropdown-section-title">Account:</div>
-                    <label class="filter-checkbox"><input type="checkbox" id="jannyFilterOnlyBookmarked"> <i class="fa-solid fa-bookmark"></i> Only Bookmarked</label>
                 </div>
             </div>
 
@@ -2750,7 +2760,14 @@ class JannyBrowseView extends BrowseView {
                     <div>
                         <h2 id="jannyCharName">Character Name</h2>
                         <p class="browse-char-meta">
-                            by <a id="jannyCharCreator" href="#" class="creator-link browse-meta-identity" title="Click to see all characters by this author">Creator</a>
+                            by <a id="jannyCharCreator" href="#" class="creator-link browse-meta-identity" title="Click to see all characters by this author">Creator</a> •
+                            <button
+                                type="button"
+                                id="jannyBookmarkBtn"
+                                class="browse-meta-action"
+                                title="Save to Janny bookmarks"
+                                aria-label="Save to Janny bookmarks"
+                            ><i class="fa-regular fa-bookmark"></i></button>
                         </p>
                     </div>
                 </div>
@@ -2759,9 +2776,7 @@ class JannyBrowseView extends BrowseView {
                     <a id="jannyOpenInBrowserBtn" href="#" target="_blank" class="action-btn secondary" title="Open on JannyAI">
                         <i class="fa-solid fa-external-link"></i> Open
                     </a>
-                                        <button id="jannyBookmarkBtn" class="action-btn secondary" title="Save to Janny bookmarks">
-                        <i class="fa-regular fa-bookmark"></i> Bookmark
-                    </button>
+
                     <div class="janny-collection-action" id="jannyCollectionAction">
                         <button id="jannyCollectionDropdownBtn" class="action-btn secondary" title="Add to Janny collection" aria-haspopup="menu" aria-expanded="false">
                             <i class="fa-solid fa-layer-group"></i> <span>Add to collection</span> <i class="fa-solid fa-chevron-down janny-collection-caret"></i>
