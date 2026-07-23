@@ -153,7 +153,7 @@ describe('hasDatacatFolderMembership', () => {
 - [ ] **Step 2: Run the focused tests and confirm they fail**
 
 ```powershell
-node --test tests/datacat-compact-save-ux-static.test.mjs tests/datacat-folder-picker.test.mjs
+node --import ./tests/setup-browser-globals.mjs --test tests/datacat-compact-save-ux-static.test.mjs tests/datacat-folder-picker.test.mjs
 ```
 
 Expected: FAIL because the modal still has separate Save and Folder buttons,
@@ -454,7 +454,7 @@ uses its bottom-sheet positioning path and ignores desktop anchor geometry.
 - [ ] **Step 9: Run focused DataCat verification**
 
 ```powershell
-node --test tests/datacat-compact-save-ux-static.test.mjs tests/datacat-folder-picker.test.mjs tests/datacat-account-retry.test.mjs
+node --import ./tests/setup-browser-globals.mjs --test tests/datacat-compact-save-ux-static.test.mjs tests/datacat-folder-picker.test.mjs tests/datacat-account-retry.test.mjs
 node --check modules/providers/datacat/datacat-browse.js
 node --check modules/providers/datacat/datacat-folder-picker.js
 node --check app/library-mobile.js
@@ -538,7 +538,7 @@ test('DataCat folder mutations own one destination notification', () => {
 - [ ] **Step 2: Run the focused tests and confirm they fail**
 
 ```powershell
-node --test tests/datacat-folder-picker.test.mjs tests/datacat-compact-save-ux-static.test.mjs
+node --import ./tests/setup-browser-globals.mjs --test tests/datacat-folder-picker.test.mjs tests/datacat-compact-save-ux-static.test.mjs
 ```
 
 Expected: FAIL because the formatters and explicit `setMainSaved` hook do not
@@ -717,7 +717,7 @@ Remove `Created ${title}.`, `Added ${characterName} to ${title}.`,
 - [ ] **Step 7: Run focused notification verification**
 
 ```powershell
-node --test tests/datacat-folder-picker.test.mjs tests/datacat-compact-save-ux-static.test.mjs tests/datacat-account-retry.test.mjs
+node --import ./tests/setup-browser-globals.mjs --test tests/datacat-folder-picker.test.mjs tests/datacat-compact-save-ux-static.test.mjs tests/datacat-account-retry.test.mjs
 node --check modules/providers/datacat/datacat-folder-picker.js
 node --check modules/providers/datacat/datacat-browse.js
 git diff --check
@@ -1431,7 +1431,7 @@ Janny integration code outside those hunks.
 - [ ] **Step 3: Run the DataCat AIO suite**
 
 ```powershell
-node --test tests/datacat-compact-save-ux-static.test.mjs tests/datacat-folder-picker.test.mjs tests/datacat-account-retry.test.mjs tests/extended-bookmarks-contract.test.mjs
+node --import ./tests/setup-browser-globals.mjs --test tests/datacat-compact-save-ux-static.test.mjs tests/datacat-folder-picker.test.mjs tests/datacat-account-retry.test.mjs tests/extended-bookmarks-contract.test.mjs
 node --check modules/providers/datacat/datacat-browse.js
 node --check modules/providers/datacat/datacat-folder-picker.js
 node --check app/library-mobile.js
@@ -1588,7 +1588,7 @@ section.
 - [ ] **Step 3: Run the complete automated suite**
 
 ```powershell
-node --test tests/*.test.mjs
+node --import ./tests/setup-browser-globals.mjs --test tests/*.test.mjs
 node --check app/library-mobile.js
 node --check modules/providers/bookmark-module.js
 node --check modules/providers/datacat/datacat-browse.js
@@ -1707,7 +1707,7 @@ as 390×844:
 - [ ] **Step 6: Run final automated verification**
 
 ```powershell
-node --test tests/*.test.mjs
+node --import ./tests/setup-browser-globals.mjs --test tests/*.test.mjs
 git diff --check
 git status --short --branch
 ```
