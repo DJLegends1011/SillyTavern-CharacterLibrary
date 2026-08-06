@@ -7,10 +7,10 @@
 // CONSTANTS
 // ========================================
 
-export const JANNY_SEARCH_URL = 'https://search.jannyai.com/multi-search';
+const JANNY_SEARCH_URL = 'https://search.jannyai.com/multi-search';
 export const JANNY_IMAGE_BASE = 'https://image.jannyai.com/bot-avatars/';
 export const JANNY_SITE_BASE = 'https://jannyai.com';
-export const JANNY_FALLBACK_TOKEN = '88a6463b66e04fb07ba87ee3db06af337f492ce511d93df6e2d2968cb2ff2b30';
+const JANNY_FALLBACK_TOKEN = '88a6463b66e04fb07ba87ee3db06af337f492ce511d93df6e2d2968cb2ff2b30';
 
 // Tag ID -> name mapping (JannyAI uses numeric IDs internally)
 export const TAG_MAP = {
@@ -39,7 +39,7 @@ let _cachedToken = JANNY_FALLBACK_TOKEN;
  * provider boot. The page scrape is Cloudflare-prone and can make SillyTavern
  * log noisy 403 binary bodies even though the fallback search token works.
  */
-export async function getSearchToken() {
+async function getSearchToken() {
     return _cachedToken || JANNY_FALLBACK_TOKEN;
 }
 
@@ -47,9 +47,62 @@ export async function getSearchToken() {
 // NETWORK & TEXT UTILITIES (shared)
 // ========================================
 
-import { fetchWithProxy } from '../provider-utils.js';
+import { fetchWithProxy, readJsonClassified } from '../provider-utils.js';
 export { fetchWithProxy };
 export { slugify, stripHtml } from '../provider-utils.js';
+
+/**
+ * One JannyAI MeiliSearch multi-search request. Callers own their filters, facets and
+ * sort; the envelope, auth headers, direct-then-proxy fallback and classified read are
+ * shared (the browse view, the provider's lookups, DataCat's Janny sorts and the Creator
+ * Downloads adapter all query the same index and drifted into four copies of this before).
+ * @param {Object} opts
+ * @param {string} [opts.search] - q
+ * @param {number} [opts.page=1]
+ * @param {number} [opts.limit=80] - hitsPerPage
+ * @param {string[]} [opts.filters] - MeiliSearch filter expressions
+ * @param {string[]} [opts.facets]
+ * @param {string[]} [opts.sort] - empty for relevance
+ * @param {boolean} [opts.highlight] - add the crop/highlight attributes the browse grids render
+ * @returns {Promise<Object>} raw multi-search response ({ results: [...] })
+ */
+export async function meiliMultiSearch({ search = '', page = 1, limit = 80, filters = [], facets = [], sort = [], highlight = false } = {}) {
+    const query = {
+        indexUid: 'janny-characters',
+        q: search,
+        filter: filters,
+        hitsPerPage: limit,
+        page,
+    };
+    if (facets.length) query.facets = facets;
+    if (highlight) {
+        query.attributesToCrop = ['description:300'];
+        query.cropMarker = '...';
+        query.attributesToHighlight = ['name', 'description'];
+        query.highlightPreTag = '__ais-highlight__';
+        query.highlightPostTag = '__/ais-highlight__';
+    }
+    if (sort.length) query.sort = sort;
+
+    const token = await getSearchToken();
+    const headers = {
+        'Accept': '*/*',
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+        'Origin': JANNY_SITE_BASE,
+        'Referer': `${JANNY_SITE_BASE}/`,
+        'x-meilisearch-client': 'Meilisearch instant-meilisearch (v0.19.0) ; Meilisearch JavaScript (v0.41.0)',
+    };
+
+    const body = JSON.stringify({ queries: [query] });
+    let response;
+    try {
+        response = await fetch(JANNY_SEARCH_URL, { method: 'POST', headers, body });
+    } catch (_) {
+        response = await fetchWithProxy(JANNY_SEARCH_URL, { method: 'POST', headers, body });
+    }
+    return readJsonClassified(response);
+}
 
 export function resolveTagNames(tagIds) {
     return (tagIds || []).map(id => TAG_MAP[id] || `Tag ${id}`);

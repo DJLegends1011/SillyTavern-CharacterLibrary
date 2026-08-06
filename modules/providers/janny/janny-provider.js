@@ -6,14 +6,14 @@
 import { ProviderBase } from '../provider-interface.js';
 import CoreAPI from '../../core-api.js';
 import { assignGalleryId, importFromPng, proxyEncode } from '../provider-utils.js';
+import { initJanitorBridge, isJanitorBridgeAvailable, janitorBridgeFetch } from '../janitor-bridge.js';
 import jannyBrowseView from './janny-browse.js';
 import { initJannyBridge, isJannyBridgeAvailable, jannyBridgeFetch } from './janny-bridge.js';
 import { parseJannySession, decodeJannyClaims } from './janny-auth.js';
 import {
-    JANNY_SEARCH_URL,
     JANNY_IMAGE_BASE,
     JANNY_SITE_BASE,
-    getSearchToken,
+    meiliMultiSearch,
     fetchWithProxy,
     slugify,
     stripHtml,
@@ -78,16 +78,33 @@ function exposeJannySession() {
  * TLS fingerprinting and JS challenges. Strategy order is based on
  * observed reliability:
  *
- * 1. corsproxy.io - most reliable in practice
+ * 0. Userscript bridge - GM_xmlhttpRequest from the user's own browser,
+ *    carries their cf_clearance cookie; the only transport that passes
+ *    Cloudflare reliably since the 2026-07 challenge tightening
+ * 1. corsproxy.io - datacenter IP, usually challenged now
  * 2. Puter.js WISP relay - needs COOP/COEP headers (SharedArrayBuffer);
  *    SillyTavern doesn't set these, so rustls.wasm fails on most setups
  * 3. SillyTavern /proxy/ - node-fetch with Node.js TLS fingerprint,
  *    Cloudflare usually blocks it with 403
  */
-async function fetchHtmlPage(url) {
+async function fetchHtmlPage(url, opts = {}) {
     const errors = [];
 
-    // Strategy 1: corsproxy.io - most reliable based on real-world testing
+    // Strategy 0: the userscript bridge (same script that unlocks hampter)
+    if (isJanitorBridgeAvailable()) {
+        try {
+            const res = await janitorBridgeFetch(url, '', { allowClearance: !!opts.allowClearance });
+            if (res.ok && isValidCharacterHtml(res.body)) {
+                console.info('[JannyProvider] Page fetched via userscript bridge');
+                return res.body;
+            }
+            errors.push(`bridge: HTTP ${res.status || 0}${res.ok ? ' (unexpected page shape)' : ''}`);
+        } catch (e) {
+            errors.push(`bridge: ${e.message}`);
+        }
+    }
+
+    // Strategy 1: corsproxy.io - datacenter IP, usually challenged now; kept as a fallback
     try {
         const html = await corsproxyFetchHtml(url);
         if (html) {
@@ -125,7 +142,10 @@ async function fetchHtmlPage(url) {
         console.warn('[JannyProvider] ST proxy strategy failed:', e.message);
     }
 
-    throw new Error(`All proxy strategies failed for ${url}. Errors: ${errors.join(' | ')}`);
+    console.warn(`[JannyProvider] All page transports failed for ${url}: ${errors.join(' | ')}`);
+    // User-facing Cloudflare copy lives at the browse surface; the throw keeps the real reasons
+    // so callers that log e.message still see what actually failed.
+    throw new Error(`All page transports failed: ${errors.join(' | ')}`);
 }
 
 function isValidCharacterHtml(html) {
@@ -302,58 +322,26 @@ async function searchJanny(opts = {}) {
     const { search = '', page = 1, limit = 40 } = opts;
 
     // Browse view ceiling is 100000 (janny-browse.js:65-66); 4101 was an old default that excluded heavy cards from fetchLinkStats / buildPreviewObject / searchForBulkLink.
-    const filters = ['totalToken >= 29'];
-    const body = {
-        queries: [{
-            indexUid: 'janny-characters',
-            q: search,
-            facets: ['isLowQuality', 'tagIds', 'totalToken'],
-            attributesToCrop: ['description:300'],
-            cropMarker: '...',
-            filter: filters,
-            attributesToHighlight: ['name', 'description'],
-            highlightPreTag: '__ais-highlight__',
-            highlightPostTag: '__/ais-highlight__',
-            hitsPerPage: limit,
-            page,
-            sort: ['createdAtStamp:desc']
-        }]
-    };
-
-    const token = await getSearchToken();
-    const headers = {
-        'Accept': '*/*',
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`,
-        'Origin': JANNY_SITE_BASE,
-        'Referer': `${JANNY_SITE_BASE}/`,
-        'x-meilisearch-client': 'Meilisearch instant-meilisearch (v0.19.0) ; Meilisearch JavaScript (v0.41.0)'
-    };
-
-    let response;
-    try {
-        response = await fetch(JANNY_SEARCH_URL, { method: 'POST', headers, body: JSON.stringify(body) });
-    } catch (_) {
-        response = await fetchWithProxy(JANNY_SEARCH_URL, { method: 'POST', headers, body: JSON.stringify(body) });
-    }
-
-    if (!response.ok) {
-        const text = await response.text().catch(() => '');
-        throw new Error(`JannyAI search error ${response.status}: ${text}`);
-    }
-
-    return response.json();
+    return meiliMultiSearch({
+        search,
+        page,
+        limit,
+        filters: ['totalToken >= 29'],
+        facets: ['isLowQuality', 'tagIds', 'totalToken'],
+        sort: ['createdAtStamp:desc'],
+        highlight: true,
+    });
 }
 
 /**
  * Fetch full character data by scraping the JannyAI character page.
  * Extracts Astro island props containing the full definition.
  */
-async function fetchCharacterDetails(characterId, slug) {
+async function fetchCharacterDetails(characterId, slug, opts = {}) {
     const url = `${JANNY_SITE_BASE}/characters/${characterId}_${slug || 'character'}`;
     console.info(`[JannyProvider] Fetching character details: ${url}`);
 
-    const html = await fetchHtmlPage(url);
+    const html = await fetchHtmlPage(url, opts);
     console.info(`[JannyProvider] Got HTML (${html.length} bytes), parsing Astro props...`);
 
     // Try CharacterButtons first, then fallback to any astro-island with character props
@@ -466,7 +454,10 @@ class JannyProvider extends ProviderBase {
     async init(coreAPI) {
         super.init(coreAPI);
         api = coreAPI;
-        // Listen for the JannyAI bridge userscript (passive, free when absent)
+        // Two independent userscripts, both passive and free when absent: the maintainer's
+        // janitor bridge reads Cloudflare-gated card pages, ours carries the account sync
+        // calls (bookmarks / collections). Neither can serve the other's endpoints.
+        initJanitorBridge();
         initJannyBridge();
         exposeJannySession();
     }
@@ -559,7 +550,9 @@ class JannyProvider extends ProviderBase {
             const parts = String(fullPath).split('_');
             const charId = parts[0];
             const slug = parts.slice(1).join('_') || 'character';
-            const data = await fetchCharacterDetails(charId, slug);
+            // Browse preview, link search and URL paste all land here, and all three are things
+            // the user just asked for, so a clearance tab is warranted.
+            const data = await fetchCharacterDetails(charId, slug, { allowClearance: true });
             return data?.character || null;
         } catch (e) {
             console.error('[JannyProvider] fetchMetadata failed:', fullPath, e);
@@ -803,7 +796,9 @@ class JannyProvider extends ProviderBase {
 
             if (!data?.character) {
                 try {
-                    data = await fetchCharacterDetails(charId, slug);
+                    // An import is an explicit user action (grid button or pasted URL), so this
+                    // may spend a clearance tab; the update check deliberately may not.
+                    data = await fetchCharacterDetails(charId, slug, { allowClearance: true });
                 } catch (e) {
                     console.warn('[JannyProvider] Page scrape failed, falling back to hit data:', e.message);
                 }

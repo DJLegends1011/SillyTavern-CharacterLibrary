@@ -251,48 +251,6 @@ function getFieldValue(data, field) {
     return getNestedValue(data, field);
 }
 
-function generateLineDiff(localValue, remoteValue) {
-    const localStr = formatValueForDisplay(localValue);
-    const remoteStr = formatValueForDisplay(remoteValue);
-    
-    const localLines = localStr.split('\n');
-    const remoteLines = remoteStr.split('\n');
-    
-    const diff = computeLineDiff(localLines, remoteLines);
-    
-    // Post-process to detect modified lines (removed+added pairs) and highlight word changes
-    const processedDiff = [];
-    for (let i = 0; i < diff.length; i++) {
-        const item = diff[i];
-        
-        if (item.type === 'removed' && i + 1 < diff.length && diff[i + 1].type === 'added') {
-            const oldLine = item.line;
-            const newLine = diff[i + 1].line;
-            
-            const { oldHtml, newHtml } = computeWordDiff(oldLine, newLine);
-            processedDiff.push({ type: 'removed', html: oldHtml });
-            processedDiff.push({ type: 'added', html: newHtml });
-            i++; // Skip the next item since we processed it
-        } else {
-            processedDiff.push({ type: item.type, html: CoreAPI.escapeHtml(item.line) });
-        }
-    }
-    
-    let html = '';
-    
-    for (const item of processedDiff) {
-        if (item.type === 'removed') {
-            html += `<div class="card-update-diff-line removed"><span class="card-update-diff-line-prefix">-</span>${item.html}</div>`;
-        } else if (item.type === 'added') {
-            html += `<div class="card-update-diff-line added"><span class="card-update-diff-line-prefix">+</span>${item.html}</div>`;
-        } else {
-            html += `<div class="card-update-diff-line context"><span class="card-update-diff-line-prefix"> </span>${item.html}</div>`;
-        }
-    }
-    
-    return html || '<div class="card-update-diff-line context">(no content)</div>';
-}
-
 function generateSideBySideDiff(localValue, remoteValue) {
     const localStr = formatValueForDisplay(localValue);
     const remoteStr = formatValueForDisplay(remoteValue);
@@ -473,6 +431,12 @@ function compareCards(localData, remoteCard, allowedFields = null) {
     
     for (const [field, label] of Object.entries(COMPARABLE_FIELDS)) {
         if (allowedFields && !allowedFields.has(field)) {
+            continue;
+        }
+        // Unknown-not-removed, generalised: a provider whose remote shape cannot carry a
+        // field at all reports it here, so an always-empty remote never proposes blanking
+        // the local value. _lorebookUnavailable below is the character_book-only ancestor.
+        if (remoteCard?._unavailableFields?.has(field)) {
             continue;
         }
 

@@ -8,6 +8,9 @@ const providers = new Map();
 /** @type {string|null} */
 let activeProviderId = null;
 
+/** Bumped per activateProvider call so a switch during an in-activate await can be detected. */
+let _activationGen = 0;
+
 /** @type {Object|null} CoreAPI reference, set during init */
 let coreAPI = null;
 
@@ -32,6 +35,36 @@ export function registerProvider(provider) {
 }
 
 /**
+ * Opt a newly-added disabledByDefault provider out for installs that predate it.
+ *
+ * Settings load is `{ ...DEFAULT_SETTINGS, ...saved }`, so a persisted disabledProviders
+ * array wins wholesale over the default, and getViewProviders gates on that array alone
+ * (disabledByDefault is never consulted at runtime). Without this, every existing install
+ * gets the new provider switched ON, and its enableWarning never fires because that only
+ * runs on a disabled to enabled flip.
+ *
+ * "Has this install seen the provider" is derived from providerOrder + disabledProviders,
+ * both of which are written from a UI built over getAllProviders(), so they name every
+ * provider that existed at the last save. A provider in neither is genuinely new here,
+ * which is what keeps a deliberately-enabled provider from being switched back off.
+ */
+function reconcileNewDisabledByDefault() {
+    const order = coreAPI?.getSetting?.('providerOrder');
+    const disabled = coreAPI?.getSetting?.('disabledProviders');
+    // Nothing persisted yet: DEFAULT_SETTINGS already carries the right list.
+    if (!Array.isArray(disabled) || (!Array.isArray(order) && !disabled.length)) return;
+
+    const seen = new Set([...(Array.isArray(order) ? order : []), ...disabled]);
+    const next = [...disabled];
+    for (const provider of providers.values()) {
+        if (!provider.disabledByDefault || seen.has(provider.id)) continue;
+        next.push(provider.id);
+        coreAPI?.debugLog?.(`[ProviderRegistry] New disabled-by-default provider, opting out: ${provider.id}`);
+    }
+    if (next.length !== disabled.length) coreAPI?.setSetting?.('disabledProviders', next);
+}
+
+/**
  * Initialize all registered providers with the CoreAPI reference.
  * Called once during app startup after CoreAPI is available.
  * @param {Object} api - CoreAPI object
@@ -47,6 +80,7 @@ export async function initProviders(api) {
             console.error(`[ProviderRegistry] Failed to init provider "${id}":`, err);
         }
     }
+    reconcileNewDisabledByDefault();
     initRecoveryBannerDismiss();
 }
 
@@ -123,6 +157,7 @@ export function getActiveProviderId() {
  * @param {HTMLElement} [filterContainer] - the filter bar area
  */
 export async function activateProvider(providerId, container, filterContainer) {
+    const gen = ++_activationGen;
     const prev = getActiveProvider();
     const switching = prev && prev.id !== providerId;
     if (switching) {
@@ -165,6 +200,16 @@ export async function activateProvider(providerId, container, filterContainer) {
         await provider.activate(container, { domRecreated, defaults });
     } catch (err) {
         console.error(`[ProviderRegistry] activate error for "${providerId}":`, err);
+    }
+
+    // A newer switch landed while activate awaited (login RTTs): the continuation just
+    // re-armed a provider that was already deactivated, so undo it. Skipped when the newer
+    // call activated this SAME provider, its activation is the current one.
+    if (gen !== _activationGen) {
+        if (activeProviderId !== providerId) {
+            try { provider.deactivate(); } catch (e) { console.error('[ProviderRegistry] stale-activation deactivate error:', e); }
+        }
+        return;
     }
 
     // Show recovery banner if extensions are still being recovered (ST lazy loading)
@@ -237,11 +282,21 @@ export function getAllLinkedCharacters(allCharacters) {
  * @param {string} url
  * @returns {import('./provider-interface.js').ProviderBase|null}
  */
-export function getProviderForUrl(url) {
+export function getProviderForUrl(url, { accept } = {}) {
+    const disabledSet = new Set(coreAPI?.getSetting?.('disabledProviders') || []);
+    // `accept` lets a caller add "and it must also parse": two providers can claim one host
+    // (janitorai + janny both claim janitorai.com) with different path shapes, so one may
+    // recognise a URL the other cannot name. Keep scanning past a rejecter to the next claimant.
+    const claims = (provider) => provider.canHandleUrl(url) && (!accept || accept(provider));
+    let disabledMatch = null;
     for (const provider of providers.values()) {
-        if (provider.canHandleUrl(url)) return provider;
+        if (!claims(provider)) continue;
+        if (!disabledSet.has(provider.id)) return provider;
+        if (!disabledMatch) disabledMatch = provider;
     }
-    return null;
+    // A disabled provider still answers when nothing enabled claims the host, because turning a
+    // provider off is about the browse selector, not about refusing to recognise its links.
+    return disabledMatch;
 }
 
 // ========================================

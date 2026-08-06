@@ -2,7 +2,7 @@
 
 import { BrowseView } from '../browse-view.js';
 import CoreAPI from '../../core-api.js';
-import { IMG_PLACEHOLDER, formatNumber, BROWSE_PURIFY_CONFIG, skeletonLines, deferRender, deferCall, CL_HELPER_PLUGIN_BASE, isMobileMode, absolutizeMediaPaths, finishBrowseImport } from '../provider-utils.js';
+import { IMG_PLACEHOLDER, formatNumber, BROWSE_PURIFY_CONFIG, skeletonLines, deferRender, deferCall, CL_HELPER_PLUGIN_BASE, isMobileMode, absolutizeMediaPaths, finishBrowseImport, renderBrowseError } from '../provider-utils.js';
 import {
     BOTBOORU_BASE,
     getBotbooruPreviewUrl,
@@ -55,6 +55,7 @@ const {
     getCharacterGalleryId,
     deleteCharacter,
     renderCreatorNotesSecure,
+    renderCardHtmlSecure,
     cleanupCreatorNotesContainer,
     checkCharacterForDuplicatesAsync,
     showPreImportDuplicateWarning,
@@ -2152,16 +2153,13 @@ async function loadBotbooruPosts(reset = false, append = false) {
         if (thisToken !== bbLoadToken) return;
         console.error('Botbooru load error:', e);
         if (!append) {
-            grid.innerHTML = `
-                <div class="browse-error">
-                    <i class="fa-solid fa-exclamation-triangle"></i>
-                    <h3>Failed to load Botbooru</h3>
-                    <p>${escapeHtml(e.message)}</p>
-                    <button class="action-btn primary browse-retry-btn">
-                        <i class="fa-solid fa-refresh"></i> Retry
-                    </button>
-                </div>
-            `;
+            renderBrowseError(grid, {
+                provider: 'botbooru',
+                error: e,
+                title: 'Failed to load Botbooru',
+                flags: { token: !!getSetting('botbooruToken'), nsfw: bbNsfwEnabled },
+                retry: () => loadBotbooruPosts(true),
+            });
         } else {
             showToast('Failed to load more: ' + e.message, 'error');
         }
@@ -2232,8 +2230,6 @@ function setupBotbooruGridDelegates() {
     const grid = document.getElementById('botbooruGrid');
     if (grid) {
         grid.addEventListener('click', (e) => {
-            if (e.target.closest('.browse-retry-btn')) { loadBotbooruPosts(true); return; }
-
             // Footer person icon: always the uploader entry point
             const uploaderBtn = e.target.closest('.botbooru-uploader-btn');
             if (uploaderBtn) {
@@ -2438,12 +2434,13 @@ async function loadBotbooruTimeline(reset = false) {
     } catch (e) {
         if (thisToken !== bbTimelineLoadToken) return;
         console.error('Botbooru timeline load error:', e);
-        grid.innerHTML = `
-            <div class="browse-error">
-                <i class="fa-solid fa-exclamation-triangle"></i>
-                <h3>Failed to load the timeline</h3>
-                <p>${escapeHtml(e.message)}</p>
-            </div>`;
+        renderBrowseError(grid, {
+            provider: 'botbooru',
+            error: e,
+            title: 'Failed to load the timeline',
+            view: 'timeline',
+            flags: { token: !!getSetting('botbooruToken') },
+        });
     } finally {
         if (thisToken === bbTimelineLoadToken) {
             bbTimelineLoading = false;
@@ -3021,16 +3018,17 @@ async function openBotbooruCharPreview(post) {
     requestAnimationFrame(() => {
         if (thisPreview !== bbPreviewToken) return;
         const sections = [
-            [absBB(d.description), descSection, descEl],
+            [absBB(d.description), descSection, descEl, true],
             [absBB(d.personality), personalitySection, personalityEl],
             [absBB(d.scenario), scenarioSection, scenarioEl],
             [absBB(d.mes_example), examplesSection, examplesEl],
             [absBB(d.first_mes), firstMsgSection, firstMsgEl],
         ];
-        for (const [text, section, el] of sections) {
+        for (const [text, section, el, secure] of sections) {
             if (text) {
                 section.style.display = 'block';
-                deferRender(el, () => safePurify(formatRichText(text, name, true), BROWSE_PURIFY_CONFIG));
+                if (secure) deferCall(el, () => renderCardHtmlSecure(text, name, el));
+                else deferRender(el, () => safePurify(formatRichText(text, name, true), BROWSE_PURIFY_CONFIG));
                 el.dataset.fullContent = text;
             } else if (section) {
                 section.style.display = 'none';

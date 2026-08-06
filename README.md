@@ -484,16 +484,16 @@ Providers with Following support include a **Followed Creators Manager** panel f
 
 ### Provider Feature Matrix
 
-| Feature | ChubAI | JanitorAI | CharacterTavern | Pygmalion | Wyvern | DataCat | Botbooru |
-|---------|--------|-----------|-----------------|-----------|--------|----------|----------|
-| Browse & Search | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Card Updates | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Character Linking | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Gallery Downloads | ✅ | -- | -- | ✅ | ✅ | ✅ | ✅ |
-| Remote Version History | ✅ | -- | -- | -- | -- | -- | -- |
-| Following / Timeline | ✅ | -- | -- | ✅ | ✅ | ✅ | ✅ |
-| Favorites | ✅ | -- | -- | -- | -- | -- | ✅ |
-| Auth Required | Optional | None | Optional | Optional | Optional | None | Optional (NSFW needs login) |
+| Feature | ChubAI | JanitorAI | JannyAI | CharacterTavern | Pygmalion | Wyvern | DataCat | Botbooru | Saucepan |
+|---------|--------|-----------|---------|-----------------|-----------|--------|---------|----------|----------|
+| Browse & Search | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Card Updates | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Character Linking | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Gallery Downloads | ✅ | -- | -- | -- | ✅ | ✅ | ✅ | ✅ | -- |
+| Remote Version History | ✅ | -- | -- | -- | -- | -- | -- | -- | -- |
+| Following / Timeline | ✅ | ✅ | -- | -- | ✅ | ✅ | ✅ | ✅ | -- |
+| Favorites | ✅ | -- | -- | -- | -- | -- | -- | ✅ | -- |
+| Auth Required | Optional | Browser required | Userscript required (no account) | Optional | Optional | Optional | None | Optional | Required |
 
 <details>
 <summary><h3>ChubAI</h3></summary>
@@ -530,16 +530,84 @@ Providers with Following support include a **Followed Creators Manager** panel f
 <details>
 <summary><h3>JanitorAI</h3></summary>
 
-**Auth:** None required for browsing. Optional account sync uses a pasted JannyAI login token plus a companion userscript bridge (see below).
+**Auth:** No account needed to browse, but this provider needs a **real browser** to work at all (see below). Sign in for more than the first page of results. Beta, and off by default.
 
-- Browse and search the full JanitorAI character catalog
+- Browse and search janitorai.com directly, with its own sort orders (Latest, Trending, Trending 24h, Popular, Relevance)
+- Filter by tags, NSFW toggle
+- In-app character preview with card details, alternate greetings, and lorebook
+- **Recovers hidden definitions.** Around half of all JanitorAI characters withhold their definition, and the field is simply absent from the API. Character Library can recover one by letting JanitorAI build a chat prompt and reading it back
+- Character linking, card updates, and a Following tab with a followed-creators manager
+
+#### Why it needs a browser
+
+janitorai.com puts Cloudflare in front of everything. Passing that challenge earns a `cf_clearance` cookie that only a real browser can hold, so no server-side request gets through on its own, no matter how it is dressed up.
+
+#### On a normal desktop, it just works
+
+If SillyTavern runs on a Windows or Mac desktop with Chrome or Edge installed (or desktop Linux with Chrome), open **Settings → Online → JanitorAI**, press **Start now**, then **Test**. For most people that is the entire setup: Windows needs nothing extra since Edge counts, the browser runs invisibly, and it stops itself when idle. This needs the [cl-helper plugin](#cl-helper-plugin-not-detected).
+
+#### The Test button is the contract
+
+The endpoint test measures everything the Cloudflare challenge actually cares about (hardware GPU rendering, desktop-class WebGL, H.264/AAC codecs, the challenge itself) and explains each result separately. That makes the support boundary simple:
+
+- **Any check red**: the problem is your browser environment, and getting it green is your side of the contract. The requirements below say what a passing environment looks like; how you produce one on your platform is your own research. We do not troubleshoot browser installs, GPU passthrough, Docker, Termux, or distro quirks; there are too many combinations for that to ever work.
+- **All checks green and the provider still misbehaves**: that is a Character Library bug, and we genuinely want the report.
+
+#### Servers, VMs, containers, ARM boards: power user territory
+
+Everything below desktop-with-a-GPU is yours to assemble. What the browser must have:
+
+- A Chromium-family binary cl-helper can find: Chrome, Edge, or Chromium, or set `CL_BROWSER` to a path
+- **Real GPU rendering.** This is Cloudflare's gate, not ours. Software rendering (headless servers, VMs without GPU passthrough, SwiftShader/llvmpipe fallbacks) sits on "Just a moment..." forever rather than failing with an error. Headless itself is fine; only the rendering matters
+- H.264 and AAC codecs. This mostly bites Linux ARM, where the common Chromium builds ship without them; Google publishes real Chrome packages for arm64, use those
+- A synced system clock
+- Known not to work regardless: Mali-class mobile GPUs (tested on an Orange Pi 5 Plus) stall even with everything else correct
+
+#### No GPU on the SillyTavern machine?
+
+Run the browser on one that has a GPU and point Character Library at it:
+
+```bash
+node extras/janitorai-browser/run-browser.mjs
+```
+
+It prints a URL to paste into the **Browser Endpoint** field in Settings. Node 22+, no dependencies, leave it running. `BIND=127.0.0.1` keeps it off the LAN. Note this port is **unauthenticated**: anyone who can reach it has full control of that browser, so keep it local unless you have a reason not to.
+
+A phone-side browser can also qualify (Android Chrome renders on the phone's real GPU) by exposing its debugging socket through Android's developer facilities, but wiring that up is exactly the kind of setup you research yourself.
+
+#### Signing in
+
+Sign in under **Settings → Online → JanitorAI**, not in the browser itself. Character Library sends that session with each request. Without it JanitorAI serves only the first page of results.
+
+No gallery downloads or version history (JanitorAI doesn't expose these APIs).
+
+</details>
+
+<details>
+<summary><h3>JannyAI</h3></summary>
+
+**Auth:** No account required, but the companion userscript effectively is: JannyAI now sits behind Cloudflare and without the userscript you cannot get a character's definition or greeting (see below).
+
+A mirror of JanitorAI content. It needs no browser endpoint, which makes it lighter to set up than the first-party JanitorAI provider above, but it serves no alternate greetings and has no following.
+
+- Browse and search the JannyAI character catalog
 - Filter by tags, token count, NSFW toggle
 - In-app character preview with card details
 - Character linking and card updates
 - Optional account sync: save/remove online JannyAI bookmarks from the preview modal
 - Optional collections panel: browse your JannyAI collections, preview/download cards in a collection, create a collection, and add bookmarked cards to a collection
 
-No gallery downloads or version history (JanitorAI doesn't expose these APIs).
+No gallery downloads, version history, or alternate greetings.
+
+#### Cloudflare and the userscript
+
+JannyAI Cloudflare-gates its card pages, and the card page is where the character actually lives. Browsing and searching still work without anything extra, but an import without the userscript gets you the name, avatar, tags, and the site blurb as creator's notes, with no description, no greeting, no scenario, and no example dialogue. That is a stub, not a character. Treat the userscript as required:
+
+1. Install a userscript manager (Tampermonkey or Violentmonkey)
+2. Add `extras/cl-janitor-bridge.user.js` from this repository
+3. Reload the Character Library tab
+
+The userscript makes the gated request from your own browser and hands back only the result. The DataCat provider uses the same userscript for its Hampter sorts, so one install covers both. It has nothing to do with the JanitorAI provider, which uses a real browser instead. If definitions stop loading even with it installed, your Cloudflare pass has probably expired: open jannyai.com in the same browser, let it load, then reopen the preview.
 
 #### JannyAI Account Sync
 
@@ -660,7 +728,7 @@ Extraction is handled entirely by DataCat's servers. The `appearOnPublicFeed` op
 1. Ensure the [cl-helper plugin](#cl-helper-plugin-not-detected) is installed and detected (required for session proxying)
 2. Enable DataCat in Settings > Online > Providers
 3. The session initializes automatically on first browse
-4. (Optional, for the JanitorAI Hampter sorts) Install the companion userscript `extras/cl-janitor-bridge.user.js` in a userscript manager like Tampermonkey or Violentmonkey, and add your JanitorAI login in Settings > Online > DataCat to page past the first page
+4. (Optional, for the Hampter sort orders) Install the companion userscript `extras/cl-janitor-bridge.user.js` in a userscript manager like Tampermonkey or Violentmonkey, and add your JanitorAI login in Settings > Online > DataCat to page past the first page
 
 </details>
 
@@ -692,6 +760,29 @@ Extraction is handled entirely by DataCat's servers. The `appearOnPublicFeed` op
 1. When you enable NSFW or use a login-required feature, the login modal appears (also reachable from the filter bar's account button)
 2. Enter your Botbooru username and password (requires the [cl-helper plugin](#cl-helper-plugin-not-detected))
 3. Without the plugin, paste a token manually in the same modal; tokens are long-lived (~90 days) and a copied `Bearer ` prefix is stripped automatically
+
+</details>
+
+<details>
+<summary><h3>Saucepan</h3></summary>
+
+**Auth:** Browsing needs no account, importing does. Requires the [cl-helper plugin](#cl-helper-plugin-not-detected) for everything, including browsing. Beta, and off by default.
+
+- Browse and search saucepan.ai, sorted by New, Trending, or Popular
+- Filter by tags, NSFW toggle, and by **fandom**, a separate dimension from tags covering source material and franchise
+- **Creator mode** for browsing one creator's companions, sorted by message count or age
+- In-app character preview with card details
+- Character linking and card updates
+
+Definitions are extracted natively rather than downloaded as a card file. Some companions have a locked definition that is not publicly available, and the preview says so; extraction may return an incomplete character body for those.
+
+#### Login
+1. Install the [cl-helper plugin](#cl-helper-plugin-not-detected). Saucepan sends no CORS headers at all, so every request goes through it, browsing included
+2. Go to **Settings → Online → Saucepan** and log in, or paste a bearer token from your own Saucepan session
+
+Opening a character that needs authentication turns the preview's import button into **Configure Token**, which takes you to the same place.
+
+The token is held in memory by cl-helper and pushed back to it automatically after a SillyTavern restart, so you should not need to log in again.
 
 </details>
 
@@ -781,7 +872,17 @@ The full app is optimized for mobile with:
 
 ### cl-helper plugin not detected
 
-The **cl-helper** plugin is required for Pygmalion login, Botbooru login, CharacterTavern NSFW access, DataCat session proxying, the Pixiv and Dropbox gallery extractors, Imgchest password-protected posts, Civitai API-key requests, and the disk-cached avatar/gallery thumbnails. JannyAI account sync does not need it — it uses a companion userscript bridge instead (see the JanitorAI provider section above). It ships with Character Library in the `extras/cl-helper/` folder but needs to be placed in SillyTavern's plugins directory:
+The **cl-helper** plugin is required for Pygmalion login, Botbooru login, CharacterTavern NSFW access, DataCat session proxying, the Pixiv and Dropbox gallery extractors, Imgchest password-protected posts, Civitai API-key requests, and the disk-cached avatar/gallery thumbnails. JannyAI account sync does not need it — it uses a companion userscript bridge instead (see the JannyAI provider section above). It ships with Character Library in the `extras/cl-helper/` folder but needs to be placed in SillyTavern's plugins directory.
+
+**One-command install (Linux, macOS, Termux):** open a terminal (in Termux, the same one you start SillyTavern from), then run:
+
+```bash
+bash "$(find ~ -maxdepth 8 -type d -name SillyTavern-CharacterLibrary 2>/dev/null | head -n 1)/extras/install-cl-helper.sh"
+```
+
+Or, if you know where the extension folder is, just run `bash <extension folder>/extras/install-cl-helper.sh` directly. The script copies the plugin into place, enables `enableServerPlugins` in config.yaml, and tells you what it did. When it finishes, **restart SillyTavern** and reload the Character Library tab. On Windows, use the manual steps below instead.
+
+**Manual install:**
 
 1. Copy (or symlink) the `extras/cl-helper` folder into your SillyTavern **plugins** directory:
    ```
@@ -805,9 +906,21 @@ Some image hosts (Imgur, Catbox, etc.) block direct browser requests due to CORS
 3. Restart the SillyTavern server
 4. Retry the download in Character Library
 
-This affects embedded media downloads, provider gallery downloads, and bulk localization.
+This affects embedded media downloads, provider gallery downloads, bulk localization, and provider browsing (CharacterTavern in particular can only be reached through the proxy).
 
-### JanitorAI Hampter sorts say "Cloudflare blocked this request"
+### A provider grid fails to load ("Search failed", error banner)
+
+When a browse grid fails, the error banner explains the cause and offers **Retry** plus a **Copy error report** button. When asking for help (Discord, GitHub), click Copy error report and paste the result; it contains the exact failure, response details, and the relevant settings as on/off flags (never your tokens). Common messages:
+
+- **"CORS proxy is disabled. Set enableCorsProxy: true..."**: SillyTavern ships with its CORS proxy off. Follow the steps in the section above.
+- **"Cloudflare blocked this request from your SillyTavern server"**: the provider's Cloudflare rejected the request coming from your ST server. Common when ST runs on a VPS or behind a VPN (datacenter IPs get blocked), or during bulk operations (rate rules); waiting a few minutes usually clears the rate case.
+- **"Your SillyTavern server could not reach \<site\>"**: your browser is fine, but the ST server itself has no route to the provider (server-side network, DNS, or VPN problem). Remember the browser's connection and the server's connection are separate things. (Rarely, a provider outage that returns a bare 500 looks identical; if other providers load fine from the same server, suspect that provider instead.)
+- **"Could not reach your SillyTavern server"**: the ST server is down or your connection to it dropped.
+- **"The provider returned an error page instead of data"**: something between your ST server and the provider intercepted the request and answered with a web page (ISP block page, captive portal, gateway login). The error report's body snippet shows the start of that page, which usually identifies the culprit.
+
+Older versions surfaced these as raw parser noise like "Search failed: JSON.parse: unexpected character at line 1 column 1 of the JSON data"; if you see that exact message, update Character Library and retry for a readable error.
+
+### DataCat: JanitorAI Hampter sorts say "Cloudflare blocked this request"
 
 JanitorAI's Hampter sort orders (Latest, Trending, and the rest, on the DataCat provider) sit behind Cloudflare bot protection. A direct load usually gets blocked (it occasionally slips through, but you can't rely on it). Install the companion userscript for dependable access:
 
@@ -815,7 +928,9 @@ JanitorAI's Hampter sort orders (Latest, Trending, and the rest, on the DataCat 
 2. Add `extras/cl-janitor-bridge.user.js` from this repository
 3. Reload the Character Library tab and retry the sort
 
-The userscript makes the Cloudflare-gated request from your own browser and hands only the results to Character Library. Without it these sorts are unreliable (Cloudflare usually blocks the direct fetch, though it occasionally gets through); every other DataCat and JanitorAI sort order works without it. To page past the first page, also add your JanitorAI login under Settings > Online > DataCat. Tested on desktop; on mobile, a userscript-capable browser such as Firefox for Android, or a mobile-specific solution that routes the request through a webview, works too.
+The userscript makes the Cloudflare-gated request from your own browser and hands only the results to Character Library. Without it these sorts are unreliable (Cloudflare usually blocks the direct fetch, though it occasionally gets through); every other DataCat and JannyAI sort order works without it. To page past the first page, also add your JanitorAI login under Settings > Online > DataCat. Tested on desktop; on mobile, a userscript-capable browser such as Firefox for Android, or a mobile-specific solution that routes the request through a webview, works too.
+
+The userscript serves exactly two things: these DataCat Hampter sorts, and **JannyAI** card definitions. The **JanitorAI** provider never uses it. That provider needs a real browser, which Character Library runs for you, and no userscript can substitute for it.
 
 ### Characters load more slowly behind HTTP Basic auth
 
@@ -833,6 +948,26 @@ Anything in Character Library that reaches an external service rides on third-pa
 
 We treat these as bugs and fix them as they come, but this kind of breakage is inevitable over time and largely outside our hands. The fastest path to a fix is a report. If a provider stops working or starts acting strangely, please open an issue describing what you did and what happened.
 
+## Contributing
+
+Right now this project isn't really set up to take contributions. Development happens outside GitHub and this repo is a release mirror, so pull requests aren't the main path. The bigger problem is that a lot of what makes this codebase work isn't written down anywhere. The conventions, the invariants, the reasons things are shaped the way they are, most of that only exists in my head. That's on me to fix, and until I do, contributing here is harder than it should be.
+
+Issues are a different story and they're genuinely welcome. Bug reports, provider breakage, feature ideas, all of it helps, and it costs you a lot less than a patch that turns out not to fit.
+
+If you do want to write code, open an issue first and say what you're planning. What usually sinks a patch isn't the feature, it's the dozen other places that have to change with it. That's the part the missing docs would have warned you about.
+
+I'd rather be upfront about the bar than have you run into it in review. I take this project seriously, and code that mostly works isn't good enough. Two things especially:
+
+- **Know where the code came from.** Anything borrowed from another project needs a license compatible with AGPL-3.0. A repo with no license file isn't permissive by default, it's all rights reserved. If part of what you send came from somewhere else, just say so and link it. That's normal, and a lot easier than it coming out later.
+- **Send code you understand and have run.** I use assistants here too, so this isn't a rule against them. The bar is the same either way. Expect to be asked why something is shaped the way it is, and to have run the feature end to end first, including the empty, expired and failure states. Code that reads well but has only been down the happy path takes the longest to review.
+
+None of this is meant to put you off. It's meant to stop you sinking real time into something I'd then have to turn down. If you're serious about it, I'd genuinely like to see it.
+
 ## License
 
 Licensed under the [GNU Affero General Public License v3](LICENSE).
+
+### Bundled third-party assets
+
+- [DOMPurify](https://github.com/cure53/DOMPurify) 3.0.6 (`app/vendor/dompurify/`), dual-licensed Apache License 2.0 / Mozilla Public License 2.0; the license banner is retained in the file.
+- [Font Awesome Free](https://fontawesome.com) 6.5.2 regular webfont (`app/vendor/fontawesome/`), font under the SIL Open Font License 1.1, icons under CC BY 4.0. The Font Awesome stylesheets and the solid/brands webfonts load from SillyTavern's own bundled copy; only the regular face (which SillyTavern does not ship) is vendored here.

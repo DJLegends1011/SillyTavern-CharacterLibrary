@@ -8,7 +8,7 @@ import { ProviderBase } from '../provider-interface.js';
 import CoreAPI from '../../core-api.js';
 import { assignGalleryId, importFromPng, fetchWithProxy } from '../provider-utils.js';
 import datacatBrowseView from './datacat-browse.js';
-import { initJanitorBridge } from './janitor-bridge.js';
+import { initJanitorBridge } from '../janitor-bridge.js';
 import './datacat-avatar-restore.js';
 import {
     DATACAT_API_BASE,
@@ -39,23 +39,6 @@ import {
 
 let api = null;
 
-// Saucepan-source DataCat characters expose extra portraits in
-// `character.companion_snapshot.portraits[]`. Each entry has
-// `image.highres_url` pointing at the saucepan CDN. Avatar lives at
-// `companion_snapshot.image.highres_url` and is downloaded separately
-// during import, so it's excluded here.
-function extractSaucepanGalleryImages(character) {
-    const portraits = character?.companion_snapshot?.portraits;
-    if (!Array.isArray(portraits) || portraits.length === 0) return [];
-    const out = [];
-    for (const p of portraits) {
-        const url = p?.image?.highres_url;
-        if (!url) continue;
-        out.push({ url, id: p.image.id || null });
-    }
-    return out;
-}
-
 // ========================================
 // PROVIDER CLASS
 // ========================================
@@ -70,6 +53,7 @@ class DatacatProvider extends ProviderBase {
     get beta() { return true; }
     get disabledByDefault() { return true; }
     get enableWarning() { return 'DataCat is an experimental source. Its API is barebones and some features (creator listings, search) may return incomplete or unavailable results. Expect rough edges.'; }
+    get minClHelperVersion() { return '1.0.0'; }
     get browseView() { return datacatBrowseView; }
 
     get linkStatFields() {
@@ -337,24 +321,13 @@ class DatacatProvider extends ProviderBase {
     get supportsVersionHistory() { return false; }
 
     // ── Gallery ──────────────────────────────────────────────
-    //
-    // Saucepan-source characters carry extra portraits in
-    // `character.companion_snapshot.portraits[]`, each with an `image.highres_url`
-    // pointing at the saucepan CDN. JanitorAI-source characters have no
-    // gallery field on DataCat, so this returns [] for them.
 
-    get supportsGallery() { return true; }
-
-    async fetchGalleryImages(linkInfo) {
-        if (!linkInfo?.id) return [];
-        try {
-            const character = await fetchDatacatCharacter(linkInfo.id, linkInfo.sourceKind || null);
-            return extractSaucepanGalleryImages(character);
-        } catch (e) {
-            console.error('[DatacatProvider] fetchGalleryImages failed:', linkInfo.id, e);
-            return [];
-        }
-    }
+    // JanitorAI cards have no galleries at all, and the only gallery DataCat ever exposed came
+    // from saucepan-sourced rows, which now belong to the standalone Saucepan provider. Declaring
+    // false keeps DataCat-linked characters out of the gallery button, the bulk gallery scans and
+    // the auto-download-after-import path, instead of walking them to always find nothing. The
+    // browse preview's portrait grid is unaffected: that is display, not the download surface.
+    get supportsGallery() { return false; }
 
     // ── Character URL / Link UI ─────────────────────────────
 
@@ -523,8 +496,7 @@ class DatacatProvider extends ProviderBase {
 
             // Download avatar. Listing rows top out at datacat's resized variants (640 card /
             // 768 hero); only the detail payload's embedded V2 json points at the untouched
-            // original, so upgrade before resolving (this also improves the saucepan portrait
-            // check below). Best-effort: keep the row on failure.
+            // original, so upgrade before resolving. Best-effort: keep the row on failure.
             if (!character.chara_card_v2_json && !character.content_variants) {
                 character = await fetchDatacatCharacter(charId, sourceKind) || character;
             }
@@ -544,7 +516,7 @@ class DatacatProvider extends ProviderBase {
                 characterCard, imageBuffer,
                 fileName: `datacat_${slugify(characterName)}.png`,
                 characterName,
-                hasGallery: extractSaucepanGalleryImages(character).length > 0,
+                hasGallery: false,
                 providerCharId: charId,
                 fullPath: charId,
                 avatarUrl: avatarUrl || null,
@@ -596,18 +568,18 @@ let _janitoraiRefreshInFlight = null;
 async function janitoraiDoRefresh() {
     if (_janitoraiRefreshInFlight) return _janitoraiRefreshInFlight;
     _janitoraiRefreshInFlight = (async () => {
-        const rt = CoreAPI.getSetting('janitoraiRefreshToken');
+        const rt = CoreAPI.getSetting('datacatJanitoraiRefreshToken');
         const res = await janitoraiRefreshGrant(rt);
         if (res.access_token) {
-            CoreAPI.setSetting('janitoraiToken', res.access_token);
-            if (res.refresh_token) CoreAPI.setSetting('janitoraiRefreshToken', res.refresh_token);
+            CoreAPI.setSetting('datacatJanitoraiToken', res.access_token);
+            if (res.refresh_token) CoreAPI.setSetting('datacatJanitoraiRefreshToken', res.refresh_token);
             return res.access_token;
         }
         // Only wipe the stored session when the refresh token is definitively dead,
         // never on a transient network blip (keeps the user logged in across hiccups).
         if (res.dead) {
-            CoreAPI.setSetting('janitoraiToken', null);
-            CoreAPI.setSetting('janitoraiRefreshToken', null);
+            CoreAPI.setSetting('datacatJanitoraiToken', null);
+            CoreAPI.setSetting('datacatJanitoraiRefreshToken', null);
         }
         return '';
     })();
@@ -616,8 +588,8 @@ async function janitoraiDoRefresh() {
 }
 
 // Current valid access token, refreshing within 2min of expiry. '' when logged out / refresh failed.
-window.getValidJanitoraiToken = async () => {
-    const tok = CoreAPI.getSetting('janitoraiToken') || '';
+window.datacatJanitoraiGetToken = async () => {
+    const tok = CoreAPI.getSetting('datacatJanitoraiToken') || '';
     if (!tok) return '';
     const { expMs } = decodeJanitoraiClaims(tok);
     if (expMs && expMs - Date.now() > 120000) return tok;
@@ -625,12 +597,12 @@ window.getValidJanitoraiToken = async () => {
 };
 
 // Force a refresh (reactive path after an unexpected 401). Returns the new token or ''.
-window.janitoraiForceRefresh = async () => janitoraiDoRefresh();
+window.datacatJanitoraiForceRefresh = async () => janitoraiDoRefresh();
 
 // Seed the session from a pasted sb-auth-auth-token cookie (or session JSON / bare JWT).
 // Verification stays off Cloudflare-gated hampter: its preflight can 403 on a perfectly
 // good token, and failing after the up-front rotation would strand the fresh pair.
-window.janitoraiSetSession = async (pasted) => {
+window.datacatJanitoraiSetSession = async (pasted) => {
     const pair = parseJanitoraiSession(pasted);
     if (!pair) return { ok: false, error: 'Could not find a session in that value. Copy the whole sb-auth-auth-token cookie.' };
     const { email, expMs } = decodeJanitoraiClaims(pair.access_token);
@@ -656,19 +628,19 @@ window.janitoraiSetSession = async (pasted) => {
                 : 'That session is expired or invalid. Copy a fresh cookie after logging in again.' };
         }
     }
-    CoreAPI.setSetting('janitoraiToken', token);
-    CoreAPI.setSetting('janitoraiRefreshToken', pair.refresh_token || null);
+    CoreAPI.setSetting('datacatJanitoraiToken', token);
+    CoreAPI.setSetting('datacatJanitoraiRefreshToken', pair.refresh_token || null);
     return { ok: true, email: decodeJanitoraiClaims(token).email || email, hasRefresh: !!pair.refresh_token };
 };
 
-window.janitoraiLogout = () => {
-    CoreAPI.setSetting('janitoraiToken', null);
-    CoreAPI.setSetting('janitoraiRefreshToken', null);
+window.datacatJanitoraiLogout = () => {
+    CoreAPI.setSetting('datacatJanitoraiToken', null);
+    CoreAPI.setSetting('datacatJanitoraiRefreshToken', null);
 };
 
-window.janitoraiSessionStatus = () => {
-    const tok = CoreAPI.getSetting('janitoraiToken') || '';
+window.datacatJanitoraiSessionStatus = () => {
+    const tok = CoreAPI.getSetting('datacatJanitoraiToken') || '';
     if (!tok) return { loggedIn: false };
     const { email, expMs } = decodeJanitoraiClaims(tok);
-    return { loggedIn: true, email, expMs, hasRefresh: !!CoreAPI.getSetting('janitoraiRefreshToken') };
+    return { loggedIn: true, email, expMs, hasRefresh: !!CoreAPI.getSetting('datacatJanitoraiRefreshToken') };
 };

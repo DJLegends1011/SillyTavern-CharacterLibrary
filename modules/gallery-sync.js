@@ -14,11 +14,16 @@ export function auditGalleryIntegrity() {
         uniqueFoldersEnabled,
         totalCharacters: characters.length,
         missingGalleryId: [],
-        issues: { missingIds: 0 },
+        issues: { missingIds: 0, unknown: 0 },
     };
 
     if (uniqueFoldersEnabled) {
         for (const char of characters) {
+            // Unobtainable extensions (interrupted shallow recovery) are unknown, not missing.
+            if (!CoreAPI.extensionsReady(char)) {
+                result.issues.unknown++;
+                continue;
+            }
             if (!CoreAPI.getCharacterGalleryId(char)) {
                 result.missingGalleryId.push({
                     avatar: char.avatar,
@@ -75,7 +80,9 @@ export function updateWarningIndicator(audit = null) {
             visible: true,
             level: 'none',
             badge: '',
-            title: 'Gallery sync status - all characters have IDs',
+            title: (audit.issues.unknown || 0) > 0
+                ? 'Gallery sync status - all checked characters have IDs'
+                : 'Gallery sync status - all characters have IDs',
         };
     }
 
@@ -104,17 +111,19 @@ function updateDropdownContent(dropdown, audit) {
     if (!content) return;
 
     const missingIds = audit.issues.missingIds;
+    const unknown = audit.issues.unknown || 0;
     const statusClass = missingIds === 0 ? 'healthy' : 'issues';
-    const hasId = audit.totalCharacters - missingIds;
+    const hasId = audit.totalCharacters - missingIds - unknown;
 
     content.innerHTML = `
         <div class="sync-dropdown-header ${statusClass}">
             <i class="fa-solid ${missingIds === 0 ? 'fa-circle-check' : 'fa-triangle-exclamation'}"></i>
-            <span>${missingIds === 0 ? 'All characters have gallery IDs' : `${missingIds} missing gallery_id`}</span>
+            <span>${missingIds === 0 ? (unknown > 0 ? 'All checked characters have gallery IDs' : 'All characters have gallery IDs') : `${missingIds} missing gallery_id`}</span>
         </div>
         <div class="sync-dropdown-stats">
             <span><i class="fa-solid fa-users"></i> ${audit.totalCharacters} chars</span>
             <span><i class="fa-solid fa-check"></i> ${hasId} with ID</span>
+            ${unknown > 0 ? `<span title="Character data could not be loaded for these; they are not counted as missing"><i class="fa-solid fa-circle-question"></i> ${unknown} not checked</span>` : ''}
         </div>
         ${missingIds > 0 ? `
         <div class="sync-dropdown-actions">

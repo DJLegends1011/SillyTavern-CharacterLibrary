@@ -2,7 +2,7 @@
 
 import { BrowseView } from '../browse-view.js';
 import CoreAPI from '../../core-api.js';
-import { IMG_PLACEHOLDER, formatNumber, fetchWithProxy, BROWSE_PURIFY_CONFIG, skeletonLines, deferRender, deferCall, isMobileMode, finishBrowseImport } from '../provider-utils.js';
+import { IMG_PLACEHOLDER, formatNumber, fetchWithProxy, BROWSE_PURIFY_CONFIG, skeletonLines, deferRender, deferCall, isMobileMode, finishBrowseImport, readJsonClassified, renderBrowseError } from '../provider-utils.js';
 import {
     WYVERN_API_BASE,
     WYVERN_SITE_BASE,
@@ -40,6 +40,7 @@ const {
     getCharacterGalleryId,
     deleteCharacter,
     renderCreatorNotesSecure,
+    renderCardHtmlSecure,
     cleanupCreatorNotesContainer,
     checkCharacterForDuplicatesAsync,
     showPreImportDuplicateWarning,
@@ -814,8 +815,8 @@ class WyvernBrowseView extends BrowseView {
 
     getFollowingManagerSortOptions() {
         return [
-            { value: 'name_asc', label: 'Name A\u2013Z' },
-            { value: 'name_desc', label: 'Name Z\u2013A' },
+            { value: 'name_asc', label: 'Name A-Z' },
+            { value: 'name_desc', label: 'Name Z-A' },
             { value: 'chars', label: 'Most Characters' },
         ];
     }
@@ -1648,8 +1649,7 @@ async function loadWyvernCharacters(forceRefresh = false) {
                 headers
             });
 
-            if (!response.ok) throw new Error(`API error: ${response.status}`);
-            const data = await response.json();
+            const data = await readJsonClassified(response);
             if (!wyvernDelegatesInitialized || gen !== wyvernLoadGeneration) return;
 
             wyvernCharacters = data.results || [];
@@ -1699,13 +1699,7 @@ async function loadWyvernCharacters(forceRefresh = false) {
             headers
         });
 
-        if (!response.ok) {
-            const errorText = await response.text();
-            console.error('[Wyvern] API error:', response.status, errorText);
-            throw new Error(`API error: ${response.status}`);
-        }
-
-        const data = await response.json();
+        const data = await readJsonClassified(response);
 
         if (!wyvernDelegatesInitialized || gen !== wyvernLoadGeneration) return;
 
@@ -1784,16 +1778,13 @@ async function loadWyvernCharacters(forceRefresh = false) {
     } catch (e) {
         console.error('[Wyvern] Load error:', e);
         if (wyvernCurrentPage === 1) {
-            grid.innerHTML = `
-                <div class="browse-error">
-                    <i class="fa-solid fa-exclamation-triangle"></i>
-                    <h3>Failed to load Wyvern</h3>
-                    <p>${escapeHtml(e.message)}</p>
-                    <button class="action-btn primary browse-retry-btn">
-                        <i class="fa-solid fa-refresh"></i> Retry
-                    </button>
-                </div>
-            `;
+            renderBrowseError(grid, {
+                provider: 'wyvern',
+                error: e,
+                title: 'Failed to load Wyvern',
+                flags: { token: !!wyvernToken, nsfw: wyvernNsfwEnabled },
+                retry: () => { wyvernCharacters = []; wyvernCurrentPage = 1; wyvernIsLoading = false; loadWyvernCharacters(true); },
+            });
         } else {
             showToast('Failed to load more: ' + e.message, 'error');
         }
@@ -1891,7 +1882,7 @@ async function loadWyvernFollowing(forceRefresh = false) {
         let feedData;
         try {
             const feedResp = await fetchWithProxy(`${WYVERN_API_BASE}/unified-feed?${params}`, { method: 'GET', headers });
-            feedData = await feedResp.json();
+            feedData = await readJsonClassified(feedResp);
         } catch (e) {
             if (e.message?.includes('401')) {
                 renderWyvernFollowingEmpty('login');
@@ -1930,17 +1921,14 @@ async function loadWyvernFollowing(forceRefresh = false) {
             return;
         }
         if (grid) {
-            grid.innerHTML = `
-                <div class="chub-timeline-empty">
-                    <i class="fa-solid fa-exclamation-triangle"></i>
-                    <h3>Error Loading Timeline</h3>
-                    <p>${escapeHtml(err.message)}</p>
-                    <button class="action-btn primary" id="wyvernFollowingRetryBtn">
-                        <i class="fa-solid fa-redo"></i> Retry
-                    </button>
-                </div>
-            `;
-            document.getElementById('wyvernFollowingRetryBtn')?.addEventListener('click', () => loadWyvernFollowing(true));
+            renderBrowseError(grid, {
+                provider: 'wyvern',
+                error: err,
+                title: 'Error loading timeline',
+                view: 'timeline',
+                flags: { token: !!wyvernToken, nsfw: wyvernNsfwEnabled },
+                retry: () => loadWyvernFollowing(true),
+            });
         }
     } finally {
         wyvernFollowingLoading = false;
@@ -2085,9 +2073,7 @@ async function loadWyvernCreatorCharacters(uid, displayName, vanityUrl) {
             headers,
         });
 
-        if (!resp.ok) throw new Error(`API error: ${resp.status}`);
-
-        const data = await resp.json();
+        const data = await readJsonClassified(resp);
         wyvernCharacters = data.characters || data.results || [];
         wyvernHasMore = false;
 
@@ -2095,13 +2081,13 @@ async function loadWyvernCreatorCharacters(uid, displayName, vanityUrl) {
 
     } catch (e) {
         console.error('[Wyvern] Creator filter error:', e);
-        grid.innerHTML = `
-            <div class="browse-error">
-                <i class="fa-solid fa-exclamation-triangle"></i>
-                <h3>Failed to load creator's characters</h3>
-                <p>${escapeHtml(e.message)}</p>
-            </div>
-        `;
+        renderBrowseError(grid, {
+            provider: 'wyvern',
+            error: e,
+            title: 'Failed to load creator\'s characters',
+            view: 'creator',
+            flags: { token: !!wyvernToken },
+        });
     }
 }
 
@@ -2306,12 +2292,6 @@ function setupWyvernGridDelegates() {
     if (wyvernDelegatesInitialized) return;
 
     const cardClickHandler = (e) => {
-        if (e.target.closest('.browse-retry-btn')) {
-            wyvernCharacters = []; wyvernCurrentPage = 1; wyvernIsLoading = false;
-            loadWyvernCharacters(true);
-            return;
-        }
-
         // Creator link click - load creator's characters
         const creatorLink = e.target.closest('.browse-card-creator-link');
         if (creatorLink) {
@@ -2640,7 +2620,7 @@ async function openWyvernCharPreview(char) {
         requestAnimationFrame(() => {
             if (node.description) {
                 descSection.style.display = 'block';
-                deferRender(descEl, () => safePurify(formatRichText(node.description, char.name, true), BROWSE_PURIFY_CONFIG));
+                deferCall(descEl, () => renderCardHtmlSecure(node.description, char.name, descEl));
                 descEl.dataset.fullContent = node.description;
             } else if (descSection) {
                 descSection.style.display = 'none';
