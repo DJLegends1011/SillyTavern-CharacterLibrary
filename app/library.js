@@ -4924,13 +4924,16 @@ function setupSettingsModal() {
     }
 
     // ── Bookmarks Backup (export/import) ────────────────────
-    const BOOKMARK_KEYS = ['jannyBookmarks', 'datacatBookmarks', 'ctBookmarks', 'pygBookmarks', 'wyvernBookmarks'];
+    const BOOKMARK_KEYS = ['jannyBookmarks', 'datacatBookmarks', 'ctBookmarks', 'pygBookmarks', 'wyvernBookmarks', 'janitoraiBookmarks', 'saucepanBookmarks'];
     const BOOKMARK_ID_FIELDS = {
         jannyBookmarks: 'id',
         datacatBookmarks: 'id',
         pygBookmarks: 'id',
         wyvernBookmarks: 'id',
         ctBookmarks: 'path',
+        // Both v7.0.0 providers key their snapshots on the JanitorAI/Saucepan character id.
+        janitoraiBookmarks: 'character_id',
+        saucepanBookmarks: 'character_id',
     };
 
     const exportBookmarksBtn = document.getElementById('exportBookmarksBtn');
