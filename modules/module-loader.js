@@ -14,7 +14,7 @@ import CoreAPI from './core-api.js';
 // CSS LOADER
 // ========================================
 
-const MODULE_CSS_VERSION = 79;
+const MODULE_CSS_VERSION = 80;
 
 function loadModuleCSS(path) {
     return new Promise((resolve) => {
@@ -198,7 +198,6 @@ async function initModuleSystem() {
         loadModuleCSS('./gallery-viewer.css');
         ModuleLoader.register('gallery-viewer', galleryViewerModule.default);
 
-        window.openGalleryViewer = galleryViewerModule.openViewer;
         window.openGalleryViewerWithImages = galleryViewerModule.openViewerWithImages;
         window.closeGalleryViewer = galleryViewerModule.closeViewer;
     } catch (err) {
@@ -360,15 +359,23 @@ async function initModuleSystem() {
     loadModuleCSS('./providers/pygmalion/pygmalion-browse.css');
     loadModuleCSS('./providers/wyvern/wyvern-browse.css');
     loadModuleCSS('./providers/datacat/datacat-browse.css');
+    loadModuleCSS('./providers/saucepan/saucepan-browse.css');
     loadModuleCSS('./providers/botbooru/botbooru-browse.css');
+    loadModuleCSS('./providers/janitorai/janitorai-browse.css');
     {
         const providerImports = [
             { name: 'chub', load: () => import('./providers/chub/chub-provider.js') },
+            // Ahead of janny for the same-state tie-break: getProviderForUrl prefers ENABLED
+            // claimants, so with janitorai disabled (the shipped default) a janitorai.com link
+            // resolves to jannyai; once both are enabled this order sends it to the source.
+            // jannyai.com URLs are unaffected either way.
+            { name: 'janitorai', load: () => import('./providers/janitorai/janitorai-provider.js') },
             { name: 'janny', load: () => import('./providers/janny/janny-provider.js') },
             { name: 'chartavern', load: () => import('./providers/chartavern/chartavern-provider.js') },
             { name: 'pygmalion', load: () => import('./providers/pygmalion/pygmalion-provider.js') },
             { name: 'wyvern', load: () => import('./providers/wyvern/wyvern-provider.js') },
             { name: 'datacat', load: () => import('./providers/datacat/datacat-provider.js') },
+            { name: 'saucepan', load: () => import('./providers/saucepan/saucepan-provider.js') },
             { name: 'botbooru', load: () => import('./providers/botbooru/botbooru-provider.js') },
         ];
         const results = await Promise.allSettled(providerImports.map(p => p.load()));

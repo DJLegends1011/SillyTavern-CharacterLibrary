@@ -598,6 +598,26 @@
     color: var(--cl-error-bright);
 }
 
+/* Additional-book (charLore) chips: dashed border + Add'l badge to read as a lighter relationship */
+.lb-linked-chip.aux {
+    border-style: dashed;
+    background: rgba(var(--accent-rgb), 0.07);
+}
+
+/* No divider before the badge: the relationship icon belongs to the identity segment;
+   only the X keeps its separator (destructive action). */
+.lb-rel-badge {
+    display: inline-flex;
+    align-items: center;
+    align-self: stretch;
+    padding: 0 var(--space-sm) 0 var(--space-2xs);
+    font-size: var(--font-2xs);
+}
+
+/* Relationship hues mirror the link-picker statuses: primary = success, additional = info */
+.lb-primary-badge { color: var(--cl-success-pale); }
+.lb-aux-badge { color: var(--cl-info-pale); }
+
 
 /* ---------- Entries toolbar ---------- */
 
@@ -1401,6 +1421,7 @@
 
 .lb-link-status.current { color: var(--cl-success-pale); }
 .lb-link-status.other { color: var(--cl-warning-pale); }
+.lb-link-status.aux { color: var(--cl-info-pale); }
 
 .lb-link-footer {
     display: flex;

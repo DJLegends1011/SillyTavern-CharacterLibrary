@@ -2,14 +2,13 @@
 
 import { BrowseView } from '../browse-view.js';
 import CoreAPI from '../../core-api.js';
-import { IMG_PLACEHOLDER, formatNumber, BROWSE_PURIFY_CONFIG, skeletonLines, deferRender, deferCall, isMobileMode, finishBrowseImport } from '../provider-utils.js';
+import { isJanitorBridgeAvailable, warmJanitorClearance } from '../janitor-bridge.js';
+import { IMG_PLACEHOLDER, formatNumber, BROWSE_PURIFY_CONFIG, skeletonLines, deferRender, deferCall, isMobileMode, finishBrowseImport, renderBrowseError } from '../provider-utils.js';
 import {
-    JANNY_SEARCH_URL,
     JANNY_IMAGE_BASE,
     JANNY_SITE_BASE,
     TAG_MAP,
-    getSearchToken,
-    fetchWithProxy,
+    meiliMultiSearch,
     slugify,
     stripHtml,
     resolveTagNames
@@ -28,6 +27,7 @@ const {
     formatRichText,
     safePurify,
     renderCreatorNotesSecure,
+    renderCardHtmlSecure,
     cleanupCreatorNotesContainer,
     debounce,
     getProviderExcludeTags,
@@ -95,51 +95,16 @@ async function searchJanny(opts = {}) {
         tokens_asc: ['totalToken:asc'],
         relevant: []
     };
-    let sortArr = sortMap[sort] || sortMap.newest;
 
-    const body = {
-        queries: [{
-            indexUid: 'janny-characters',
-            q: search,
-            facets: ['isLowQuality', 'isNsfw', 'tagIds', 'totalToken'],
-            attributesToCrop: ['description:300'],
-            cropMarker: '...',
-            filter: filters,
-            attributesToHighlight: ['name', 'description'],
-            highlightPreTag: '__ais-highlight__',
-            highlightPostTag: '__/ais-highlight__',
-            hitsPerPage: limit,
-            page
-        }]
-    };
-
-    if (sortArr.length > 0) {
-        body.queries[0].sort = sortArr;
-    }
-
-    const token = await getSearchToken();
-    const headers = {
-        'Accept': '*/*',
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`,
-        'Origin': JANNY_SITE_BASE,
-        'Referer': `${JANNY_SITE_BASE}/`,
-        'x-meilisearch-client': 'Meilisearch instant-meilisearch (v0.19.0) ; Meilisearch JavaScript (v0.41.0)'
-    };
-
-    let response;
-    try {
-        response = await fetch(JANNY_SEARCH_URL, { method: 'POST', headers, body: JSON.stringify(body) });
-    } catch (_) {
-        response = await fetchWithProxy(JANNY_SEARCH_URL, { method: 'POST', headers, body: JSON.stringify(body) });
-    }
-
-    if (!response.ok) {
-        const text = await response.text().catch(() => '');
-        throw new Error(`JannyAI search error ${response.status}: ${text}`);
-    }
-
-    return response.json();
+    return meiliMultiSearch({
+        search,
+        page,
+        limit,
+        filters,
+        facets: ['isLowQuality', 'isNsfw', 'tagIds', 'totalToken'],
+        sort: sortMap[sort] || sortMap.newest,
+        highlight: true,
+    });
 }
 
 // ========================================
@@ -423,17 +388,13 @@ async function loadCharacters(append = false) {
         console.error('[JannyBrowse] Search error:', err);
         showToast(`JannyAI search failed: ${err.message}`, 'error');
         if (!append && grid) {
-            grid.innerHTML = `
-                <div style="grid-column: 1 / -1; padding: 40px; text-align: center; color: var(--text-muted);">
-                    <i class="fa-solid fa-exclamation-triangle" style="font-size: 2rem; color: var(--cl-error-bright);"></i>
-                    <p style="margin-top: 12px;">Search failed: ${escapeHtml(err.message)}</p>
-                    <button class="glass-btn" style="margin-top: 12px;" id="jannyRetryBtn">
-                        <i class="fa-solid fa-redo"></i> Retry
-                    </button>
-                </div>
-            `;
-            const retryBtn = document.getElementById('jannyRetryBtn');
-            if (retryBtn) retryBtn.addEventListener('click', () => loadCharacters(false));
+            renderBrowseError(grid, {
+                provider: 'janny',
+                error: err,
+                message: `Search failed: ${err.message}`,
+                flags: { nsfw: jannyNsfwEnabled },
+                retry: () => loadCharacters(false),
+            });
         }
     } finally {
         if (thisToken === jannyLoadToken) {
@@ -571,7 +532,9 @@ async function fetchAndPopulateDetails(hit, token) {
             const descEl = document.getElementById('jannyCharDescription');
             if (descSection && descEl) {
                 descSection.style.display = 'block';
-                descEl.innerHTML = '<em style="color: var(--text-secondary, #888)">Could not load character definition. Cloudflare may be blocking the request; the character can still be imported with basic info.</em>';
+                descEl.innerHTML = isJanitorBridgeAvailable()
+                    ? '<em style="color: var(--text-secondary, #888)">JannyAI\'s Cloudflare wall blocked the definition fetch. Your Cloudflare pass may have expired: open jannyai.com in this browser, let it load, then reopen this preview. Importing now would save a card with no definition or greeting.</em>'
+                    : '<em style="color: var(--text-secondary, #888)">JannyAI now Cloudflare-gates card definitions. Install or update the companion userscript (extras/cl-janitor-bridge.user.js) for reliable access. Importing without it would save a card with no definition or greeting.</em>';
             }
             return;
         }
@@ -600,7 +563,7 @@ async function fetchAndPopulateDetails(hit, token) {
         if (descSection) {
             if (personality) {
                 descSection.style.display = 'block';
-                if (descEl) deferRender(descEl, () => safePurify(formatRichText(personality, name, true), BROWSE_PURIFY_CONFIG));
+                if (descEl) deferCall(descEl, () => renderCardHtmlSecure(personality, name, descEl));
             } else {
                 descSection.style.display = 'none';
             }
@@ -639,7 +602,7 @@ async function fetchAndPopulateDetails(hit, token) {
         debugLog('[JannyBrowse] Detail fetch error:', err);
         if (token === jannyDetailFetchToken) {
             const descEl = document.getElementById('jannyCharDescription');
-            if (descEl) descEl.innerHTML = '<em style="color: var(--text-secondary, #888)">Could not load character definition. The character can still be imported with basic info.</em>';
+            if (descEl) descEl.innerHTML = '<em style="color: var(--text-secondary, #888)">Could not load character definition. Importing now would save a card with no definition or greeting; retry before importing.</em>';
         }
     }
 }
@@ -1492,7 +1455,7 @@ class JannyBrowseView extends BrowseView {
         initJannyView();
         const grid = document.getElementById('jannyGrid');
         if (grid) this.observeImages(grid);
-        loadCharacters(false);
+        // No initial load here: init() runs before applyDefaults(), so activate() issues it.
     }
 
     getSearchInputId(mode) {
@@ -1531,11 +1494,27 @@ class JannyBrowseView extends BrowseView {
         const wasInitialized = this._initialized;
         super.activate(container, options);
 
-        if (wasInitialized && this._initialized) {
+        if (wasInitialized && this._initialized && !options.domRecreated) {
             delegatesInitialized = true;
             this.buildLocalLibraryLookup();
             this.reconnectImageObserver();
         }
+
+        // Test for real cards, not child nodes: an aborted load leaves skeletons.
+        const grid = document.getElementById('jannyGrid');
+        const painted = !!grid?.querySelector('.browse-card');
+        if (jannyCharacters.length === 0) {
+            loadCharacters(false);
+        } else if (!painted) {
+            jannyGridRenderedCount = 0;
+            renderGrid(jannyCharacters, false);
+        }
+
+        // Browsing itself rides MeiliSearch (CORS-open), but opening any card needs the
+        // Cloudflare-gated page fetch. Clear it now, while the user is still scanning the grid,
+        // so the first card they open does not sit through a refresh. Probe-first, so a valid
+        // clearance costs one request and no tab; fire-and-forget so activation never blocks.
+        warmJanitorClearance(`${JANNY_SITE_BASE}/characters/`).catch(() => {});
     }
 
     // ── Library Lookup (BrowseView contract) ────────────────

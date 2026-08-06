@@ -1153,27 +1153,55 @@ function fieldHasOverrides(fieldKey) {
     return false;
 }
 
+let _savedPrompts = null;
+let _savedPromptsLoading = null;
+let _savedPromptsSaving = false;
+let _savedPromptsSaveQueued = false;
+
 async function loadSavedPrompts() {
-    try {
-        const resp = await fetch(`/user/files/${PROMPTS_FILE}`);
-        if (!resp.ok) return {};
-        return await resp.json();
-    } catch { return {}; }
+    if (_savedPrompts) return _savedPrompts;
+    if (_savedPromptsLoading) return _savedPromptsLoading;
+    _savedPromptsLoading = (async () => {
+        let data = null;
+        try {
+            const resp = await fetch(`/user/files/${PROMPTS_FILE}`);
+            if (resp.ok) data = await resp.json();
+        } catch { /* missing or invalid file is fine */ }
+        _savedPrompts = (data && typeof data === 'object' && !Array.isArray(data)) ? data : {};
+        _savedPromptsLoading = null;
+        return _savedPrompts;
+    })();
+    return _savedPromptsLoading;
 }
 
 async function saveSavedPrompts(data) {
+    if (data && typeof data === 'object') _savedPrompts = data;
+    if (!_savedPrompts) return false;
+    if (_savedPromptsSaving) {
+        // mutation is already in _savedPrompts and the queued write will persist it
+        _savedPromptsSaveQueued = true;
+        return true;
+    }
+    _savedPromptsSaving = true;
+    let ok = false;
     try {
         const resp = await CoreAPI.apiRequest('/files/upload', 'POST', {
             name: PROMPTS_FILE,
-            data: CoreAPI.utf8ToBase64(JSON.stringify(data, null, 2)),
+            data: CoreAPI.utf8ToBase64(JSON.stringify(_savedPrompts, null, 2)),
         });
         if (!resp.ok) throw new Error(`upload failed (${resp.status})`);
-        return true;
+        ok = true;
     } catch (e) {
         console.error('[Creator] Failed to save prompt presets:', e.message);
         CoreAPI.showToast('Failed to save prompt preset', 'error');
-        return false;
+    } finally {
+        _savedPromptsSaving = false;
+        if (_savedPromptsSaveQueued) {
+            _savedPromptsSaveQueued = false;
+            saveSavedPrompts();
+        }
     }
+    return ok;
 }
 
 function populateStudioSettings() {
@@ -1639,7 +1667,9 @@ function openNotesPreview() {
     const charName = document.getElementById('creatorName')?.value?.trim() || 'Character';
     CoreAPI.renderCreatorNotesSecure(content, charName, container);
 
-    const iframe = container.querySelector('iframe');
+    // Last iframe = the render that just ran; the first can be a still-bridging prior render.
+    const iframes = container.querySelectorAll('iframe');
+    const iframe = iframes[iframes.length - 1];
     if (iframe) {
         // Kill the auto-resize machinery - this container has a fixed flex height.
         // setupCreatorNotesResize sets iframe.onload which would re-impose a pixel

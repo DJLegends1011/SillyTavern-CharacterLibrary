@@ -807,6 +807,15 @@
     gap: var(--space-md);
 }
 
+/* Message-authored inline styles must not escape the preview (same guard as the browse modals) */
+.chat-preview-messages [style*="position:fixed"], .chat-preview-messages [style*="position: fixed"],
+.chat-preview-messages [style*="position:sticky"], .chat-preview-messages [style*="position: sticky"] {
+    position: static !important;
+}
+.chat-preview-messages [style*="z-index"] {
+    z-index: auto !important;
+}
+
 /* Chat message bubbles */
 .chat-message {
     display: flex;

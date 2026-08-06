@@ -1546,6 +1546,11 @@ html.cl-mobile .cl-confirm-overlay .confirm-modal-footer .action-btn {
     font-size: var(--font-base);
     font-weight: 600;
 }
+/* Three-choice confirms stack vertically (three side-by-side labels dont fit a phone row);
+   reversed so the primary action lands on top. */
+html.cl-mobile .cl-confirm-overlay.cl-confirm-three .confirm-modal-footer {
+    flex-direction: column-reverse;
+}
 @keyframes clConfirmSheetSlideUp {
     from { transform: translateY(100%); }
     to { transform: translateY(0); }
@@ -1742,6 +1747,11 @@ html.cl-mobile .provider-link-search-row input:nth-child(3) {
 html.cl-mobile .provider-link-search-by {
     font-size: var(--font-xs);
 }
+/* Defeat the custom-select width lock so the source filter shares the wrapped row (author-banner pattern) */
+html.cl-mobile .provider-link-search-row .custom-select-container {
+    min-width: 0 !important;
+    flex: 1;
+}
 html.cl-mobile .provider-link-search-btn {
     min-height: var(--touch-target-min);
     min-width: var(--touch-target-min);
@@ -1824,6 +1834,59 @@ html.cl-mobile .provider-exclude-tags-input {
     font-size: var(--mobile-input-size) !important;
 }
 html.cl-mobile .provider-exclude-tag-remove {
+    min-width: 28px;
+    min-height: 28px;
+}
+
+/* --- Linked-lorebook card (edit tab) --- */
+/* Tighter chrome overall; the action buttons take their own full row (three text
+   buttons never fit beside the info block on a phone) and split it evenly. */
+html.cl-mobile .linked-lorebook-bar {
+    gap: var(--space-sm);
+    padding: var(--space-sm);
+}
+html.cl-mobile .linked-lorebook-tile {
+    width: 30px;
+    height: 30px;
+    font-size: var(--font-sm);
+}
+html.cl-mobile .linked-lorebook-name {
+    font-size: var(--font-sm);
+}
+html.cl-mobile .linked-lorebook-actions {
+    flex: 1 1 100%;
+    margin-left: 0;
+    gap: var(--space-xs);
+}
+html.cl-mobile .linked-lorebook-actions .action-btn {
+    flex: 1;
+    justify-content: center;
+    min-height: var(--touch-target-min);
+    touch-action: manipulation;
+}
+/* Aux row goes two-story: label + Add form a header line, pills take the full
+   width below, so many pills wrap in even lines instead of flowing around the
+   inline label with the Add button stranded wherever the last pill ends. */
+html.cl-mobile .linked-lorebook-aux {
+    gap: var(--space-sm);
+    padding: var(--space-sm);
+}
+html.cl-mobile .linked-lorebook-aux-label { order: 1; }
+html.cl-mobile #addAuxLorebookBtn {
+    order: 2;
+    margin-left: auto;
+    min-height: 36px;
+    touch-action: manipulation;
+}
+html.cl-mobile .linked-lorebook-aux-pills {
+    order: 3;
+    flex: 1 1 100%;
+}
+/* One long book name must not own the row */
+html.cl-mobile .aux-lorebook-pill-name {
+    max-width: 46vw;
+}
+html.cl-mobile .aux-lorebook-pill-x {
     min-width: 28px;
     min-height: 28px;
 }
@@ -2581,6 +2644,54 @@ html.cl-mobile .dup-delete-transfer-radio img {
 html.cl-mobile .pre-import-info { font-size: var(--font-md); }
 html.cl-mobile .pre-import-matches { gap: var(--space-sm); max-height: 40vh; }
 
+/* --- DataCat -> JanitorAI re-link modal --- */
+/* Body becomes the flex column and only the list scrolls, so summary/options/toolbar stay pinned. */
+html.cl-mobile #dcRelinkModal .cl-modal-body {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+html.cl-mobile .dc-relink-list {
+    max-height: none;
+    flex: 1;
+    min-height: 0;
+}
+html.cl-mobile .dc-relink-row {
+    min-height: 44px;
+    padding: var(--space-xs) var(--space-sm);
+}
+html.cl-mobile .dc-relink-row .dc-relink-cb {
+    width: 20px;
+    height: 20px;
+    flex-shrink: 0;
+}
+html.cl-mobile .dc-relink-cb-spacer {
+    width: 20px;
+}
+html.cl-mobile .dc-relink-avatar {
+    width: 32px;
+    height: 32px;
+}
+html.cl-mobile .dc-relink-option {
+    min-height: 44px;
+}
+html.cl-mobile .dc-relink-option input {
+    width: 20px;
+    height: 20px;
+    flex-shrink: 0;
+}
+html.cl-mobile .dc-relink-mini-btn {
+    min-height: 44px;
+}
+html.cl-mobile #dcRelinkModal .cl-modal-footer {
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+    padding-bottom: max(var(--space-sm), env(safe-area-inset-bottom));
+}
+html.cl-mobile .dc-relink-progress {
+    flex-basis: 100%;
+}
+
 /* --- Save confirmation (diff view) --- */
 html.cl-mobile .changes-diff {
     font-size: var(--font-sm);
@@ -2634,6 +2745,34 @@ html.cl-mobile .settings-group-title { font-size: var(--font-md); }
 html.cl-mobile .settings-row { font-size: var(--font-md); }
 html.cl-mobile .settings-row > label { font-size: var(--font-sm); }
 html.cl-mobile .color-preview-label { font-size: var(--font-sm); }
+
+/* Status badges carry live text (an account email, a browser version, a reason a thing is off),
+   so the desktop `white-space: nowrap` runs them straight off the side of a phone. Let them wrap
+   and pin the icon to the first line. Applies to every provider's badge, not just one. */
+html.cl-mobile .settings-status-badge {
+    display: flex;
+    align-items: flex-start;
+    max-width: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    font-size: var(--font-sm);
+}
+html.cl-mobile .settings-status-badge i {
+    margin-top: 0.45em;
+    flex-shrink: 0;
+}
+
+/* Rows that pair a status badge with action buttons stack instead of overflowing. */
+html.cl-mobile #janitoraiManagedStatusRow {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-sm);
+}
+html.cl-mobile #janitoraiManagedStatusRow .settings-action-btn {
+    flex: 1 1 auto;
+    min-height: 44px;
+}
 
 /* --- Provider Order & Defaults ---
    Restructured as stacked cards on mobile.

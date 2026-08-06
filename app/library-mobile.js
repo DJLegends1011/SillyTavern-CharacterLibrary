@@ -219,7 +219,6 @@
     // ── Expose parseDate + formatDate for DOM fixer ──
     window.__mobileDateParse = parseDate;
     window.__mobileDateFormat = formatDate;
-    console.log('[MobileDatePatch] v3 loaded, manual parser active');
 })();
 
 /* ========================================
@@ -1198,6 +1197,13 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
             // When char details is stacked above another modal, unwind its layers first
             () => {
                 if (!document.body.classList.contains('char-modal-above')) return false;
+                // A visible showConfirm outranks everything here (z-10003) but matches neither
+                // selector below; close it via its registry entry so the promise resolves as cancel
+                const cc = document.getElementById('clConfirmOverlay');
+                if (cc && !cc.classList.contains('hidden')) {
+                    (window._overlayRegistry || []).find(r => r.id === 'clConfirmOverlay')?.close(cc);
+                    return true;
+                }
                 // Close the topmost non-pinned modal first (eg. preImportDuplicateModal
                 // or localizeModal opened on top of charModal). Covers both class
                 // systems since the pinned-z-index marker is the same trick for both.
@@ -1772,13 +1778,13 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
         browseChip.addEventListener('click', () => {
             const ids = getIds();
             const realBtn = ids?.modeBrowseSelector ? document.querySelector(ids.modeBrowseSelector) : null;
-            if (realBtn) { realBtn.click(); setTimeout(() => { syncMode(); syncSort(); }, 100); }
+            if (realBtn) { realBtn.click(); setTimeout(() => { syncMode(); syncSort(); syncMtTags(); }, 100); }
             close();
         });
         followChip.addEventListener('click', () => {
             const ids = getIds();
             const realBtn = ids?.modeFollowSelector ? document.querySelector(ids.modeFollowSelector) : null;
-            if (realBtn) { realBtn.click(); setTimeout(() => { syncMode(); syncSort(); }, 100); }
+            if (realBtn) { realBtn.click(); setTimeout(() => { syncMode(); syncSort(); syncMtTags(); }, 100); }
             close();
         });
 
@@ -1835,6 +1841,15 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
             const realBtn = ids?.tags ? document.getElementById(ids.tags) : null;
             if (realBtn) { close(); setTimeout(() => realBtn.click(), 300); }
         });
+
+        // Mirror the real button's browse-filter-hidden, same as the sub-sort chip: a provider that
+        // hides its tag filter per mode would otherwise keep a chip that proxies to a hidden button.
+        function syncMtTags() {
+            const ids = getIds();
+            const realBtn = ids?.tags ? document.getElementById(ids.tags) : null;
+            const box = realBtn?.closest('.browse-tags-dropdown-container') || realBtn;
+            mtTagsChip.style.display = (box && box.classList.contains('browse-filter-hidden')) ? 'none' : '';
+        }
 
         const mtFeaturesChip = createChip('<i class="fa-solid fa-sliders"></i> Features');
         mtFeaturesChip.addEventListener('click', () => {
@@ -1904,7 +1919,7 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
         genericSection.appendChild(genericProviderLabel);
         genericSection.appendChild(genericSortSection);
 
-        // Filters row (Tags, Features, NSFW)
+        // Filters row (Tags, Fandoms, Features, NSFW)
         const genericFilterSection = createSection('Filters');
         const genericFilterRow = document.createElement('div');
         genericFilterRow.className = 'mobile-settings-row';
@@ -1914,6 +1929,15 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
         genericTagsChip.addEventListener('click', () => {
             const ids = window.ProviderRegistry?.getActiveMobileFilterIds?.();
             const realBtn = ids?.tags ? document.getElementById(ids.tags) : null;
+            if (realBtn) { close(); setTimeout(() => realBtn.click(), 300); }
+        });
+
+        // Fandoms: only providers that expose an ids.fandoms button (Saucepan) show this;
+        // its visibility is synced per active provider when the online view opens.
+        const genericFandomsChip = createChip('<i class="fa-solid fa-masks-theater"></i> Fandoms');
+        genericFandomsChip.addEventListener('click', () => {
+            const ids = window.ProviderRegistry?.getActiveMobileFilterIds?.();
+            const realBtn = ids?.fandoms ? document.getElementById(ids.fandoms) : null;
             if (realBtn) { close(); setTimeout(() => realBtn.click(), 300); }
         });
 
@@ -1942,6 +1966,7 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
         });
 
         genericFilterRow.appendChild(genericTagsChip);
+        genericFilterRow.appendChild(genericFandomsChip);
         genericFilterRow.appendChild(genericFeaturesChip);
         genericFilterRow.appendChild(genericNsfwChip);
         genericFilterSection.appendChild(genericFilterRow);
@@ -2054,6 +2079,7 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
                     genericProviderLabel.textContent = prov ? prov.name : 'Online';
                     genericSortChip._syncLabel();
                     syncGenericNsfwState();
+                    genericFandomsChip.style.display = ids?.fandoms ? '' : 'none';
                 }
 
                 if (hasModeToggle) {
@@ -2064,6 +2090,7 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
                     syncMtNsfwState();
                     syncSort();
                     syncSubSort();
+                    syncMtTags();
                 }
             } else if (activeView === 'chats') {
                 syncGrouping();
@@ -2764,6 +2791,14 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
                 e.stopPropagation();
                 // The browse view stashes the card PNG url on the element
                 openAvatarViewer(target.dataset.full || target.src, target.src);
+            } else if (target.id === 'saucepanCharAvatar') {
+                if (target.src.endsWith('/img/ai4.png')) return;
+                e.stopPropagation();
+                openAvatarViewer(target.dataset.full || target.src, target.src);
+            } else if (target.id === 'janitoraiCharAvatar') {
+                if (target.src.endsWith('/img/ai4.png')) return;
+                e.stopPropagation();
+                openAvatarViewer(target.src);
             }
         });
     }
@@ -3413,6 +3448,7 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
                 document.querySelector('.modal-overlay:not(.hidden)') ||
                 document.querySelector('.cl-modal.visible') ||
                 document.querySelector('.confirm-modal:not(.hidden)') ||
+                document.querySelector('.cl-confirm-overlay:not(.hidden)') ||
                 document.querySelector('.mobile-avatar-viewer') ||
                 document.querySelector('.browse-avatar-viewer') ||
                 document.querySelector('.mobile-search-overlay:not(.hidden)') ||
