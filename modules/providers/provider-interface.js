@@ -1,6 +1,6 @@
 // Provider Interface - contract for external character sources
 
-import { saveGalleryImage } from './provider-utils.js';
+import { saveGalleryImage, resolveGalleryMediaName } from './provider-utils.js';
 
 /**
  * @typedef {Object} ProviderLinkInfo
@@ -73,6 +73,9 @@ export class ProviderBase {
 
     /** Warning message shown when enabling this provider. Null = no warning. @returns {string|null} */
     get enableWarning() { return null; }
+
+    /** Lowest cl-helper version whose routes this provider needs. Null = works without it. @returns {string|null} */
+    get minClHelperVersion() { return null; }
 
     /** Reference to this provider's BrowseView subclass instance, if any. @returns {import('./browse-view.js').BrowseView|null} */
     get browseView() { return null; }
@@ -602,7 +605,7 @@ export class ProviderBase {
             const imgLog = onLog?.(`Checking ${displayUrl}`, 'pending') ?? null;
 
             if (useFastSkip && fileNameIndex) {
-                const sanitizedName = api.extractSanitizedUrlName?.(image.url) || '';
+                const sanitizedName = resolveGalleryMediaName(image, api);
                 if (sanitizedName.length >= 4) {
                     const match = fileNameIndex.get(sanitizedName.toLowerCase());
                     if (match) {
@@ -653,7 +656,7 @@ export class ProviderBase {
                 successCount++;
                 hashMap.set(contentHash, { fileName: saveResult.filename });
                 if (fileNameIndex) {
-                    const savedSanitized = api.extractSanitizedUrlName?.(image.url) || '';
+                    const savedSanitized = resolveGalleryMediaName(image, api);
                     if (savedSanitized) fileNameIndex.set(savedSanitized.toLowerCase(), { fileName: saveResult.filename, localPath: saveResult.localPath || '' });
                 }
                 if (onLogUpdate && imgLog) onLogUpdate(imgLog, `Saved: ${saveResult.filename}`, 'success');

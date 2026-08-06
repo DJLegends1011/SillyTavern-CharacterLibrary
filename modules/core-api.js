@@ -304,6 +304,16 @@ export function getCharacterGalleryId(char) {
 }
 
 /**
+ * Whether a character's data.extensions is actually readable (false during/after
+ * an incomplete shallow recovery, when the field is unobtainable rather than empty)
+ * @param {Object} char - Character object
+ * @returns {boolean}
+ */
+export function extensionsReady(char) {
+    return window.extensionsReady?.(char) ?? true;
+}
+
+/**
  * List existing gallery folder names without the IMAGES_LIST mkdir side effect
  * @returns {Promise<Set<string>>} Folder names on disk
  */
@@ -608,12 +618,24 @@ export function notifySTCharacterEdited(...args) {
     return window.notifySTCharacterEdited?.(...args);
 }
 
+export function copyTextToClipboard(...args) {
+    return window.copyTextToClipboard?.(...args) ?? Promise.resolve(false);
+}
+
+export function isStShallowMode(...args) {
+    return window.isStShallowMode?.(...args) ?? false;
+}
+
 export function getDisplayTagline(...args) {
     return window.getDisplayTagline?.(...args) ?? '';
 }
 
 export function getCharacterName(...args) {
     return window.getCharacterName?.(...args) ?? args[0]?.name ?? '';
+}
+
+export function renderLorebookEntriesHtml(...args) {
+    return window.renderLorebookEntriesHtml?.(...args) ?? '';
 }
 
 /**
@@ -805,6 +827,14 @@ export function renderCreatorNotesSecure(content, charName, container) {
 }
 
 /**
+ * Render any third-party card field (description etc.) via the sandboxed iframe pipeline
+ * @param {...*} args - content, charName, container
+ */
+export function renderCardHtmlSecure(...args) {
+    return window.renderCardHtmlSecure?.(...args);
+}
+
+/**
  * Clean up a creator notes container (remove event listeners, observers, etc.)
  * @param {HTMLElement} container - Container to clean up
  */
@@ -953,6 +983,14 @@ export function getExistingFileIndex(folderName) {
  */
 export function extractSanitizedUrlName(url) {
     return window.extractSanitizedUrlName?.(url) || '';
+}
+
+/**
+ * @param {string} filename
+ * @returns {string}
+ */
+export function sanitizeMediaFilename(...args) {
+    return window.sanitizeMediaFilename?.(...args) || '';
 }
 
 /**
@@ -1194,6 +1232,70 @@ export function mergeRemoteLorebookIntoWorldFile(avatar, remoteBook) {
 }
 
 /**
+ * Whether additional-lorebook (charLore) writes are possible (ST window reachable).
+ * @returns {boolean}
+ */
+export function canEditCharLore(...args) {
+    return window.canEditCharLore?.(...args) || false;
+}
+
+/**
+ * All charLore entries: [{ name: avatar-minus-ext, extraBooks: string[] }].
+ * Resolves null when NO source succeeded (distinct from [] = readable and empty).
+ * @returns {Promise<Array<{name: string, extraBooks: string[]}>|null>}
+ */
+export function getAllCharLore(...args) {
+    return window.getAllCharLore?.(...args) ?? Promise.resolve(null);
+}
+
+/**
+ * The charLore key for an avatar: filename minus extension (ST's getCharaFilename shape).
+ * @param {string} avatar
+ * @returns {string}
+ */
+export function charLoreKey(...args) {
+    return window.charLoreKey?.(...args) || '';
+}
+
+/**
+ * Additional lorebook names for one character.
+ * @param {string} avatar
+ * @returns {Promise<string[]>}
+ */
+export function getCharAdditionalLorebooks(...args) {
+    return window.getCharAdditionalLorebooks?.(...args) || Promise.resolve([]);
+}
+
+/**
+ * Replace a character's additional lorebook list.
+ * @param {string} avatar
+ * @param {string[]} books
+ * @returns {Promise<boolean>} Success
+ */
+export function setCharAdditionalLorebooks(...args) {
+    return window.setCharAdditionalLorebooks?.(...args) || Promise.resolve(false);
+}
+
+/**
+ * Re-point charLore references after a world rename.
+ * @param {string} oldName
+ * @param {string} newName
+ * @returns {Promise<number|null>} Touched entries, or null when the bridge is unreachable
+ */
+export function charLoreRenameWorld(...args) {
+    return window.charLoreRenameWorld?.(...args) ?? Promise.resolve(null);
+}
+
+/**
+ * Drop charLore references to a deleted world.
+ * @param {string} name
+ * @returns {Promise<number|null>} Touched entries, or null when the bridge is unreachable
+ */
+export function charLoreRemoveWorld(...args) {
+    return window.charLoreRemoveWorld?.(...args) ?? Promise.resolve(null);
+}
+
+/**
  * Set/clear a single-character chat's bound lorebook (chat_metadata.world_info).
  * Owned by the chats module; proxied here for the Lorebook Manager.
  * @param {Object} char - { avatar, name }
@@ -1349,6 +1451,7 @@ export default {
     sanitizeFolderName,
     getCharacterGalleryInfo,
     getCharacterGalleryId,
+    extensionsReady,
     getExistingImageFolders,
     generateGalleryId,
     getGallerySyncAuditDone,
@@ -1396,9 +1499,12 @@ export default {
     bumpAvatarCacheBust,
     getCharacterAvatarUrl,
     notifySTCharacterEdited,
+    copyTextToClipboard,
+    isStShallowMode,
     getDisplayTagline,
     getCharacterName,
     formatRichText,
+    renderLorebookEntriesHtml,
     
     // Character actions
     loadCharInMain,
@@ -1421,6 +1527,7 @@ export default {
     
     // Creator Notes
     renderCreatorNotesSecure,
+    renderCardHtmlSecure,
     cleanupCreatorNotesContainer,
     autoSnapshotBeforeChange,
     
@@ -1442,6 +1549,7 @@ export default {
     getExistingFileHashes,
     getExistingFileIndex,
     extractSanitizedUrlName,
+    sanitizeMediaFilename,
     buildDedupState,
     downloadCharacterMedia,
     markMediaLocalizationComplete,
@@ -1475,6 +1583,13 @@ export default {
     renameWorldInfo,
     importWorldInfoData,
     mergeRemoteLorebookIntoWorldFile,
+    canEditCharLore,
+    getAllCharLore,
+    charLoreKey,
+    getCharAdditionalLorebooks,
+    setCharAdditionalLorebooks,
+    charLoreRenameWorld,
+    charLoreRemoveWorld,
     setChatBoundWorld,
     listCharacterChatsWithMeta,
     listAllChatsWithMeta,

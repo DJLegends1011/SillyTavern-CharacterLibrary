@@ -2,7 +2,7 @@
 
 import { BrowseView } from '../browse-view.js';
 import CoreAPI from '../../core-api.js';
-import { IMG_PLACEHOLDER, formatNumber, BROWSE_PURIFY_CONFIG, skeletonLines, deferRender, isMobileMode, finishBrowseImport } from '../provider-utils.js';
+import { IMG_PLACEHOLDER, formatNumber, BROWSE_PURIFY_CONFIG, skeletonLines, deferRender, deferCall, isMobileMode, finishBrowseImport, renderBrowseError } from '../provider-utils.js';
 import { createBookmarkModule } from '../bookmark-module.js';
 import {
     searchCards,
@@ -36,6 +36,8 @@ const {
     debounce,
     apiRequest,
     cleanupCreatorNotesContainer,
+    renderCreatorNotesSecure,
+    renderCardHtmlSecure,
     getProviderExcludeTags,
     renderLoadingState,
     renderSkeletonGrid,
@@ -424,17 +426,13 @@ async function loadCharacters(append = false) {
         console.error('[CTBrowse] Search error:', err);
         showToast(`CharacterTavern search failed: ${err.message}`, 'error');
         if (!append && grid) {
-            grid.innerHTML = `
-                <div style="grid-column: 1 / -1; padding: 40px; text-align: center; color: var(--text-muted);">
-                    <i class="fa-solid fa-exclamation-triangle" style="font-size: 2rem; color: var(--cl-error-bright);"></i>
-                    <p style="margin-top: 12px;">Search failed: ${escapeHtml(err.message)}</p>
-                    <button class="glass-btn" style="margin-top: 12px;" id="ctRetryBtn">
-                        <i class="fa-solid fa-redo"></i> Retry
-                    </button>
-                </div>
-            `;
-            const retryBtn = document.getElementById('ctRetryBtn');
-            if (retryBtn) retryBtn.addEventListener('click', () => loadCharacters(false));
+            renderBrowseError(grid, {
+                provider: 'chartavern',
+                error: err,
+                message: `Search failed: ${err.message}`,
+                flags: { nsfw: ctNsfwEnabled },
+                retry: () => loadCharacters(false),
+            });
         }
     } finally {
         if (thisToken === ctLoadToken) {
@@ -568,19 +566,25 @@ function openPreviewModal(hit) {
         const scenario = hit.characterScenario || '';
         const firstMsg = hit.characterFirstMessage || '';
         if (creatorNotesSection && creatorNotesEl) {
-            if (creatorNotes && creatorNotes.trim()) { creatorNotesSection.style.display = 'block'; creatorNotesEl.innerHTML = skeletonLines(3); }
-            else { creatorNotesSection.style.display = 'none'; creatorNotesEl.innerHTML = ''; }
+            if (creatorNotes && creatorNotes.trim()) {
+                creatorNotesSection.style.display = 'block';
+                if (!creatorNotesEl.querySelector('iframe')) creatorNotesEl.innerHTML = skeletonLines(3);
+            } else {
+                creatorNotesSection.style.display = 'none';
+                cleanupCreatorNotesContainer(creatorNotesEl);
+                creatorNotesEl.innerHTML = '';
+            }
         }
         if (descSection && descEl) { descSection.style.display = 'block'; descEl.innerHTML = skeletonLines(3); }
         if (scenarioSection && scenarioEl) { scenarioSection.style.display = 'block'; scenarioEl.innerHTML = skeletonLines(2); }
         if (firstMsgSection && firstMsgEl) { firstMsgSection.style.display = 'block'; firstMsgEl.innerHTML = skeletonLines(4); }
         requestAnimationFrame(() => {
             if (creatorNotesEl && creatorNotes && creatorNotes.trim()) {
-                deferRender(creatorNotesEl, () => safePurify(formatRichText(creatorNotes, name, true), BROWSE_PURIFY_CONFIG));
+                deferCall(creatorNotesEl, () => renderCreatorNotesSecure(creatorNotes, name, creatorNotesEl));
             }
             if (descSection && descEl) {
                 if (charDef) {
-                    deferRender(descEl, () => safePurify(formatRichText(charDef, name, true), BROWSE_PURIFY_CONFIG));
+                    deferCall(descEl, () => renderCardHtmlSecure(charDef, name, descEl));
                 }
                 // No charDef: keep skeleton, fetchAndPopulateDetails fills it.
             }
@@ -739,12 +743,12 @@ async function fetchAndPopulateDetails(hit, token) {
         requestAnimationFrame(() => {
             if (detailNotes && detailNotes.trim() && creatorNotesEl) {
                 if (creatorNotesSection) creatorNotesSection.style.display = 'block';
-                deferRender(creatorNotesEl, () => safePurify(formatRichText(detailNotes, name, true), BROWSE_PURIFY_CONFIG));
+                deferCall(creatorNotesEl, () => renderCreatorNotesSecure(detailNotes, name, creatorNotesEl));
             }
             if (descSection) {
                 if (charDef) {
                     descSection.style.display = 'block';
-                    if (descEl) deferRender(descEl, () => safePurify(formatRichText(charDef, name, true), BROWSE_PURIFY_CONFIG));
+                    if (descEl) deferCall(descEl, () => renderCardHtmlSecure(charDef, name, descEl));
                 } else {
                     descSection.style.display = 'none';
                 }
@@ -1964,14 +1968,7 @@ class ChartavernBrowseView extends BrowseView {
         initCtView();
         const grid = document.getElementById('ctGrid');
         if (grid) this.observeImages(grid);
-        // Check session silently - if logged in, update toggle and reload with NSFW
-        tryCheckSession().then(() => {
-            if (ctBookmarks.filterMyBookmarks) {
-                ctBookmarks.renderBookmarksView();
-            } else {
-                loadCharacters(false);
-            }
-        });
+        // No initial load here: init() runs before applyDefaults(), so activate() issues it.
     }
 
     getSearchInputId(mode) {
@@ -2017,12 +2014,27 @@ class ChartavernBrowseView extends BrowseView {
             ctNsfwEnabled = false;
             ctSelectedChar = null;
         }
-        const wasInitialized = this._initialized;
         super.activate(container, options);
 
-        if (wasInitialized && this._initialized) {
-            delegatesInitialized = true;
-            this.buildLocalLibraryLookup();
+        delegatesInitialized = true;
+        this.buildLocalLibraryLookup();
+        // Test for real cards, not child nodes: an aborted load leaves skeletons.
+        const grid = document.getElementById('ctGrid');
+        const painted = !!grid?.querySelector('.browse-card');
+        if (ctCharacters.length === 0) {
+            // Session check first so a logged-in account fetches NSFW-inclusive results once, not
+            // twice. The saved view is local, but it still waits on the session for the same reason.
+            tryCheckSession().then(() => {
+                if (ctBookmarks.filterMyBookmarks) {
+                    ctBookmarks.renderBookmarksView();
+                } else {
+                    loadCharacters(false);
+                }
+            });
+        } else if (!painted) {
+            ctGridRenderedCount = 0;
+            renderGrid(ctCharacters, false);
+        } else {
             this.reconnectImageObserver();
         }
     }

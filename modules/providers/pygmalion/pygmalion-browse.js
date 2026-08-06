@@ -5,7 +5,7 @@
 
 import { BrowseView } from '../browse-view.js';
 import CoreAPI from '../../core-api.js';
-import { IMG_PLACEHOLDER, formatNumber, BROWSE_PURIFY_CONFIG, skeletonLines, deferRender, isMobileMode, finishBrowseImport } from '../provider-utils.js';
+import { IMG_PLACEHOLDER, formatNumber, BROWSE_PURIFY_CONFIG, skeletonLines, deferRender, deferCall, isMobileMode, finishBrowseImport, renderBrowseError } from '../provider-utils.js';
 import { createBookmarkModule } from '../bookmark-module.js';
 import {
     searchCharacters,
@@ -29,6 +29,7 @@ const {
     deleteCharacter, getCharacterGalleryId,
     formatRichText, debounce,
     apiRequest, cleanupCreatorNotesContainer,
+    renderCreatorNotesSecure, renderCardHtmlSecure,
     getProviderExcludeTags,
     renderLoadingState,
     renderSkeletonGrid,
@@ -476,7 +477,7 @@ async function loadCharacters(append = false) {
             } else {
                 pygNsfwEnabled = false;
                 updateNsfwToggle();
-                showToast('Pygmalion token expired — please re-authenticate.', 'warning', 5000);
+                showToast('Pygmalion token expired, please re-authenticate.', 'warning', 5000);
                 openPygTokenModal();
                 setTimeout(() => loadCharacters(false), 0);
             }
@@ -484,17 +485,13 @@ async function loadCharacters(append = false) {
             console.error('[PygBrowse] Search error:', err);
             showToast(`Pygmalion search failed: ${err.message}`, 'error');
             if (!append && grid) {
-                grid.innerHTML = `
-                    <div style="grid-column: 1 / -1; padding: 40px; text-align: center; color: var(--text-muted);">
-                        <i class="fa-solid fa-exclamation-triangle" style="font-size: 2rem; color: var(--cl-error-bright);"></i>
-                        <p style="margin-top: 12px;">Search failed: ${escapeHtml(err.message)}</p>
-                        <button class="glass-btn" style="margin-top: 12px;" id="pygRetryBtn">
-                            <i class="fa-solid fa-redo"></i> Retry
-                        </button>
-                    </div>
-                `;
-                const retryBtn = document.getElementById('pygRetryBtn');
-                if (retryBtn) retryBtn.addEventListener('click', () => loadCharacters(false));
+                renderBrowseError(grid, {
+                    provider: 'pygmalion',
+                    error: err,
+                    message: `Search failed: ${err.message}`,
+                    flags: { token: !!pygToken, nsfw: pygNsfwEnabled },
+                    retry: () => loadCharacters(false),
+                });
             }
         }
     } finally {
@@ -825,9 +822,11 @@ function populateDefinitionSections(name, p, altGreetings) {
         if (creatorNotesEl) {
             if (p.characterNotes && p.characterNotes.trim()) {
                 if (creatorNotesSection) creatorNotesSection.style.display = 'block';
-                deferRender(creatorNotesEl, () => safePurify(formatRichText(p.characterNotes, name, true), BROWSE_PURIFY_CONFIG));
+                if (!creatorNotesEl.querySelector('iframe')) creatorNotesEl.innerHTML = skeletonLines(3);
+                deferCall(creatorNotesEl, () => renderCreatorNotesSecure(p.characterNotes, name, creatorNotesEl));
             } else {
                 if (creatorNotesSection) creatorNotesSection.style.display = 'none';
+                cleanupCreatorNotesContainer(creatorNotesEl);
                 creatorNotesEl.innerHTML = '';
             }
         }
@@ -838,7 +837,7 @@ function populateDefinitionSections(name, p, altGreetings) {
         if (descSection) {
             if (p.persona) {
                 descSection.style.display = 'block';
-                if (descEl) deferRender(descEl, () => safePurify(formatRichText(p.persona, name, true), BROWSE_PURIFY_CONFIG));
+                if (descEl) deferCall(descEl, () => renderCardHtmlSecure(p.persona, name, descEl));
             } else {
                 descSection.style.display = 'none';
             }
@@ -1387,23 +1386,20 @@ async function loadPygFollowingTimeline(forceRefresh = false) {
                 debugLog('[PygFollowing] Token recovered, retrying');
                 shouldRetry = true;
             } else {
-                showToast('Pygmalion token expired \u2014 please re-authenticate.', 'warning', 5000);
+                showToast('Pygmalion token expired. Please re-authenticate.', 'warning', 5000);
                 openPygTokenModal();
                 renderPygFollowingEmpty('login');
             }
         } else {
             if (grid) {
-                grid.innerHTML = `
-                    <div class="chub-timeline-empty">
-                        <i class="fa-solid fa-exclamation-triangle"></i>
-                        <h3>Error Loading Timeline</h3>
-                        <p>${escapeHtml(err.message)}</p>
-                        <button class="action-btn primary" id="pygFollowingRetryBtn">
-                            <i class="fa-solid fa-redo"></i> Retry
-                        </button>
-                    </div>
-                `;
-                document.getElementById('pygFollowingRetryBtn')?.addEventListener('click', () => loadPygFollowingTimeline(true));
+                renderBrowseError(grid, {
+                    provider: 'pygmalion',
+                    error: err,
+                    title: 'Error loading timeline',
+                    view: 'timeline',
+                    flags: { token: !!pygToken, nsfw: pygNsfwEnabled },
+                    retry: () => loadPygFollowingTimeline(true),
+                });
             }
         }
     } finally {
@@ -1700,33 +1696,6 @@ async function loginWithCredentials(email, password) {
     }
 }
 
-function logout() {
-    clearTokenRefresh();
-    savePygToken(null);
-    setSetting('pygmalionEmail', null);
-    setSetting('pygmalionPassword', null);
-    setSetting('pygmalionRememberCredentials', false);
-
-    const emailInput = document.getElementById('pygLoginEmail');
-    const passInput = document.getElementById('pygLoginPassword');
-    if (emailInput) emailInput.value = '';
-    if (passInput) passInput.value = '';
-
-    pygNsfwEnabled = false;
-    setSetting('pygmalionNsfw', false);
-    updateNsfwToggle();
-
-    pygFollowedUserIds = null;
-    pygFollowedUsers = [];
-    pygFollowingCharacters = [];
-
-    if (pygViewMode === 'following') {
-        switchPygViewMode('browse');
-    }
-
-    showToast('Logged out from Pygmalion', 'info');
-}
-
 function scheduleTokenRefresh(token, email, password) {
     clearTokenRefresh();
 
@@ -1980,7 +1949,7 @@ async function togglePygFollowAuthor() {
             result = await toggleFollowUser(pygToken, pygAuthorOwnerId);
         } catch (e) {
             if (e.authFailed) {
-                showToast('Pygmalion token expired — please re-authenticate.', 'warning', 5000);
+                showToast('Pygmalion token expired, please re-authenticate.', 'warning', 5000);
                 openPygTokenModal();
             } else {
                 showToast(`Follow failed: ${e.message}`, 'error');

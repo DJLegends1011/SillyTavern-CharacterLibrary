@@ -661,8 +661,8 @@
     50% { opacity: 1; }
 }
 
-/* ChubAI Loading/Error/Empty States */
-.browse-loading, .browse-error, .browse-empty {
+/* ChubAI Loading/Empty States */
+.browse-loading, .browse-empty {
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -673,7 +673,7 @@
     grid-column: 1 / -1;
 }
 
-.browse-loading i, .browse-error i, .browse-empty i {
+.browse-loading i, .browse-empty i {
     font-size: 3rem;
     margin-bottom: 20px;
     opacity: 0.3;
@@ -686,15 +686,43 @@
     opacity: 1;
 }
 
-.browse-error i {
-    color: var(--cl-error-bright);
-    opacity: 0.7;
-}
-
-.browse-error h3, .browse-empty h3 {
+.browse-empty h3 {
     color: var(--text-primary);
     margin-bottom: 10px;
     border: none;
+}
+
+/* @canonical browse-error-banner */
+/* Grid-load error state; buttons armed by provider-utils' shared delegate */
+.browse-error-banner {
+    grid-column: 1 / -1;
+    padding: 40px 20px;
+    text-align: center;
+    color: var(--text-muted);
+}
+
+.browse-error-banner > i {
+    font-size: var(--font-3xl);
+    color: var(--cl-error-bright);
+}
+
+.browse-error-banner h3 {
+    color: var(--text-primary);
+    margin-top: var(--space-md);
+    border: none;
+}
+
+.browse-error-banner p {
+    margin-top: var(--space-md);
+    overflow-wrap: anywhere;
+}
+
+.browse-error-banner .browse-error-actions {
+    margin-top: var(--space-md);
+    display: flex;
+    gap: var(--space-sm);
+    justify-content: center;
+    flex-wrap: wrap;
 }
 
 /* Online Filter Area */
@@ -732,6 +760,16 @@
     max-height: calc(85vh * var(--modal-scale, 1));
     display: flex;
     flex-direction: column;
+}
+
+/* Card-authored inline styles must not escape the preview: fixed/sticky pins to the viewport
+   and inline z-index can climb over the modal chrome. */
+.browse-char-modal [style*="position:fixed"], .browse-char-modal [style*="position: fixed"],
+.browse-char-modal [style*="position:sticky"], .browse-char-modal [style*="position: sticky"] {
+    position: static !important;
+}
+.browse-char-modal [style*="z-index"] {
+    z-index: auto !important;
 }
 
 /* Compact action buttons for ChubAI modal */
@@ -2353,7 +2391,8 @@ html.cl-mobile .browse-load-more { padding: 12px; }
 html.cl-mobile .browse-load-more .glass-btn { padding: 10px 24px; font-size: var(--font-md); }
 
 /* Chub loading/error/empty states */
-html.cl-mobile .browse-loading, html.cl-mobile .browse-error, html.cl-mobile .browse-empty { padding: 40px 16px; }
+html.cl-mobile .browse-loading, html.cl-mobile .browse-empty, html.cl-mobile .browse-error-banner { padding: 40px 16px; }
+html.cl-mobile .browse-error-banner .glass-btn { min-height: var(--touch-target-min); }
 
 /* ChubAI character detail modal */
 html.cl-mobile .browse-char-body { padding: 8px; gap: var(--space-sm); }

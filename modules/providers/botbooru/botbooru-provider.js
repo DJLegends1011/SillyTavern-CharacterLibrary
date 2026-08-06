@@ -44,7 +44,7 @@ let _cachedLinkNode = null;
  * import to the WRONG provider. Provenance is recorded in
  * extensions.botbooru.origin/sauce instead, display-only.
  */
-const FOREIGN_PROVIDER_NAMESPACES = ['chub', 'janny', 'chartavern', 'pygmalion', 'wyvern', 'datacat'];
+const FOREIGN_PROVIDER_NAMESPACES = ['chub', 'janitorai', 'jannyai', 'chartavern', 'pygmalion', 'wyvern', 'datacat', 'saucepan'];
 function stripForeignProviderNamespaces(card) {
     const ext = card?.data?.extensions;
     if (!ext) return;
@@ -58,6 +58,9 @@ class BotbooruProvider extends ProviderBase {
 
     get id() { return 'botbooru'; }
     get name() { return 'Botbooru'; }
+    // Matches DEFAULT_SETTINGS.disabledProviders; without this Restore Defaults paints the row
+    // enabled while persisting it disabled.
+    get disabledByDefault() { return true; }
     get icon() { return 'fa-solid fa-robot'; }
     get iconUrl() { return `${BOTBOORU_BASE}/favicon.ico`; }
     get beta() { return true; }
@@ -144,7 +147,7 @@ class BotbooruProvider extends ProviderBase {
                 origin: linkInfo.origin || cached?.origin || existing.origin || null,
                 sauce: linkInfo.sauce || cached?.sauce || existing.sauce || null,
                 // pageName feeds the listing-name display + search key
-                pageName: linkInfo.pageName || cached?.character_name || existing.pageName || null,
+                pageName: linkInfo.pageName || this.getListingName(cached) || existing.pageName || null,
                 tagline: linkInfo.tagline || cached?.tagline || existing.tagline || null,
                 linkedAt: linkInfo.linkedAt || new Date().toISOString(),
             };
@@ -196,7 +199,8 @@ class BotbooruProvider extends ProviderBase {
         // (it would fire once per card inside the batch-import loop, and the
         // 3-entry post cache cant absorb that). Reimports claim hasGallery
         // false; the gallery offer already fired on the original import.
-        if (ext.id != null && ext.filename && ext.pageName) {
+        // pageName stays out of the check; most posts have no listing title so its legitimately null
+        if (ext.id != null && ext.filename) {
             return {
                 cardData,
                 providerInfo: {
@@ -228,7 +232,7 @@ class BotbooruProvider extends ProviderBase {
                 rev: existing.rev || post.card_image_revision || 1,
                 uploaderId: existing.uploaderId || (post.uploader_id != null ? String(post.uploader_id) : null),
                 uploaderName: existing.uploaderName || post.uploader_name || null,
-                pageName: existing.pageName || post.character_name || null,
+                pageName: existing.pageName || this.getListingName(post) || null,
                 tagline: existing.tagline || post.tagline || null,
             };
         }
@@ -263,7 +267,7 @@ class BotbooruProvider extends ProviderBase {
     /**
      * Fetch the remote card for update comparison.
      * /download/json is already V2-wrapped; the post detail adds the
-     * listing name (character_name can differ from the card's data.name).
+     * listing title (meta_name, absent on most posts).
      */
     async fetchRemoteCard(linkInfo) {
         if (!linkInfo?.id) return null;
@@ -271,7 +275,8 @@ class BotbooruProvider extends ProviderBase {
             const card = await fetchBotbooruCard(linkInfo.id);
             if (!card) return null;
             const post = await fetchBotbooruPost(linkInfo.id);
-            if (post?.character_name) card._listingName = post.character_name;
+            const listingName = this.getListingName(post);
+            if (listingName) card._listingName = listingName;
             // Mirror the import's creator resolution exactly (Writer tag, then uploader, then the
             // card json value) or the update check would flag a creator diff on every card.
             if (post) {
@@ -349,7 +354,8 @@ class BotbooruProvider extends ProviderBase {
 
     // ── Listing Name ────────────────────────────────────────
 
-    getListingName(hitData) { return hitData?.character_name || null; }
+    // meta_name is the listing title; character_name duplicates the card's data.name
+    getListingName(hitData) { return hitData?.meta_name || null; }
 
     // ── Authentication ──────────────────────────────────────
 
@@ -644,7 +650,7 @@ class BotbooruProvider extends ProviderBase {
                 uploaderName: post?.uploader_name || existing.uploaderName || null,
                 origin: post?.origin || existing.origin || null,
                 sauce: post?.sauce || existing.sauce || null,
-                pageName: post?.character_name || existing.pageName || null,
+                pageName: this.getListingName(post) || existing.pageName || null,
                 tagline: post?.tagline || existing.tagline || null,
                 linkedAt: new Date().toISOString()
             };

@@ -5,6 +5,9 @@
 // Also provides gallery thumbnail generation via ST's bundled jimp.
 
 import { randomUUID } from 'node:crypto';
+import { spawn } from 'node:child_process';
+import { homedir, tmpdir } from 'node:os';
+import { createServer } from 'node:net';
 import { join, resolve, sep, dirname } from 'node:path';
 import { existsSync, mkdirSync, readdirSync, rmSync, readFileSync, lstatSync, realpathSync } from 'node:fs';
 import { stat, lstat, readFile, writeFile, rename, unlink, readdir, open } from 'node:fs/promises';
@@ -61,6 +64,8 @@ const THUMB_MAX_SIZE = 1024;
 const THUMB_EXTENSIONS = /\.(png|jpe?g|webp|gif)$/i;
 const THUMB_CONCURRENCY = 2;
 const THUMB_MAX_FILE_BYTES = 50 * 1024 * 1024;   // 50 MB on-disk
+// PNG-only avatar route: the pixel cap is the real RAM gate, so a detailed tall avatar (legitimately >50 MB on disk) gets a higher byte pre-filter than the multi-format gallery route
+const AVATAR_THUMB_MAX_FILE_BYTES = 256 * 1024 * 1024;  // 256 MB on-disk
 const THUMB_MAX_PIXELS = 150_000_000;            // ~150 MP (decoded RAM ~600 MB worst case)
 const THUMB_HEADER_PEEK_BYTES = 65536;           // 64 KB scan for JPEG SOF
 
@@ -138,6 +143,16 @@ function _thumbRelease() {
         _thumbQueue.shift()();
     } else {
         _thumbActive--;
+    }
+}
+
+// Single guaranteed release; a throw after a manual release used to double-release and corrupt the counter.
+async function withThumbSlot(fn) {
+    await _thumbSemaphore();
+    try {
+        return await fn();
+    } finally {
+        _thumbRelease();
     }
 }
 
@@ -289,11 +304,11 @@ function registerThumbnailRoutes(router) {
         } catch { /* cache miss */ }
 
         try {
-            await _thumbSemaphore();
-            const image = await _Jimp.read(originalPath);
-            image.cover({ w: size, h: size });
-            const buffer = await image.getBuffer('image/jpeg', { quality: THUMB_QUALITY, jpegColorSpace: 'ycbcr' });
-            _thumbRelease();
+            const buffer = await withThumbSlot(async () => {
+                const image = await _Jimp.read(originalPath);
+                image.cover({ w: size, h: size });
+                return image.getBuffer('image/jpeg', { quality: THUMB_QUALITY, jpegColorSpace: 'ycbcr' });
+            });
 
             mkdirSync(cacheFolder, { recursive: true });
             writeFile(cachePath, buffer).catch(() => {});
@@ -302,7 +317,6 @@ function registerThumbnailRoutes(router) {
             res.set('Cache-Control', 'public, max-age=86400');
             res.send(buffer);
         } catch (err) {
-            _thumbRelease();
             console.error(`[cl-helper] Thumb error ${folder}/${file}:`, err.message);
             res.status(500).json({ error: 'Generation failed' });
         }
@@ -371,8 +385,14 @@ function registerThumbnailRoutes(router) {
             return res.status(404).json({ error: 'Not found' });
         }
 
-        if (origStat.size > THUMB_MAX_FILE_BYTES) {
+        if (origStat.size > AVATAR_THUMB_MAX_FILE_BYTES) {
             return res.status(413).json({ error: 'Image too large' });
+        }
+
+        const dims = await peekImageDimensions(originalPath);
+        if (dims && (dims.w * dims.h) > THUMB_MAX_PIXELS) {
+            console.log(`[cl-helper] avatar thumb rejected (dimensions ${dims.w}x${dims.h}): ${file}`);
+            return res.status(413).json({ error: 'Image dimensions too large' });
         }
 
         const avatarThumbDir = avatarThumbDirForReq(req);
@@ -388,12 +408,12 @@ function registerThumbnailRoutes(router) {
         } catch { /* cache miss */ }
 
         try {
-            await _thumbSemaphore();
-            const image = await _Jimp.read(originalPath);
-            // Match .char-card aspect (2:3) so browser object-fit: cover is a no-op and doesnt double-crop.
-            image.cover({ w: size, h: Math.round(size * 1.5) });
-            const buffer = await image.getBuffer('image/jpeg', { quality: THUMB_QUALITY, jpegColorSpace: 'ycbcr' });
-            _thumbRelease();
+            const buffer = await withThumbSlot(async () => {
+                const image = await _Jimp.read(originalPath);
+                // Match .char-card aspect (2:3) so browser object-fit: cover is a no-op and doesnt double-crop.
+                image.cover({ w: size, h: Math.round(size * 1.5) });
+                return image.getBuffer('image/jpeg', { quality: THUMB_QUALITY, jpegColorSpace: 'ycbcr' });
+            });
 
             mkdirSync(avatarThumbDir, { recursive: true });
             writeFile(cachePath, buffer).catch(() => {});
@@ -402,7 +422,6 @@ function registerThumbnailRoutes(router) {
             res.set('Cache-Control', 'public, max-age=86400');
             res.send(buffer);
         } catch (err) {
-            _thumbRelease();
             console.error(`[cl-helper] Avatar thumb error ${file}:`, err.message);
             res.status(500).json({ error: 'Generation failed' });
         }
@@ -504,8 +523,12 @@ async function runAvatarPopulateJob(size, files, charactersDir, avatarThumbDir) 
 
         try {
             const origStat = await stat(originalPath);
-            if (origStat.size > THUMB_MAX_FILE_BYTES) {
-                console.warn(`[cl-helper] Avatar thumb populate skipped (over ${Math.round(THUMB_MAX_FILE_BYTES / 1024 / 1024)} MB cap, ${(origStat.size / 1024 / 1024).toFixed(1)} MB): ${file}`);
+            const dims = origStat.size > AVATAR_THUMB_MAX_FILE_BYTES ? null : await peekImageDimensions(originalPath);
+            if (origStat.size > AVATAR_THUMB_MAX_FILE_BYTES) {
+                console.warn(`[cl-helper] Avatar thumb populate skipped (over ${Math.round(AVATAR_THUMB_MAX_FILE_BYTES / 1024 / 1024)} MB cap, ${(origStat.size / 1024 / 1024).toFixed(1)} MB): ${file}`);
+                _populateJob.failed++;
+            } else if (dims && (dims.w * dims.h) > THUMB_MAX_PIXELS) {
+                console.warn(`[cl-helper] Avatar thumb populate skipped (dimensions ${dims.w}x${dims.h}): ${file}`);
                 _populateJob.failed++;
             } else {
                 let needs = true;
@@ -515,15 +538,14 @@ async function runAvatarPopulateJob(size, files, charactersDir, avatarThumbDir) 
                 } catch { /* cache miss */ }
                 if (needs) {
                     try {
-                        await _thumbSemaphore();
-                        const image = await _Jimp.read(originalPath);
-                        image.cover({ w: size, h: Math.round(size * 1.5) });
-                        const buffer = await image.getBuffer('image/jpeg', { quality: THUMB_QUALITY, jpegColorSpace: 'ycbcr' });
-                        _thumbRelease();
+                        const buffer = await withThumbSlot(async () => {
+                            const image = await _Jimp.read(originalPath);
+                            image.cover({ w: size, h: Math.round(size * 1.5) });
+                            return image.getBuffer('image/jpeg', { quality: THUMB_QUALITY, jpegColorSpace: 'ycbcr' });
+                        });
                         await writeFile(cachePath, buffer);
                         _populateJob.generated++;
                     } catch (err) {
-                        _thumbRelease();
                         console.warn(`[cl-helper] Avatar thumb populate failed for ${file}:`, err.message);
                         _populateJob.failed++;
                     }
@@ -1620,8 +1642,11 @@ const SAUCEPAN_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.3
 const SAUCEPAN_MAX_BYTES = 10 * 1024 * 1024;
 const SAUCEPAN_ALLOWED_PATHS = [
     /^\/api\/v1\/search$/,
-    /^\/api\/v1\/companions-of-user$/,
-    /^\/api\/v1\/companion$/,
+    /^\/api\/v1\/fandoms$/,
+    /^\/api\/v2\/users\/[A-Za-z0-9_.-]+\/companions$/,
+    /^\/api\/v2\/companions\/[a-zA-Z0-9-]+$/,
+    /^\/api\/v1\/companion\/definition$/,
+    /^\/cdn\/.+$/,
 ];
 const SAUCEPAN_POST_PATH = '/api/v1/search';
 const SAUCEPAN_MAX_SEARCH_LEN = 500;
@@ -1629,6 +1654,49 @@ const SAUCEPAN_MAX_TAG_LEN = 64;
 const SAUCEPAN_MAX_TAGS = 100;
 const SAUCEPAN_MAX_DATE_LEN = 30;
 const SAUCEPAN_MAX_ORDER_LEN = 32;
+
+let saucepanToken = null;
+
+function saucepanHeaders(token) {
+    const headers = {
+        'User-Agent': SAUCEPAN_UA,
+        Accept: '*/*',
+        'Accept-Encoding': 'gzip, deflate, br',
+        Origin: SAUCEPAN_ORIGIN,
+        Referer: SAUCEPAN_ORIGIN + '/',
+        'x-saucepan-client-version': '1',
+    };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    return headers;
+}
+
+async function testSaucepanToken(token) {
+    // Search alone discriminates: Saucepan 403s both anonymous and bad-bearer requests,
+    // so a 200 here already proves the token. The endpoint 422s unless every field is sent.
+    return fetch(`${SAUCEPAN_BASE}/api/v1/search`, {
+        method: 'POST',
+        headers: { ...saucepanHeaders(token), 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            text_search: null,
+            tags: [],
+            excluded_tags: [],
+            fandom_tags: [],
+            excluded_fandom_tags: [],
+            match_all_fandom_tags: false,
+            match_all_tags: true,
+            limit: 1,
+            offset: 0,
+            sus: true,
+            extra_spicy: null,
+            order_by: 'created',
+            asc: false,
+            posted_at_from: null,
+            posted_at_to: null,
+            hide_hidden_content: false,
+            open_definition_only: true,
+        }),
+    });
+}
 
 function sanitizeSaucepanSearchBody(input) {
     if (!input || typeof input !== 'object') return null;
@@ -1695,6 +1763,92 @@ async function readSaucepanBody(response) {
 }
 
 function registerSaucepanRoutes(router) {
+    // Saucepan auth: password login
+    router.post('/saucepan-login', async (req, res) => {
+        const { handle, password } = req.body ?? {};
+        if (!handle || typeof handle !== 'string' || !password || typeof password !== 'string') {
+            return res.status(400).json({ error: 'handle and password are required' });
+        }
+        if (handle.length > 64 || password.length > 128) {
+            return res.status(400).json({ error: 'handle or password too long' });
+        }
+
+        try {
+            const response = await fetch(`${SAUCEPAN_BASE}/api/v1/auth/sign_in_password`, {
+                method: 'POST',
+                headers: {
+                    ...saucepanHeaders(),
+                    'Content-Type': 'application/json',
+                    Referer: `${SAUCEPAN_ORIGIN}/sign-in`,
+                },
+                body: JSON.stringify({ handle: handle.trim(), password }),
+            });
+
+            let data = {};
+            try {
+                data = JSON.parse(await readSaucepanBody(response));
+            } catch { /* non-JSON error body */ }
+            if (!response.ok) {
+                const msg = data?.error?.message || `HTTP ${response.status}`;
+                return res.status(response.status).json({ ok: false, error: msg });
+            }
+
+            // the login response body carries exactly { token }; a missing key is a platform change
+            const token = data?.token;
+            if (!token) {
+                return res.status(502).json({ ok: false, error: 'Login response carried no token' });
+            }
+
+            saucepanToken = token;
+            console.log('[cl-helper] Saucepan login succeeded');
+            res.json({ ok: true, token });
+        } catch (err) {
+            console.error('[cl-helper] Saucepan login error:', err.message);
+            res.status(502).json({ ok: false, error: err.message });
+        }
+    });
+
+    // Store a user-provided Saucepan token
+    router.post('/saucepan-set-token', async (req, res) => {
+        const { token } = req.body ?? {};
+        if (!token || typeof token !== 'string' || !token.trim()) {
+            return res.status(400).json({ error: 'token string is required' });
+        }
+        if (token.length > 2048) {
+            return res.status(400).json({ error: 'Token too long' });
+        }
+        saucepanToken = token.trim();
+        console.log('[cl-helper] Saucepan token stored');
+        res.json({ ok: true });
+    });
+
+    // Clear stored Saucepan token
+    router.post('/saucepan-clear-token', (_req, res) => {
+        saucepanToken = null;
+        console.log('[cl-helper] Saucepan token cleared');
+        res.json({ ok: true });
+    });
+
+    // Validate stored Saucepan token
+    router.get('/saucepan-validate', async (_req, res) => {
+        if (!saucepanToken) {
+            return res.json({ valid: false, reason: 'no token stored' });
+        }
+        try {
+            const response = await testSaucepanToken(saucepanToken);
+            if (response.ok) {
+                res.json({ valid: true });
+            } else {
+                const text = await readSaucepanBody(response).catch(() => '');
+                console.warn(`[cl-helper] Saucepan validate failed: HTTP ${response.status}`);
+                res.json({ valid: false, reason: `HTTP ${response.status}: ${text.slice(0, 200)}` });
+            }
+        } catch (err) {
+            console.error('[cl-helper] Saucepan validate error:', err.message);
+            res.json({ valid: false, reason: err.message });
+        }
+    });
+
     const handleProxy = async (req, res) => {
         const targetPath = '/' + req.params[0];
         const normalizedPath = new URL(targetPath, SAUCEPAN_BASE).pathname;
@@ -1709,6 +1863,7 @@ function registerSaucepanRoutes(router) {
             return res.status(403).json({ error: `Proxy target must be ${SAUCEPAN_HOSTNAME}` });
         }
 
+        const isCdn = normalizedPath.startsWith('/cdn/');
         const isPost = req.method === 'POST';
         let bodyStr = null;
         if (isPost) {
@@ -1724,15 +1879,17 @@ function registerSaucepanRoutes(router) {
 
         const headers = {
             'User-Agent': SAUCEPAN_UA,
-            'Accept': '*/*',
+            'Accept': isCdn ? 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8' : '*/*',
             // Deliberately omits zstd: undici auto-decompresses gzip/deflate/br,
             // and Saucepan should respect the negotiated encoding. The zstd
             // fallback in readSaucepanBody covers servers that ignore us.
             'Accept-Encoding': 'gzip, deflate, br',
             'Origin': SAUCEPAN_ORIGIN,
             'Referer': SAUCEPAN_ORIGIN + '/',
+            'x-saucepan-client-version': '1',
         };
         if (isPost) headers['Content-Type'] = 'application/json';
+        if (saucepanToken && !isCdn) headers['Authorization'] = `Bearer ${saucepanToken}`;
 
         try {
             const response = await fetch(targetUrl.toString(), {
@@ -1741,6 +1898,26 @@ function registerSaucepanRoutes(router) {
                 body: bodyStr ?? undefined,
                 redirect: 'follow',
             });
+
+            // CDN images: return binary bytes straight back; do not run through
+            // the zstd/text reader used for API responses.
+            if (isCdn) {
+                const contentLength = parseInt(response.headers.get('content-length'), 10);
+                if (contentLength > SAUCEPAN_MAX_BYTES) {
+                    return res.status(413).json({ error: 'Saucepan image too large' });
+                }
+                const buf = Buffer.from(await response.arrayBuffer());
+                if (buf.length > SAUCEPAN_MAX_BYTES) {
+                    return res.status(413).json({ error: 'Saucepan image too large' });
+                }
+                res.status(response.status);
+                res.set('Content-Type', response.headers.get('content-type') || 'image/jpeg');
+                // Saucepan serves images immutable; keeping its cache headers
+                // stops the browser re-requesting every avatar through us.
+                const cacheControl = response.headers.get('cache-control');
+                if (cacheControl) res.set('Cache-Control', cacheControl);
+                return res.send(buf);
+            }
 
             const text = await readSaucepanBody(response);
             res.status(response.status);
@@ -1820,6 +1997,1241 @@ function registerDropboxRoutes(router) {
 }
 
 // =============================================================================
+// JanitorAI browser endpoint (Chrome DevTools Protocol)
+// =============================================================================
+//
+// Raw CDP, no playwright: this plugin has zero dependencies, and a playwright client would pin a
+// matching browser build. The endpoint is user-supplied and this server dials it, so private
+// ranges must keep working and are deliberately NOT blocked; bounded by scheme, length, and only
+// ever speaking CDP over it.
+
+const CDP_MAX_ENDPOINT_LEN = 512;
+const CDP_CONNECT_TIMEOUT = 15000;
+const CDP_COMMAND_TIMEOUT = 30000;
+const CDP_NAV_TIMEOUT = 60000;
+const JANITORAI_ORIGIN = 'https://janitorai.com';
+const JANITORAI_UUID_RE = /^[a-f0-9-]{36}$/i;
+
+function cdpHttpBase(endpoint) {
+    if (typeof endpoint !== 'string' || !endpoint.trim()) throw new Error('Browser endpoint is required');
+    if (endpoint.length > CDP_MAX_ENDPOINT_LEN) throw new Error('Browser endpoint is too long');
+    const u = new URL(endpoint.trim());
+    if (u.protocol === 'ws:') u.protocol = 'http:';
+    else if (u.protocol === 'wss:') u.protocol = 'https:';
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+        throw new Error('Browser endpoint must be an http(s) or ws(s) URL');
+    }
+    u.pathname = '/';
+    u.search = '';
+    u.hash = '';
+    return u.toString().replace(/\/$/, '');
+}
+
+function withTimeout(promise, ms, label) {
+    let timer;
+    return Promise.race([
+        promise,
+        new Promise((_, rej) => { timer = setTimeout(() => rej(new Error(`${label} timed out after ${ms}ms`)), ms); }),
+    ]).finally(() => clearTimeout(timer));
+}
+
+class CdpClient {
+    constructor(ws, info) {
+        this.ws = ws;
+        this.info = info;
+        this._id = 0;
+        this._pending = new Map();
+        this._listeners = new Set();
+        this._closed = false;
+        ws.addEventListener('message', (ev) => this._onMessage(ev));
+        ws.addEventListener('close', () => {
+            this._closed = true;
+            for (const p of this._pending.values()) p.reject(new Error('Browser connection closed'));
+            this._pending.clear();
+        });
+    }
+
+    static async connect(endpoint) {
+        const base = cdpHttpBase(endpoint);
+        let resp;
+        try {
+            resp = await withTimeout(fetch(`${base}/json/version`), CDP_CONNECT_TIMEOUT, 'Browser handshake');
+        } catch (e) {
+            throw new Error(`Could not reach the browser endpoint: ${e.message}`);
+        }
+        if (!resp.ok) throw new Error(`Browser endpoint answered HTTP ${resp.status} on /json/version`);
+        const info = await resp.json().catch(() => null);
+        if (!info?.webSocketDebuggerUrl) throw new Error('That endpoint did not advertise a DevTools websocket (is it a CDP endpoint?)');
+
+        // Chrome binds CDP to loopback and reports that, so anything reached across the network
+        // advertises a host we cannot dial; re-point the socket at the one the user gave us.
+        let wsUrl = info.webSocketDebuggerUrl;
+        try {
+            const reported = new URL(wsUrl);
+            const given = new URL(base);
+            reported.host = given.host;
+            // Carry the scheme too: a TLS-terminated endpoint dialed as plain ws:// never connects.
+            reported.protocol = given.protocol === 'https:' ? 'wss:' : 'ws:';
+            wsUrl = reported.toString();
+        } catch { /* use as reported */ }
+
+        const ws = new WebSocket(wsUrl);
+        try {
+            await withTimeout(new Promise((res, rej) => {
+                ws.addEventListener('open', res, { once: true });
+                ws.addEventListener('error', () => rej(new Error('DevTools websocket refused the connection')), { once: true });
+            }), CDP_CONNECT_TIMEOUT, 'Browser websocket');
+        } catch (e) {
+            // The timeout path leaves a live socket that may still open later; dont leak it.
+            try { ws.close(); } catch {}
+            throw e;
+        }
+        return new CdpClient(ws, info);
+    }
+
+    _onMessage(ev) {
+        let msg;
+        try { msg = JSON.parse(typeof ev.data === 'string' ? ev.data : ''); } catch { return; }
+        if (msg.id && this._pending.has(msg.id)) {
+            const p = this._pending.get(msg.id);
+            this._pending.delete(msg.id);
+            if (msg.error) p.reject(new Error(msg.error.message || 'Browser command failed'));
+            else p.resolve(msg.result);
+            return;
+        }
+        if (msg.method) for (const fn of this._listeners) { try { fn(msg); } catch { /* a listener throwing is not our failure */ } }
+    }
+
+    send(method, params = {}, sessionId) {
+        if (this._closed) return Promise.reject(new Error('Browser connection closed'));
+        const id = ++this._id;
+        const payload = sessionId ? { id, method, params, sessionId } : { id, method, params };
+        const p = new Promise((resolve, reject) => this._pending.set(id, { resolve, reject }));
+        try { this.ws.send(JSON.stringify(payload)); } catch (e) { this._pending.delete(id); return Promise.reject(e); }
+        return withTimeout(p, CDP_COMMAND_TIMEOUT, method);
+    }
+
+    on(fn) { this._listeners.add(fn); return () => this._listeners.delete(fn); }
+
+    waitFor(method, sessionId, ms) {
+        let off;
+        return withTimeout(new Promise((resolve) => {
+            off = this.on((msg) => {
+                if (msg.method !== method) return;
+                if (sessionId && msg.sessionId !== sessionId) return;
+                resolve(msg.params);
+            });
+        }), ms, method).finally(() => off?.());
+    }
+
+    close() { try { this.ws.close(); } catch {} this._closed = true; }
+}
+
+class CdpPage {
+    constructor(client, targetId, sessionId) {
+        this.client = client;
+        this.targetId = targetId;
+        this.sessionId = sessionId;
+    }
+
+    static async create(client) {
+        const { targetId } = await client.send('Target.createTarget', { url: 'about:blank' });
+        const { sessionId } = await client.send('Target.attachToTarget', { targetId, flatten: true });
+        const page = new CdpPage(client, targetId, sessionId);
+        await page.send('Page.enable');
+        await page.send('Runtime.enable');
+        await page.send('Network.enable');
+        return page;
+    }
+
+    send(method, params) { return this.client.send(method, params, this.sessionId); }
+
+    async goto(url, { timeout = CDP_NAV_TIMEOUT } = {}) {
+        const loaded = this.client.waitFor('Page.loadEventFired', this.sessionId, timeout);
+        await this.send('Page.navigate', { url });
+        await loaded;
+    }
+
+    async evaluate(expression, { timeout = CDP_COMMAND_TIMEOUT } = {}) {
+        const r = await withTimeout(
+            this.send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true }),
+            timeout, 'page evaluate');
+        if (r.exceptionDetails) {
+            throw new Error(r.exceptionDetails.exception?.description || r.exceptionDetails.text || 'Page script threw');
+        }
+        return r.result?.value;
+    }
+
+    async cookies(urls) {
+        const r = await this.send('Network.getCookies', { urls });
+        return r.cookies || [];
+    }
+
+    /**
+     * Arm a one-shot body capture for the first response matching `re`. Must be armed BEFORE
+     * whatever triggers the request. Bodies are only readable once loading finishes, so both
+     * events are tracked rather than reading on responseReceived.
+     */
+    captureResponse(re, { timeout = 45000 } = {}) {
+        let requestId = null;
+        let settle;
+        const done = new Promise((res) => { settle = res; });
+        const off = this.client.on(async (msg) => {
+            if (msg.sessionId !== this.sessionId) return;
+            if (!requestId && msg.method === 'Network.responseReceived') {
+                if (re.test(msg.params?.response?.url || '')) requestId = msg.params.requestId;
+                return;
+            }
+            if (requestId && msg.method === 'Network.loadingFinished' && msg.params?.requestId === requestId) {
+                off();
+                try {
+                    const r = await this.send('Network.getResponseBody', { requestId });
+                    settle(r.base64Encoded ? Buffer.from(r.body, 'base64').toString('utf8') : r.body);
+                } catch { settle(null); }
+            }
+        });
+        return {
+            wait: () => withTimeout(done, timeout, 'response capture').catch(() => { off(); return null; }),
+            cancel: () => off(),
+        };
+    }
+
+    async close() { try { await this.client.send('Target.closeTarget', { targetId: this.targetId }); } catch {} }
+}
+
+/** Build an in-page fetch against janitorai, as an expression string for Runtime.evaluate. */
+function janitoraiCall(method, path, body, token) {
+    const headers = { Accept: 'application/json' };
+    if (token) headers.Authorization = `Bearer ${token}`;
+    if (body) headers['Content-Type'] = 'application/json';
+    const init = {
+        method,
+        credentials: 'include',
+        headers,
+        ...(body ? { body: JSON.stringify(body) } : {}),
+    };
+    return `(async () => {
+        const r = await fetch(${JSON.stringify(path)}, ${JSON.stringify(init)});
+        const t = await r.text();
+        let d = null; try { d = JSON.parse(t); } catch {}
+        return { status: r.status, data: d, text: d ? null : t.slice(0, 400) };
+    })()`;
+}
+
+/** Pull the access token out of janitorai's supabase session cookie. '' when absent. */
+function readJanitoraiToken(cookies) {
+    const raw = cookies.find(c => c.name === 'sb-auth-auth-token')?.value;
+    if (!raw) return { token: '', cookie: '' };
+    try {
+        const dec = decodeURIComponent(raw);
+        const json = dec.startsWith('base64-') ? Buffer.from(dec.slice(7), 'base64').toString('utf8') : dec;
+        return { token: JSON.parse(json).access_token || '', cookie: raw };
+    } catch {
+        return { token: '', cookie: raw };
+    }
+}
+
+const CF_CHALLENGE_RE = /just a moment|checking your browser|attention required|access restricted|verifying you are human/i;
+const CF_MAX_WAIT_MS = 30000;
+const CF_RELOAD_ATTEMPTS = 3;
+const CF_RELOAD_GAP_MS = 5000;
+
+/**
+ * Poll until the page stops being a challenge, reloading a few times: the challenge runs js and
+ * reloads, so one snapshot just catches the interstitial.
+ *
+ * NEVER clear cookies around this. The challenge issues its own, and wiping them forces the hard
+ * interactive path every time, which looks identical to a browser that cannot pass.
+ */
+async function waitForCloudflare(page) {
+    const started = Date.now();
+    let title = '';
+    let blocked = true;
+    for (let attempt = 0; attempt < CF_RELOAD_ATTEMPTS && blocked; attempt++) {
+        if (attempt > 0) {
+            await new Promise(r => setTimeout(r, CF_RELOAD_GAP_MS));
+            try { await page.send('Page.reload', { ignoreCache: false }); } catch { /* keep polling */ }
+        }
+        const deadline = Date.now() + CF_MAX_WAIT_MS;
+        while (Date.now() < deadline) {
+            await new Promise(r => setTimeout(r, 1500));
+            try {
+                title = String(await page.evaluate('document.title') || '');
+            } catch { /* mid-reload; the next poll picks it up */ }
+            blocked = !title || CF_CHALLENGE_RE.test(title);
+            if (!blocked) break;
+        }
+    }
+
+    let hint = '';
+    if (blocked) {
+        let signals = {};
+        try {
+            // No WebGL at all fingerprints as a bot louder than a headless UA does. The
+            // UA-vs-Client-Hints check catches --user-agent naming a different Chrome release.
+            signals = await page.evaluate(`(function () {
+                var gl = null;
+                try {
+                    var cv = document.createElement('canvas');
+                    gl = cv.getContext('webgl') || cv.getContext('experimental-webgl');
+                } catch (e) { gl = null; }
+                var renderer = '';
+                if (gl) {
+                    try {
+                        var dbg = gl.getExtension('WEBGL_debug_renderer_info');
+                        renderer = dbg ? String(gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL)) : 'available';
+                    } catch (e) { renderer = 'available'; }
+                }
+                var uaM = navigator.userAgent.match(/Chrome\\/(\\d+)/);
+                var brands = (navigator.userAgentData && navigator.userAgentData.brands) || [];
+                var chV = '';
+                for (var i = 0; i < brands.length; i++) {
+                    if (/chrom/i.test(brands[i].brand)) { chV = String(brands[i].version); break; }
+                }
+                return {
+                    webdriver: navigator.webdriver === true,
+                    headlessUa: /headless/i.test(navigator.userAgent),
+                    languages: (navigator.languages || []).length,
+                    webgl: !!gl,
+                    renderer: renderer,
+                    uaVersion: uaM ? uaM[1] : '',
+                    hintsVersion: chV
+                };
+            })()`) || {};
+        } catch { /* diagnostics are best effort */ }
+
+        const flags = [];
+        if (signals.webgl === false) {
+            flags.push('WebGL is unavailable, so this browser has no GPU to render with. Software rendering does not get through here either, so it needs a host with a working GPU');
+        }
+        if (signals.uaVersion && signals.hintsVersion && signals.uaVersion !== signals.hintsVersion) {
+            flags.push(`the user-agent claims Chrome ${signals.uaVersion} but this browser is really Chrome ${signals.hintsVersion} (drop --user-agent; it does not rewrite Client Hints)`);
+        }
+        if (signals.webdriver) flags.push('navigator.webdriver is true (add --disable-blink-features=AutomationControlled)');
+        if (signals.headlessUa) flags.push('the user-agent still says Headless, so this browser is running headless');
+        if (signals.languages === 0) flags.push('navigator.languages is empty (set --lang)');
+
+        hint = flags.length
+            ? `Fix these first: ${flags.join('; ')}.`
+            : 'No fingerprint problem to fix. Cloudflare hands some hosts an interactive challenge that never completes without a person, and no launch flag changes that. Running the browser on a different machine (an ordinary x64 desktop works) is the reliable way through. Solving it by hand is not an option here: the widget is never rendered, so there is nothing to click.';
+    }
+    return { blocked, title, waitedMs: Date.now() - started, hint };
+}
+
+/**
+ * Put Character Library's session into the hosted browser. A Bearer is enough for the API but
+ * not for the chat page, which renders no composer for a signed-out browser.
+ */
+async function injectJanitoraiSession(page, accessToken, refreshToken) {
+    if (!accessToken) return false;
+    let expiresAt = Math.floor(Date.now() / 1000) + 3600;
+    try {
+        const claims = JSON.parse(Buffer.from(String(accessToken).split('.')[1].replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8'));
+        if (claims?.exp) expiresAt = claims.exp;
+    } catch { /* keep the default */ }
+
+    const session = {
+        access_token: accessToken,
+        token_type: 'bearer',
+        expires_in: Math.max(60, expiresAt - Math.floor(Date.now() / 1000)),
+        expires_at: expiresAt,
+        refresh_token: refreshToken || '',
+        user: {},
+    };
+    const value = 'base64-' + Buffer.from(JSON.stringify(session), 'utf8').toString('base64');
+
+    try {
+        await page.send('Network.setCookie', {
+            name: 'sb-auth-auth-token',
+            value,
+            domain: 'janitorai.com',
+            path: '/',
+            secure: false,
+            httpOnly: false,
+            sameSite: 'Lax',
+            expires: expiresAt,
+        });
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+/** Open a page, run `fn`, always tear the page down. */
+async function withJanitoraiPage(endpoint, fn) {
+    const client = await CdpClient.connect(endpoint);
+    let page = null;
+    try {
+        page = await CdpPage.create(client);
+        return await fn(page, client);
+    } finally {
+        if (page) await page.close();
+        client.close();
+    }
+}
+
+// A warm page parked on janitorai.com, reused across browse requests. Connecting, opening a
+// target and navigating costs several seconds; a grid load is dozens of requests, so doing that
+// per request would be unusable. Extraction deliberately does NOT share this page: it navigates
+// away to a chat, which would break every in-flight fetch.
+let _warmPage = null;   // { endpoint, client, page, lastUsed }
+let _warmPending = null;
+let _warmPendingEndpoint = null;
+const WARM_IDLE_MS = 5 * 60 * 1000;
+let _warmReaper = null;
+
+async function closeWarmPage() {
+    const w = _warmPage;
+    _warmPage = null;
+    if (!w) return;
+    try { await w.page.close(); } catch {}
+    try { w.client.close(); } catch {}
+}
+
+function armWarmReaper() {
+    if (_warmReaper) return;
+    _warmReaper = setInterval(() => {
+        if (_warmPage && Date.now() - _warmPage.lastUsed > WARM_IDLE_MS) {
+            closeWarmPage().catch(() => {});
+        }
+        if (!_warmPage) { clearInterval(_warmReaper); _warmReaper = null; }
+    }, 60000);
+    // Never hold the process open just to reap an idle browser tab.
+    _warmReaper.unref?.();
+}
+
+async function getWarmPage(endpoint) {
+    if (_warmPage && _warmPage.endpoint === endpoint && !_warmPage.client._closed) {
+        _warmPage.lastUsed = Date.now();
+        return _warmPage;
+    }
+    // Concurrent grid requests must share one warm-up, not race a dozen navigations. Joining is
+    // only right for the SAME browser; a warm-up for another endpoint must settle first or the
+    // joiner gets a page carrying somebody else's cookies. A loop, not an if: another waiter can
+    // start a fresh warm-up while this one awaited, and racing it would orphan a page + socket.
+    while (_warmPending) {
+        if (_warmPendingEndpoint === endpoint) return _warmPending;
+        await _warmPending.catch(() => {});
+        if (_warmPage && _warmPage.endpoint === endpoint && !_warmPage.client._closed) {
+            _warmPage.lastUsed = Date.now();
+            return _warmPage;
+        }
+    }
+
+    _warmPendingEndpoint = endpoint;
+    let wrapped;
+    wrapped = (async () => {
+        await closeWarmPage();
+        const client = await CdpClient.connect(endpoint);
+        let page;
+        try {
+            page = await CdpPage.create(client);
+            await page.goto(`${JANITORAI_ORIGIN}/`, { timeout: CDP_NAV_TIMEOUT });
+            // Park only once the challenge is done, so the first real request is not spent on it.
+            await waitForCloudflare(page);
+        } catch (e) {
+            try { await page?.close(); } catch {}
+            client.close();
+            throw e;
+        }
+        _warmPage = { endpoint, client, page, lastUsed: Date.now() };
+        armWarmReaper();
+        return _warmPage;
+    })().finally(() => {
+        // Only clear a slot this warm-up still owns; a newer one may hold it by settle time.
+        if (_warmPending === wrapped) { _warmPending = null; _warmPendingEndpoint = null; }
+    });
+    _warmPending = wrapped;
+
+    return wrapped;
+}
+
+// ============================================================================================
+// Managed browser
+//
+// Spawns and owns a headless browser on loopback, so a normal user never pastes a CDP URL.
+// Headless does not force software rendering: on a host with a GPU it reports the real adapter.
+// Loopback only, since Chrome always binds CDP to 127.0.0.1 and nothing off-box needs it here.
+
+const MANAGED_IDLE_MS = 10 * 60 * 1000;
+const MANAGED_START_TIMEOUT_MS = 45000;
+// After a failed start, stop trying for a bit. Browse asks for a browser on EVERY hampter
+// request, so without this a box where the browser exists but will not launch pays the full
+// start timeout per request and the grid becomes unusable rather than merely unaccelerated.
+const MANAGED_FAIL_COOLDOWN_MS = 60000;
+
+let _managed = null;          // { proc, endpoint, binary, browser, ua, profile, lastUsed }
+let _managedStarting = null;  // the spawned proc before _managed is assigned, so Stop can reach it
+let _managedKiller = null;    // removed on teardown so restarts don't leak process signal listeners
+let _managedPending = null;
+let _managedReaper = null;
+let _managedLastError = null;
+let _managedFailedAt = 0;
+
+/** Newest playwright build first, then the system browsers. Mirrors run-browser.mjs. */
+function managedBrowserCandidates() {
+    const out = [];
+    if (process.env.CL_BROWSER) out.push(process.env.CL_BROWSER);
+    // Several playwright chromiums often coexist and readdir order is not version order, so a
+    // plain "first hit" picks a stale build.
+    const glob = (dir, re, tail) => {
+        try {
+            readdirSync(dir)
+                .filter(d => re.test(d))
+                .sort((a, b) => (parseInt(b.match(/\d+/)[0], 10) - parseInt(a.match(/\d+/)[0], 10)))
+                .forEach(d => out.push(join(dir, d, ...tail)));
+        } catch { /* not present */ }
+    };
+    if (process.platform === 'win32') {
+        glob(join(homedir(), 'AppData/Local/ms-playwright'), /^chromium-\d+$/, ['chrome-win64', 'chrome.exe']);
+        out.push('C:/Program Files/Google/Chrome/Application/chrome.exe',
+                 'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe',
+                 join(homedir(), 'AppData/Local/Google/Chrome/Application/chrome.exe'),
+                 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
+                 'C:/Program Files/Microsoft/Edge/Application/msedge.exe');
+    } else if (process.platform === 'darwin') {
+        glob(join(homedir(), 'Library/Caches/ms-playwright'), /^chromium-\d+$/, ['chrome-mac', 'Chromium.app', 'Contents', 'MacOS', 'Chromium']);
+        out.push('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+                 '/Applications/Chromium.app/Contents/MacOS/Chromium');
+    } else {
+        glob('/ms-playwright', /^chromium-\d+$/, ['chrome-linux', 'chrome']);
+        glob(join(homedir(), '.cache/ms-playwright'), /^chromium-\d+$/, ['chrome-linux', 'chrome']);
+        out.push('/usr/bin/google-chrome', '/usr/bin/google-chrome-stable',
+                 '/usr/bin/chromium', '/usr/bin/chromium-browser', '/snap/bin/chromium');
+    }
+    return out;
+}
+
+function findManagedBrowser() {
+    return managedBrowserCandidates().find(p => { try { return existsSync(p); } catch { return false; } }) || null;
+}
+
+function freeLoopbackPort() {
+    return new Promise((res, rej) => {
+        const s = createServer();
+        s.once('error', rej);
+        s.listen(0, '127.0.0.1', () => {
+            const { port } = s.address();
+            s.close(() => res(port));
+        });
+    });
+}
+
+// Headless reports "HeadlessChrome/<ver>", which janitorai answers with "Access Restricted".
+// The override must name the browser's REAL version, since --user-agent does not touch Sec-CH-UA.
+// The probe port is ephemeral: a fixed one can be held by an unrelated Chrome, whose version we
+// would then wear.
+async function probeManagedUserAgent(binary) {
+    let probePort;
+    try { probePort = await freeLoopbackPort(); } catch { return null; }
+    const probeProfile = join(tmpdir(), `cl-ua-probe-${process.pid}-${probePort}`);
+    let proc;
+    try {
+        proc = spawn(binary, ['--headless=new', `--remote-debugging-port=${probePort}`,
+            `--user-data-dir=${probeProfile}`, '--no-first-run', 'about:blank'], { stdio: 'ignore' });
+    } catch { return null; }
+
+    let exited = false;
+    proc.once('exit', () => { exited = true; });
+    proc.once('error', () => { exited = true; });
+
+    try {
+        for (let i = 0; i < 24; i++) {
+            await new Promise(r => setTimeout(r, 500));
+            if (exited) return null;          // it died; anything on that port is not ours
+            try {
+                const info = await (await fetch(`http://127.0.0.1:${probePort}/json/version`)).json();
+                const ua = String(info['User-Agent'] || '');
+                if (!ua) continue;
+                // Cross-check: the UA must name the same Chrome as the browser that produced it.
+                const uaMajor = (ua.match(/Chrome\/(\d+)/) || [])[1];
+                const realMajor = (String(info.Browser || '').match(/(\d+)/) || [])[1];
+                if (uaMajor && realMajor && uaMajor !== realMajor) return null;
+                return ua.replace(/Headless/g, '');
+            } catch { /* not up yet */ }
+        }
+    } finally {
+        try { proc.kill(); } catch {}
+        await new Promise(r => setTimeout(r, 500));
+        try { rmSync(probeProfile, { recursive: true, force: true }); } catch {}
+    }
+    return null;
+}
+
+function managedProfileDir(req) {
+    const charactersDir = charactersDirForReq(req);
+    return charactersDir ? join(charactersDir, '..', 'cl_janitorai_browser') : join(tmpdir(), 'cl_janitorai_browser');
+}
+
+async function stopManagedBrowser() {
+    if (_managedKiller) {
+        process.removeListener('exit', _managedKiller);
+        process.removeListener('SIGTERM', _managedKiller);
+        process.removeListener('SIGINT', _managedKiller);
+        _managedKiller = null;
+    }
+    // A start still inside its wait loop holds the proc only here; without this a Stop during
+    // that window orphans a browser whose exit hooks were just removed above.
+    if (_managedStarting) {
+        try { _managedStarting.kill(); } catch {}
+        _managedStarting = null;
+    }
+    const m = _managed;
+    _managed = null;
+    if (!m) return;
+    try { m.proc.kill(); } catch {}
+}
+
+// Mirrors armWarmReaper: a periodic sweep that unref()s so an idle browser never holds the
+// process open, and that stops itself once there is nothing left to reap.
+function armManagedReaper() {
+    if (_managedReaper) return;
+    _managedReaper = setInterval(() => {
+        if (_managed && Date.now() - _managed.lastUsed > MANAGED_IDLE_MS) {
+            stopManagedBrowser().catch(() => {});
+        }
+        if (!_managed) { clearInterval(_managedReaper); _managedReaper = null; }
+    }, 60000);
+    _managedReaper.unref?.();
+}
+
+/**
+ * Lazily start (or reuse) the managed browser and return its CDP endpoint.
+ * @param {Object} req
+ * @param {boolean} [force] - bypass the failure cooldown; a button press means try again
+ */
+async function getManagedEndpoint(req, force = false) {
+    // signalCode too: an OOM-killed or crashed browser keeps exitCode null and would be
+    // reported alive forever, wedging every request on a dead endpoint.
+    if (_managed && _managed.proc.exitCode === null && _managed.proc.signalCode === null) {
+        _managed.lastUsed = Date.now();
+        return _managed.endpoint;
+    }
+    // Concurrent callers must share one spawn, not race a dozen browsers onto the box.
+    if (_managedPending) return _managedPending;
+    if (force) _managedFailedAt = 0;
+    if (_managedFailedAt && Date.now() - _managedFailedAt < MANAGED_FAIL_COOLDOWN_MS) {
+        throw new Error(_managedLastError || 'Managed browser failed to start');
+    }
+
+    _managedPending = (async () => {
+        await stopManagedBrowser();
+        const binary = findManagedBrowser();
+        if (!binary) {
+            throw new Error('No Chrome, Chromium or Edge found on this machine. Install one, set CL_BROWSER to its path, or switch to endpoint mode and point Character Library at a browser elsewhere.');
+        }
+
+        const port = await freeLoopbackPort();
+        const profile = managedProfileDir(req);
+        try { mkdirSync(profile, { recursive: true }); } catch {}
+        // A profile left locked by an unclean shutdown makes Chrome exit 21 in a loop.
+        for (const f of ['SingletonLock', 'SingletonSocket', 'SingletonCookie']) {
+            try { rmSync(join(profile, f), { force: true }); } catch {}
+        }
+
+        const ua = await probeManagedUserAgent(binary);
+        const flags = [
+            '--headless=new',
+            `--remote-debugging-port=${port}`,
+            `--user-data-dir=${profile}`,
+            '--no-first-run',
+            '--no-default-browser-check',
+            '--disable-blink-features=AutomationControlled',
+            '--disable-background-networking',
+            '--password-store=basic',
+            '--use-mock-keychain',
+            '--window-size=1280,900',
+        ];
+        if (ua) flags.push(`--user-agent=${ua}`);
+        // Deliberately NO SwiftShader flags. Software rendering never clears the challenge, so
+        // falling back to it would trade a visible failure for a silent one.
+
+        const proc = spawn(binary, [...flags, 'about:blank'], { stdio: ['ignore', 'ignore', 'ignore'] });
+        _managedStarting = proc;
+        // A failed spawn (unreadable or non-executable binary) emits 'error' and never sets
+        // exitCode, so without capturing it here the wait loop below would sit out its whole
+        // timeout on a browser that was never going to start.
+        let spawnError = null;
+        proc.once('error', (e) => { spawnError = e; });
+        // The browser must not outlive SillyTavern.
+        const killer = () => { try { proc.kill(); } catch {} };
+        _managedKiller = killer;
+        process.once('exit', killer);
+        process.once('SIGTERM', killer);
+        process.once('SIGINT', killer);
+
+        const endpoint = `http://127.0.0.1:${port}`;
+        const deadline = Date.now() + MANAGED_START_TIMEOUT_MS;
+        let info = null;
+        while (Date.now() < deadline) {
+            if (spawnError) throw new Error(`Could not launch ${binary}: ${spawnError.message}`);
+            if (proc.signalCode !== null) throw new Error(`Browser was killed during startup (${proc.signalCode}).`);
+            if (proc.exitCode !== null) throw new Error(`Browser exited immediately (code ${proc.exitCode}). Profile may be locked by another instance.`);
+            try {
+                info = await (await fetch(`${endpoint}/json/version`)).json();
+                if (info?.Browser) break;
+            } catch { /* not up yet */ }
+            await new Promise(r => setTimeout(r, 400));
+        }
+        if (!info?.Browser) {
+            try { proc.kill(); } catch {}
+            throw new Error('Browser did not open its debugging port in time.');
+        }
+
+        _managed = { proc, endpoint, binary, browser: String(info.Browser), ua: ua || null, profile, lastUsed: Date.now() };
+        _managedLastError = null;
+        _managedFailedAt = 0;
+        armManagedReaper();
+        console.log(`[cl-helper] managed browser up: ${info.Browser} (${binary})`);
+        return endpoint;
+    })().catch((e) => { _managedLastError = e.message; _managedFailedAt = Date.now(); throw e; })
+        .finally(() => { _managedPending = null; _managedStarting = null; });
+
+    return _managedPending;
+}
+
+/**
+ * Every janitorai browser route resolves its endpoint through here, so `managed: true` from the
+ * client is all it takes to get a browser. Kept in one place because the alternative is each
+ * route growing its own copy of the lazy-start decision.
+ */
+async function resolveBrowserEndpoint(req, force = false) {
+    const { endpoint, managed } = req.body ?? {};
+    if (managed) return getManagedEndpoint(req, force);
+    return endpoint;
+}
+
+/**
+ * Reported as its own check because "it timed out" sends people hunting flags when the real
+ * answer is the box has no GPU (software rendering never clears the Cloudflare challenge).
+ */
+async function probeRenderStack(page) {
+    const raw = await page.evaluate(`(() => {
+        try {
+            // Codecs are probed before the WebGL bail so a GL-less browser still gets an
+            // honest codec verdict instead of a fabricated "no proprietary codecs".
+            const v = document.createElement('video');
+            const video = v.canPlayType('video/mp4; codecs="avc1.42E01E"') || '';
+            const audio = v.canPlayType('audio/mp4; codecs="mp4a.40.2"') || '';
+            const c = document.createElement('canvas');
+            const gl = c.getContext('webgl2') || c.getContext('webgl');
+            if (!gl) return JSON.stringify({ renderer: '', exts: 0, video, audio });
+            const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+            return JSON.stringify({
+                renderer: dbg ? String(gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) || '') : '',
+                exts: (gl.getSupportedExtensions() || []).length,
+                video,
+                audio,
+            });
+        } catch (e) { return JSON.stringify({ error: String(e && e.message || e) }); }
+    })()`);
+    try { return JSON.parse(String(raw || '{}')); } catch { return {}; }
+}
+
+function isSoftwareRenderer(renderer) {
+    return /swiftshader|llvmpipe|softpipe|software/i.test(String(renderer || ''));
+}
+
+function registerJanitoraiBrowserRoutes(router) {
+    // Managed-browser lifecycle. Start is idempotent and lazy everywhere else; this route exists
+    // so the settings panel can start one on demand and report what happened.
+    router.post('/janitorai-managed/start', async (req, res) => {
+        try {
+            const endpoint = await getManagedEndpoint(req, true);
+            res.json({ ok: true, endpoint, browser: _managed?.browser || null, binary: _managed?.binary || null });
+        } catch (err) {
+            res.status(503).json({ ok: false, error: err.message, binary: findManagedBrowser() });
+        }
+    });
+
+    router.post('/janitorai-managed/stop', async (req, res) => {
+        await stopManagedBrowser();
+        res.json({ ok: true });
+    });
+
+    router.get('/janitorai-managed/status', (req, res) => {
+        const running = !!(_managed && _managed.proc.exitCode === null && _managed.proc.signalCode === null);
+        res.json({
+            running,
+            endpoint: running ? _managed.endpoint : null,
+            browser: running ? _managed.browser : null,
+            binary: running ? _managed.binary : findManagedBrowser(),
+            userAgentOverridden: running ? !!_managed.ua : null,
+            idleStopMinutes: MANAGED_IDLE_MS / 60000,
+            lastError: _managedLastError,
+        });
+    });
+
+
+    // Capability probe. Reports each check separately: "it failed" is useless when the fix
+    // differs per check (wrong URL vs headless UA vs an active Cloudflare challenge).
+    router.post('/janitorai-browser-test', async (req, res) => {
+        const checks = [];
+        const add = (key, label, ok, detail) => checks.push({ key, label, ok: !!ok, detail: detail || '' });
+
+        let client = null;
+        let page = null;
+        try {
+            // force: pressing Test is an explicit "try again", so it skips the failure cooldown.
+            const endpoint = await resolveBrowserEndpoint(req, true);
+            client = await CdpClient.connect(endpoint);
+            add('connect', 'Endpoint reachable', true, client.info.Browser || 'connected');
+            add('browser', 'Browser version', true, client.info.Browser || 'unknown');
+
+            page = await CdpPage.create(client);
+            const ua = await page.evaluate('navigator.userAgent');
+            const headless = /headless/i.test(String(ua || ''));
+            add('useragent', 'User-Agent is not headless', !headless,
+                headless
+                    ? 'Reports HeadlessChrome, which JanitorAI answers with "Access Restricted". Launch the browser with a real Chrome user-agent.'
+                    : String(ua || '').slice(0, 120));
+
+            add('script', 'Can run injected script', (await page.evaluate('1 + 1')) === 2);
+
+            // Both of these were measured causes of a permanent stall, and neither is visible
+            // from the challenge timing out, so they are reported before the Cloudflare check.
+            const stack = await probeRenderStack(page);
+            const software = isSoftwareRenderer(stack.renderer);
+            add('gpu', 'GPU is hardware accelerated', stack.renderer && !software,
+                !stack.renderer
+                    ? 'Could not read the WebGL renderer. WebGL may be disabled entirely, which is worse than software rendering.'
+                    : (software
+                        ? `Rendering with ${String(stack.renderer).slice(0, 60)}, which is software. Cloudflare does not let software-rendered browsers through here, so this will never finish. Run the browser on a machine with a working GPU and point this at it.`
+                        : String(stack.renderer).slice(0, 90)));
+            add('gl-extensions', 'WebGL extension count looks desktop-class', !stack.renderer || stack.exts >= 25,
+                !stack.renderer
+                    ? 'Skipped: no WebGL renderer to inspect.'
+                    : (stack.exts < 25
+                        ? `Only ${stack.exts} WebGL extensions; desktop GPUs report 30+. Mobile-class GPUs (Mali and friends) sit under 20 and are a known Cloudflare fail even with hardware rendering.`
+                        : `${stack.exts} extensions.`));
+            add('codecs', 'H.264 and AAC available', !!stack.video && !!stack.audio,
+                (!stack.video || !stack.audio)
+                    ? 'This build has no proprietary codecs, which is a browser Chrome-branded builds always have. Playwright\'s Linux arm64 Chromium is the usual culprit; install real Chrome or a distro Chromium instead.'
+                    : 'Present.');
+
+            await page.goto(`${JANITORAI_ORIGIN}/`, { timeout: CDP_NAV_TIMEOUT });
+            const cf = await waitForCloudflare(page);
+            add('cloudflare', 'Cloudflare cleared', !cf.blocked, cf.blocked
+                ? `Still on the challenge after ${Math.round(cf.waitedMs / 1000)}s (page title: "${cf.title}"). ${cf.hint}`
+                : `Cleared in ${Math.round(cf.waitedMs / 1000)}s (page title: "${cf.title}").`);
+
+            const cookies = await page.cookies([JANITORAI_ORIGIN]);
+            const hasClearance = cookies.some(c => c.name === 'cf_clearance');
+            // A clearance cookie is only worth anything if the challenge actually passed. It is
+            // bound to the user-agent that earned it, so one left over from a different launch
+            // config is dead weight, and reporting it as a pass while the challenge fails is
+            // just noise. Report the combination, not the cookie.
+            add('clearance', 'Holds a valid cf_clearance cookie', hasClearance && !cf.blocked,
+                !hasClearance
+                    ? 'Absent. Every request to janitorai.com is challenged without it.'
+                    : (cf.blocked
+                        ? 'A cf_clearance cookie exists but the challenge still failed, so it is stale. These are tied to the user-agent that earned them, so changing launch flags invalidates them. It will be replaced once a challenge completes.'
+                        : 'Present and working.'));
+
+            const required = checks.filter(c => !c.optional);
+            res.json({ ok: required.every(c => c.ok), checks, browser: client.info.Browser || null });
+        } catch (err) {
+            // a post-connect failure must not contradict the already-recorded connect row
+            if (!client) {
+                add('connect', 'Endpoint reachable', false, err.message);
+            } else {
+                add('error', 'Test failed', false, err.message);
+            }
+            res.json({ ok: false, checks, error: err.message });
+        } finally {
+            if (page) await page.close();
+            if (client) client.close();
+        }
+    });
+
+    // Drives the real login form in the user's browser. Turnstile is domain-locked to
+    // janitorai.com so this is the only way credentials can work at all. The session goes back
+    // to the caller; this process keeps nothing, though the browser profile on disk does hold
+    // the logged-in cookies (thats what makes restarts painless).
+    router.post('/janitorai-browser-login', async (req, res) => {
+        const { email, password } = req.body ?? {};
+        if (typeof email !== 'string' || typeof password !== 'string' || !email || !password) {
+            return res.status(400).json({ error: 'email and password are required' });
+        }
+        if (email.length > 256 || password.length > 256) {
+            return res.status(400).json({ error: 'Invalid credentials format' });
+        }
+
+        try {
+            const endpoint = await resolveBrowserEndpoint(req);
+            const result = await withJanitoraiPage(endpoint, async (page) => {
+                await page.goto(`${JANITORAI_ORIGIN}/login`, { timeout: CDP_NAV_TIMEOUT });
+                await new Promise(r => setTimeout(r, 6000));
+
+                // React tracks value through its own descriptor, so a plain el.value = x is
+                // reverted on the next render; go through the native setter and fire input.
+                const filled = await page.evaluate(`
+                    (() => {
+                        const set = (el, v) => {
+                            Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, v);
+                            el.dispatchEvent(new Event('input', { bubbles: true }));
+                        };
+                        const em = document.querySelector('input[type="email"],input[name="email"]');
+                        const pw = document.querySelector('input[type="password"]');
+                        if (!em || !pw) return false;
+                        set(em, ${JSON.stringify(email)});
+                        set(pw, ${JSON.stringify(password)});
+                        return true;
+                    })()`);
+                if (!filled) throw new Error('Could not find the login form on janitorai.com');
+
+                await new Promise(r => setTimeout(r, 2500));
+                await page.evaluate(`
+                    (() => {
+                        const b = [...document.querySelectorAll('button')]
+                            .find(x => /sign in|log in|login/i.test(x.textContent || ''));
+                        if (b) b.click();
+                        return !!b;
+                    })()`);
+                await new Promise(r => setTimeout(r, 13000));
+
+                const { token, cookie } = readJanitoraiToken(await page.cookies([JANITORAI_ORIGIN]));
+                if (!token) {
+                    throw new Error('Login did not produce a session. Wrong credentials, or a captcha needs solving in that browser.');
+                }
+                return { session: cookie };
+            });
+            res.json({ ok: true, ...result });
+        } catch (err) {
+            console.warn('[cl-helper] JanitorAI browser login failed:', err.message);
+            res.status(502).json({ ok: false, error: err.message });
+        }
+    });
+
+    // Browse transport. Runs an ordinary same-origin fetch inside the hosted browser, which is
+    // the only place a cf_clearance cookie exists, and hands back status + body verbatim. This
+    // is what lets the provider work without the companion userscript.
+    router.post('/janitorai-browser-fetch', async (req, res) => {
+        const { path: reqPath, token } = req.body ?? {};
+        if (typeof reqPath !== 'string' || !reqPath.startsWith('/hampter/') || reqPath.length > 2048) {
+            return res.status(400).json({ error: 'path must be a /hampter/ path' });
+        }
+        if (token !== undefined && (typeof token !== 'string' || token.length > 4096)) {
+            return res.status(400).json({ error: 'Invalid token' });
+        }
+        // Normalize before trusting the prefix so ../ cannot climb out of /hampter/.
+        let safePath;
+        try {
+            const u = new URL(reqPath, JANITORAI_ORIGIN);
+            if (u.origin !== JANITORAI_ORIGIN || !u.pathname.startsWith('/hampter/')) {
+                return res.status(403).json({ error: 'path escapes /hampter/' });
+            }
+            safePath = u.pathname + u.search;
+        } catch {
+            return res.status(400).json({ error: 'Malformed path' });
+        }
+
+        // Writes (follow/unfollow) are POSTs with a JSON body. Only POST is allowed through: the
+        // hampter write surface CL uses is POST-only, and widening this to arbitrary methods
+        // would turn the route into a general-purpose request forwarder.
+        const method = String(req.body?.method || 'GET').toUpperCase();
+        if (method !== 'GET' && method !== 'POST') {
+            return res.status(400).json({ error: 'method must be GET or POST' });
+        }
+        const jsonBody = req.body?.jsonBody;
+        if (jsonBody !== undefined && (typeof jsonBody !== 'object' || jsonBody === null)) {
+            return res.status(400).json({ error: 'jsonBody must be an object' });
+        }
+        // real bodies are a single {userId} uuid; the cap matches the other generous input bounds
+        if (jsonBody !== undefined && JSON.stringify(jsonBody).length > 4096) {
+            return res.status(400).json({ error: 'jsonBody too large' });
+        }
+
+        try {
+            const warm = await getWarmPage(await resolveBrowserEndpoint(req));
+            const out = await warm.page.evaluate(`(async () => {
+                const h = { Accept: 'application/json' };
+                ${token ? `h.Authorization = 'Bearer ' + ${JSON.stringify(token)};` : ''}
+                const init = { credentials: 'include', headers: h, method: ${JSON.stringify(method)} };
+                ${jsonBody !== undefined ? `h['Content-Type'] = 'application/json'; init.body = ${JSON.stringify(JSON.stringify(jsonBody))};` : ''}
+                const r = await fetch(${JSON.stringify(safePath)}, init);
+                return { status: r.status, body: await r.text(), retryAfter: r.headers.get('retry-after') || '' };
+            })()`);
+            res.json({ ok: true, status: out?.status ?? 0, body: out?.body ?? '', retryAfter: out?.retryAfter || '' });
+        } catch (err) {
+            // A dead or navigated-away page must not poison every later request.
+            await closeWarmPage().catch(() => {});
+            console.warn('[cl-helper] JanitorAI browser fetch failed:', err.message);
+            res.status(502).json({ ok: false, error: err.message });
+        }
+    });
+
+    // Recovers one character's definition. Public definitions come straight off the detail
+    // response; withheld ones are reconstructed from the prompt JanitorAI itself builds when a
+    // chat message is sent, captured off the wire. Account settings are snapshotted and put back.
+    router.post('/janitorai-extract', async (req, res) => {
+        const { characterId, token: clientToken, refreshToken } = req.body ?? {};
+        if (typeof characterId !== 'string' || !JANITORAI_UUID_RE.test(characterId)) {
+            return res.status(400).json({ error: 'characterId must be a JanitorAI character uuid' });
+        }
+        for (const t of [clientToken, refreshToken]) {
+            if (t !== undefined && (typeof t !== 'string' || t.length > 4096)) {
+                return res.status(400).json({ error: 'Invalid token' });
+            }
+        }
+
+        try {
+            const endpoint = await resolveBrowserEndpoint(req);
+            const result = await withJanitoraiPage(endpoint, async (page) => {
+                await page.goto(`${JANITORAI_ORIGIN}/`, { timeout: CDP_NAV_TIMEOUT });
+                await new Promise(r => setTimeout(r, 3500));
+
+                // The account session and the browser are separate things. Character Library
+                // keeps a self-refreshing token of its own, so prefer that and treat a session
+                // inside the browser as a fallback: requiring the browser to be independently
+                // signed in would refuse perfectly good credentials the user already gave us.
+                const browserToken = readJanitoraiToken(await page.cookies([JANITORAI_ORIGIN])).token;
+                const token = clientToken || browserToken;
+
+                // The chat UI renders no composer for a signed-out browser, so the session has
+                // to exist as a cookie too, not just as a Bearer on our fetches.
+                if (clientToken && !browserToken) {
+                    await injectJanitoraiSession(page, clientToken, refreshToken);
+                }
+
+                const detailRes = await page.evaluate(janitoraiCall('GET', `/hampter/characters/${characterId}`, null, token));
+                if (detailRes.status === 404) throw new Error('That character no longer exists on JanitorAI.');
+                if (detailRes.status >= 400 || !detailRes.data) {
+                    throw new Error(`JanitorAI returned HTTP ${detailRes.status} for that character.`);
+                }
+                const detail = detailRes.data;
+
+                if (detail.personality) return { detail, definition: '', extracted: false };
+                if (!token) throw new Error('This definition is hidden, so it needs a JanitorAI account. Sign in under Settings > Online > JanitorAI.');
+
+                return await extractHiddenDefinition(page, token, detail);
+            });
+            res.json({ ok: true, ...result });
+        } catch (err) {
+            console.warn('[cl-helper] JanitorAI extract failed:', err.message);
+            res.status(502).json({ ok: false, error: err.message });
+        }
+    });
+}
+
+/**
+ * JanitorAI bakes macros into the prompt before sending it, so the captured text has real
+ * names where {{user}} / {{char}} used to be. {{user}} is recoverable exactly because we chose
+ * the persona name ourselves; {{char}} is recovered from the card's own name.
+ *
+ * Short names are skipped: a one or two character name (a bare space is real on janitorai)
+ * would match everywhere and shred the text.
+ */
+function restoreJanitoraiMacros(text, { userSentinel, detail }) {
+    let out = String(text || '');
+    const swap = (needle, macro) => {
+        const n = String(needle || '').trim();
+        if (n.length < 3) return;
+        out = out.split(n).join(macro);
+    };
+    swap(userSentinel, '{{user}}');
+    // chat_name is the in-chat display name, name is the full listing title; both appear.
+    swap(detail?.chat_name, '{{char}}');
+    if (detail?.name !== detail?.chat_name) swap(detail?.name, '{{char}}');
+    return out;
+}
+
+/** Hex token of `bytes` bytes, for values that only have to be unique and opaque. */
+function randomHex(bytes) {
+    let out = '';
+    while (out.length < bytes * 2) out += randomUUID().replace(/-/g, '');
+    return out.slice(0, bytes * 2);
+}
+
+// Detected per response, never assumed: patching a name this deployment doesnt use would leave
+// the selection pointing at the preset we then delete.
+const SELECTED_PRESET_KEYS = ['selected_proxy_config_id', 'selected_proxy_id'];
+
+function resolveSelectedPresetKey(data) {
+    for (const scope of [data?.settings, data?.legacy_config, data]) {
+        if (!scope || typeof scope !== 'object') continue;
+        for (const key of SELECTED_PRESET_KEYS) {
+            if (key in scope) return { key, value: scope[key] ?? null };
+        }
+    }
+    return { key: null, value: null };
+}
+
+/** Flatten an unexpected prompt-request body into one short line for the error toast. */
+function promptErrorSnippet(body) {
+    const flat = String(body || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+    return flat ? flat.slice(0, 200) : 'the response was empty';
+}
+
+/**
+ * The generateAlpha capture. Every account mutation is undone in the finally block. The persona
+ * is named with a random sentinel rather than the macro itself: janitorai substitutes the
+ * persona name into the prompt, so a sentinel round-trips back to the macro exactly.
+ */
+async function extractHiddenDefinition(page, token, detail) {
+    const snapshot = await page.evaluate(janitoraiCall('GET', '/hampter/api-settings', null, token));
+    const prev = snapshot.data?.legacy_config || snapshot.data?.settings || {};
+    const prevGeneration = prev.generation_settings && typeof prev.generation_settings === 'object'
+        ? prev.generation_settings
+        : null;
+    const prevSource = prev.api || prev.source || 'janitor';
+    const selected = resolveSelectedPresetKey(snapshot.data);
+
+    // Never override a context length we cannot put back; the user would inherit it in their chats.
+    if (typeof prevGeneration?.context_length !== 'number') {
+        throw new Error('Could not read your JanitorAI generation settings, so nothing was changed. Open JanitorAI settings once in this browser and try again.');
+    }
+
+    // No fixed affix, so a persona left behind by a failed run reads as noise rather than a marker.
+    const userSentinel = randomHex(12).toUpperCase();
+    let proxyId = null;
+    let personaId = null;
+    let chatId = null;
+    try {
+        const persona = await page.evaluate(janitoraiCall('POST', '/hampter/personas', {
+            appearance: '', avatar: '', groupId: null, name: userSentinel, pronouns: null,
+        }, token));
+        personaId = persona.data?.id || null;
+
+        // Ephemeral range: nothing listens there by convention, so this cant reach a local
+        // model server the user is running on a well-known port.
+        const deadPort = 49152 + Math.floor(Math.random() * 16384);
+        const created = await page.evaluate(janitoraiCall('POST', '/hampter/api-settings/proxy-configs', {
+            // Rejected server-side once used, so it cannot be a constant.
+            client_id: randomUUID(),
+            name: randomHex(8),
+            model: 'gpt-4-turbo',
+            api_url: `http://127.0.0.1:${deadPort}/v1/chat/completions`,
+            // Only has to be non-blank; the request is never meant to arrive anywhere.
+            api_key: `sk-${randomHex(20)}`,
+            prompt_id: null,
+        }, token));
+        const cfgs = created.data?.proxy_configs || [];
+        proxyId = cfgs.length ? cfgs[cfgs.length - 1].id : null;
+        if (!proxyId) throw new Error(`JanitorAI rejected the temporary preset (HTTP ${created.status})`);
+
+        await page.evaluate(janitoraiCall('PATCH', '/hampter/api-settings', {
+            source: 'proxy',
+            [selected.key || SELECTED_PRESET_KEYS[0]]: proxyId,
+            // A bounded context makes the server rewrite the prompt, losing the section
+            // boundaries the definition is read from.
+            generation_settings: { context_length: 0 },
+        }, token));
+
+        const chat = await page.evaluate(janitoraiCall('POST', '/hampter/chats',
+            personaId ? { character_id: detail.id, persona_id: personaId } : { character_id: detail.id }, token));
+        chatId = chat.data?.id;
+        if (!chatId) throw new Error(`Could not open a chat with that character (HTTP ${chat.status})`);
+
+        const capture = page.captureResponse(/generateAlpha/, { timeout: 45000 });
+        try {
+            await page.goto(`${JANITORAI_ORIGIN}/chats/${chatId}`, { timeout: CDP_NAV_TIMEOUT });
+            await new Promise(r => setTimeout(r, 8000));
+
+            // The composer can be in "press button to send" mode, where Enter only inserts a
+            // linebreak and nothing is sent. Click the send control; Enter is the fallback.
+            const sent = await page.evaluate(`
+                (() => {
+                    const ta = document.querySelector('textarea');
+                    if (!ta) return { ok: false, why: 'no composer' };
+                    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
+                    setter.call(ta, 'hi');
+                    ta.dispatchEvent(new Event('input', { bubbles: true }));
+                    const form = ta.closest('form') || ta.parentElement?.parentElement || document.body;
+                    const btn = [...form.querySelectorAll('button')].reverse()
+                        .find(b => !b.disabled && (/send/i.test(b.getAttribute('aria-label') || '') || b.querySelector('svg')));
+                    if (!btn) return { ok: false, why: 'no send control' };
+                    btn.click();
+                    return { ok: true };
+                })()`);
+            if (!sent?.ok) throw new Error(`Could not send the priming message (${sent?.why || 'unknown'})`);
+
+            const body = await capture.wait();
+            if (!body) throw new Error('JanitorAI never assembled the prompt. It may be rate limiting; try again shortly.');
+
+            // The payload is the whole chat request, not just the definition:
+            //   system    = the definition
+            //   user "."  = a dummy turn janitorai injects
+            //   assistant = the character's opening line, ie. the first message
+            //   user      = our priming message
+            // A withheld definition withholds first_message from the API too, so the assistant
+            // turn is the only place it can be recovered from.
+            let system = '';
+            let firstMessage = '';
+            try {
+                const msgs = JSON.parse(body).messages || [];
+                system = msgs.find(m => m.role === 'system')?.content || '';
+                firstMessage = msgs.find(m => m.role === 'assistant')?.content || '';
+            } catch {
+                // Proxy mode is the only mode that hands the assembled prompt back, so a creator
+                // who forbids it has closed the sole surface the definition can be read from.
+                if (/proxies are forbidden/i.test(body)) {
+                    throw new Error('The creator has turned off proxy access for this character, so its definition cannot be recovered.');
+                }
+                // Anything else: keep what janitorai said, or an opaque parse error reads like a CL bug.
+                throw new Error(`JanitorAI did not return a prompt for this character: ${promptErrorSnippet(body)}`);
+            }
+            if (!system) throw new Error('Captured prompt carried no system message.');
+            return {
+                detail,
+                definition: restoreJanitoraiMacros(system, { userSentinel, detail }),
+                firstMessage: firstMessage ? restoreJanitoraiMacros(firstMessage, { userSentinel, detail }) : '',
+                extracted: true,
+            };
+        } finally {
+            capture.cancel();
+        }
+    } finally {
+        // The chat exists only so janitorai will assemble the prompt; it is a side effect of the
+        // capture, not a result. Leaving it behind puts one dead entry in the account's chat list
+        // per extraction. Removed before the persona it references.
+        if (chatId) {
+            await page.evaluate(`
+                (async () => {
+                    try {
+                        const r = await fetch('/hampter/chats/${chatId}', {
+                            method: 'DELETE', credentials: 'include',
+                            headers: { Authorization: 'Bearer ' + ${JSON.stringify(token)} },
+                        });
+                        return r.status;
+                    } catch { return 0; }
+                })()`).catch(() => {});
+        }
+        if (personaId) {
+            await page.evaluate(`
+                (async () => {
+                    try {
+                        const r = await fetch('/hampter/personas/${personaId}', {
+                            method: 'DELETE', credentials: 'include',
+                            headers: { Authorization: 'Bearer ' + ${JSON.stringify(token)} },
+                        });
+                        return r.status;
+                    } catch { return 0; }
+                })()`).catch(() => {});
+        }
+        if (proxyId) {
+            // DELETE must carry no Content-Type: an empty body with a json content-type 400s.
+            await page.evaluate(`
+                (async () => {
+                    try {
+                        const r = await fetch('/hampter/api-settings/proxy-configs/${proxyId}', {
+                            method: 'DELETE', credentials: 'include',
+                            headers: { Authorization: 'Bearer ' + ${JSON.stringify(token)} },
+                        });
+                        return r.status;
+                    } catch { return 0; }
+                })()`).catch(() => {});
+        }
+        await page.evaluate(janitoraiCall('PATCH', '/hampter/api-settings', {
+            source: prevSource,
+            // Null is meaningful here (nothing was selected), so send it whenever the key was found.
+            ...(selected.key ? { [selected.key]: selected.value } : {}),
+            // Replayed wholesale; rebuilding it would swap tuning values we dont model for defaults.
+            ...(prevGeneration ? { generation_settings: prevGeneration } : {}),
+        }, token)).catch(() => {});
+    }
+}
+
 // =============================================================================
 // Plugin entry
 // =============================================================================
@@ -1968,6 +3380,7 @@ export async function init(router) {
     registerPixivRoutes(router);
     registerSaucepanRoutes(router);
     registerDropboxRoutes(router);
+    registerJanitoraiBrowserRoutes(router);
 
     console.log('[cl-helper] Character Library helper plugin loaded');
 

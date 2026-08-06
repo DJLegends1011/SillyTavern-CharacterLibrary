@@ -27,7 +27,7 @@ export const CT_SORT_OPTIONS = {
 // NETWORK (shared)
 // ========================================
 
-import { fetchWithProxy } from '../provider-utils.js';
+import { fetchWithProxy, readJsonClassified } from '../provider-utils.js';
 export { fetchWithProxy };
 
 // ========================================
@@ -195,10 +195,7 @@ export async function searchCards(opts = {}, apiRequest) {
 
     const url = `${CT_API_BASE}/search/cards?${params}`;
     const resp = await ctFetch(url, apiRequest);
-    if (!resp.ok) {
-        throw new Error(`CT search returned HTTP ${resp.status}`);
-    }
-    return resp.json();
+    return readJsonClassified(resp);
 }
 
 /**

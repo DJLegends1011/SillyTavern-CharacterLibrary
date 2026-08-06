@@ -159,6 +159,10 @@ let eventsAttached = false;
 
 let worldsList = [];          // [{ file_id, name, extensions }]
 let linkedMap = new Map();    // file_id -> [{ avatar, name, char }]  (character primary links)
+// file_id -> [{ avatar, name, char }] of characters carrying it as an ADDITIONAL book
+// (ST's world_info.charLore, read through the ST-window bridge; empty when unreachable).
+let auxMap = new Map();
+let charLoreEditable = false; // ST window reachable -> additional-book writes possible
 
 // "Used by" lens: 'characters' (card extensions.world) | 'chats' (chat_metadata.world_info).
 // Governs the sidebar badges + sort and the editor's usage section. Per manager session.
@@ -171,6 +175,7 @@ let chatIndexLoading = false;
 let currentWorld = null;      // file_id of the open world
 let workingWorld = null;      // deep-cloned working copy { entries: {...}, ... }
 let originalSnapshot = '';    // JSON of workingWorld at load/save, for dirty compare
+let diskSnapshot = '';        // JSON of the file AS LOADED (pre-repair), for the save divergence guard
 let dirty = false;
 
 let worldSearch = '';
@@ -192,6 +197,8 @@ let linkPlaylistAvailable = false; // any playlists exist (hides the filter when
 let linkBook = null;             // file_id the picker is linking
 let linkMode = 'characters';     // 'characters' | 'chats'
 let linkManageMode = false;      // true = "manage links" view (show only linked, action = unlink)
+let linkAsAux = false;           // characters mode: add as additional book instead of setting primary
+let linkAuxSet = new Set();      // avatars carrying linkBook as an additional book (per picker open)
 let manageChatList = [];         // chats mode + manage: the book's bound chats (cross-character)
 let linkChatChar = null;         // chats mode: the character whose chats we're picking
 let linkChatList = [];           // chats mode: that character's chats (with chat_metadata)
@@ -309,6 +316,10 @@ function createModal() {
                                 <input type="checkbox" id="lbLinkHideLinked">
                                 <span>Hide already-linked</span>
                             </label>
+                            <label class="lb-link-filter-toggle" id="lbLinkAsAuxWrap" title="Add to the characters' additional lorebooks instead of replacing their primary link">
+                                <input type="checkbox" id="lbLinkAsAux">
+                                <span>As additional</span>
+                            </label>
                             <span class="lb-link-count" id="lbLinkCount">0 selected</span>
                         </div>
                     </div>
@@ -375,11 +386,14 @@ function forceClose() {
     // + live char refs for the session (the back-to-list and delete paths already did; desktop close was the gap).
     workingWorld = null;
     originalSnapshot = '';
+    diskSnapshot = '';
     currentWorld = null;
     dirty = false;
     expandedUids.clear();
     advancedUids.clear();
     linkedMap = new Map();
+    auxMap = new Map();
+    linkAuxSet = new Set();
     linkSelection = new Set();
     linkChatList = [];
     linkChatChar = null;
@@ -398,6 +412,7 @@ async function refreshList({ keepSelection = false } = {}) {
     // animation was more distracting than the brief empty state it replaced.
     worldsList = await CoreAPI.listWorldInfoFiles();
     buildLinkedMap();
+    await refreshAuxMap();
     renderWorldList();
     if (keepSelection && currentWorld && worldsList.some(w => w.file_id === currentWorld)) {
         // working copy already in memory; keep the editor, re-assert mobile editing view
@@ -442,6 +457,31 @@ function buildLinkedMap() {
     }
 }
 
+// Reverse index of additional books (charLore). Entries whose character no longer exists
+// arent renderable, so they're skipped here; the delete/rename sweeps still see them.
+async function refreshAuxMap() {
+    auxMap = new Map();
+    charLoreEditable = !!CoreAPI.canEditCharLore();
+    try {
+        const all = await CoreAPI.getAllCharLore();
+        if (!Array.isArray(all) || !all.length) return;
+        const byKey = new Map();
+        for (const c of CoreAPI.getAllCharacters() || []) {
+            if (c?.avatar) byKey.set(CoreAPI.charLoreKey(c.avatar), c);
+        }
+        for (const entry of all) {
+            const char = byKey.get(entry?.name);
+            if (!char || !Array.isArray(entry?.extraBooks)) continue;
+            for (const book of new Set(entry.extraBooks.filter(b => typeof b === 'string' && b))) {
+                if (!auxMap.has(book)) auxMap.set(book, []);
+                auxMap.get(book).push({ avatar: char.avatar, name: char.name || char.avatar, char });
+            }
+        }
+    } catch (e) {
+        console.warn('[Lorebooks] charLore index build failed', e);
+    }
+}
+
 function entryCountOf(world) {
     // The open world is exact from the working copy; others come from the lazy count cache.
     if (world.file_id === currentWorld && workingWorld) {
@@ -457,7 +497,13 @@ function usedByCount(fileId) {
         if (!chatIndexLoaded) return null;
         return (chatBoundMap.get(fileId) || []).length;
     }
-    return (linkedMap.get(fileId) || []).length;
+    // Union of primary + additional users; a char with both counts once.
+    const prim = linkedMap.get(fileId) || [];
+    const aux = auxMap.get(fileId) || [];
+    if (!aux.length) return prim.length;
+    const set = new Set(prim.map(l => l.avatar));
+    aux.forEach(a => set.add(a.avatar));
+    return set.size;
 }
 
 // Build world file_id -> bound chats, from one /chats/recent (all chats, with metadata).
@@ -515,7 +561,8 @@ function matchedNamesFor(fileId, q) {
             .filter(c => (c.charName || '').toLowerCase().includes(q))
             .map(c => c.charName);
     }
-    return (linkedMap.get(fileId) || []).filter(l => l.name.toLowerCase().includes(q)).map(l => l.name);
+    const both = [...(linkedMap.get(fileId) || []), ...(auxMap.get(fileId) || [])];
+    return [...new Set(both.filter(l => l.name.toLowerCase().includes(q)).map(l => l.name))];
 }
 
 function worldMatchesQuery(w, q) {
@@ -653,10 +700,19 @@ async function selectWorld(fileId) {
         renderEmptyContent();
         return;
     }
+    // Raw as-loaded state, captured before any normalization, so the save guard
+    // compares disk against disk.
+    diskSnapshot = JSON.stringify(data);
     if (!data.entries || typeof data.entries !== 'object') data.entries = {};
 
     currentWorld = fileId;
     workingWorld = JSON.parse(JSON.stringify(data));
+    // Key-canonical uid repair: handlers find entries via the body uid, but third-party files
+    // can omit it or let it drift from the entries-object key (which is what ST keys by).
+    for (const [key, entry] of Object.entries(workingWorld.entries)) {
+        const n = Number(key);
+        if (entry && typeof entry === 'object' && Number.isFinite(n) && entry.uid !== n) entry.uid = n;
+    }
     originalSnapshot = JSON.stringify(workingWorld);
     dirty = false;
     expandedUids.clear();
@@ -683,7 +739,7 @@ async function selectWorld(fileId) {
 function lbNavAllowed() {
     const modal = document.getElementById('lorebookModal');
     if (!modal || modal.classList.contains('hidden')) return false;
-    if (document.querySelector('.cl-modal.visible, .confirm-modal:not(.hidden)')) return false;
+    if (document.querySelector('.cl-modal.visible, .confirm-modal:not(.hidden), .cl-confirm-overlay:not(.hidden)')) return false;
     const cm = document.getElementById('charModal');
     if (cm && !cm.classList.contains('hidden')) return false;
     return true;
@@ -772,7 +828,7 @@ function renderEditor() {
                 </div>
                 <div class="lb-editor-meta">
                     <span class="lb-meta-pill"><i class="fa-solid fa-list"></i> ${total} ${total === 1 ? 'entry' : 'entries'}</span>
-                    ${usingChats ? renderBoundChatChips() : renderLinkedChips(linkedMap.get(currentWorld) || [])}
+                    ${usingChats ? renderBoundChatChips() : renderLinkedChips(linkedMap.get(currentWorld) || [], auxMap.get(currentWorld) || [])}
                 </div>
             </div>
 
@@ -816,17 +872,26 @@ function renderNoEntries(total) {
         : `<div class="lb-entries-empty"><i class="fa-solid fa-magnifying-glass"></i><p>No entries match "${esc(entrySearch)}".</p></div>`;
 }
 
-function renderLinkedChips(linked) {
-    if (!linked.length) return `<span class="lb-meta-pill subtle"><i class="fa-solid fa-link-slash"></i> No linked characters</span>`;
-    const chips = linked.slice(0, 8).map(l => `
-        <span class="lb-linked-chip">
+function renderLinkedChips(linked, aux = []) {
+    // Primary chips first, additional after; a char carrying the book both ways gets one
+    // chip per relationship, each X removing only its own kind.
+    const rows = [
+        ...linked.map(l => ({ ...l, aux: false })),
+        ...aux.map(a => ({ ...a, aux: true })),
+    ];
+    if (!rows.length) return `<span class="lb-meta-pill subtle"><i class="fa-solid fa-link-slash"></i> No linked characters</span>`;
+    const chips = rows.slice(0, 8).map(l => `
+        <span class="lb-linked-chip${l.aux ? ' aux' : ''}" title="${l.aux ? 'Additional lorebook for' : 'Primary lorebook of'} ${esc(l.name)}">
             <button class="lb-linked-chip-open" data-action="open-char" data-avatar="${esc(l.avatar)}" title="Open ${esc(l.name)}">
                 <img src="${esc(CoreAPI.getCharacterAvatarStThumbUrl(l.avatar))}" alt="" loading="lazy">
                 <span>${esc(l.name)}</span>
             </button>
-            <button class="lb-linked-chip-x" data-action="unlink-char" data-avatar="${esc(l.avatar)}" title="Unlink this lorebook from ${esc(l.name)}">&times;</button>
+            ${l.aux
+                ? '<span class="lb-rel-badge lb-aux-badge" title="Additional lorebook"><i class="fa-solid fa-book-medical"></i></span>'
+                : '<span class="lb-rel-badge lb-primary-badge" title="Primary lorebook"><i class="fa-solid fa-book-bookmark"></i></span>'}
+            <button class="lb-linked-chip-x" data-action="${l.aux ? 'unlink-aux' : 'unlink-char'}" data-avatar="${esc(l.avatar)}" title="${l.aux ? `Remove this additional lorebook from ${esc(l.name)}` : `Unlink this lorebook from ${esc(l.name)}`}">&times;</button>
         </span>`).join('');
-    const more = linked.length > 8 ? `<button class="lb-linked-more" data-action="manage-links" title="See all ${linked.length} linked characters">+${linked.length - 8} more</button>` : '';
+    const more = rows.length > 8 ? `<button class="lb-linked-more" data-action="manage-links" title="See all ${rows.length} uses">+${rows.length - 8} more</button>` : '';
     return `<span class="lb-linked-chips">${chips}${more}</span>`;
 }
 
@@ -1220,6 +1285,33 @@ async function deleteEntry(uid) {
     renderEditor();
 }
 
+// The save is a whole-file overwrite, so a file that changed on disk since load (ST's
+// own editor, another tab, a card-update lorebook merge) would be silently discarded.
+// Same guard shape as the chat-bound write's signature re-read. A deleted file is
+// legitimately recreated by the write, but ST reports it as a 200 {entries:{}} dummy
+// (never null), so a bare dummy body triggers a presence check instead of the warn.
+// Missing data never blocks the save: a failed fetch or list proceeds, and the write
+// surfaces its own failure.
+async function confirmDiskDivergence(name) {
+    const disk = await CoreAPI.getWorldInfoData(name);
+    if (!disk) return true;
+    const diskStr = JSON.stringify(disk);
+    if (diskStr === diskSnapshot) return true;
+    if (diskStr === '{"entries":{}}') {
+        // fresh list, not the cached worldsList: that still holds the deleted book
+        let files = [];
+        try { files = await CoreAPI.listWorldInfoFiles(); } catch (_) {}
+        if (!files.some(w => String(w.file_id || '').toLowerCase() === name.toLowerCase())) return true;
+    }
+    return CoreAPI.showConfirm({
+        title: 'Lorebook changed on disk',
+        message: `"${name}" was modified outside this editor since you opened it (SillyTavern, another tab, or a card update). Saving will overwrite those changes with this editor's copy.`,
+        confirmLabel: 'Overwrite',
+        cancelLabel: 'Cancel',
+        danger: true,
+    });
+}
+
 async function saveWorld() {
     if (!dirty || !currentWorld) return;
     // An entry with secondary keys is selective in the V2/V3 spec; keep the flag in sync on save.
@@ -1230,10 +1322,15 @@ async function saveWorld() {
     }
     const btn = document.getElementById('lbSaveBtn');
     if (btn) { btn.disabled = true; btn.classList.add('saving'); }
+    if (!(await confirmDiskDivergence(currentWorld))) {
+        if (btn) { btn.disabled = false; btn.classList.remove('saving'); }
+        return;
+    }
     const ok = await CoreAPI.saveWorldInfoData(currentWorld, workingWorld);
     if (btn) btn.classList.remove('saving');
     if (ok) {
         originalSnapshot = JSON.stringify(workingWorld);
+        diskSnapshot = originalSnapshot;
         dirty = false;
         entryCountCache.set(currentWorld, Object.keys(workingWorld.entries).length);
         updateSaveButton();
@@ -1307,8 +1404,9 @@ function startRename() {
 async function doRename(oldName, newName) {
     // Persist any pending edits into the new file as part of the rename copy.
     if (dirty) {
+        if (!(await confirmDiskDivergence(oldName))) { renderEditor(); return; }
         const saved = await CoreAPI.saveWorldInfoData(oldName, workingWorld);
-        if (saved) { originalSnapshot = JSON.stringify(workingWorld); dirty = false; }
+        if (saved) { originalSnapshot = JSON.stringify(workingWorld); diskSnapshot = originalSnapshot; dirty = false; }
     }
     // Snapshot the characters linked to the OLD name before the rename, so we can
     // offer to re-point them (ST's own rename does this; copy+delete alone dangles them).
@@ -1318,10 +1416,19 @@ async function doRename(oldName, newName) {
     if (!ok) { CoreAPI.showToast('Rename failed', 'error'); renderEditor(); return; }
     currentWorld = newName;
 
+    // Additional-book references (charLore) auto-sweep like ST's own rename does; no confirm.
+    // null = bridge unreachable, so surviving references get a caveat instead.
+    const auxRefsBefore = (auxMap.get(oldName) || []).length;
+    const auxSwept = await CoreAPI.charLoreRenameWorld(oldName, newName);
+    if (auxMap.has(oldName)) { auxMap.set(newName, auxMap.get(oldName)); auxMap.delete(oldName); }
+    let auxNote = '';
+    if (auxSwept > 0) auxNote = ` Updated ${auxSwept} additional-book reference${auxSwept === 1 ? '' : 's'}.`;
+    else if (auxSwept === null && auxRefsBefore > 0) auxNote = ' Additional-book references could not be updated (open the Library from SillyTavern).';
+
     // Chat-bound links (chat_metadata.world_info) aren't swept on rename; the success toast warns
     // the user to rebind. Suppressed only when the Chats index is built and shows zero (no scan here).
     const knownZeroChats = chatIndexLoaded && !(chatBoundMap.get(oldName) || []).length;
-    const chatCaveat = knownZeroChats ? '' : ' Bound chats keep the old name, rebind from the Chats lens.';
+    const chatCaveat = (knownZeroChats ? '' : ' Bound chats keep the old name, rebind from the Chats lens.') + auxNote;
 
     // Re-point primary character links (data.extensions.world) from old to new name.
     if (linkedBefore.length) {
@@ -1384,11 +1491,13 @@ async function deleteWorld() {
     // Snapshot linked characters before delete so we can offer to clear their dangling links.
     const linkedChars = (linkedMap.get(currentWorld) || []).slice();
     const linked = linkedChars.length;
+    const auxRefs = (auxMap.get(currentWorld) || []).length;
+    const auxInfo = auxRefs > 0 ? ` (+${auxRefs} as additional)` : '';
 
     const ok = await CoreAPI.showConfirm({
         title: 'Delete lorebook?',
-        message: linked > 0
-            ? `"${deletedName}" is linked to ${linked} character${linked === 1 ? '' : 's'}. Permanently delete it? This cannot be undone.`
+        message: linked > 0 || auxRefs > 0
+            ? `"${deletedName}" is used by ${linked} character${linked === 1 ? '' : 's'}${auxInfo}. Permanently delete it? This cannot be undone.`
             : `Permanently delete "${deletedName}"? This cannot be undone.`,
         confirmLabel: 'Delete',
         cancelLabel: 'Cancel',
@@ -1419,6 +1528,14 @@ async function deleteWorld() {
         }
     }
 
+    // Additional-book references auto-sweep unconditionally, matching ST's own delete
+    // behavior (a dangling extraBooks name is pure noise). null = bridge unreachable.
+    const auxSwept = await CoreAPI.charLoreRemoveWorld(deletedName);
+    auxMap.delete(deletedName);
+    let auxNote = '';
+    if (auxSwept > 0) auxNote = ` Removed ${auxSwept} additional-book reference${auxSwept === 1 ? '' : 's'}.`;
+    else if (auxSwept === null && auxRefs > 0) auxNote = ' Additional-book references could not be cleaned (open the Library from SillyTavern).';
+
     entryCountCache.delete(deletedName);
     currentWorld = null;
     workingWorld = null;
@@ -1427,10 +1544,10 @@ async function deleteWorld() {
     await refreshList();
     renderEmptyContent();
     CoreAPI.showToast(
-        cleared > 0
+        (cleared > 0
             ? `Deleted "${deletedName}" and unlinked ${cleared} character${cleared === 1 ? '' : 's'}.`
-            : `Deleted "${deletedName}"`,
-        'success', cleared > 0 ? 5000 : 3000,
+            : `Deleted "${deletedName}".`) + auxNote,
+        'success', (cleared > 0 || auxNote) ? 5000 : 3000,
     );
 }
 
@@ -1457,6 +1574,38 @@ async function unlinkCharFromCurrentWorld(avatar) {
     renderEditor();
     renderWorldList();
     CoreAPI.showToast(`Unlinked from ${charName}.`, 'success', 5000);
+}
+
+/**
+ * Remove the current world from one character's ADDITIONAL books (charLore extraBooks).
+ * The card is untouched; this writes ST's settings through the ST-window bridge.
+ */
+async function unlinkAuxFromCurrentWorld(avatar) {
+    if (!currentWorld || !avatar) return;
+    const entry = (auxMap.get(currentWorld) || []).find(l => l.avatar === avatar);
+    const charName = entry?.name || avatar;
+    // Live check, not the session-cached charLoreEditable: the ST tab may have closed since.
+    if (!CoreAPI.canEditCharLore()) {
+        CoreAPI.showToast('Open the Library from SillyTavern to edit additional lorebooks', 'warning');
+        return;
+    }
+    const ok = await CoreAPI.showConfirm({
+        title: 'Remove additional lorebook?',
+        message: `Remove "${currentWorld}" from ${charName}'s additional lorebooks? The lorebook is kept; only this character stops using it.`,
+        confirmLabel: 'Remove',
+        cancelLabel: 'Cancel',
+        danger: true,
+    });
+    if (!ok) return;
+    const books = await CoreAPI.getCharAdditionalLorebooks(avatar);
+    const success = await CoreAPI.setCharAdditionalLorebooks(avatar, books.filter(b => b !== currentWorld));
+    if (!success) { CoreAPI.showToast('Failed to remove', 'error'); return; }
+    const list = (auxMap.get(currentWorld) || []).filter(l => l.avatar !== avatar);
+    if (list.length) auxMap.set(currentWorld, list);
+    else auxMap.delete(currentWorld);
+    renderEditor();
+    renderWorldList();
+    CoreAPI.showToast(`Removed from ${charName}.`, 'success', 5000);
 }
 
 /**
@@ -1556,6 +1705,8 @@ function openLinkPicker(initialMode = 'characters', { manage = false } = {}) {
     linkSelection = new Set();
     linkSearch = '';
     linkHideLinked = false;
+    linkAsAux = false;
+    linkAuxSet = new Set((auxMap.get(linkBook) || []).map(a => a.avatar));
     linkPlaylistUid = '';
     linkPlaylistSet = null;
     linkChatChar = null;
@@ -1574,6 +1725,8 @@ function openLinkPicker(initialMode = 'characters', { manage = false } = {}) {
     if (searchEl) searchEl.value = '';
     const hideEl = document.getElementById('lbLinkHideLinked');
     if (hideEl) hideEl.checked = false;
+    const auxEl = document.getElementById('lbLinkAsAux');
+    if (auxEl) auxEl.checked = false;
     populateLinkPlaylistFilter();
     document.getElementById('lbLinkHead')?.classList.remove('lb-toolbar-hidden', 'lb-pinned'); // start expanded + unpinned; a prior session may have left either
     syncLinkModeUI();
@@ -1584,7 +1737,7 @@ function openLinkPicker(initialMode = 'characters', { manage = false } = {}) {
     if (!matchMedia('(pointer: coarse)').matches && !manage) searchEl?.focus();
 }
 
-// The apply button reads as Link (primary) or Unlink selected (danger) depending on the mode.
+// The apply button reads as Link (primary), Add as additional, or Unlink selected (danger).
 function setLinkApplyButton() {
     const btn = document.getElementById('lbLinkApplyBtn');
     if (!btn) return;
@@ -1592,7 +1745,9 @@ function setLinkApplyButton() {
     btn.classList.toggle('cl-btn-primary', !linkManageMode);
     btn.innerHTML = linkManageMode
         ? `<i class="fa-solid fa-link-slash"></i> Unlink selected <span id="lbLinkApplyCount"></span>`
-        : `<i class="fa-solid fa-link"></i> Link <span id="lbLinkApplyCount"></span>`;
+        : linkAsAux
+            ? `<i class="fa-solid fa-plus"></i> Add as additional <span id="lbLinkApplyCount"></span>`
+            : `<i class="fa-solid fa-link"></i> Link <span id="lbLinkApplyCount"></span>`;
 }
 
 function closeLinkPicker() {
@@ -1605,16 +1760,24 @@ function syncLinkModeUI() {
     const hint = document.getElementById('lbLinkModeHint');
     const searchEl = document.getElementById('lbLinkSearch');
     const hideWrap = document.getElementById('lbLinkHideLinkedWrap');
+    const auxWrap = document.getElementById('lbLinkAsAuxWrap');
     syncLinkPlaylistVisibility();
+    // The additional toggle only makes sense when picking characters to add; it also
+    // needs the ST window (the only charLore write path).
+    if (auxWrap) auxWrap.style.display = (linkMode === 'characters' && !linkManageMode && charLoreEditable) ? '' : 'none';
     if (linkManageMode) {
-        const what = linkMode === 'chats' ? 'chats bound to' : 'characters linked to';
-        if (hint) hint.innerHTML = `Select the ${what} <strong>${esc(linkBook)}</strong> to unlink, then Unlink selected.`;
+        const what = linkMode === 'chats' ? 'chats bound to' : 'characters using';
+        if (hint) hint.innerHTML = `Select the ${what} <strong>${esc(linkBook)}</strong> to unlink, then Unlink selected. Primary and additional uses are both removed.`;
         if (searchEl) searchEl.placeholder = linkMode === 'chats' ? 'Search bound chats...' : 'Search linked characters...';
         if (hideWrap) hideWrap.style.display = 'none';
         return;
     }
     if (linkMode === 'characters') {
-        if (hint) hint.innerHTML = `Set <strong>${esc(linkBook)}</strong> as the <strong>primary</strong> lorebook on the chosen characters (writes to the card).`;
+        if (hint) {
+            hint.innerHTML = linkAsAux
+                ? `Add <strong>${esc(linkBook)}</strong> as an <strong>additional</strong> lorebook on the chosen characters (stored in SillyTavern's settings; the primary link is untouched).`
+                : `Set <strong>${esc(linkBook)}</strong> as the <strong>primary</strong> lorebook on the chosen characters (writes to the card).`;
+        }
         if (searchEl) searchEl.placeholder = 'Search characters...';
         if (hideWrap) hideWrap.style.display = '';
     } else {
@@ -1666,8 +1829,12 @@ function linkBaseList() {
     linkBaseSorted = chars.filter(c => {
         if (linkPlaylistSet && !linkPlaylistSet.has(c.avatar)) return false;
         const cur = c.data?.extensions?.world || '';
-        if (linkManageMode && linkMode === 'characters') return cur === linkBook; // manage: only linked here
-        if (linkMode === 'characters' && linkHideLinked && cur === linkBook) return false;
+        // manage: chars using this book either way (primary or additional)
+        if (linkManageMode && linkMode === 'characters') return cur === linkBook || linkAuxSet.has(c.avatar);
+        if (linkMode === 'characters' && linkHideLinked) {
+            // hide-already-X follows the active write mode
+            if (linkAsAux ? linkAuxSet.has(c.avatar) : cur === linkBook) return false;
+        }
         return true;
     }).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
     return linkBaseSorted;
@@ -1760,11 +1927,13 @@ function charLinkRowHtml(c) {
     const selected = linkSelection.has(c.avatar);
     const isThis = cur === linkBook;
     const hasOther = cur && cur !== linkBook;
-    const status = isThis
+    const isAux = linkAuxSet.has(c.avatar);
+    let status = isThis
         ? `<span class="lb-link-status current"><i class="fa-solid fa-check"></i> Linked here</span>`
         : hasOther
             ? `<span class="lb-link-status other" title="Currently linked to ${esc(cur)}"><i class="fa-solid fa-triangle-exclamation"></i> <span class="lb-link-status-name">${esc(cur)}</span></span>`
             : '';
+    if (isAux) status += `<span class="lb-link-status aux" title="Already one of this character's additional lorebooks"><i class="fa-solid fa-plus"></i> Additional here</span>`;
     return `
         <button class="lb-link-row${selected ? ' selected' : ''}" data-action="link-toggle" data-avatar="${esc(c.avatar)}" title="${esc(c.name || c.avatar)}">
             <span class="lb-link-check"><i class="fa-solid fa-check"></i></span>
@@ -1966,37 +2135,49 @@ async function applyLinks() {
     if (!linkBook || linkSelection.size === 0) return;
     if (linkManageMode) return applyUnlinks();
     if (linkMode === 'chats') return applyChatLinks();
+    if (linkAsAux) return applyAuxLinks();
 
+    // Apply-time capture: the picker can be closed + reopened for another world while the
+    // per-character HTTP loop below is still running, reassigning live linkBook.
+    const book = linkBook;
     const chars = CoreAPI.getAllCharacters() || [];
     const targets = chars.filter(c => linkSelection.has(c.avatar));
 
-    // Warn for characters that already have a DIFFERENT primary book.
+    // Characters that already have a DIFFERENT primary book: the user picks whether those
+    // get overwritten, keep their primary and take this book as an additional, or are skipped.
     const conflicts = targets.filter(c => {
         const cur = c.data?.extensions?.world || '';
-        return cur && cur !== linkBook;
+        return cur && cur !== book;
     });
-    let skipConflicts = false;
+    let conflictAction = 'overwrite';
     if (conflicts.length) {
         const names = conflicts.slice(0, 8).map(c => `${c.name || c.avatar} (${c.data.extensions.world})`).join(', ');
         const more = conflicts.length > 8 ? ` and ${conflicts.length - 8} more` : '';
-        const ok = await CoreAPI.showConfirm({
-            title: 'Overwrite existing links?',
-            message: `${conflicts.length} selected character${conflicts.length === 1 ? '' : 's'} already link a different lorebook: ${names}${more}. Overwrite them, or skip them and link only the rest?`,
-            confirmLabel: 'Overwrite',
+        const res = await CoreAPI.showConfirm({
+            title: 'Characters already have a primary lorebook',
+            message: `${conflicts.length} selected character${conflicts.length === 1 ? '' : 's'} already link a different lorebook: ${names}${more}. Overwrite their primary link, or keep it and add "${book}" as an additional lorebook?`,
+            confirmLabel: 'Overwrite primary',
+            extraLabel: CoreAPI.canEditCharLore() ? 'Add as additional' : '',
             cancelLabel: 'Skip those',
             danger: true,
         });
-        skipConflicts = !ok;
+        conflictAction = res === true ? 'overwrite' : (res === 'extra' ? 'aux' : 'skip');
     }
 
+    const isConflicted = (c) => {
+        const cur = c.data?.extensions?.world || '';
+        return cur && cur !== book;
+    };
     const toLink = targets.filter(c => {
         const cur = c.data?.extensions?.world || '';
-        if (cur === linkBook) return false;           // already linked here, no-op
-        if (skipConflicts && cur && cur !== linkBook) return false;
+        if (cur === book) return false;               // already linked here, no-op
+        if (isConflicted(c)) return conflictAction === 'overwrite';
         return true;
     });
+    // Conflicted chars routed to additional; already-carrying ones are a silent no-op.
+    const toAux = conflictAction === 'aux' ? conflicts.filter(c => !linkAuxSet.has(c.avatar)) : [];
 
-    if (!toLink.length) {
+    if (!toLink.length && !toAux.length) {
         CoreAPI.showToast('Nothing to link (all selected were skipped or already linked)', 'info');
         return;
     }
@@ -2006,34 +2187,100 @@ async function applyLinks() {
     if (applyBtn) { applyBtn.disabled = true; applyBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Linking...'; }
 
     let done = 0;
+    let auxDone = 0;
     try {
         for (const c of toLink) {
-            const ok = await CoreAPI.applyCardFieldUpdates(c.avatar, { 'extensions.world': linkBook });
+            const ok = await CoreAPI.applyCardFieldUpdates(c.avatar, { 'extensions.world': book });
             if (ok) done++;
+        }
+        for (const c of toAux) {
+            if (await addAuxBookToChar(c, book)) auxDone++;
         }
     } finally {
         if (applyBtn) { applyBtn.innerHTML = applyBtnHtml; applyBtn.disabled = false; }
     }
 
-    closeLinkPicker();
+    if (linkBook === book) closeLinkPicker();
     buildLinkedMap();
     renderEditor();
     renderWorldList();
-    const skipped = targets.length - toLink.length;
+    const skipped = targets.length - toLink.length - toAux.length;
+    const parts = [];
+    if (done) parts.push(`linked ${done} character${done === 1 ? '' : 's'}`);
+    if (auxDone) parts.push(`added as additional on ${auxDone}`);
+    if (skipped > 0) parts.push(`skipped ${skipped}`);
+    const msg = parts.join(', ') || 'no changes made';
+    CoreAPI.showToast(`${msg[0].toUpperCase()}${msg.slice(1)}.`, 'success', 5000);
+}
+
+// Append the CAPTURED book to one character's extraBooks and sync the local indexes.
+// Callers pass their apply-time book, not live linkBook: the picker can be closed and
+// reopened for another world while a slow batch is still running.
+// Returns true when the char ends up carrying the book (including already-had).
+async function addAuxBookToChar(c, book) {
+    const books = await CoreAPI.getCharAdditionalLorebooks(c.avatar);
+    const ok = books.includes(book)
+        || await CoreAPI.setCharAdditionalLorebooks(c.avatar, [...books, book]);
+    if (ok) {
+        if (book === linkBook) linkAuxSet.add(c.avatar);
+        const list = auxMap.get(book) || [];
+        if (!list.some(l => l.avatar === c.avatar)) list.push({ avatar: c.avatar, name: c.name || c.avatar, char: c });
+        auxMap.set(book, list);
+    }
+    return ok;
+}
+
+// "As additional" mode: append the book to each character's charLore extraBooks.
+// Additive by design, so no overwrite-conflict prompt; already-added chars are skipped.
+async function applyAuxLinks() {
+    if (!CoreAPI.canEditCharLore()) {
+        CoreAPI.showToast('Open the Library from SillyTavern to edit additional lorebooks', 'warning');
+        return;
+    }
+    const book = linkBook; // apply-time capture; see addAuxBookToChar
+    const chars = CoreAPI.getAllCharacters() || [];
+    const targets = chars.filter(c => linkSelection.has(c.avatar));
+    const toAdd = targets.filter(c => !linkAuxSet.has(c.avatar));
+    if (!toAdd.length) {
+        CoreAPI.showToast('Nothing to add (all selected already have this lorebook)', 'info');
+        return;
+    }
+
+    const applyBtn = document.getElementById('lbLinkApplyBtn');
+    const applyBtnHtml = applyBtn?.innerHTML;
+    if (applyBtn) { applyBtn.disabled = true; applyBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Adding...'; }
+
+    let done = 0;
+    try {
+        for (const c of toAdd) {
+            if (await addAuxBookToChar(c, book)) done++;
+        }
+    } finally {
+        if (applyBtn) { applyBtn.innerHTML = applyBtnHtml; applyBtn.disabled = false; }
+    }
+
+    // Do not close a picker the user re-opened for a different world mid-batch.
+    if (linkBook === book) closeLinkPicker();
+    if (currentWorld) renderEditor();
+    renderWorldList();
+    const skipped = targets.length - toAdd.length;
     CoreAPI.showToast(
-        `Linked ${done} character${done === 1 ? '' : 's'}${skipped ? `, skipped ${skipped}` : ''}.`,
+        `Added as additional lorebook on ${done} character${done === 1 ? '' : 's'}${skipped ? `, skipped ${skipped}` : ''}.`,
         'success', 5000,
     );
 }
 
 async function applyChatLinks() {
     if (!linkChatChar || linkSelection.size === 0) return;
+    // Apply-time captures: the picker can be closed + reopened elsewhere mid-batch.
+    const book = linkBook;
+    const chatChar = linkChatChar;
     const targets = linkChatList.filter(ch => linkSelection.has(ch.file_name));
 
     // Warn for chats already bound to a DIFFERENT book.
     const conflicts = targets.filter(ch => {
         const cur = ch.chat_metadata?.world_info || '';
-        return cur && cur !== linkBook;
+        return cur && cur !== book;
     });
     let skipConflicts = false;
     if (conflicts.length) {
@@ -2051,8 +2298,8 @@ async function applyChatLinks() {
 
     const toBind = targets.filter(ch => {
         const cur = ch.chat_metadata?.world_info || '';
-        if (cur === linkBook) return false;
-        if (skipConflicts && cur && cur !== linkBook) return false;
+        if (cur === book) return false;
+        if (skipConflicts && cur && cur !== book) return false;
         return true;
     });
 
@@ -2069,29 +2316,29 @@ async function applyChatLinks() {
     const newlyBound = [];
     try {
         for (const ch of toBind) {
-            const ok = await CoreAPI.setChatBoundWorld(linkChatChar, ch.file_name, linkBook);
+            const ok = await CoreAPI.setChatBoundWorld(chatChar, ch.file_name, book);
             if (ok) {
                 done++;
                 ch.chat_metadata = ch.chat_metadata || {};
-                ch.chat_metadata.world_info = linkBook;
-                newlyBound.push({ avatar: linkChatChar.avatar, charName: linkChatChar.name || linkChatChar.avatar, char: linkChatChar, file_name: ch.file_name });
+                ch.chat_metadata.world_info = book;
+                newlyBound.push({ avatar: chatChar.avatar, charName: chatChar.name || chatChar.avatar, char: chatChar, file_name: ch.file_name });
             }
         }
 
         // Keep the reverse index in sync (only if it's been built) so the editor + sidebar reflect
         // the new bindings without a full refetch.
         if (chatIndexLoaded && newlyBound.length) {
-            const list = chatBoundMap.get(linkBook) || [];
+            const list = chatBoundMap.get(book) || [];
             for (const nb of newlyBound) {
                 if (!list.some(x => x.file_name === nb.file_name && x.avatar === nb.avatar)) list.push(nb);
             }
-            chatBoundMap.set(linkBook, list);
+            chatBoundMap.set(book, list);
         }
     } finally {
         if (applyBtn) { applyBtn.innerHTML = applyBtnHtml; applyBtn.disabled = false; }
     }
 
-    closeLinkPicker();
+    if (linkBook === book) closeLinkPicker();
     if (currentWorld) renderEditor();
     renderWorldList();
     const skipped = targets.length - toBind.length;
@@ -2105,10 +2352,17 @@ async function applyChatLinks() {
 async function applyUnlinks() {
     if (!linkBook || linkSelection.size === 0) return;
     const isChat = linkMode === 'chats';
+    // Manage rows are the union of uses; aux removals need the ST-window bridge, so gate
+    // up front instead of half-succeeding with a silent aux no-op per character.
+    if (!isChat && [...linkSelection].some(a => linkAuxSet.has(a)) && !CoreAPI.canEditCharLore()) {
+        CoreAPI.showToast('Open the Library from SillyTavern to edit additional lorebooks', 'warning');
+        return;
+    }
+    const book = linkBook; // apply-time capture, same reason as applyLinks
     const n = linkSelection.size;
     const ok = await CoreAPI.showConfirm({
         title: isChat ? 'Unbind selected chats?' : 'Unlink selected characters?',
-        message: `Remove "${esc(linkBook)}" from ${n} ${isChat ? `chat${n === 1 ? '' : 's'}` : `character${n === 1 ? '' : 's'}`}?`,
+        message: `Remove "${esc(book)}" from ${n} ${isChat ? `chat${n === 1 ? '' : 's'}` : `character${n === 1 ? '' : 's'}`}?`,
         confirmLabel: isChat ? 'Unbind' : 'Unlink',
         cancelLabel: 'Cancel',
         danger: true,
@@ -2129,21 +2383,39 @@ async function applyUnlinks() {
                 if (okU) {
                     done++;
                     if (c.chat_metadata) c.chat_metadata.world_info = '';
-                    const list = chatBoundMap.get(linkBook);
-                    if (list) chatBoundMap.set(linkBook, list.filter(x => !(x.avatar === c.avatar && x.file_name === c.file_name)));
+                    const list = chatBoundMap.get(book);
+                    if (list) chatBoundMap.set(book, list.filter(x => !(x.avatar === c.avatar && x.file_name === c.file_name)));
                 }
             }
         } else {
             for (const avatar of linkSelection) {
-                const okU = await CoreAPI.applyCardFieldUpdates(avatar, { 'extensions.world': '' });
-                if (okU) done++;
+                // Manage rows are the union of uses; strip whichever relationship(s) exist.
+                const char = (CoreAPI.getAllCharacters() || []).find(c => c.avatar === avatar);
+                const isPrimary = (char?.data?.extensions?.world || '') === book;
+                const isAux = linkAuxSet.has(avatar);
+                let okU = true;
+                if (isPrimary) {
+                    okU = await CoreAPI.applyCardFieldUpdates(avatar, { 'extensions.world': '' }) && okU;
+                }
+                if (isAux) {
+                    const books = await CoreAPI.getCharAdditionalLorebooks(avatar);
+                    const okAux = await CoreAPI.setCharAdditionalLorebooks(avatar, books.filter(b => b !== book));
+                    if (okAux) {
+                        if (book === linkBook) linkAuxSet.delete(avatar);
+                        const list = (auxMap.get(book) || []).filter(l => l.avatar !== avatar);
+                        if (list.length) auxMap.set(book, list);
+                        else auxMap.delete(book);
+                    }
+                    okU = okAux && okU;
+                }
+                if (okU && (isPrimary || isAux)) done++;
             }
         }
     } finally {
         if (applyBtn) { applyBtn.innerHTML = applyBtnHtml; applyBtn.disabled = false; }
     }
 
-    closeLinkPicker();
+    if (linkBook === book) closeLinkPicker();
     buildLinkedMap();
     if (currentWorld) renderEditor();
     renderWorldList();
@@ -2306,6 +2578,14 @@ function attachEvents() {
         linkBaseSorted = null; // membership changed; rebuild the sorted base
         renderLinkList();
     });
+    document.getElementById('lbLinkAsAux')?.addEventListener('change', (e) => {
+        linkAsAux = e.target.checked;
+        linkBaseSorted = null; // hide-linked semantics follow the write mode
+        syncLinkModeUI();
+        setLinkApplyButton();
+        renderLinkList();
+        updateLinkFooter();
+    });
     CoreAPI.initCustomSelect(document.getElementById('lbLinkPlaylistFilter'));
     document.getElementById('lbLinkPlaylistFilter')?.addEventListener('change', (e) => {
         linkPlaylistUid = e.target.value || '';
@@ -2442,13 +2722,15 @@ function onContentClick(e) {
         }
         case 'open-char': {
             const avatar = actionEl.dataset.avatar;
-            const entry = (linkedMap.get(currentWorld) || []).find(l => l.avatar === avatar);
+            const entry = (linkedMap.get(currentWorld) || []).find(l => l.avatar === avatar)
+                || (auxMap.get(currentWorld) || []).find(l => l.avatar === avatar);
             // Open the character detail modal ABOVE the manager (don't close it); the user
             // returns to the manager when they dismiss the detail modal.
             if (entry?.char) CoreAPI.openCharModalElevated(entry.char);
             break;
         }
         case 'unlink-char': unlinkCharFromCurrentWorld(actionEl.dataset.avatar); break;
+        case 'unlink-aux': unlinkAuxFromCurrentWorld(actionEl.dataset.avatar); break;
         case 'open-bound-chat': {
             const c = (chatBoundMap.get(currentWorld) || [])[Number(actionEl.dataset.idx)];
             if (c?.char) CoreAPI.openCharModalElevated(c.char);
@@ -2540,24 +2822,27 @@ function onContentKeydown(e) {
         if (!raw) return;
         const uid = Number(target.dataset.uid);
         const field = target.dataset.field;
-        const arr = workingWorld.entries[uid][field];
-        if (Array.isArray(arr)) {
-            // Allow comma-paste of multiple keys at once
-            for (const part of raw.split(',').map(s => s.trim()).filter(Boolean)) {
-                if (!arr.includes(part)) arr.push(part);
-            }
-            markDirty();
-            refreshRow(uid);
-            refreshRowHeader(uid);
-            requestAnimationFrame(() => {
-                const fresh = document.querySelector(`.lb-pill-input[data-uid="${uid}"][data-field="${field}"]`);
-                fresh?.focus();
-            });
+        const entry = workingWorld.entries[uid];
+        if (!entry) return;
+        // Entries from imported files can lack the array entirely; the user is editing this
+        // entry, so creating the field is mutate-in-place, not a rebuild.
+        let arr = entry[field];
+        if (!Array.isArray(arr)) { arr = []; entry[field] = arr; }
+        // Allow comma-paste of multiple keys at once
+        for (const part of raw.split(',').map(s => s.trim()).filter(Boolean)) {
+            if (!arr.includes(part)) arr.push(part);
         }
+        markDirty();
+        refreshRow(uid);
+        refreshRowHeader(uid);
+        requestAnimationFrame(() => {
+            const fresh = document.querySelector(`.lb-pill-input[data-uid="${uid}"][data-field="${field}"]`);
+            fresh?.focus();
+        });
     } else if (e.key === 'Backspace' && target.value === '') {
         const uid = Number(target.dataset.uid);
         const field = target.dataset.field;
-        const arr = workingWorld.entries[uid][field];
+        const arr = workingWorld.entries[uid]?.[field];
         if (Array.isArray(arr) && arr.length) {
             arr.pop();
             markDirty();

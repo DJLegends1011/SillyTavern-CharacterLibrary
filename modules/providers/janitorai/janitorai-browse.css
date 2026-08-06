@@ -1,0 +1,100 @@
+/* JanitorAI browse view
+ *
+ * Nearly everything reuses browse-shared.css (cards, grid, tags dropdown, view toggle, following
+ * manager, preview modal). Only the few elements with no shared equivalent live here.
+ */
+
+/* Book name + entry count above the entries themselves, which render as the canonical .lb-entry */
+.janitorai-lorebook-head {
+    margin-bottom: var(--space-sm);
+    color: var(--text-secondary);
+    font-size: var(--font-sm);
+}
+
+.janitorai-hidden-notice {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-sm);
+    margin: var(--space-sm) 0;
+    padding: var(--space-sm) var(--space-md);
+    border-radius: var(--radius-lg);
+    background: rgba(var(--cl-warning-rgb), 0.12);
+    border: 1px solid rgba(var(--cl-warning-rgb), 0.3);
+    color: var(--cl-warning-pale);
+    font-size: var(--font-sm);
+    line-height: 1.5;
+}
+
+.janitorai-hidden-notice i {
+    margin-top: 2px;
+    color: var(--cl-warning);
+    flex-shrink: 0;
+}
+
+.janitorai-hidden-notice .glass-btn {
+    margin-left: auto;
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+
+/* Endpoint capability report in Settings > Online > JanitorAI. One row per named check, so a
+   failure says which thing to fix rather than just "it did not work". */
+/* Module CSS loads after library.css, so display:flex would outrank the global .hidden */
+.janitorai-check-list.hidden {
+    display: none;
+}
+
+.janitorai-check-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2xs);
+    width: 100%;
+    padding: var(--space-sm);
+    border-radius: var(--radius-lg);
+    background: rgba(0, 0, 0, 0.25);
+    border: 1px solid var(--glass-border);
+}
+
+.janitorai-check {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-xs);
+    font-size: var(--font-sm);
+    line-height: 1.45;
+}
+
+.janitorai-check i { flex-shrink: 0; }
+.janitorai-check.ok i { color: var(--cl-success); }
+.janitorai-check.fail i { color: var(--cl-error); }
+.janitorai-check.warn i { color: var(--cl-warning); }
+
+.janitorai-check-label {
+    color: var(--text-primary);
+    flex-shrink: 0;
+}
+
+.janitorai-check-detail {
+    color: var(--text-muted);
+    font-size: var(--font-xs);
+    overflow-wrap: anywhere;
+}
+
+html.cl-mobile .janitorai-check {
+    flex-wrap: wrap;
+}
+
+/* The label is flex-shrink: 0 on desktop so it never squeezes against the detail text. On a
+   phone that keeps it at full intrinsic width, and the longer check labels then run off the
+   side, so let it shrink and wrap here. */
+html.cl-mobile .janitorai-check-label {
+    flex-shrink: 1;
+    min-width: 0;
+}
+html.cl-mobile .janitorai-check-list {
+    padding: var(--space-xs);
+}
+
+html.cl-mobile .janitorai-hidden-notice {
+    font-size: var(--font-xs);
+    padding: var(--space-xs) var(--space-sm);
+}

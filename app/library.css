@@ -1,3 +1,19 @@
+/* SillyTavern bundles the FA solid + brands faces but not regular; CL vendors that one file */
+@font-face {
+    font-family: 'Font Awesome 6 Free';
+    font-style: normal;
+    font-weight: 400;
+    font-display: block;
+    src: url('vendor/fontawesome/webfonts/fa-regular-400.woff2') format('woff2');
+}
+
+/* ST ships no regular.css, so this weight rule comes with the vendored face: without it the icon
+   inherits its containers weight and bold contexts (600+) resolve to the 900 solid glyph. */
+.far,
+.fa-regular {
+    font-weight: 400;
+}
+
 :root {
     color-scheme: dark;
     --bg-primary: #121212;
@@ -260,6 +276,7 @@ body.modal-size-large .cl-modal-content.creator-saveas-diff-content { max-width:
  *   .ai-studio-overlay      - character-creator.css - AI Studio sub-panel shell
  *   .browse-recovery-banner - browse-shared.css - extensions-recovery notice in browse views
  *   .browse-author-banner   - browse-shared.css - author/uploader filter banner
+ *   .browse-error-banner    - browse-shared.css - grid-load error state (retry + copy-report actions)
  *   .browse-avatar-viewer   - browse-shared.css - full-screen avatar/image viewer overlay
  *
  * CSS VARIABLES
@@ -2012,22 +2029,62 @@ body.char-modal-above .cl-modal.visible {
     color: var(--accent);
 }
 
+/* One card for the whole lorebook-links surface: primary row + additional row,
+   divided, sharing the chrome. Relationship hues mirror the manager's badges. */
+.linked-lorebook-card {
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-lg);
+    background: rgba(var(--accent-rgb), 0.05);
+    overflow: hidden;
+}
+
 .linked-lorebook-bar {
     display: flex;
     align-items: center;
     gap: var(--space-md);
     flex-wrap: wrap;
     padding: var(--space-sm) var(--space-md);
+}
+
+.linked-lorebook-tile {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    flex-shrink: 0;
+    border-radius: var(--radius-md);
     border: 1px solid var(--glass-border);
-    border-radius: var(--radius-lg);
-    background: rgba(var(--accent-rgb), 0.06);
+    background: rgba(var(--accent-rgb), 0.12);
+    color: var(--cl-success-pale);
+    font-size: var(--font-md);
+}
+
+.linked-lorebook-tile.is-unlinked {
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--text-faint);
+}
+
+.linked-lorebook-info {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    flex: 1;
+    min-width: 0;
 }
 
 .linked-lorebook-name {
-    flex: 1;
     min-width: 0;
     font-weight: 600;
     color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.linked-lorebook-meta {
+    font-size: var(--font-2xs);
+    color: var(--text-muted);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -2038,6 +2095,7 @@ body.char-modal-above .cl-modal.visible {
     align-items: center;
     gap: var(--space-sm);
     flex-shrink: 0;
+    margin-left: auto;
 }
 
 .linked-lorebook-actions .action-btn:disabled {
@@ -2049,6 +2107,130 @@ body.char-modal-above .cl-modal.visible {
     font-weight: 400;
     font-style: italic;
     color: var(--text-faint);
+}
+
+/* Additional (charLore) row: sibling of the primary bar inside the card */
+.linked-lorebook-aux {
+    display: flex;
+    align-items: center;
+    gap: var(--space-md);
+    flex-wrap: wrap;
+    padding: var(--space-sm) var(--space-md);
+    border-top: 1px solid var(--glass-border);
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.linked-lorebook-aux-label {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-xs);
+    font-size: var(--font-sm);
+    font-weight: 600;
+    color: var(--text-secondary);
+    flex-shrink: 0;
+}
+
+.linked-lorebook-aux-label i {
+    color: var(--cl-info-pale);
+    font-size: var(--font-2xs);
+}
+
+.linked-lorebook-aux-pills {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    flex-wrap: wrap;
+    flex: 1;
+    min-width: 0;
+}
+
+.linked-lorebook-aux-none {
+    font-style: italic;
+    color: var(--text-faint);
+    font-size: var(--font-sm);
+}
+
+.aux-lorebook-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-xs);
+    border-radius: var(--radius-pill);
+    border: 1px solid var(--glass-border);
+    background: rgba(var(--accent-rgb), 0.08);
+    color: var(--text-primary);
+    font-size: var(--font-xs);
+    padding: 0 0 0 var(--space-sm);
+    overflow: hidden;
+    max-width: 100%;
+}
+
+.aux-lorebook-pill > i {
+    color: var(--cl-info-pale);
+    font-size: var(--font-2xs);
+}
+
+.aux-lorebook-pill-name {
+    padding: var(--space-2xs) 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.aux-lorebook-pill-x {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    align-self: stretch;
+    padding: 0 var(--space-sm);
+    background: transparent;
+    border: none;
+    border-left: 1px solid var(--glass-border);
+    color: var(--text-faint);
+    font-size: var(--font-sm);
+    line-height: 1;
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+
+.aux-lorebook-pill-x:hover {
+    background: rgba(var(--cl-error-rgb), 0.18);
+    color: var(--cl-error-bright);
+}
+
+.linked-lorebook-aux.locked .aux-lorebook-pill-x {
+    pointer-events: none;
+    opacity: 0.4;
+}
+
+.linked-lorebook-aux .action-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* Read-view: additional books nested under the primary linked-lorebook box */
+.linked-aux-book {
+    margin-top: var(--space-md);
+    border-top: 1px solid var(--glass-border);
+    padding-top: var(--space-sm);
+}
+
+.linked-aux-book > summary {
+    cursor: pointer;
+    font-size: var(--font-sm);
+}
+
+.linked-aux-tag {
+    display: inline-block;
+    margin-left: var(--space-xs);
+    padding: 0 var(--space-xs);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-pill);
+    background: rgba(var(--accent-rgb), 0.08);
+    color: var(--text-faint);
+    font-size: var(--font-3xs);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    vertical-align: middle;
 }
 
 /* Link-lorebook picker, opened from the edit-tab Link button. List/row/search chrome mirrors the chat-lore picker (chats.css). */
@@ -2655,6 +2837,15 @@ body.char-modal-above .cl-modal.visible {
 
 .provider-tagline-text iframe {
     width: 100%;
+}
+
+/* Tagline-authored inline styles must not escape the row (rich taglines allow the style attr) */
+.provider-tagline-text [style*="position:fixed"], .provider-tagline-text [style*="position: fixed"],
+.provider-tagline-text [style*="position:sticky"], .provider-tagline-text [style*="position: sticky"] {
+    position: static !important;
+}
+.provider-tagline-text [style*="z-index"] {
+    z-index: auto !important;
 }
 
 .description-box, .first-mes-box {
@@ -5027,11 +5218,11 @@ html.cl-mobile .cl-skeleton-card .cl-skeleton-meta {
     }
 }
 
-/* Edit-tab loading cover: shown while a slim card hydrates so the form cant be read or saved empty */
-#pane-edit.edit-pane-loading > :not(.edit-pane-loader) {
+/* Tab-pane loading/error cover: shown while a slim card hydrates (edit: so the form cant be read or saved empty) */
+.tab-pane.pane-loading > :not(.pane-loader) {
     display: none;
 }
-.edit-pane-loader {
+.pane-loader {
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -5043,12 +5234,25 @@ html.cl-mobile .cl-skeleton-card .cl-skeleton-meta {
     color: var(--text-secondary);
     font-size: var(--font-sm);
 }
-.edit-pane-loader i {
+.pane-loader i {
     font-size: var(--font-2xl);
     color: var(--accent);
 }
-.edit-pane-loader span {
+.pane-loader span {
     max-width: 320px;
+}
+/* Inline load-failure notice for detail-modal content slots */
+.modal-load-error {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    padding: var(--space-sm) 0;
+    color: var(--text-secondary);
+    font-size: var(--font-sm);
+    grid-column: 1 / -1;
+}
+.modal-load-error i {
+    color: var(--cl-warning);
 }
 
 /* Edit Lock Header */
@@ -5884,6 +6088,10 @@ html.cl-mobile .char-portrait-container.editing-unlocked .portrait-edit-overlay 
     align-items: center;
 }
 
+.provider-link-search-row .custom-select-container {
+    flex-shrink: 0;
+}
+
 .provider-link-search-row input {
     flex: 1;
 }
@@ -6154,6 +6362,20 @@ html.cl-mobile .char-portrait-container.editing-unlocked .portrait-edit-overlay 
 .info-section ul li {
     margin-bottom: 6px;
     line-height: 1.5;
+}
+
+/* Cross-reference between help sections. Matches .creator-link so in-app links read the same
+   everywhere; a bare anchor here inherits the browser default and looks like a bug. */
+.info-section .help-jump {
+    color: var(--accent);
+    text-decoration: none;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.info-section .help-jump:hover {
+    color: var(--accent-hover);
+    text-decoration: underline;
 }
 
 .info-code-list {
@@ -7271,6 +7493,135 @@ html.cl-mobile .char-portrait-container.editing-unlocked .portrait-edit-overlay 
 .pre-import-matches {
     max-height: 400px;
     overflow-y: auto;
+}
+
+/* DataCat -> JanitorAI re-link modal */
+/* Opens over the settings modal (same .cl-modal z tier, later DOM sibling wins otherwise) */
+#dcRelinkModal {
+    z-index: 10001;
+}
+.cl-modal-content.dc-relink-content {
+    max-width: calc(720px * var(--modal-scale, 1));
+    width: 95vw;
+}
+.dc-relink-summary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+    margin-bottom: var(--space-md);
+    font-size: var(--font-sm);
+    color: var(--text-secondary);
+}
+.dc-relink-pill {
+    padding: var(--space-2xs) var(--space-sm);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-md);
+    background: rgba(255, 255, 255, 0.03);
+    white-space: nowrap;
+}
+.dc-relink-pill.ready {
+    color: var(--cl-success-pale);
+    border-color: var(--cl-success);
+}
+.dc-relink-pill.conflict {
+    color: var(--cl-warning-pale);
+    border-color: var(--cl-warning);
+}
+.dc-relink-toolbar {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    margin-bottom: var(--space-2xs);
+}
+.dc-relink-selcount {
+    flex: 1;
+    font-size: var(--font-sm);
+    color: var(--text-secondary);
+}
+.dc-relink-mini-btn {
+    padding: var(--btn-pad-v-sm) var(--btn-pad-h-sm);
+    font-size: var(--btn-font-sm);
+}
+.dc-relink-avatar {
+    width: 26px;
+    height: 26px;
+    border-radius: var(--radius-sm);
+    object-fit: cover;
+    flex-shrink: 0;
+    background: rgba(255, 255, 255, 0.06);
+}
+.dc-relink-options {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+    margin-bottom: var(--space-md);
+    font-size: var(--font-sm);
+}
+.dc-relink-option {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    cursor: pointer;
+}
+.dc-relink-list {
+    max-height: 45vh;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2xs);
+}
+.dc-relink-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    padding: var(--space-2xs) var(--space-sm);
+    border-radius: var(--radius-md);
+    background: rgba(255, 255, 255, 0.03);
+    font-size: var(--font-sm);
+    min-height: 32px;
+}
+.dc-relink-row:hover {
+    background: rgba(255, 255, 255, 0.06);
+}
+.dc-relink-row-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.dc-relink-lock {
+    color: var(--text-faint);
+    font-size: var(--font-2xs);
+}
+.dc-relink-badge {
+    font-size: var(--font-2xs);
+    padding: 1px var(--space-xs);
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--glass-border);
+    color: var(--text-faint);
+    white-space: nowrap;
+}
+.dc-relink-badge.ready {
+    color: var(--cl-success-pale);
+    border-color: var(--cl-success);
+}
+.dc-relink-badge.conflict {
+    color: var(--cl-warning-pale);
+    border-color: var(--cl-warning);
+}
+.dc-relink-badge.fail {
+    color: var(--cl-error-pale);
+    border-color: var(--cl-error);
+}
+.dc-relink-cb-spacer {
+    width: 13px;
+    flex-shrink: 0;
+}
+.dc-relink-progress {
+    flex: 1;
+    text-align: left;
+    font-size: var(--font-sm);
+    color: var(--text-secondary);
 }
 
 /* Responsive - desktop only (mobile has its own overrides in library-mobile.css) */
@@ -8895,6 +9246,24 @@ html:not(.cl-mobile) .settings-row[data-platform="mobile"] { display: none !impo
 }
 .settings-status-badge i {
     font-size: var(--font-4xs);
+}
+
+/* A textarea cannot be type="password", so the one credential that lives in one (the
+   CharacterTavern session cookie) is masked this way instead. The unprefixed property is not
+   in any shipping engine yet; it is listed so this stops being prefix-only for free later.
+   Worst case on an engine supporting neither is the previous behaviour, plaintext. */
+.cl-masked-field:not(.revealed) {
+    -webkit-text-security: disc;
+    text-security: disc;
+}
+
+/* Badge plus its action buttons on one baseline. Without this the inline-flex badge and the
+   inline-block buttons sit on different baselines and the row looks broken. */
+#janitoraiManagedStatusRow {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    flex-wrap: wrap;
 }
 .settings-status-badge.active {
     color: var(--cl-success);

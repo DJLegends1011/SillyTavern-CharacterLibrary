@@ -90,18 +90,42 @@ function createEmptyIndex() {
     return { version: 1, characters: {}, avatarMap: {} };
 }
 
+let _indexLoading = null;
+let _indexSaving = false;
+let _indexSaveQueued = false;
+
 async function ensureIndexLoaded() {
     if (cachedIndex) return cachedIndex;
-    cachedIndex = await fileRead(INDEX_FILE);
-    if (!cachedIndex || typeof cachedIndex !== 'object' || !cachedIndex.characters) {
-        cachedIndex = createEmptyIndex();
-    }
-    return cachedIndex;
+    if (_indexLoading) return _indexLoading;
+    _indexLoading = (async () => {
+        let idx = await fileRead(INDEX_FILE);
+        if (!idx || typeof idx !== 'object' || !idx.characters) {
+            idx = createEmptyIndex();
+        }
+        cachedIndex = idx;
+        _indexLoading = null;
+        return cachedIndex;
+    })();
+    return _indexLoading;
 }
 
 async function saveIndex() {
     if (!cachedIndex) return;
-    await fileUpload(INDEX_FILE, cachedIndex);
+    if (_indexSaving) {
+        _indexSaveQueued = true;
+        return;
+    }
+    _indexSaving = true;
+    try {
+        await fileUpload(INDEX_FILE, cachedIndex);
+    } finally {
+        _indexSaving = false;
+        if (_indexSaveQueued) {
+            _indexSaveQueued = false;
+            // re-fired save has no awaiter; the direct call keeps its throw for storageSave* callers
+            saveIndex().catch(e => console.error('[CharVersions] Queued index save failed:', e.message));
+        }
+    }
 }
 
 async function updateIndex(versionUid, name, avatar, snapshotCount) {
@@ -432,16 +456,6 @@ export function cleanupVersionsPane() {
     selectedSnapshotId = null;
     paneContainer = null;
     paneDelegationHandler = null;
-}
-
-export async function saveCurrentSnapshot(char, label = '') {
-    const uid = await ensureVersionUid(char);
-    const data = await extractCardData(char);
-    const charName = char.data?.name || char.name || 'Unknown';
-    const finalLabel = label || `Snapshot ${new Date().toLocaleString()}`;
-    await storageSaveSnapshot(char.avatar, charName, finalLabel, 'local', data, uid);
-    CoreAPI.hapticFeedback(12);
-    CoreAPI.showToast(`Snapshot saved: "${finalLabel}"`, 'success');
 }
 
 export async function autoSnapshotBeforeChange(char, source = 'edit', opts = {}) {
@@ -2051,6 +2065,5 @@ export default {
     openVersionHistory,
     renderVersionsPane,
     cleanupVersionsPane,
-    saveCurrentSnapshot,
     autoSnapshotBeforeChange
 };

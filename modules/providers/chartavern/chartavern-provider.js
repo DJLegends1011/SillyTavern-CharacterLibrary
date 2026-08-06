@@ -118,6 +118,7 @@ class ChartavernProvider extends ProviderBase {
     get name() { return 'CharacterTavern'; }
     get icon() { return 'fa-solid fa-beer-mug-empty'; }
     get iconUrl() { return `${CT_SITE_BASE}/favicon.ico`; }
+    get minClHelperVersion() { return '1.0.0'; }
     get browseView() { return chartavernBrowseView; }
 
     get linkStatFields() {

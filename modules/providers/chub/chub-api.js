@@ -186,29 +186,23 @@ export async function fetchChubMetadata(fullPath) {
 export async function fetchChubLinkedLorebook(projectId) {
     if (!projectId) return null;
     const headers = getChubHeaders(true);
-    try {
-        const commitsUrl = `${CHUB_API_BASE}/api/v4/projects/${projectId}/repository/commits`;
-        let commitsResp;
-        try {
-            commitsResp = await fetch(commitsUrl, { headers });
-            if (!commitsResp.ok) throw new Error(`HTTP ${commitsResp.status}`);
-        } catch (_) {
-            commitsResp = await fetch(`/proxy/${proxyEncode(commitsUrl)}`, { headers });
-            if (!commitsResp.ok) return null;
+    // Proxy only when fetch itself rejects (CORS/network); an HTTP error is a valid answer, not a proxy trigger.
+    const tryFetch = async (url) => {
+        try { return await fetch(url, { headers }); }
+        catch (e) {
+            if (e.name === 'AbortError') throw e;
+            return await fetch(`/proxy/${proxyEncode(url)}`, { headers });
         }
+    };
+    try {
+        const commitsResp = await tryFetch(`${CHUB_API_BASE}/api/v4/projects/${projectId}/repository/commits`);
+        if (!commitsResp.ok) return null;
         const commits = await commitsResp.json();
         const ref = Array.isArray(commits) && commits[0]?.id;
         if (!ref) return null;
 
-        const cardUrl = `${CHUB_API_BASE}/api/v4/projects/${projectId}/repository/files/raw%252Fcard.json/raw?ref=${ref}`;
-        let cardResp;
-        try {
-            cardResp = await fetch(cardUrl, { headers });
-            if (!cardResp.ok) throw new Error(`HTTP ${cardResp.status}`);
-        } catch (_) {
-            cardResp = await fetch(`/proxy/${proxyEncode(cardUrl)}`, { headers });
-            if (!cardResp.ok) return null;
-        }
+        const cardResp = await tryFetch(`${CHUB_API_BASE}/api/v4/projects/${projectId}/repository/files/raw%252Fcard.json/raw?ref=${ref}`);
+        if (!cardResp.ok) return null;
         const card = await cardResp.json();
         const book = card?.data?.character_book || card?.character_book || null;
         if (book) {

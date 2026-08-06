@@ -977,6 +977,9 @@ jQuery(async () => {
     // Must run before the 2s wait; ST's gallery initSettings is synchronous at load.
     initGalleryFolderResolver();
 
+    // Early too: the library tab may already be open (ST page reload) and calls this via its opener handle.
+    initCharLoreBridge();
+
     // Delay to ensure ST's UI is fully loaded
     await new Promise(resolve => setTimeout(resolve, 2000));
 
@@ -1098,6 +1101,124 @@ function getGalleryFolderForCharacter(character) {
         return safeName + '_' + galleryId;
     }
     return safeName;
+}
+
+// ==============================================
+// charLore Bridge (additional character lorebooks)
+// ==============================================
+
+// Accessor API for world_info.charLore (additional character lorebooks), called by the
+// library tab through its opener/parent handle. Writes mutate the live export directly,
+// the same shape as ST's own delete/rename sweeps; deliberately NOT charSetAuxWorlds,
+// which reroutes writes into the create-character form whenever that panel is open.
+let _wiModulePromise = null;
+function getWorldInfoModule() {
+    // Same URL ST's own imports resolve to, so this returns the already-loaded module
+    // instance with live state, not a fresh copy. A failed import is not cached, or one
+    // transient error would kill the bridge until the next ST reload.
+    if (!_wiModulePromise) {
+        _wiModulePromise = import('../../../world-info.js').catch(e => {
+            _wiModulePromise = null;
+            throw e;
+        });
+    }
+    return _wiModulePromise;
+}
+
+function stripAvatarExt(avatar) {
+    return String(avatar || '').replace(/\.[^/.]+$/, '');
+}
+
+function normalizeAuxBooks(books) {
+    return [...new Set((Array.isArray(books) ? books : []).filter(b => typeof b === 'string' && b))];
+}
+
+function initCharLoreBridge() {
+    window.__clCharLore = {
+        async list() {
+            try {
+                const mod = await getWorldInfoModule();
+                return JSON.parse(JSON.stringify(mod.world_info?.charLore || []));
+            } catch (e) {
+                console.warn(`${EXTENSION_NAME}: charLore list failed:`, e?.message || e);
+                return null;
+            }
+        },
+        async getFor(avatar) {
+            const all = await this.list();
+            if (!all) return null;
+            const key = stripAvatarExt(avatar);
+            const entry = all.find(e => e?.name === key);
+            return normalizeAuxBooks(entry?.extraBooks);
+        },
+        async set(avatar, books) {
+            try {
+                const mod = await getWorldInfoModule();
+                const wi = mod.world_info;
+                const key = stripAvatarExt(avatar);
+                if (!wi || typeof wi !== 'object' || !key) return false;
+                const next = normalizeAuxBooks(books);
+                const charLore = wi.charLore ?? [];
+                const idx = charLore.findIndex(e => e?.name === key);
+                if (next.length === 0) {
+                    if (idx !== -1) charLore.splice(idx, 1);
+                } else if (idx === -1) {
+                    charLore.push({ name: key, extraBooks: next });
+                } else {
+                    charLore[idx] = { ...charLore[idx], extraBooks: next };
+                }
+                Object.assign(wi, { charLore });
+                SillyTavern?.getContext?.()?.saveSettingsDebounced?.();
+                return true;
+            } catch (e) {
+                console.warn(`${EXTENSION_NAME}: charLore set failed:`, e?.message || e);
+                return false;
+            }
+        },
+        // Re-point every extraBooks reference old -> new. The library's world rename is
+        // copy+delete over REST, which bypasses ST's own client-side sweep.
+        async renameWorld(oldName, newName) {
+            try {
+                const mod = await getWorldInfoModule();
+                const charLore = mod.world_info?.charLore;
+                if (!Array.isArray(charLore) || !oldName || !newName) return 0;
+                let touched = 0;
+                for (const entry of charLore) {
+                    if (!entry?.extraBooks?.includes(oldName)) continue;
+                    entry.extraBooks = normalizeAuxBooks(entry.extraBooks.map(b => (b === oldName ? newName : b)));
+                    touched++;
+                }
+                if (touched) SillyTavern?.getContext?.()?.saveSettingsDebounced?.();
+                return touched;
+            } catch (e) {
+                console.warn(`${EXTENSION_NAME}: charLore rename sweep failed:`, e?.message || e);
+                return null;
+            }
+        },
+        // Drop every extraBooks reference to a deleted world; entries left empty are removed,
+        // matching ST's own delete sweep.
+        async removeWorld(name) {
+            try {
+                const mod = await getWorldInfoModule();
+                const charLore = mod.world_info?.charLore;
+                if (!Array.isArray(charLore) || !name) return 0;
+                let touched = 0;
+                for (let i = charLore.length - 1; i >= 0; i--) {
+                    const entry = charLore[i];
+                    if (!entry?.extraBooks?.includes(name)) continue;
+                    const rest = entry.extraBooks.filter(b => b !== name);
+                    if (rest.length === 0) charLore.splice(i, 1);
+                    else entry.extraBooks = rest;
+                    touched++;
+                }
+                if (touched) SillyTavern?.getContext?.()?.saveSettingsDebounced?.();
+                return touched;
+            } catch (e) {
+                console.warn(`${EXTENSION_NAME}: charLore remove sweep failed:`, e?.message || e);
+                return null;
+            }
+        },
+    };
 }
 
 // Install a Proxy on extensionSettings.gallery.folders so reads are answered live from card data instead of from a persisted map.
@@ -1726,7 +1847,7 @@ async function localizeCharacterInfoPanels() {
 // Display Name Override in SillyTavern Chat
 // ==============================================
 
-const PROVIDER_EXT_KEYS = ['chub', 'jannyai', 'pygmalion', 'wyvern', 'chartavern', 'datacat', 'botbooru'];
+const PROVIDER_EXT_KEYS = ['chub', 'janitorai', 'jannyai', 'pygmalion', 'wyvern', 'chartavern', 'datacat', 'saucepan', 'botbooru'];
 let _displayNameUiObserver = null;
 let _displayNameUiRaf = 0;
 
