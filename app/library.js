@@ -544,8 +544,21 @@ const DEFAULT_SETTINGS = {
     datacatReextractOnUpdate: false,
     datacatUseAccountForExtraction: true,
     datacatSyncYours: true,
+    // Separate from the janitorai* pair below: the refresh token is single-use and rotates, so a
+    // shared pair breaks whichever provider refreshes second.
+    datacatJanitoraiToken: null,
+    datacatJanitoraiRefreshToken: null,
+    saucepanToken: null,
     janitoraiToken: null,
     janitoraiRefreshToken: null,
+    // Kept so a lapsed session can be renewed without hunting for the password again.
+    janitoraiEmail: null,
+    janitoraiPassword: null,
+    janitoraiBrowserEndpoint: null,
+    // 'managed' lets cl-helper own a headless browser here, spawned lazily on first real use.
+    janitoraiBrowserMode: 'managed',
+    janitoraiNsfw: false,
+    janitoraiExtractOnUpdate: false,
     botbooruToken: null,
     botbooruUsername: null,
     botbooruPassword: null,
@@ -566,6 +579,8 @@ const DEFAULT_SETTINGS = {
     wyvernNsfw: false,
     ctNsfw: false,
     datacatNsfw: false,
+    saucepanNsfw: false,
+    saucepanHideExtreme: false,
 
     // ---- Search & Sort ----
     defaultSort: 'name_asc',
@@ -644,7 +659,7 @@ const DEFAULT_SETTINGS = {
     providerOrder: null,
     providerDefaults: {},
     infiniteScroll: {},
-    disabledProviders: ['datacat', 'botbooru'],
+    disabledProviders: ['datacat', 'saucepan', 'botbooru', 'janitorai'],
     datacatFollowedCreators: [],
     providerExcludeTags: {},
 
@@ -735,11 +750,9 @@ async function probeSTSentinelSupport() {
     } catch { /* endpoint may not exist on older ST */ }
     try {
         // /settings/get response wraps a stringified settings JSON; the app_version field hides inside that.
-        const resp = await apiRequest('/settings/get', 'POST', {});
-        if (resp.ok) {
-            const data = await resp.json();
-            const inner = typeof data.settings === 'string' ? JSON.parse(data.settings) : data.settings;
-            const v = data?.appVersion || data?.applicationVersion || data?.version || inner?.app_version || inner?.applicationVersion;
+        const st = await fetchStSettings();
+        if (st) {
+            const v = st.data?.appVersion || st.data?.applicationVersion || st.data?.version || st.settings?.app_version || st.settings?.applicationVersion;
             if (v && compareSemverParts(String(v), ST_MIN_VERSION_FOR_SENTINEL) >= 0) { debugLog('[ST sentinel] detected via /settings/get:', v); return true; }
         }
     } catch { /* network or 404 */ }
@@ -754,13 +767,27 @@ async function getExtensionDeleteValue() {
 }
 
 
-// Mirrors STs name-to-url proxy lookup; "None" forced empty to stop shared-entry leak.
-async function resolveProxyForProfile(profile) {
+// One POST /settings/get with the stringified-settings unwrap; callers read their own
+// fields off the result. Returns { data, settings } or null on any failure.
+async function fetchStSettings() {
     try {
         const response = await apiRequest('/settings/get', 'POST', {});
-        if (!response.ok) return { url: '', password: '' };
+        if (!response.ok) return null;
         const data = await response.json();
         const settings = typeof data.settings === 'string' ? JSON.parse(data.settings) : data.settings;
+        return { data, settings: settings || null };
+    } catch (e) {
+        // Callers pick their own fallback; the diagnostic lives here so they dont each re-log.
+        console.warn('[Settings] /settings/get fetch failed:', e?.message || e);
+        return null;
+    }
+}
+
+// Mirrors ST's name-to-url proxy lookup; "None" forced empty to stop shared-entry leak.
+async function resolveProxyForProfile(profile) {
+    try {
+        const st = await fetchStSettings();
+        const settings = st?.settings;
         if (!settings) return { url: '', password: '' };
         const oai = settings.oai_settings || {};
         const proxies = settings.proxies || oai.proxies || [];
@@ -863,10 +890,9 @@ function extractLlmContent(data, { checkFinishReason = false } = {}) {
 async function getLlmSettings() {
     const out = { profiles: [], activeSource: '', activeModel: '', activePreset: null, selectedProfileId: '', hasProfiles: false, error: false };
     try {
-        const response = await apiRequest('/settings/get', 'POST', {});
-        if (!response.ok) { out.error = true; return out; }
-        const data = await response.json();
-        const settings = typeof data.settings === 'string' ? JSON.parse(data.settings) : data.settings;
+        const st = await fetchStSettings();
+        if (!st) { out.error = true; return out; }
+        const { data, settings } = st;
 
         const presetName = settings?.preset_settings_openai;
         if (presetName && Array.isArray(data.openai_setting_names) && Array.isArray(data.openai_settings)) {
@@ -1121,11 +1147,9 @@ function getPersonaName() {
 async function loadGallerySettings() {
     // Try to load fresh from disk via ST's settings API (authoritative source)
     try {
-        const response = await apiRequest('/settings/get', 'POST');
-        if (response.ok) {
-            const data = await response.json();
-            // ST returns the settings field as a raw JSON string
-            const parsedSettings = JSON.parse(data.settings);
+        const st = await fetchStSettings();
+        if (st) {
+            const parsedSettings = st.settings;
             // Key in settings.json on disk is snake_case "extension_settings"
             // (ST's context API uses camelCase "extensionSettings", but the raw file doesn't)
             if (parsedSettings?.extension_settings?.[SETTINGS_KEY]) {
@@ -1442,6 +1466,31 @@ function updateThemeCustomizerVisibility() {
     row.style.display = getSetting('themeCustomizer') ? '' : 'none';
 }
 
+// Last /health answer, so the provider enable gate does not re-probe. _clHelperProbed stays false
+// until one probe finishes either way, so an early click fails open instead of crying "missing".
+let _clHelperRunningVersion = null;
+let _clHelperAvailable = false;
+let _clHelperProbed = false;
+
+/**
+ * Compare dotted numeric versions. Fails OPEN on anything unparseable, so a malformed version
+ * can never gate a user out of enabling something.
+ * @returns {number} negative if a < b, 0 if equal or unknown, positive if a > b
+ */
+function compareVersions(a, b) {
+    const parse = (v) => {
+        const m = String(v ?? '').trim().match(/^(\d+)(?:\.(\d+))?(?:\.(\d+))?/);
+        return m ? [Number(m[1]), Number(m[2] || 0), Number(m[3] || 0)] : null;
+    };
+    const pa = parse(a);
+    const pb = parse(b);
+    if (!pa || !pb) return 0;
+    for (let i = 0; i < 3; i++) {
+        if (pa[i] !== pb[i]) return pa[i] - pb[i];
+    }
+    return 0;
+}
+
 /**
  * Check cl-helper plugin availability and update settings UI accordingly.
  */
@@ -1464,6 +1513,11 @@ async function checkClHelperPlugin(...pairs) {
             debugLog('[cl-helper] health check failed:', resp.status);
         }
     } catch (e) { debugLog('[cl-helper] not reachable:', e.message); }
+    // Assigned outside the ok-branch so a helper that WAS present and went away cannot leave a
+    // stale-positive cache behind for the provider version gate.
+    _clHelperAvailable = available;
+    _clHelperRunningVersion = available ? runningVersion : null;
+    _clHelperProbed = true;
 
     refreshClHelperUpdateBanner(available, runningVersion, linkedInstall, isAdmin);
 
@@ -1662,6 +1716,12 @@ function setupSettingsModal() {
     const toggleWyvernPasswordVisibility = document.getElementById('toggleWyvernPasswordVisibility');
     const datacatTokenInput = document.getElementById('settingsDatacatToken');
     const toggleDatacatTokenVisibility = document.getElementById('toggleDatacatTokenVisibility');
+    const saucepanHandleInput = document.getElementById('settingsSaucepanHandle');
+    const saucepanPasswordInput = document.getElementById('settingsSaucepanPassword');
+    const saucepanTokenInput = document.getElementById('settingsSaucepanToken');
+    const toggleSaucepanTokenVisibility = document.getElementById('toggleSaucepanTokenVisibility');
+    const saucepanPluginBanner = document.getElementById('saucepanPluginBanner');
+    const saucepanSettingsFields = document.getElementById('saucepanSettingsFields');
     const datacatPluginBanner = document.getElementById('datacatPluginBanner');
     const datacatSettingsFields = document.getElementById('datacatSettingsFields');
     const datacatSessionStatus = document.getElementById('datacatSessionStatus');
@@ -1787,12 +1847,36 @@ function setupSettingsModal() {
         if (orderItem) orderItem.classList.toggle('provider-disabled', isNowDisabled);
     }
 
+    /**
+     * Advisory, not blocking: the user can enable anyway and fix the plugin after.
+     * @returns {Promise<boolean>} true to continue enabling
+     */
+    async function confirmClHelperVersion(prov) {
+        const need = prov?.minClHelperVersion;
+        if (!need || !_clHelperProbed) return true;
+        const running = _clHelperRunningVersion;
+        const tooOld = _clHelperAvailable && running && compareVersions(running, need) < 0;
+        if (_clHelperAvailable && !tooOld) return true;
+
+        return showConfirm({
+            title: `${prov.name} needs the cl-helper plugin`,
+            message: tooOld
+                ? `${prov.name} needs cl-helper ${need} or newer, and this server is running ${running}. Until it is updated, its features will fail. You can update it under Settings > Info, which also explains how.`
+                : `${prov.name} needs the cl-helper plugin, which is not installed on this server. Without it, its features will fail. Settings > Info has the install steps.`,
+            icon: 'fa-solid fa-plug-circle-exclamation',
+            confirmLabel: 'Enable anyway',
+        });
+    }
+
     function wireProviderToggleListeners(container, viewProviders) {
         container.querySelectorAll('.provider-toggle-btn').forEach(btn => {
-            btn.addEventListener('click', () => {
+            btn.addEventListener('click', async () => {
                 const isCurrentlyDisabled = btn.classList.contains('disabled');
                 const pid = btn.dataset.provider;
                 const prov = viewProviders.find(p => p.id === pid);
+
+                // Version first: a stale helper blocks the provider, enableWarning only warns.
+                if (isCurrentlyDisabled && !(await confirmClHelperVersion(prov))) return;
 
                 if (isCurrentlyDisabled && prov?.enableWarning) {
                     // Canonical confirm: stacks above the settings cl-modal (a raw .confirm-modal sits
@@ -2165,7 +2249,9 @@ function setupSettingsModal() {
         { id: 'chartavern', inputId: 'ctExcludeTagsInput', pillsId: 'ctExcludeTagsPills' },
         { id: 'wyvern', inputId: 'wyvernExcludeTagsInput', pillsId: 'wyvernExcludeTagsPills' },
         { id: 'datacat', inputId: 'datacatExcludeTagsInput', pillsId: 'datacatExcludeTagsPills' },
+        { id: 'saucepan', inputId: 'saucepanExcludeTagsInput', pillsId: 'saucepanExcludeTagsPills' },
         { id: 'botbooru', inputId: 'botbooruExcludeTagsInput', pillsId: 'botbooruExcludeTagsPills' },
+        { id: 'janitorai', inputId: 'janitoraiExcludeTagsInput', pillsId: 'janitoraiExcludeTagsPills' },
     ];
 
     function renderExcludeTagPills(providerId, pillsId) {
@@ -2233,23 +2319,29 @@ function setupSettingsModal() {
         if (wyvernPasswordInput) wyvernPasswordInput.value = getSetting('wyvernPassword') || '';
         if (wyvernRememberCredsCheckbox) wyvernRememberCredsCheckbox.checked = getSetting('wyvernRememberCredentials') || false;
         if (datacatTokenInput) datacatTokenInput.value = getSetting('datacatToken') || '';
+        if (saucepanTokenInput) saucepanTokenInput.value = getSetting('saucepanToken') || '';
+        // Not just field repopulation: this also re-reads the managed browser's live state, which
+        // can have started or idle-stopped since the panel was last built.
+        refreshJanitoraiSettingsUi();
         const civitaiApiKeyInput = document.getElementById('settingsCivitaiApiKey');
         if (civitaiApiKeyInput) civitaiApiKeyInput.value = getSetting('civitaiApiKey') || '';
         const pixivCookieInput = document.getElementById('settingsPixivCookie');
         if (pixivCookieInput) pixivCookieInput.value = getSetting('pixivCookie') || '';
+        // onchange, not addEventListener: this runs on every settings open, so a listener would
+        // stack and one click would fire N writes.
         const datacatPublicFeedCheckbox = document.getElementById('datacatPublicFeedCheckbox');
         if (datacatPublicFeedCheckbox) {
             datacatPublicFeedCheckbox.checked = getSetting('datacatPublicFeed') === true;
-            datacatPublicFeedCheckbox.addEventListener('change', () => {
+            datacatPublicFeedCheckbox.onchange = () => {
                 setSetting('datacatPublicFeed', datacatPublicFeedCheckbox.checked);
-            });
+            };
         }
         const datacatReextractCheckbox = document.getElementById('datacatReextractOnUpdateCheckbox');
         if (datacatReextractCheckbox) {
             datacatReextractCheckbox.checked = getSetting('datacatReextractOnUpdate') === true;
-            datacatReextractCheckbox.addEventListener('change', () => {
+            datacatReextractCheckbox.onchange = () => {
                 setSetting('datacatReextractOnUpdate', datacatReextractCheckbox.checked);
-            });
+            };
         }
         // The stored token itself stays invisible; this row just answers "am I logged in"
         const botbooruLoginState = document.getElementById('botbooruLoginState');
@@ -2650,8 +2742,10 @@ function setupSettingsModal() {
             botbooruPluginBanner, botbooruSettingsFields,
             ctPluginBanner, ctSettingsFields,
             datacatPluginBanner, datacatSettingsFields,
+            saucepanPluginBanner, saucepanSettingsFields,
             gridThumbsClHelperBanner, settingsGridThumbClHelperFields,
             galleryThumbsClHelperBanner, galleryThumbsClHelperFields,
+            document.getElementById('janitoraiBrowserPluginBanner'), document.getElementById('janitoraiBrowserFields'),
         ).then(available => {
             if (datacatSessionStatus) {
                 if (!available) {
@@ -3551,7 +3645,19 @@ function setupSettingsModal() {
             wyvernRefreshToken: preserveWyv ? getSetting('wyvernRefreshToken') : null,
             wyvernUid: preserveWyv ? getSetting('wyvernUid') : null,
             datacatToken: getSetting('datacatToken') || null,
+            datacatJanitoraiToken: getSetting('datacatJanitoraiToken') || null,
+            datacatJanitoraiRefreshToken: getSetting('datacatJanitoraiRefreshToken') || null,
+            saucepanToken: getSetting('saucepanToken') || null,
             ctCookie: getSetting('ctCookie') || null,
+            janitoraiToken: getSetting('janitoraiToken') || null,
+            janitoraiRefreshToken: getSetting('janitoraiRefreshToken') || null,
+            janitoraiEmail: getSetting('janitoraiEmail') || null,
+            janitoraiPassword: getSetting('janitoraiPassword') || null,
+            botbooruToken: getSetting('botbooruToken') || null,
+            botbooruUsername: getSetting('botbooruUsername') || null,
+            botbooruPassword: getSetting('botbooruPassword') || null,
+            civitaiApiKey: getSetting('civitaiApiKey') || null,
+            pixivCookie: getSetting('pixivCookie') || null,
         });
         
         const searchName = document.getElementById('searchName');
@@ -3573,6 +3679,15 @@ function setupSettingsModal() {
     };
 
     // Session Validation - CharacterTavern
+    // A textarea cannot be type="password", so this credential masks via .cl-masked-field.
+    const toggleCtCookieBtn = document.getElementById('toggleCtCookieVisibility');
+    if (toggleCtCookieBtn && ctCookieInput) {
+        toggleCtCookieBtn.onclick = () => {
+            const revealed = ctCookieInput.classList.toggle('revealed');
+            toggleCtCookieBtn.innerHTML = `<i class="fa-solid fa-eye${revealed ? '-slash' : ''}"></i>`;
+        };
+    }
+
     const validateCtCookieBtn = document.getElementById('validateCtCookieBtn');
     if (validateCtCookieBtn && ctCookieInput) {
         validateCtCookieBtn.onclick = async (e) => {
@@ -3809,6 +3924,16 @@ function setupSettingsModal() {
             }
         });
     }
+
+    // Version display reads the manifest (the single version source) so it cant drift;
+    // no-cache forces revalidation so an update isnt masked by heuristic HTTP caching
+    fetch('../manifest.json', { cache: 'no-cache' })
+        .then(r => r.json())
+        .then(manifest => {
+            const el = document.getElementById('clAppVersion');
+            if (el && manifest?.version) el.textContent = `v${manifest.version}`;
+        })
+        .catch(() => { /* html fallback text stays */ });
 
     document.getElementById('datacatRestoreAvatarsBtn')?.addEventListener('click', () => {
         // Closes settings first: the restore modal opens its own review surface on top.
@@ -4098,6 +4223,143 @@ function setupSettingsModal() {
         };
     }
 
+    // ---- Saucepan Account (native extraction) ----
+    // Token persistence lives in window.saucepanLogin/saucepanSetToken/
+    // saucepanClearSession (saucepan-provider.js); handlers here only drive the UI.
+    if (toggleSaucepanTokenVisibility && saucepanTokenInput) {
+        toggleSaucepanTokenVisibility.onclick = () => {
+            const isPassword = saucepanTokenInput.type === 'password';
+            saucepanTokenInput.type = isPassword ? 'text' : 'password';
+            toggleSaucepanTokenVisibility.innerHTML = `<i class="fa-solid fa-eye${isPassword ? '-slash' : ''}"></i>`;
+        };
+    }
+
+    const toggleSaucepanPasswordVisibility = document.getElementById('toggleSaucepanPasswordVisibility');
+    if (toggleSaucepanPasswordVisibility && saucepanPasswordInput) {
+        toggleSaucepanPasswordVisibility.onclick = () => {
+            const isPassword = saucepanPasswordInput.type === 'password';
+            saucepanPasswordInput.type = isPassword ? 'text' : 'password';
+            toggleSaucepanPasswordVisibility.innerHTML = `<i class="fa-solid fa-eye${isPassword ? '-slash' : ''}"></i>`;
+        };
+    }
+
+    const saucepanLoginBtn = document.getElementById('saucepanLoginBtn');
+    if (saucepanLoginBtn) {
+        saucepanLoginBtn.onclick = async (e) => {
+            e.preventDefault();
+            const handle = (saucepanHandleInput?.value || '').trim();
+            const password = saucepanPasswordInput?.value || '';
+            if (!handle || !password) {
+                showToast('Enter your Saucepan handle and password', 'warning');
+                return;
+            }
+            if (!window.saucepanLogin) {
+                showToast('Saucepan module not ready', 'error');
+                return;
+            }
+            const originalHtml = saucepanLoginBtn.innerHTML;
+            saucepanLoginBtn.disabled = true;
+            saucepanLoginBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
+            try {
+                const result = await window.saucepanLogin(handle, password);
+                if (result?.ok && result.token) {
+                    if (saucepanTokenInput) saucepanTokenInput.value = result.token;
+                    if (saucepanPasswordInput) saucepanPasswordInput.value = '';
+                    showToast('Saucepan login successful!', 'success');
+                } else {
+                    showToast(`Saucepan login failed: ${result?.error || 'unknown error'}`, 'error');
+                }
+            } catch (err) {
+                showToast(`Saucepan login error: ${err.message}`, 'error');
+            } finally {
+                saucepanLoginBtn.disabled = false;
+                saucepanLoginBtn.innerHTML = originalHtml;
+            }
+        };
+    }
+
+    const saveSaucepanTokenBtn = document.getElementById('saveSaucepanTokenBtn');
+    if (saveSaucepanTokenBtn) {
+        saveSaucepanTokenBtn.onclick = async () => {
+            const pasted = (saucepanTokenInput?.value || '').trim();
+            if (!pasted) {
+                showToast('Paste a Saucepan token first', 'warning');
+                return;
+            }
+            if (!window.saucepanSetToken) {
+                showToast('Saucepan module not ready', 'error');
+                return;
+            }
+            const original = saveSaucepanTokenBtn.innerHTML;
+            saveSaucepanTokenBtn.disabled = true;
+            saveSaucepanTokenBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Saving...';
+            try {
+                const result = await window.saucepanSetToken(pasted);
+                if (result?.ok) {
+                    showToast('Saucepan token saved', 'success');
+                } else {
+                    showToast(result?.error || 'Failed to save token', 'warning');
+                }
+            } catch (err) {
+                showToast(`Save error: ${err.message}`, 'error');
+            } finally {
+                saveSaucepanTokenBtn.disabled = false;
+                saveSaucepanTokenBtn.innerHTML = original;
+            }
+        };
+    }
+
+    const validateSaucepanBtn = document.getElementById('validateSaucepanBtn');
+    if (validateSaucepanBtn) {
+        validateSaucepanBtn.onclick = async (e) => {
+            e.preventDefault();
+            if (!window.saucepanValidateSession) {
+                showToast('Saucepan module not ready', 'error');
+                return;
+            }
+            const originalHtml = validateSaucepanBtn.innerHTML;
+            validateSaucepanBtn.classList.remove('success', 'error');
+            validateSaucepanBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
+            validateSaucepanBtn.disabled = true;
+            try {
+                const result = await window.saucepanValidateSession();
+                if (result?.valid) {
+                    validateSaucepanBtn.classList.add('success');
+                    validateSaucepanBtn.innerHTML = '<i class="fa-solid fa-check"></i>';
+                    showToast('Saucepan token is valid!', 'success');
+                } else {
+                    validateSaucepanBtn.classList.add('error');
+                    validateSaucepanBtn.innerHTML = '<i class="fa-solid fa-times"></i>';
+                    showToast(`Saucepan token invalid: ${result?.reason || 'unknown'}`, 'error');
+                }
+            } catch (err) {
+                validateSaucepanBtn.classList.add('error');
+                validateSaucepanBtn.innerHTML = '<i class="fa-solid fa-exclamation"></i>';
+                showToast(`Validation error: ${err.message}`, 'error');
+            } finally {
+                validateSaucepanBtn.disabled = false;
+                setTimeout(() => {
+                    validateSaucepanBtn.classList.remove('success', 'error');
+                    validateSaucepanBtn.innerHTML = originalHtml;
+                }, 3000);
+            }
+        };
+    }
+
+    const saucepanClearTokenBtn = document.getElementById('saucepanClearTokenBtn');
+    if (saucepanClearTokenBtn) {
+        saucepanClearTokenBtn.onclick = async () => {
+            try {
+                if (window.saucepanClearSession) await window.saucepanClearSession();
+                else setSetting('saucepanToken', null);
+                if (saucepanTokenInput) saucepanTokenInput.value = '';
+                showToast('Saucepan token cleared', 'info');
+            } catch (err) {
+                showToast(`Clear error: ${err.message}`, 'error');
+            }
+        };
+    }
+
     // ---- Civitai API Key ----
     const civitaiApiKeyInputEl = document.getElementById('settingsCivitaiApiKey');
     const toggleCivitaiKeyVisibilityBtn = document.getElementById('toggleCivitaiKeyVisibility');
@@ -4285,13 +4547,68 @@ function setupSettingsModal() {
         };
     }
 
-    // ---- JanitorAI Login (session cookie; unlocks Hampter pagination) ----
-    // Password login is Turnstile-gated (domain-locked, unsolvable from CL), so the session is
-    // seeded from the sb-auth-auth-token cookie and kept alive by the captcha-free refresh grant.
-    // Parse / verify / refresh all live in datacat-provider (window.janitorai*).
-    const janitoraiTokenInputEl = document.getElementById('settingsJanitoraiToken');
-    const toggleJanitoraiTokenBtn = document.getElementById('toggleJanitoraiTokenVisibility');
-    const saveJanitoraiTokenBtn = document.getElementById('saveJanitoraiTokenBtn');
+    // ---- DataCat's JanitorAI Login (session cookie; unlocks Hampter pagination) ----
+    // Its own session, not the provider's; refresh lives in datacat-provider (window.datacatJanitorai*).
+    const datacatJanitoraiTokenInputEl = document.getElementById('settingsDatacatJanitoraiToken');
+    const toggleDatacatJanitoraiTokenBtn = document.getElementById('toggleDatacatJanitoraiTokenVisibility');
+    const saveDatacatJanitoraiTokenBtn = document.getElementById('saveDatacatJanitoraiTokenBtn');
+    const clearDatacatJanitoraiTokenBtn = document.getElementById('clearDatacatJanitoraiTokenBtn');
+    const datacatJanitoraiTokenStatusEl = document.getElementById('datacatJanitoraiTokenStatus');
+
+    function updateDatacatJanitoraiStatus() {
+        if (!datacatJanitoraiTokenStatusEl) return;
+        const set = (cls, icon, text) => { datacatJanitoraiTokenStatusEl.className = `settings-status-badge ${cls}`; datacatJanitoraiTokenStatusEl.innerHTML = `<i class="fa-solid ${icon}"></i> ${text}`; };
+        const status = window.datacatJanitoraiSessionStatus?.() || { loggedIn: !!getSetting('datacatJanitoraiToken') };
+        if (!status.loggedIn) return set('inactive', 'fa-circle', 'Not logged in');
+        // A refresh token keeps the session alive; without one it lapses in ~3h (bare-JWT paste).
+        if (status.hasRefresh === false) return set('active', 'fa-triangle-exclamation', `Logged in${status.email ? ' as ' + status.email : ''} (expires in ~3h; paste the full cookie for a lasting session)`);
+        set('active', 'fa-circle-check', `Logged in${status.email ? ' as ' + status.email : ''}`);
+    }
+    updateDatacatJanitoraiStatus();
+
+    if (toggleDatacatJanitoraiTokenBtn && datacatJanitoraiTokenInputEl) {
+        toggleDatacatJanitoraiTokenBtn.onclick = () => {
+            const isPassword = datacatJanitoraiTokenInputEl.type === 'password';
+            datacatJanitoraiTokenInputEl.type = isPassword ? 'text' : 'password';
+            toggleDatacatJanitoraiTokenBtn.innerHTML = `<i class="fa-solid fa-eye${isPassword ? '-slash' : ''}"></i>`;
+        };
+    }
+    if (saveDatacatJanitoraiTokenBtn && datacatJanitoraiTokenInputEl) {
+        saveDatacatJanitoraiTokenBtn.onclick = async () => {
+            const raw = (datacatJanitoraiTokenInputEl.value || '').trim();
+            if (!raw) { showToast('Paste your sb-auth-auth-token cookie value first', 'warning'); return; }
+            const original = saveDatacatJanitoraiTokenBtn.innerHTML;
+            saveDatacatJanitoraiTokenBtn.disabled = true;
+            saveDatacatJanitoraiTokenBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Saving...';
+            try {
+                const res = await window.datacatJanitoraiSetSession?.(raw);
+                if (res?.ok) {
+                    datacatJanitoraiTokenInputEl.value = '';
+                    updateDatacatJanitoraiStatus();
+                    if (res.hasRefresh) showToast(`DataCat is now signed in to JanitorAI${res.email ? ' as ' + res.email : ''}`, 'success');
+                    else showToast('Logged in, but no refresh token was in that value; this session expires in ~3h. Copy the whole sb-auth-auth-token cookie for a lasting login.', 'warning', 9000);
+                } else {
+                    showToast(res?.error || 'Could not save the session', 'error');
+                }
+            } catch (err) {
+                showToast(`Login error: ${err.message}`, 'error');
+            } finally {
+                saveDatacatJanitoraiTokenBtn.disabled = false;
+                saveDatacatJanitoraiTokenBtn.innerHTML = original;
+            }
+        };
+    }
+    if (clearDatacatJanitoraiTokenBtn) {
+        clearDatacatJanitoraiTokenBtn.onclick = () => {
+            window.datacatJanitoraiLogout?.();
+            if (datacatJanitoraiTokenInputEl) datacatJanitoraiTokenInputEl.value = '';
+            updateDatacatJanitoraiStatus();
+            showToast('DataCat signed out of JanitorAI', 'info');
+        };
+    }
+
+    // ---- JanitorAI provider login (driven through the hosted browser; Turnstile is domain-locked) ----
+    // Parse / verify / refresh live in janitor-session.js (window.janitorai*).
     const clearJanitoraiTokenBtn = document.getElementById('clearJanitoraiTokenBtn');
     const janitoraiTokenStatusEl = document.getElementById('janitoraiTokenStatus');
 
@@ -4300,51 +4617,553 @@ function setupSettingsModal() {
         const set = (cls, icon, text) => { janitoraiTokenStatusEl.className = `settings-status-badge ${cls}`; janitoraiTokenStatusEl.innerHTML = `<i class="fa-solid ${icon}"></i> ${text}`; };
         const status = window.janitoraiSessionStatus?.() || { loggedIn: !!getSetting('janitoraiToken') };
         if (!status.loggedIn) return set('inactive', 'fa-circle', 'Not logged in');
-        // A refresh token keeps the session alive; without one it lapses in ~3h (bare-JWT paste).
-        if (status.hasRefresh === false) return set('active', 'fa-triangle-exclamation', `Logged in${status.email ? ' as ' + status.email : ''} (expires in ~3h; paste the full cookie for a lasting session)`);
+        // Without a refresh token the session lapses in ~3h; browser sign-in always returns one.
+        if (status.hasRefresh === false) return set('active', 'fa-triangle-exclamation', `Logged in${status.email ? ' as ' + status.email : ''} (expires in ~3h, sign in again for a lasting session)`);
         set('active', 'fa-circle-check', `Logged in${status.email ? ' as ' + status.email : ''}`);
     }
     updateJanitoraiStatus();
 
-    if (toggleJanitoraiTokenBtn && janitoraiTokenInputEl) {
-        toggleJanitoraiTokenBtn.onclick = () => {
-            const isPassword = janitoraiTokenInputEl.type === 'password';
-            janitoraiTokenInputEl.type = isPassword ? 'text' : 'password';
-            toggleJanitoraiTokenBtn.innerHTML = `<i class="fa-solid fa-eye${isPassword ? '-slash' : ''}"></i>`;
-        };
-    }
-    if (saveJanitoraiTokenBtn && janitoraiTokenInputEl) {
-        saveJanitoraiTokenBtn.onclick = async () => {
-            const raw = (janitoraiTokenInputEl.value || '').trim();
-            if (!raw) { showToast('Paste your sb-auth-auth-token cookie value first', 'warning'); return; }
-            const original = saveJanitoraiTokenBtn.innerHTML;
-            saveJanitoraiTokenBtn.disabled = true;
-            saveJanitoraiTokenBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Saving...';
-            try {
-                const res = await window.janitoraiSetSession?.(raw);
-                if (res?.ok) {
-                    janitoraiTokenInputEl.value = '';
-                    updateJanitoraiStatus();
-                    if (res.hasRefresh) showToast(`Logged in to JanitorAI${res.email ? ' as ' + res.email : ''}`, 'success');
-                    else showToast('Logged in, but no refresh token was in that value; this session expires in ~3h. Copy the whole sb-auth-auth-token cookie for a lasting login.', 'warning', 9000);
-                } else {
-                    showToast(res?.error || 'Could not save the session', 'error');
-                }
-            } catch (err) {
-                showToast(`Login error: ${err.message}`, 'error');
-            } finally {
-                saveJanitoraiTokenBtn.disabled = false;
-                saveJanitoraiTokenBtn.innerHTML = original;
-            }
-        };
-    }
     if (clearJanitoraiTokenBtn) {
         clearJanitoraiTokenBtn.onclick = () => {
+            // Also clears the stored credentials: janitoraiLogout() only drops the tokens, and a
+            // button labelled Log Out leaving the password saved would surprise.
             window.janitoraiLogout?.();
-            if (janitoraiTokenInputEl) janitoraiTokenInputEl.value = '';
+            setSettings({ janitoraiEmail: null, janitoraiPassword: null });
+            const emailEl = document.getElementById('settingsJanitoraiEmail');
+            const pwEl = document.getElementById('settingsJanitoraiPassword');
+            if (emailEl) emailEl.value = '';
+            if (pwEl) pwEl.value = '';
             updateJanitoraiStatus();
             showToast('Logged out of JanitorAI', 'info');
         };
+    }
+
+    const janitoraiExtractOnUpdateCheckbox = document.getElementById('janitoraiExtractOnUpdateCheckbox');
+    if (janitoraiExtractOnUpdateCheckbox) {
+        janitoraiExtractOnUpdateCheckbox.checked = getSetting('janitoraiExtractOnUpdate') === true;
+        janitoraiExtractOnUpdateCheckbox.onchange = () => {
+            setSetting('janitoraiExtractOnUpdate', janitoraiExtractOnUpdateCheckbox.checked);
+        };
+    }
+
+    // ── JanitorAI browser endpoint (hidden-definition recovery) ──
+    const janitoraiEndpointInput = document.getElementById('settingsJanitoraiBrowserEndpoint');
+    const janitoraiChecksEl = document.getElementById('janitoraiBrowserChecks');
+    const janitoraiBrowserLoginBtn = document.getElementById('janitoraiBrowserLoginBtn');
+    const janitoraiBrowserLoginHint = document.getElementById('janitoraiBrowserLoginHint');
+    const janitoraiEmailInput = document.getElementById('settingsJanitoraiEmail');
+    const janitoraiPasswordInput = document.getElementById('settingsJanitoraiPassword');
+    const togglePwBtn = document.getElementById('toggleJanitoraiPasswordVisibility');
+
+    const janitoraiModeSelect = document.getElementById('settingsJanitoraiBrowserMode');
+    const janitoraiManagedRow = document.getElementById('janitoraiManagedRow');
+    const janitoraiManagedStatusRow = document.getElementById('janitoraiManagedStatusRow');
+    const janitoraiEndpointHintRow = document.getElementById('janitoraiEndpointHintRow');
+    const janitoraiManagedStatusEl = document.getElementById('janitoraiManagedStatus');
+    const janitoraiManagedStartBtn = document.getElementById('janitoraiManagedStartBtn');
+    const janitoraiManagedStopBtn = document.getElementById('janitoraiManagedStopBtn');
+
+    const janitoraiBrowserMode = () => getSetting('janitoraiBrowserMode') || 'managed';
+
+    async function refreshJanitoraiManagedStatus() {
+        if (!janitoraiManagedStatusEl) return;
+        if (janitoraiBrowserMode() !== 'managed') return;
+        try {
+            const resp = await apiRequest('/plugins/cl-helper/janitorai-managed/status', 'GET');
+            const d = await resp.json().catch(() => null);
+            if (!d) throw new Error('no answer');
+            const running = !!d.running;
+            janitoraiManagedStatusEl.className = `settings-status-badge ${running ? 'active' : 'inactive'}`;
+            const label = running
+                ? `Running (${d.browser || 'browser'}), stops after ${d.idleStopMinutes || 10} min idle`
+                : (d.binary
+                    ? 'Not started. It starts by itself when something needs it.'
+                    : 'No Chrome, Chromium or Edge found on this machine.');
+            janitoraiManagedStatusEl.innerHTML = `<i class="fa-solid fa-circle"></i> ${escapeHtml(label)}`;
+            if (janitoraiManagedStopBtn) janitoraiManagedStopBtn.disabled = !running;
+        } catch {
+            janitoraiManagedStatusEl.className = 'settings-status-badge inactive';
+            janitoraiManagedStatusEl.innerHTML = '<i class="fa-solid fa-circle"></i> cl-helper did not answer';
+        }
+    }
+
+    /**
+     * Re-read everything this section displays. Called on each settings open and whenever the
+     * JanitorAI section is expanded, because the managed browser starts LAZILY: browsing
+     * JanitorAI can bring one up long after this panel was first built, and a status read once
+     * at init would still say "Not started" forever. The 10 minute idle stop moves it the other
+     * way just as invisibly.
+     */
+    function refreshJanitoraiSettingsUi() {
+        if (janitoraiEmailInput) janitoraiEmailInput.value = getSetting('janitoraiEmail') || '';
+        if (janitoraiPasswordInput) janitoraiPasswordInput.value = getSetting('janitoraiPassword') || '';
+        if (janitoraiEndpointInput) janitoraiEndpointInput.value = getSetting('janitoraiBrowserEndpoint') || '';
+        if (janitoraiModeSelect) {
+            janitoraiModeSelect.value = janitoraiBrowserMode();
+            janitoraiModeSelect._customSelect?.update?.();
+        }
+        updateJanitoraiStatus();
+        applyJanitoraiBrowserMode();
+    }
+
+    // The section is a <details>; expanding it is the moment the user actually looks at the
+    // status, so re-read it then rather than only when the whole panel opens.
+    document.getElementById('settingsJanitoraiSection')?.addEventListener('toggle', (e) => {
+        if (e.target.open) refreshJanitoraiSettingsUi();
+    });
+
+    function applyJanitoraiBrowserMode() {
+        const managed = janitoraiBrowserMode() === 'managed';
+        // Managed mode has no endpoint to type, but Test applies to both modes, so hide only the
+        // input and its label, never the row that carries the Test button.
+        const endpointRow = janitoraiEndpointInput?.closest('.settings-row');
+        endpointRow?.querySelector('label')?.classList.toggle('cl-hidden', managed);
+        janitoraiEndpointInput?.classList.toggle('cl-hidden', managed);
+        janitoraiManagedRow?.classList.toggle('cl-hidden', !managed);
+        janitoraiManagedStatusRow?.classList.toggle('cl-hidden', !managed);
+        janitoraiEndpointHintRow?.classList.toggle('cl-hidden', managed);
+        // In managed mode there is nothing to configure before logging in: the browser is started
+        // on demand, so gating the login button on a URL the user never has to enter would be a
+        // dead end.
+        const ready = managed || !!(janitoraiEndpointInput?.value || '').trim();
+        setJanitoraiLoginEnabled(ready, ready
+            ? ''
+            : "Needs a browser endpoint above (JanitorAI's login captcha only runs on their own page).");
+        if (managed) refreshJanitoraiManagedStatus();
+    }
+
+    if (janitoraiModeSelect) {
+        janitoraiModeSelect.value = janitoraiBrowserMode();
+        // Classes transfer to the custom-select container at build time only, so a programmatic
+        // value write needs the trigger re-synced by hand.
+        janitoraiModeSelect._customSelect?.update?.();
+        janitoraiModeSelect.addEventListener('change', () => {
+            setSetting('janitoraiBrowserMode', janitoraiModeSelect.value === 'endpoint' ? 'endpoint' : 'managed');
+            renderJanitoraiChecks([], null);
+            applyJanitoraiBrowserMode();
+        });
+    }
+
+    if (janitoraiManagedStartBtn) {
+        janitoraiManagedStartBtn.onclick = async () => {
+            const original = janitoraiManagedStartBtn.innerHTML;
+            janitoraiManagedStartBtn.disabled = true;
+            janitoraiManagedStartBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Starting...';
+            try {
+                const resp = await apiRequest('/plugins/cl-helper/janitorai-managed/start', 'POST', {});
+                const d = await resp.json().catch(() => null);
+                if (!resp.ok || !d?.ok) throw new Error(d?.error || `HTTP ${resp.status}`);
+                showToast('Browser started', 'success');
+            } catch (err) {
+                showToast(err.message || 'Could not start a browser', 'error');
+            } finally {
+                janitoraiManagedStartBtn.disabled = false;
+                janitoraiManagedStartBtn.innerHTML = original;
+                refreshJanitoraiManagedStatus();
+            }
+        };
+    }
+
+    if (janitoraiManagedStopBtn) {
+        janitoraiManagedStopBtn.onclick = async () => {
+            try {
+                await apiRequest('/plugins/cl-helper/janitorai-managed/stop', 'POST', {});
+            } catch { /* status refresh below reports the truth either way */ }
+            refreshJanitoraiManagedStatus();
+        };
+    }
+
+    if (janitoraiEndpointInput) {
+        janitoraiEndpointInput.value = getSetting('janitoraiBrowserEndpoint') || '';
+        // Saved on change rather than on Save: the Test button reads it back immediately,
+        // and a tested-but-unsaved endpoint would silently not be the one extraction uses.
+        janitoraiEndpointInput.addEventListener('change', () => {
+            const v = janitoraiEndpointInput.value.trim();
+            setSetting('janitoraiBrowserEndpoint', v || null);
+            applyJanitoraiBrowserMode();
+        });
+    }
+    if (togglePwBtn && janitoraiPasswordInput) {
+        togglePwBtn.onclick = () => {
+            const isPassword = janitoraiPasswordInput.type === 'password';
+            janitoraiPasswordInput.type = isPassword ? 'text' : 'password';
+            togglePwBtn.innerHTML = `<i class="fa-solid fa-eye${isPassword ? '-slash' : ''}"></i>`;
+        };
+    }
+
+    // Show what is actually configured. Blank boxes next to a "Logged in" badge give no way to
+    // tell whether the stored credentials are the ones you think they are. Saved on change, the
+    // same way the endpoint field above is, because this section has no Save button.
+    janitoraiEmailInput?.addEventListener('change', () => {
+        setSetting('janitoraiEmail', janitoraiEmailInput.value.trim() || null);
+    });
+    janitoraiPasswordInput?.addEventListener('change', () => {
+        setSetting('janitoraiPassword', janitoraiPasswordInput.value || null);
+    });
+
+    // Single init paint, after every field and listener above exists. A saved endpoint is enough
+    // to enable Sign In; requiring a green test first meant reopening the panel disabled the
+    // button again, since nothing re-runs the test.
+    refreshJanitoraiSettingsUi();
+
+    function renderJanitoraiChecks(checks, fatalError) {
+        if (!janitoraiChecksEl) return;
+        if (!checks?.length && !fatalError) {
+            janitoraiChecksEl.classList.add('hidden');
+            janitoraiChecksEl.innerHTML = '';
+            return;
+        }
+        janitoraiChecksEl.classList.remove('hidden');
+        const rows = (checks || []).map(c => `
+            <div class="janitorai-check ${c.ok ? 'ok' : (c.optional ? 'warn' : 'fail')}">
+                <i class="fa-solid ${c.ok ? 'fa-circle-check' : (c.optional ? 'fa-circle-info' : 'fa-circle-xmark')}"></i>
+                <span class="janitorai-check-label">${escapeHtml(c.label || c.key || '')}</span>
+                ${c.detail ? `<span class="janitorai-check-detail">${escapeHtml(String(c.detail))}</span>` : ''}
+            </div>`).join('');
+        janitoraiChecksEl.innerHTML = rows + (fatalError
+            ? `<div class="janitorai-check fail"><i class="fa-solid fa-circle-xmark"></i><span class="janitorai-check-label">${escapeHtml(fatalError)}</span></div>`
+            : '');
+    }
+
+    function setJanitoraiLoginEnabled(enabled, hint) {
+        if (janitoraiBrowserLoginBtn) janitoraiBrowserLoginBtn.disabled = !enabled;
+        if (janitoraiBrowserLoginHint) janitoraiBrowserLoginHint.textContent = hint || '';
+    }
+
+    const testJanitoraiBrowserBtn = document.getElementById('testJanitoraiBrowserBtn');
+    if (testJanitoraiBrowserBtn) {
+        testJanitoraiBrowserBtn.onclick = async () => {
+            const managed = janitoraiBrowserMode() === 'managed';
+            const endpoint = (janitoraiEndpointInput?.value || '').trim();
+            if (!managed && !endpoint) { showToast('Enter a browser endpoint first', 'warning'); return; }
+            if (!managed) setSetting('janitoraiBrowserEndpoint', endpoint);
+            const original = testJanitoraiBrowserBtn.innerHTML;
+            testJanitoraiBrowserBtn.disabled = true;
+            testJanitoraiBrowserBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
+            renderJanitoraiChecks([], null);
+            try {
+                // Through the provider helper rather than a hand-rolled apiRequest: it carries an
+                // abort timeout and apiRequest has none, so a wedged browser spun here forever.
+                const data = await window.janitoraiTestBrowserEndpoint?.(managed ? '' : endpoint);
+                renderJanitoraiChecks(data?.checks, data?.checks?.length ? null : (data?.error || 'cl-helper did not answer'));
+                if (data?.ok) {
+                    setJanitoraiLoginEnabled(true, 'Browser ready.');
+                    showToast('Browser is ready', 'success');
+                } else {
+                    setJanitoraiLoginEnabled(false, 'Fix the failing checks above.');
+                    showToast('Browser is not usable yet', 'warning');
+                }
+            } catch (err) {
+                renderJanitoraiChecks([], err.message);
+                setJanitoraiLoginEnabled(false, 'Fix the failing checks above.');
+            } finally {
+                testJanitoraiBrowserBtn.disabled = false;
+                testJanitoraiBrowserBtn.innerHTML = original;
+                if (managed) refreshJanitoraiManagedStatus();
+            }
+        };
+    }
+
+    if (janitoraiBrowserLoginBtn) {
+        janitoraiBrowserLoginBtn.onclick = async () => {
+            const managed = janitoraiBrowserMode() === 'managed';
+            const endpoint = (janitoraiEndpointInput?.value || '').trim();
+            const email = (janitoraiEmailInput?.value || '').trim();
+            const password = janitoraiPasswordInput?.value || '';
+            if ((!managed && !endpoint) || !email || !password) {
+                showToast(managed ? 'Email and password are both required' : 'Endpoint, email and password are all required', 'warning');
+                return;
+            }
+            const original = janitoraiBrowserLoginBtn.innerHTML;
+            janitoraiBrowserLoginBtn.disabled = true;
+            janitoraiBrowserLoginBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Signing in...';
+            try {
+                const data = await window.janitoraiBrowserLogin?.(email, password, managed ? '' : endpoint);
+                if (!data?.ok) throw new Error(data?.error || 'Sign-in failed');
+                // The browser is signed in either way; adopting the session locally is what
+                // unlocks paging past page 1 in the browse view.
+                const res = data.session ? await window.janitoraiSetSession?.(data.session) : null;
+                // Keep the credentials that just worked, rather than clearing the field. The
+                // session refreshes itself, but when it does lapse this is what lets the user
+                // sign in again without going to find the password.
+                setSettings({ janitoraiEmail: email, janitoraiPassword: password });
+                updateJanitoraiStatus();
+                showToast(res?.ok
+                    ? `Signed in${res.email ? ' as ' + res.email : ''}; session adopted for browsing too`
+                    : 'Browser signed in to JanitorAI', 'success');
+            } catch (err) {
+                showToast(`Sign-in failed: ${err.message}`, 'error', 9000);
+            } finally {
+                janitoraiBrowserLoginBtn.disabled = false;
+                janitoraiBrowserLoginBtn.innerHTML = original;
+            }
+        };
+    }
+
+    // ── DataCat -> JanitorAI batch re-link ──────────────────
+    const migrateDatacatLinksBtn = document.getElementById('migrateDatacatLinksBtn');
+    const dcRelinkModal = document.getElementById('dcRelinkModal');
+    if (migrateDatacatLinksBtn && dcRelinkModal) {
+        const dcListEl = document.getElementById('dcRelinkList');
+        const dcSummaryEl = document.getElementById('dcRelinkSummary');
+        const dcProgressEl = document.getElementById('dcRelinkProgress');
+        const dcRunBtn = document.getElementById('dcRelinkRunBtn');
+        const dcRemoveOldCb = document.getElementById('dcRelinkRemoveOld');
+        const dcVerifyCb = document.getElementById('dcRelinkVerify');
+        let dcRelinkRows = [];
+        let dcRelinkNotChecked = 0;
+        let dcRelinkRunning = false;
+        let dcRelinkAbort = false;
+
+        const DC_JA_UUID_RE = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
+        const DC_BUCKET_LABELS = {
+            already: 'Already linked - cleanup only',
+            conflict: 'Conflict: different JanitorAI link',
+            saucepan: 'Saucepan-sourced',
+            unresolvable: 'No JanitorAI id found',
+        };
+
+        function scanDcRelink() {
+            const ja = window.ProviderRegistry?.getProvider?.('janitorai');
+            const rows = [];
+            let notChecked = 0;
+            for (const char of allCharacters) {
+                if (!extensionsReady(char)) { notChecked++; continue; }
+                const dc = char.data?.extensions?.datacat;
+                if (!dc || !dc.id) continue;
+                const existing = char.data?.extensions?.janitorai?.id || null;
+                // Old datacat downloads shipped the source JanitorAI URL in character_version;
+                // for janitor-sourced cards datacat's own id IS the JanitorAI uuid.
+                const version = char.data?.character_version || char.character_version || '';
+                const verUuid = ja?.parseUrl?.(String(version)) || null;
+                let resolved = verUuid;
+                let source = 'version URL';
+                if (!resolved && dc.sourceKind !== 'saucepan' && DC_JA_UUID_RE.test(String(dc.id))) {
+                    resolved = String(dc.id);
+                    source = 'DataCat id';
+                }
+                let bucket;
+                if (existing) bucket = (resolved && String(existing) !== resolved) ? 'conflict' : 'already';
+                else if (resolved) bucket = 'ready';
+                else bucket = dc.sourceKind === 'saucepan' ? 'saucepan' : 'unresolvable';
+                rows.push({
+                    avatar: char.avatar,
+                    name: getCharacterName(char) || char.name || char.avatar,
+                    bucket, resolved, source, existing,
+                    locked: !!char.data?.extensions?.update_locked,
+                    pageName: dc.pageName || null,
+                    tagline: dc.tagline || null,
+                });
+            }
+            return { rows, notChecked };
+        }
+
+        function dcRowActionable(r, removeOld) {
+            return !r.done && r.selected !== false
+                && (r.bucket === 'ready' || (r.bucket === 'already' && removeOld));
+        }
+
+        function updateDcSelCount() {
+            const n = dcRelinkRows.filter(r => dcRowActionable(r, dcRemoveOldCb.checked)).length;
+            const sel = document.getElementById('dcRelinkSelCount');
+            if (sel) sel.textContent = `${n} selected`;
+            dcRunBtn.innerHTML = `<i class="fa-solid fa-play"></i> Migrate Selected (${n})`;
+            dcRunBtn.disabled = n === 0 || dcRelinkRunning;
+        }
+
+        function renderDcRelink() {
+            const removeOld = dcRemoveOldCb.checked;
+            const counts = {};
+            for (const r of dcRelinkRows) counts[r.bucket] = (counts[r.bucket] || 0) + 1;
+            const pill = (n, label, cls) => `<span class="dc-relink-pill ${cls}">${n} ${escapeHtml(label)}</span>`;
+            const pills = [];
+            if (counts.ready) pills.push(pill(counts.ready, 'ready', 'ready'));
+            if (counts.already) pills.push(pill(counts.already, removeOld ? 'cleanup only' : 'already linked (hidden)', ''));
+            if (counts.conflict) pills.push(pill(counts.conflict, 'conflicting', 'conflict'));
+            if (counts.saucepan) pills.push(pill(counts.saucepan, 'saucepan-sourced', ''));
+            if (counts.unresolvable) pills.push(pill(counts.unresolvable, 'unresolvable', ''));
+            if (dcRelinkNotChecked) pills.push(pill(dcRelinkNotChecked, 'not checked', ''));
+            dcSummaryEl.innerHTML = pills.length
+                ? pills.join('')
+                : '<span class="dc-relink-pill">No DataCat-linked characters found</span>';
+
+            const order = { ready: 0, conflict: 1, already: 2, unresolvable: 3, saucepan: 4 };
+            // Cleanup-only rows have nothing to offer while removal is off, so they hide with it.
+            const visible = dcRelinkRows.filter(r => removeOld || r.bucket !== 'already');
+            const sorted = visible.sort((a, b) =>
+                (order[a.bucket] - order[b.bucket]) || a.name.localeCompare(b.name));
+            dcListEl.innerHTML = sorted.map(r => {
+                const selectable = (r.bucket === 'ready' || r.bucket === 'already') && !r.done;
+                const cb = selectable
+                    ? `<input type="checkbox" class="dc-relink-cb" data-avatar="${escapeHtml(r.avatar)}"${r.selected === false ? '' : ' checked'}>`
+                    : '<span class="dc-relink-cb-spacer"></span>';
+                const lock = r.locked
+                    ? '<i class="fa-solid fa-lock dc-relink-lock" title="Update-locked. The lock governs update checks; the link can still change."></i>'
+                    : '';
+                let badge;
+                if (r.bucket === 'ready') {
+                    badge = `<span class="dc-relink-badge ready" title="JanitorAI id resolved from ${escapeHtml(r.source)}">${escapeHtml(r.source)}</span>`;
+                } else if (r.bucket === 'already') {
+                    badge = `<span class="dc-relink-badge" title="Already linked to JanitorAI. Running removes the leftover DataCat namespace; its display fields are kept when the JanitorAI side lacks them.">${escapeHtml(DC_BUCKET_LABELS.already)}</span>`;
+                } else if (r.bucket === 'conflict') {
+                    badge = `<span class="dc-relink-badge conflict" title="Linked to ${escapeHtml(String(r.existing))} but resolved ${escapeHtml(String(r.resolved))}. This tool never touches conflicting cards.">${escapeHtml(DC_BUCKET_LABELS.conflict)}</span>`;
+                } else {
+                    badge = `<span class="dc-relink-badge">${escapeHtml(DC_BUCKET_LABELS[r.bucket] || r.bucket)}</span>`;
+                }
+                return `<div class="dc-relink-row" data-avatar="${escapeHtml(r.avatar)}">${cb}<img class="dc-relink-avatar" src="${escapeHtml(getCharacterAvatarStThumbUrl(r.avatar))}" loading="lazy" alt=""><span class="dc-relink-row-name" title="${escapeHtml(r.avatar)}">${escapeHtml(r.name)}</span>${lock}${badge}</div>`;
+            }).join('');
+            updateDcSelCount();
+        }
+
+        function markDcRow(avatar, ok, msg) {
+            if (ok) {
+                const data = dcRelinkRows.find(x => x.avatar === avatar);
+                if (data) data.done = true;
+            }
+            const row = dcListEl.querySelector(`.dc-relink-row[data-avatar="${CSS.escape(avatar)}"]`);
+            if (!row) return;
+            const b = document.createElement('span');
+            b.className = `dc-relink-badge ${ok ? 'ready' : 'fail'}`;
+            b.textContent = msg;
+            row.appendChild(b);
+            const cb = row.querySelector('.dc-relink-cb');
+            if (cb) { cb.checked = false; cb.disabled = true; }
+        }
+
+        function openDcRelinkModal() {
+            if (window.extensionsRecoveryInProgress) {
+                showToast('Character data is still loading, please wait', 'warning');
+                return;
+            }
+            const scan = scanDcRelink();
+            dcRelinkRows = scan.rows;
+            dcRelinkNotChecked = scan.notChecked;
+            renderDcRelink();
+            dcProgressEl.textContent = '';
+            dcRelinkModal.classList.add('visible');
+        }
+
+        function closeDcRelinkModal() {
+            dcRelinkAbort = true;
+            dcRelinkModal.classList.remove('visible');
+        }
+
+        async function runDcRelink() {
+            if (dcRelinkRunning) return;
+            const removeOld = dcRemoveOldCb.checked;
+            const verify = dcVerifyCb.checked;
+            const targets = dcRelinkRows.filter(r => dcRowActionable(r, removeOld));
+            if (targets.length === 0) { showToast('Nothing selected.', 'info'); return; }
+
+            dcRelinkRunning = true;
+            dcRelinkAbort = false;
+            dcRunBtn.disabled = true;
+            let linked = 0, cleaned = 0, skipped = 0, failed = 0, unverified = 0;
+
+            for (let i = 0; i < targets.length; i++) {
+                if (dcRelinkAbort) break;
+                const r = targets[i];
+                dcProgressEl.textContent = `${i + 1}/${targets.length} - ${r.name}`;
+
+                if (activeChar?.avatar === r.avatar && isCharModalDirty()) {
+                    skipped++;
+                    markDcRow(r.avatar, false, 'Skipped: open with unsaved edits');
+                    continue;
+                }
+
+                const updates = {};
+                if (r.bucket === 'ready') {
+                    let pageName = r.pageName;
+                    if (verify) {
+                        let detail;
+                        let verifyThrew = false;
+                        try {
+                            detail = await window.janitoraiFetchCharacter?.(r.resolved);
+                        } catch { verifyThrew = true; }
+                        // hampter rate-limits bursts hard (measured 429s), pace the pass
+                        await new Promise(res => setTimeout(res, 900));
+                        if (dcRelinkAbort) break;
+                        // null = definitive 404 (the fetcher throws on transport/auth); linking a gone target would be wrong
+                        if (!verifyThrew && detail === null) {
+                            skipped++;
+                            markDcRow(r.avatar, false, 'Not found on JanitorAI');
+                            continue;
+                        }
+                        if (detail?.name) pageName = detail.name;
+                        else unverified++;
+                    }
+                    const jaNs = { id: r.resolved, linkedAt: new Date().toISOString() };
+                    if (pageName) jaNs.pageName = pageName;
+                    if (r.tagline) jaNs.tagline = r.tagline;
+                    updates['extensions.janitorai'] = jaNs;
+                }
+                if (r.bucket === 'already' && removeOld) {
+                    // Dual-linked cleanup: keep datacat's display fields when the janitorai namespace lacks them.
+                    const live = allCharacters.find(c => c.avatar === r.avatar);
+                    const jaExisting = live?.data?.extensions?.janitorai || {};
+                    if (!jaExisting.pageName && r.pageName) updates['extensions.janitorai.pageName'] = r.pageName;
+                    if (!jaExisting.tagline && r.tagline) updates['extensions.janitorai.tagline'] = r.tagline;
+                }
+                if (removeOld) updates['extensions.datacat'] = ST_UNSET_SENTINEL;
+                if (Object.keys(updates).length === 0) { skipped++; continue; }
+
+                try {
+                    const ok = await window.applyCardFieldUpdates(r.avatar, updates);
+                    if (ok) {
+                        if (r.bucket === 'ready') { linked++; markDcRow(r.avatar, true, 'Migrated'); }
+                        else { cleaned++; markDcRow(r.avatar, true, 'Cleaned'); }
+                    } else {
+                        failed++;
+                        markDcRow(r.avatar, false, 'Write failed');
+                    }
+                } catch (e) {
+                    failed++;
+                    markDcRow(r.avatar, false, e?.message || 'Write failed');
+                }
+            }
+
+            dcRelinkRunning = false;
+            updateDcSelCount();
+            const bits = [`${linked} migrated`];
+            if (cleaned) bits.push(`${cleaned} cleaned`);
+            if (skipped) bits.push(`${skipped} skipped`);
+            if (failed) bits.push(`${failed} failed`);
+            if (unverified) bits.push(`${unverified} unverified`);
+            dcProgressEl.textContent = (dcRelinkAbort ? 'Stopped. ' : 'Done. ') + bits.join(', ');
+
+            window.ProviderRegistry?.rebuildAllBrowseLookups?.();
+            window.ProviderRegistry?.refreshActiveBrowseBadges?.();
+            performSearch();
+        }
+
+        migrateDatacatLinksBtn.onclick = openDcRelinkModal;
+        dcRunBtn.onclick = runDcRelink;
+        document.getElementById('dcRelinkCloseBtn').onclick = closeDcRelinkModal;
+        document.getElementById('dcRelinkCancelBtn').onclick = () => {
+            if (dcRelinkRunning) { dcRelinkAbort = true; return; }
+            closeDcRelinkModal();
+        };
+        dcListEl.addEventListener('change', (e) => {
+            const cb = e.target?.classList?.contains('dc-relink-cb') ? e.target : null;
+            if (!cb) return;
+            const row = dcRelinkRows.find(x => x.avatar === cb.dataset.avatar);
+            if (row) row.selected = cb.checked;
+            updateDcSelCount();
+        });
+        dcRemoveOldCb.addEventListener('change', renderDcRelink);
+        document.getElementById('dcRelinkSelAllBtn').onclick = () => {
+            for (const r of dcRelinkRows) {
+                if (r.bucket === 'ready' || r.bucket === 'already') r.selected = true;
+            }
+            renderDcRelink();
+        };
+        document.getElementById('dcRelinkSelNoneBtn').onclick = () => {
+            for (const r of dcRelinkRows) {
+                if (r.bucket === 'ready' || r.bucket === 'already') r.selected = false;
+            }
+            renderDcRelink();
+        };
+        window.registerOverlay?.({ id: 'dcRelinkModal', tier: 4, close: () => closeDcRelinkModal(), visible: (el) => el.classList.contains('visible') });
     }
 
     function updateGalleryMigrationStatus() {
@@ -4357,8 +5176,9 @@ function setupSettingsModal() {
         }
 
         const needsId = countCharactersNeedingGalleryId();
+        const unknown = allCharacters.filter(c => !extensionsReady(c)).length;
         const total = allCharacters.length;
-        const hasId = total - needsId;
+        const hasId = total - needsId - unknown;
 
         if (total === 0) {
             galleryMigrationStatus.style.display = 'none';
@@ -4367,10 +5187,12 @@ function setupSettingsModal() {
 
         galleryMigrationStatus.style.display = 'block';
 
-        if (needsId === 0) {
+        if (needsId === 0 && unknown === 0) {
             galleryMigrationStatusText.innerHTML = `<i class="fa-solid fa-check-circle" style="color: var(--cl-success);"></i> All ${total} characters have gallery IDs.`;
+        } else if (needsId === 0) {
+            galleryMigrationStatusText.innerHTML = `<i class="fa-solid fa-info-circle"></i> ${hasId}/${total} characters have gallery IDs. ${unknown} could not be checked (character data unavailable).`;
         } else {
-            galleryMigrationStatusText.innerHTML = `<i class="fa-solid fa-info-circle"></i> ${hasId}/${total} characters have gallery IDs. ${needsId} need assignment.`;
+            galleryMigrationStatusText.innerHTML = `<i class="fa-solid fa-info-circle"></i> ${hasId}/${total} characters have gallery IDs. ${needsId} need assignment.${unknown > 0 ? ` ${unknown} could not be checked.` : ''}`;
         }
     }
     
@@ -4416,7 +5238,7 @@ function setupSettingsModal() {
 
             let assigned = 0, errors = 0, processed = 0;
             for (const char of allCharacters) {
-                if (getCharacterGalleryId(char)) continue;
+                if (!extensionsReady(char) || getCharacterGalleryId(char)) continue;
                 const result = await assignGalleryIdToCharacter(char);
                 if (result.success) assigned++;
                 else { errors++; console.error(`Failed to assign gallery_id to ${char.name}:`, result.error); }
@@ -4480,6 +5302,11 @@ function setupSettingsModal() {
             const needsId = countCharactersNeedingGalleryId();
             if (needsId > 0) {
                 showToast(`Please assign gallery IDs first (${needsId} characters need IDs).`, 'error');
+                return;
+            }
+            const unknownIds = allCharacters.filter(c => !extensionsReady(c)).length;
+            if (unknownIds > 0) {
+                showToast(`Character data could not be loaded for ${unknownIds} character(s) - reload and try again before relocating.`, 'error');
                 return;
             }
             
@@ -4670,8 +5497,9 @@ function setupSettingsModal() {
         if (!gallerySyncStatus) return;
 
         const missingIds = audit.issues.missingIds;
+        const unknownIds = audit.issues.unknown || 0;
         const statusClass = missingIds === 0 ? 'healthy' : 'issues';
-        const hasId = audit.totalCharacters - missingIds;
+        const hasId = audit.totalCharacters - missingIds - unknownIds;
 
         const buildMissingIdsDetails = () => {
             if (audit.missingGalleryId.length === 0) return '';
@@ -4686,7 +5514,7 @@ function setupSettingsModal() {
             <div class="sync-result">
                 <div class="sync-result-header ${statusClass}">
                     <i class="fa-solid ${missingIds === 0 ? 'fa-circle-check' : 'fa-triangle-exclamation'}"></i>
-                    <span>${missingIds === 0 ? 'All characters have gallery IDs' : `${missingIds} character${missingIds !== 1 ? 's' : ''} missing gallery_id`}</span>
+                    <span>${missingIds === 0 ? (unknownIds > 0 ? 'All checked characters have gallery IDs' : 'All characters have gallery IDs') : `${missingIds} character${missingIds !== 1 ? 's' : ''} missing gallery_id`}</span>
                 </div>
                 ${missingIds > 0 ? `
                 <div class="sync-issues-list">
@@ -4703,6 +5531,7 @@ function setupSettingsModal() {
                 <div class="sync-stats">
                     <span><i class="fa-solid fa-users"></i> ${audit.totalCharacters} chars</span>
                     <span><i class="fa-solid fa-check"></i> ${hasId} with ID</span>
+                    ${unknownIds > 0 ? `<span title="Character data could not be loaded for these; they are not counted as missing"><i class="fa-solid fa-circle-question"></i> ${unknownIds} not checked</span>` : ''}
                 </div>
             </div>
         `;
@@ -4966,15 +5795,16 @@ function switchView(view) {
         }
         show('characterGrid');
 
+        // Re-apply current filters and sort when returning to characters view.
+        // Defer so the grid has reflowed after removing 'hidden' class.
+        requestAnimationFrame(() => performSearch());
+
         // If a lightweight incremental add was used (e.g. from a browse import),
         // do the full API refresh now that the user is back on this view and the
-        // browse view's memory has been released.
+        // browse view's memory has been released. The paint above already shows
+        // the surgically-added import, so the refresh lands silently behind it.
         if (_needsCharacterRefresh) {
             fetchCharacters(true);
-        } else {
-            // Re-apply current filters and sort when returning to characters view.
-            // Defer so the grid has reflowed after removing 'hidden' class.
-            requestAnimationFrame(() => performSearch());
         }
     } else if (view === 'chats') {
         if (chatFilters) chatFilters.style.display = 'flex';
@@ -5018,27 +5848,6 @@ function onViewEnter(view, callback) {
 function onViewExit(view, callback) {
     if (!viewExitCallbacks[view]) viewExitCallbacks[view] = [];
     viewExitCallbacks[view].push(callback);
-}
-
-/**
- * Wrap an async operation with loading state on a button
- * @param {HTMLElement} button - Button element to show loading state
- * @param {string} loadingText - Text to show while loading
- * @param {Function} operation - Async function to execute
- * @returns {Promise<*>} Result of the operation
- */
-async function withLoadingState(button, loadingText, operation) {
-    if (!button) return operation();
-    const originalHtml = button.innerHTML;
-    const wasDisabled = button.disabled;
-    button.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> ${loadingText}`;
-    button.disabled = true;
-    try {
-        return await operation();
-    } finally {
-        button.innerHTML = originalHtml;
-        button.disabled = wasDisabled;
-    }
 }
 
 /**
@@ -5217,7 +6026,8 @@ function updateGalleryIdWarning(char) {
     const assignBtn = document.getElementById('assignGalleryIdBtn');
     if (!warningEl || !assignBtn) return;
 
-    const needsWarning = getSetting('uniqueGalleryFolders') && !getCharacterGalleryId(char);
+    // extensionsReady gate: unreadable extensions mean the id is unknown, not absent; a mint here would clobber the real one.
+    const needsWarning = getSetting('uniqueGalleryFolders') && extensionsReady(char) && !getCharacterGalleryId(char);
 
     if (!needsWarning) {
         warningEl.classList.add('hidden');
@@ -5232,15 +6042,14 @@ function updateGalleryIdWarning(char) {
         assignBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Assigning...';
 
         try {
-            const galleryId = generateGalleryId();
-            const success = await window.applyCardFieldUpdates(char.avatar, {
-                'extensions.gallery_id': galleryId
-            });
+            // Route through the guarded primitive so every existing-card mint shares one gate.
+            const result = await assignGalleryIdToCharacter(char);
 
-            if (success) {
+            if (result.success) {
+                // writeCardFields syncs the allCharacters entry; the modal char may be a detached copy
                 if (!char.data) char.data = {};
                 if (!char.data.extensions) char.data.extensions = {};
-                char.data.extensions.gallery_id = galleryId;
+                char.data.extensions.gallery_id = result.galleryId;
 
                 if (typeof window.auditGalleryIntegrity === 'function' &&
                     typeof window.updateGallerySyncWarning === 'function') {
@@ -5250,7 +6059,7 @@ function updateGalleryIdWarning(char) {
 
                 warningEl.classList.add('hidden');
                 fetchCharacterImages(char);
-                showToast(`Gallery ID assigned: ${galleryId}`, 'success');
+                showToast(`Gallery ID assigned: ${result.galleryId}`, 'success');
             } else {
                 showToast('Failed to assign gallery ID. Check console for details.', 'error');
             }
@@ -5649,10 +6458,6 @@ function addDismissedFolder(name) {
     const set = getDismissedFolders();
     set.add(name);
     localStorage.setItem(DISMISSED_FOLDERS_KEY, JSON.stringify([...set]));
-}
-
-function clearDismissedFolders() {
-    localStorage.removeItem(DISMISSED_FOLDERS_KEY);
 }
 
 /**
@@ -6714,8 +7519,9 @@ function resolveGalleryFolderName(charOrNameOrAvatar) {
     // It's a string - could be avatar or name
     const str = String(charOrNameOrAvatar);
     
-    // Try to find character by avatar
-    const charByAvatar = allCharacters.find(c => c.avatar === str);
+    // Try to find character by avatar (also accepts the extensionless import-response stem)
+    const strPng = `${str}.png`;
+    const charByAvatar = allCharacters.find(c => c.avatar === str || c.avatar === strPng);
     if (charByAvatar) {
         return getGalleryFolderName(charByAvatar);
     }
@@ -6752,7 +7558,12 @@ async function assignGalleryIdToCharacter(char) {
         debugLog(`[GalleryFolder] Character already has gallery_id: ${char.name}`);
         return { success: true, galleryId: getCharacterGalleryId(char) };
     }
-    
+
+    // Extensions unreadable = the id is UNKNOWN; minting one here would clobber the cards real id on disk.
+    if (!extensionsReady(char)) {
+        return { success: false, galleryId: null, error: 'Character data not loaded (cannot verify existing ID)' };
+    }
+
     const galleryId = generateGalleryId();
 
     try {
@@ -6816,7 +7627,8 @@ function buildGalleryViewerMedia(files, folderName) {
  * @returns {number}
  */
 function countCharactersNeedingGalleryId() {
-    return allCharacters.filter(c => !getCharacterGalleryId(c)).length;
+    // Unreadable extensions (interrupted shallow recovery) are unknown, not missing.
+    return allCharacters.filter(c => extensionsReady(c) && !getCharacterGalleryId(c)).length;
 }
 
 // ========================================
@@ -7625,9 +8437,9 @@ function showToast(message, type = 'info', duration = 3000) {
 }
 
 // @canonical cl-confirm-overlay
-// Singleton confirmation dialog. Returns a Promise<boolean> resolving to
-// true when confirmed, false when cancelled (Keep button, backdrop click,
-// Escape, or back button via overlay registry).
+// Singleton confirmation dialog. Resolves true (confirm), false (cancel button,
+// backdrop, Escape, or Android back via the overlay registry), or the string
+// 'extra' when the optional third button (extraLabel) is shown and chosen.
 function showConfirm({
     title = 'Confirm',
     message = '',
@@ -7636,6 +8448,7 @@ function showConfirm({
     iconColor = '',
     confirmLabel = 'Confirm',
     cancelLabel = 'Cancel',
+    extraLabel = '',
     danger = false,
 } = {}) {
     let overlay = document.getElementById('clConfirmOverlay');
@@ -7654,6 +8467,7 @@ function showConfirm({
                 </div>
                 <div class="confirm-modal-footer">
                     <button type="button" class="action-btn secondary" id="clConfirmCancelBtn"></button>
+                    <button type="button" class="action-btn secondary hidden" id="clConfirmExtraBtn"></button>
                     <button type="button" class="action-btn" id="clConfirmConfirmBtn"></button>
                 </div>
             </div>`;
@@ -7661,9 +8475,11 @@ function showConfirm({
 
         const cancelFn = () => { overlay.classList.add('hidden'); overlay._resolve?.(false); };
         const confirmFn = () => { overlay.classList.add('hidden'); overlay._resolve?.(true); };
+        const extraFn = () => { overlay.classList.add('hidden'); overlay._resolve?.('extra'); };
 
         document.getElementById('clConfirmCancelBtn').addEventListener('click', cancelFn);
         document.getElementById('clConfirmConfirmBtn').addEventListener('click', confirmFn);
+        document.getElementById('clConfirmExtraBtn').addEventListener('click', extraFn);
         overlay.addEventListener('click', e => { if (e.target === overlay) cancelFn(); });
 
         // Register with overlay registry so Escape and Android back resolve as cancel.
@@ -7699,8 +8515,16 @@ function showConfirm({
         confirmBtn.classList.toggle('danger', !!danger);
         confirmBtn.classList.toggle('primary', !danger);
     }
+    const extraBtn = document.getElementById('clConfirmExtraBtn');
+    if (extraBtn) {
+        extraBtn.textContent = extraLabel;
+        extraBtn.classList.toggle('hidden', !extraLabel);
+    }
+    overlay.classList.toggle('cl-confirm-three', !!extraLabel);
 
     return new Promise(resolve => {
+        // a re-entrant open must cancel the pending question, not orphan its awaiter
+        overlay._resolve?.(false);
         overlay._resolve = resolve;
         overlay.classList.remove('hidden');
         cancelBtn?.focus();
@@ -8104,7 +8928,8 @@ async function fetchAndAddCharacter(avatarFileName, options = {}) {
         const char = await response.json();
         if (!char || !char.avatar) return null;
 
-        if (char.data?.extensions) {
+        if (char.data) {
+            char.data.extensions = char.data.extensions || {};
             _extensionsCache.set(char.avatar, char.data.extensions);
         }
 
@@ -8230,11 +9055,12 @@ async function hydrateCharacter(char) {
             }
         }
 
-        // Also recover extensions in case ST lazy loading stripped them
-        if (full.data?.extensions) {
+        // Also recover extensions in case ST lazy loading stripped them.
+        // Verified-absent caches {} so the char counts as recovered, not unknown.
+        if (full.data) {
             if (!char.data) char.data = {};
-            char.data.extensions = full.data.extensions;
-            _extensionsCache.set(char.avatar, full.data.extensions);
+            char.data.extensions = full.data.extensions || {};
+            _extensionsCache.set(char.avatar, char.data.extensions);
         }
 
         if (full.spec) char.spec = full.spec;
@@ -8318,15 +9144,17 @@ async function recoverShallowExtensions(generation) {
                         char._tokenEstimate = tok;
                         _tokenEstimateCache.set(char.avatar, tok);
 
-                        if (!full.data?.extensions) return;
+                        if (!full.data) return;
 
+                        // A verified card with no extensions still counts as recovered: cache {} so
+                        // it isnt treated as unknown forever (and re-fetched every run).
                         if (!char.data) char.data = {};
-                        char.data.extensions = full.data.extensions;
+                        char.data.extensions = full.data.extensions || {};
                         if (full.spec) char.spec = full.spec;
                         if (full.spec_version) char.spec_version = full.spec_version;
                         char._lowerListingName = (getListingNameFromExtensions(char) || '').toLowerCase();
                         char._lowerTagline = getDisplayTagline(char).toLowerCase();
-                        _extensionsCache.set(char.avatar, full.data.extensions);
+                        _extensionsCache.set(char.avatar, char.data.extensions);
                         recovered++;
                     } catch { /* skip */ }
                 })
@@ -9608,12 +10436,13 @@ async function fetchCharacterImages(charOrName) {
             const files = await response.json();
             renderGalleryImages(files, folderName);
         } else {
-             console.warn(`[Gallery] Failed to list images: ${response.status}`);
-             renderSimpleEmpty(grid, 'No user images found for this character.');
+            // A missing folder is a 200 [] (ST mkdirs it), so non-ok is a real failure, not an empty gallery.
+            console.warn(`[Gallery] Failed to list images: ${response.status}`);
+            grid.innerHTML = modalLoadErrorHtml('Failed to load gallery. Check your connection to SillyTavern.');
         }
     } catch (e) {
         console.error("Error fetching images:", e);
-        renderSimpleEmpty(grid, 'Error loading media.');
+        grid.innerHTML = modalLoadErrorHtml('Failed to load gallery. Check your connection to SillyTavern.');
     }
 }
 
@@ -10863,14 +11692,26 @@ async function openModal(char, { navList } = {}) {
             infoTabBtn.classList.add('hidden');
         }
         
-        infoTabBtn.onclick = () => {
+        infoTabBtn.onclick = async () => {
             // Switch tabs
             deactivateAllTabs();
             infoTabBtn.classList.add('active');
             document.getElementById('pane-info').classList.add('active');
-            
-            // Populate info content
-            populateInfoTab(char);
+
+            // Info reads heavy fields (lorebook, greetings, media urls); a slim card would report zeros as fact.
+            let c = activeChar;
+            if (!c) return;
+            setPaneLoadingState('pane-info', 'hidden');
+            if (c._slim) {
+                const avatar = c.avatar;
+                setPaneLoadingState('pane-info', 'loading');
+                await hydrateCharacter(c);
+                c = activeChar; // re-resolve: a concurrent refresh may have swapped activeChar
+                if (!c || c.avatar !== avatar) { setPaneLoadingState('pane-info', 'hidden'); return; } // modal swapped mid-fetch
+                if (c._slim) { setPaneLoadingState('pane-info', 'error'); return; } // hydrate failed; leave covered
+                setPaneLoadingState('pane-info', 'hidden');
+            }
+            populateInfoTab(c);
         };
     }
 
@@ -10912,6 +11753,14 @@ async function openModal(char, { navList } = {}) {
             renderProviderTaglineRow(char);
             populateLinkedLorebookBox(char);
         }
+
+        // Hydrate failed: an honest error beats painting undefined as an empty card.
+        if (char._slim) {
+            const err = modalLoadErrorHtml('Failed to load character details. Check your connection to SillyTavern and reopen.');
+            document.getElementById('modalDescription').innerHTML = err;
+            document.getElementById('modalFirstMes').innerHTML = err;
+            return;
+        }
     }
 
     paintModalHeavyContent(char, creatorNotes, gen);
@@ -10920,26 +11769,36 @@ async function openModal(char, { navList } = {}) {
     if (gen === _modalOpenGen) prefetchModalNeighbors(char);
 }
 
-/** Edit-tab cover ('loading'|'error'|'hidden'): while shown the form is hidden so a slim card cant be saved empty. */
-function setEditPaneLoadingState(state) {
-    const pane = document.getElementById('pane-edit');
+/** Tab-pane cover ('loading'|'error'|'hidden'): while shown the pane content is hidden behind the loader. */
+function setPaneLoadingState(paneId, state, errorMsg) {
+    const pane = document.getElementById(paneId);
     if (!pane) return;
     if (state === 'hidden') {
-        pane.classList.remove('edit-pane-loading');
-        const existing = pane.querySelector('.edit-pane-loader');
+        pane.classList.remove('pane-loading');
+        const existing = pane.querySelector('.pane-loader');
         if (existing) existing.remove();
         return;
     }
-    let loader = pane.querySelector('.edit-pane-loader');
+    let loader = pane.querySelector('.pane-loader');
     if (!loader) {
         loader = document.createElement('div');
-        loader.className = 'edit-pane-loader';
+        loader.className = 'pane-loader';
         pane.appendChild(loader);
     }
-    pane.classList.add('edit-pane-loading');
+    pane.classList.add('pane-loading');
     loader.innerHTML = state === 'error'
-        ? '<i class="fa-solid fa-triangle-exclamation"></i><span>Couldn\'t load this card. Check your connection, then reopen the Edit tab.</span>'
+        ? `<i class="fa-solid fa-triangle-exclamation"></i><span>${errorMsg || 'Failed to load character details. Check your connection to SillyTavern.'}</span>`
         : '<i class="fa-solid fa-spinner fa-spin"></i><span>Loading card data...</span>';
+}
+
+/** Edit-tab cover: while shown the form is hidden so a slim card cant be saved empty. */
+function setEditPaneLoadingState(state) {
+    setPaneLoadingState('pane-edit', state, 'Couldn\'t load this card. Check your connection, then reopen the Edit tab.');
+}
+
+/** Inline load-failure notice for detail-modal content slots (spans the full row in grid containers). */
+function modalLoadErrorHtml(message) {
+    return `<div class="modal-load-error"><i class="fa-solid fa-triangle-exclamation"></i><span>${escapeHtml(message)}</span></div>`;
 }
 
 /** Populate the Edit tab form fields, editors, and original-value baselines. Called once per modal open. */
@@ -11459,19 +12318,9 @@ function copyRawCardData(char) {
         
         const jsonString = JSON.stringify(cardData, null, 2);
         
-        // Try modern clipboard API first, fall back to legacy method
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-            navigator.clipboard.writeText(jsonString).then(() => {
-                showToast('Card data copied to clipboard', 'success');
-            }).catch(err => {
-                console.error('Clipboard API failed:', err);
-                // Fallback to legacy method
-                copyToClipboardFallback(jsonString);
-            });
-        } else {
-            // Use fallback for older browsers or non-secure contexts
-            copyToClipboardFallback(jsonString);
-        }
+        copyTextToClipboard(jsonString).then((success) => {
+            showToast(success ? 'Card data copied to clipboard' : 'Failed to copy to clipboard', success ? 'success' : 'error');
+        });
     } catch (error) {
         console.error('Error preparing card data:', error);
         showToast('Error preparing card data', 'error');
@@ -11479,10 +12328,18 @@ function copyRawCardData(char) {
 }
 
 /**
- * Fallback clipboard copy using textarea element
- * @param {string} text - Text to copy
+ * Copy text to the clipboard: modern API first, textarea fallback for
+ * non-secure contexts. No toasts; callers own the feedback.
+ * @param {string} text
+ * @returns {Promise<boolean>}
  */
-function copyToClipboardFallback(text) {
+async function copyTextToClipboard(text) {
+    try {
+        if (navigator.clipboard?.writeText) {
+            await navigator.clipboard.writeText(text);
+            return true;
+        }
+    } catch { /* fall through to the textarea path */ }
     try {
         const textarea = document.createElement('textarea');
         textarea.value = text;
@@ -11492,18 +12349,12 @@ function copyToClipboardFallback(text) {
         document.body.appendChild(textarea);
         textarea.focus();
         textarea.select();
-        
         const success = document.execCommand('copy');
         document.body.removeChild(textarea);
-        
-        if (success) {
-            showToast('Card data copied to clipboard', 'success');
-        } else {
-            showToast('Failed to copy to clipboard', 'error');
-        }
+        return success;
     } catch (err) {
         console.error('Fallback copy failed:', err);
-        showToast('Failed to copy to clipboard', 'error');
+        return false;
     }
 }
 
@@ -13118,6 +13969,9 @@ function setEditLock(locked) {
         const unlinkLbBtn = document.getElementById('unlinkLorebookBtn');
         if (linkLbBtn) linkLbBtn.disabled = true;
         if (unlinkLbBtn) unlinkLbBtn.disabled = true;
+        const addAuxLbBtn = document.getElementById('addAuxLorebookBtn');
+        if (addAuxLbBtn) addAuxLbBtn.disabled = true;
+        document.getElementById('auxLorebooksEditRow')?.classList.add('locked');
 
         // Hide tag input and show non-editable tags
         if (tagInputWrapper) tagInputWrapper.classList.add('hidden');
@@ -13169,6 +14023,9 @@ function setEditLock(locked) {
         const unlinkLbBtn = document.getElementById('unlinkLorebookBtn');
         if (linkLbBtn) linkLbBtn.disabled = false;
         if (unlinkLbBtn) unlinkLbBtn.disabled = false;
+        const addAuxLbBtn = document.getElementById('addAuxLorebookBtn');
+        if (addAuxLbBtn) addAuxLbBtn.disabled = false;
+        document.getElementById('auxLorebooksEditRow')?.classList.remove('locked');
 
         // Show tag input and make tags editable
         if (tagInputWrapper) tagInputWrapper.classList.remove('hidden');
@@ -13318,35 +14175,6 @@ function getCharacterCreateDate(char) {
         const d = parseDateValue(rawCreateDate);
         if (d) return d.getTime();
     }
-    return 0;
-}
-
-/**
- * Get a stable date value for sorting characters.
- * Uses create_date (stored in PNG metadata) which doesn't change on edits,
- * falling back to date_added (file system ctime) if create_date is unavailable.
- * 
- * Note: date_added comes from file system ctime and changes whenever the file is rewritten.
- * create_date is stored in the PNG metadata and remains stable across edits.
- * 
- * @param {object} char - Character object
- * @returns {number} Timestamp in milliseconds for sorting
- */
-function getCharacterDate(char) {
-    if (!char) return 0;
-    
-    // Prefer create_date (stored in PNG, stable across edits)
-    const rawCreateDate = getCharacterCreateDateValue(char);
-    if (rawCreateDate) {
-        const d = parseDateValue(rawCreateDate);
-        if (d) return d.getTime();
-    }
-    
-    // Fallback to date_added (file system ctime, changes on edit)
-    if (char.date_added) {
-        return Number(char.date_added) || 0;
-    }
-    
     return 0;
 }
 
@@ -13781,9 +14609,26 @@ function initSectionExpandButtons() {
         linkLbBtn.addEventListener('click', (e) => {
             e.preventDefault();
             e.stopPropagation();
-            openLinkLorebookPicker();
+            openLinkLorebookPicker('primary');
         });
     }
+
+    // Additional lorebooks: same picker in aux mode, pill X removes.
+    const addAuxBtn = document.getElementById('addAuxLorebookBtn');
+    if (addAuxBtn) {
+        addAuxBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            openLinkLorebookPicker('aux');
+        });
+    }
+    document.getElementById('auxLorebooksPills')?.addEventListener('click', (e) => {
+        const x = e.target.closest('[data-aux-remove]');
+        if (!x || isEditLocked) return;
+        e.preventDefault();
+        e.stopPropagation();
+        removeAuxLorebookFromCharacter(x.dataset.auxRemove);
+    });
 
     // Link-lorebook picker modal: static modal, listeners attach once (this init runs once at boot).
     const linkLbModal = document.getElementById('linkLorebookModal');
@@ -13793,7 +14638,9 @@ function initSectionExpandButtons() {
         document.getElementById('linkLorebookSearch')?.addEventListener('input', renderLinkLorebookList);
         document.getElementById('linkLorebookList')?.addEventListener('click', (e) => {
             const row = e.target.closest('[data-world]');
-            if (row) linkLorebookToCharacter(row.dataset.world);
+            if (!row) return;
+            if (_linkLorebookMode === 'aux') addAuxLorebookToCharacter(row.dataset.world);
+            else linkLorebookToCharacter(row.dataset.world);
         });
         window.registerOverlay?.({
             id: 'linkLorebookModal',
@@ -13833,14 +14680,27 @@ async function unlinkLorebookFromCharacter() {
 // and friends). If a third world-picker ever lands its worth pulling them into one shared helper,
 // but for two it isnt worth the churn yet.
 let _linkLorebookWorlds = [];
+// 'primary' sets data.extensions.world; 'aux' appends to the charLore extraBooks list.
+let _linkLorebookMode = 'primary';
+let _linkLorebookAuxBooks = [];
 
 /**
- * Open the picker to link or change the character's external lorebook (data.extensions.world).
+ * Open the picker to link or change the character's external lorebook (data.extensions.world),
+ * or to add an additional (charLore) lorebook when mode is 'aux'.
  * Immediate write, not part of the field-edit save flow (same model as unlink).
+ * @param {'primary'|'aux'} mode
  */
-async function openLinkLorebookPicker() {
+async function openLinkLorebookPicker(mode = 'primary') {
     if (!activeChar) return;
+    const gen = _modalOpenGen;
+    _linkLorebookMode = mode === 'aux' ? 'aux' : 'primary';
+    _linkLorebookAuxBooks = _linkLorebookMode === 'aux'
+        ? await window.getCharAdditionalLorebooks(activeChar.avatar)
+        : [];
     _linkLorebookWorlds = await window.listWorldInfoFiles();
+    // Modal swapped or closed during the fetches: do not open a picker whose aux
+    // checkmarks belong to the previous character.
+    if (gen !== _modalOpenGen) return;
     renderLinkLorebookPicker();
     document.getElementById('linkLorebookModal')?.classList.add('visible');
     setTimeout(() => document.getElementById('linkLorebookSearch')?.focus(), 60);
@@ -13854,9 +14714,13 @@ function renderLinkLorebookPicker() {
     const current = activeChar?.data?.extensions?.world || '';
     const sub = document.getElementById('linkLorebookSubhead');
     if (sub) {
-        sub.innerHTML = current
-            ? `Linked to <strong>${escapeHtml(current)}</strong>. Pick another to change it.`
-            : `Pick a lorebook to link to ${escapeHtml(getCharacterName(activeChar) || 'this character')}.`;
+        if (_linkLorebookMode === 'aux') {
+            sub.innerHTML = `Add an <strong>additional</strong> lorebook for ${escapeHtml(getCharacterName(activeChar) || 'this character')}. Already-added books are checked.`;
+        } else {
+            sub.innerHTML = current
+                ? `Linked to <strong>${escapeHtml(current)}</strong>. Pick another to change it.`
+                : `Pick a lorebook to link to ${escapeHtml(getCharacterName(activeChar) || 'this character')}.`;
+        }
     }
     const searchEl = document.getElementById('linkLorebookSearch');
     if (searchEl) searchEl.value = '';
@@ -13875,7 +14739,9 @@ function renderLinkLorebookList() {
         return;
     }
     listEl.innerHTML = worlds.map(w => {
-        const isCurrent = w.file_id === current;
+        const isCurrent = _linkLorebookMode === 'aux'
+            ? _linkLorebookAuxBooks.includes(w.file_id)
+            : w.file_id === current;
         return `
             <button class="lorebook-link-row${isCurrent ? ' current' : ''}" data-world="${escapeHtml(w.file_id)}">
                 <i class="fa-solid fa-book"></i>
@@ -13899,6 +14765,94 @@ async function linkLorebookToCharacter(fileId) {
     populateLorebookEditor(activeChar.data?.character_book || activeChar.character_book);
     populateLinkedLorebookBox(activeChar);
     showToast(`Linked "${fileId}".`, 'success', 5000);
+}
+
+let _auxRowRunId = 0;
+
+/**
+ * Fill the Additional row under the primary link: pills for the character's charLore
+ * extraBooks. Read-only (no Add, no X) when the ST window is unreachable, since that is
+ * the only write path for charLore.
+ */
+async function populateAuxLorebooksRow() {
+    const row = document.getElementById('auxLorebooksEditRow');
+    const pills = document.getElementById('auxLorebooksPills');
+    const addBtn = document.getElementById('addAuxLorebookBtn');
+    if (!row || !pills || !activeChar) return;
+    const canEdit = window.canEditCharLore();
+    row.classList.toggle('locked', isEditLocked);
+    if (addBtn) {
+        addBtn.disabled = isEditLocked;
+        addBtn.classList.toggle('hidden', !canEdit);
+    }
+    row.title = canEdit ? '' : 'Additional lorebooks are read-only here. Open the Library from SillyTavern to edit them.';
+    const gen = _modalOpenGen;
+    const run = ++_auxRowRunId;
+    let books = [];
+    try { books = await window.getCharAdditionalLorebooks(activeChar.avatar); } catch { /* renders as none */ }
+    if (gen !== _modalOpenGen || run !== _auxRowRunId) return;
+    // Without the bridge and without books the row is pure noise (nothing shown, nothing addable).
+    row.classList.toggle('hidden', !canEdit && !books.length);
+    if (!books.length) {
+        pills.innerHTML = `<span class="linked-lorebook-aux-none">None</span>`;
+        return;
+    }
+    pills.innerHTML = books.map(b => `
+        <span class="aux-lorebook-pill" title="${escapeHtml(b)}">
+            <i class="fa-solid fa-book"></i>
+            <span class="aux-lorebook-pill-name">${escapeHtml(b)}</span>
+            ${canEdit ? `<button type="button" class="aux-lorebook-pill-x" data-aux-remove="${escapeHtml(b)}" title="Remove this additional lorebook">&times;</button>` : ''}
+        </span>`).join('');
+}
+
+/**
+ * Append a world to the active character's additional lorebooks (charLore extraBooks).
+ * @param {string} fileId
+ */
+async function addAuxLorebookToCharacter(fileId) {
+    if (!activeChar || !fileId) return;
+    if (!window.canEditCharLore()) {
+        showToast('Open the Library from SillyTavern to edit additional lorebooks', 'warning');
+        return;
+    }
+    // Capture the write target up front; the awaits below must not retarget on a modal swap.
+    const avatar = activeChar.avatar;
+    const books = await window.getCharAdditionalLorebooks(avatar);
+    if (books.includes(fileId)) { closeLinkLorebookPicker(); return; }
+    const ok = await window.setCharAdditionalLorebooks(avatar, [...books, fileId]);
+    if (!ok) { showToast('Failed to add additional lorebook', 'error'); return; }
+    closeLinkLorebookPicker();
+    populateAuxLorebooksRow();
+    populateLinkedLorebookBox(activeChar);
+    showToast(`Added "${fileId}" as an additional lorebook.`, 'success', 5000);
+}
+
+/**
+ * Remove one world from the active character's additional lorebooks.
+ * @param {string} fileId
+ */
+async function removeAuxLorebookFromCharacter(fileId) {
+    if (!activeChar || !fileId) return;
+    if (!window.canEditCharLore()) {
+        showToast('Open the Library from SillyTavern to edit additional lorebooks', 'warning');
+        return;
+    }
+    // Capture the write target up front; the confirm + awaits must not retarget on a modal swap.
+    const avatar = activeChar.avatar;
+    const ok = await showConfirm({
+        title: 'Remove additional lorebook?',
+        message: `Remove "${fileId}" from ${getCharacterName(activeChar) || 'this character'}'s additional lorebooks? The lorebook file is kept.`,
+        confirmLabel: 'Remove',
+        cancelLabel: 'Cancel',
+        danger: true,
+    });
+    if (!ok) return;
+    const books = await window.getCharAdditionalLorebooks(avatar);
+    const success = await window.setCharAdditionalLorebooks(avatar, books.filter(b => b !== fileId));
+    if (!success) { showToast('Failed to remove additional lorebook', 'error'); return; }
+    populateAuxLorebooksRow();
+    populateLinkedLorebookBox(activeChar);
+    showToast(`Removed "${fileId}".`, 'success', 5000);
 }
 
 /**
@@ -14666,7 +15620,8 @@ function openBrowseExpandedView(sectionId, label, iconClass) {
     // Truncated sections (First Message, etc.) stash full content on the element.
     let content;
     if (sectionEl.dataset.fullContent) {
-        const charName = document.getElementById('chubCharName')?.textContent || 'Character';
+        // Shared across all provider preview modals; resolve the name from THIS modal, not chub's.
+        const charName = sectionEl.closest('.browse-char-modal')?.querySelector('.modal-header h2')?.textContent || 'Character';
         content = formatRichText(sectionEl.dataset.fullContent, charName, true);
     } else {
         // Creator's Notes renders through a secure iframe; pull content out if present.
@@ -14954,11 +15909,13 @@ const ADV_FILTER_NO_VALUE_OPS = new Set([
 
 const ADV_FILTER_PROVIDERS = [
     { value: 'chub', label: 'ChubAI' },
-    { value: 'jannyai', label: 'JanitorAI' },
+    { value: 'janitorai', label: 'JanitorAI' },
+    { value: 'jannyai', label: 'JanitorAI (via JannyAI)' },
     { value: 'chartavern', label: 'CharacterTavern' },
     { value: 'pygmalion', label: 'Pygmalion' },
     { value: 'wyvern', label: 'Wyvern' },
     { value: 'datacat', label: 'DataCat' },
+    { value: 'saucepan', label: 'Saucepan' },
     { value: 'botbooru', label: 'Botbooru' },
 ];
 
@@ -15523,7 +16480,8 @@ function performSearch() {
     //   "creator:john linked:yes dark elf"
     // ========================================================================
     
-    const prefixPattern = /(?:^|\s)((?:creator|version|gallery|uid|favorite|fav|linked|chub|janny|charactertavern|ct|pygmalion|wyvern|datacat|dc|botbooru|bb|playlist):(?:[^\s]+))/gi;
+    // favorite before fav: alternation is first-match, so a token that prefixes another must come second.
+    const prefixPattern = /(?:^|\s)((?:creator|version|gallery|uid|favorite|fav|linked|chub|janitorai|jai|janny|charactertavern|ct|pygmalion|wyvern|datacat|dc|saucepan|botbooru|bb|playlist):(?:[^\s]+))/gi;
     
     let creatorFilter = null;
     let versionFilter = null;
@@ -15560,7 +16518,7 @@ function performSearch() {
             favoriteFilter = value;
             filterFavoriteYes = value === 'yes' || value === 'true';
             filterFavoriteNo = value === 'no' || value === 'false';
-        } else if (['linked', 'chub', 'janny', 'charactertavern', 'ct', 'pygmalion', 'wyvern', 'datacat', 'dc', 'botbooru', 'bb'].includes(prefix)) {
+        } else if (['linked', 'chub', 'janitorai', 'jai', 'janny', 'charactertavern', 'ct', 'pygmalion', 'wyvern', 'datacat', 'dc', 'saucepan', 'botbooru', 'bb'].includes(prefix)) {
             linkFilterPrefix = prefix;
             linkFilterWantLinked = value === 'yes' || value === 'true' || value === 'linked';
         } else if (prefix === 'playlist') {
@@ -15633,11 +16591,13 @@ function performSearch() {
                 isLinked = !!window.ProviderRegistry?.getLinkInfo(c);
             } else {
                 const provId = linkFilterPrefix === 'chub' ? 'chub'
+                    : (linkFilterPrefix === 'janitorai' || linkFilterPrefix === 'jai') ? 'janitorai'
                     : linkFilterPrefix === 'janny' ? 'jannyai'
                     : (linkFilterPrefix === 'charactertavern' || linkFilterPrefix === 'ct') ? 'chartavern'
                     : linkFilterPrefix === 'pygmalion' ? 'pygmalion'
                     : linkFilterPrefix === 'wyvern' ? 'wyvern'
                     : (linkFilterPrefix === 'datacat' || linkFilterPrefix === 'dc') ? 'datacat'
+                    : linkFilterPrefix === 'saucepan' ? 'saucepan'
                     : (linkFilterPrefix === 'botbooru' || linkFilterPrefix === 'bb') ? 'botbooru'
                     : null;
                 const prov = provId ? window.ProviderRegistry?.getProvider(provId) : null;
@@ -16557,20 +17517,37 @@ function populateLorebookEditor(characterBook) {
     const linkedRow = document.getElementById('linkedLorebookEditRow');
     if (linkedRow) {
         const nameEl = document.getElementById('linkedLorebookEditName');
+        const metaEl = document.getElementById('linkedLorebookEditMeta');
+        const tileEl = document.getElementById('linkedLorebookTile');
         const linkLabel = document.getElementById('linkLorebookBtnLabel');
         const manageBtn = document.getElementById('openLinkedLorebookBtn');
         const unlinkBtn = document.getElementById('unlinkLorebookBtn');
         if (linkedWorld) {
             if (nameEl) { nameEl.textContent = linkedWorld; nameEl.title = linkedWorld; nameEl.classList.remove('is-unlinked'); }
+            tileEl?.classList.remove('is-unlinked');
+            if (metaEl) {
+                metaEl.textContent = 'Primary lorebook';
+                metaEl.dataset.world = linkedWorld;
+                // Entry count rides the read-view's render cache (warm from modal open);
+                // gen + world checks drop stale resolutions after nav or a link change.
+                const gen = _modalOpenGen;
+                getRenderedWorldCached(linkedWorld).then(r => {
+                    if (gen !== _modalOpenGen || metaEl.dataset.world !== linkedWorld) return;
+                    metaEl.textContent = `Primary lorebook · ${r.count} ${r.count === 1 ? 'entry' : 'entries'}`;
+                }).catch(() => { /* count stays off the meta line */ });
+            }
             if (linkLabel) linkLabel.textContent = 'Change';
             manageBtn?.classList.remove('hidden');
             unlinkBtn?.classList.remove('hidden');
         } else {
             if (nameEl) { nameEl.textContent = 'No lorebook linked'; nameEl.title = ''; nameEl.classList.add('is-unlinked'); }
+            tileEl?.classList.add('is-unlinked');
+            if (metaEl) { metaEl.textContent = 'Link a standalone lorebook file'; delete metaEl.dataset.world; }
             if (linkLabel) linkLabel.textContent = 'Link';
             manageBtn?.classList.add('hidden');
             unlinkBtn?.classList.add('hidden');
         }
+        populateAuxLorebooksRow();
     }
 
     if (!container) return;
@@ -16841,7 +17818,7 @@ function getCharacterBookFromEditor() {
 // Utility Functions
 // ==============================================
 
-const PROVIDER_EXT_KEYS = ['chub', 'jannyai', 'pygmalion', 'wyvern', 'chartavern', 'datacat', 'botbooru'];
+const PROVIDER_EXT_KEYS = ['chub', 'janitorai', 'jannyai', 'pygmalion', 'wyvern', 'chartavern', 'datacat', 'saucepan', 'botbooru'];
 
 function getListingNameFromExtensions(char) {
     const ext = char?.data?.extensions;
@@ -17018,51 +17995,76 @@ window.invalidateLinkedWorldRenderCache = function(worldName) {
     else _linkedWorldRenderCache.clear();
 };
 
+// Fetch + render one world through the shared cache. World files store entries as an
+// object keyed by uid; flatten to an array for the renderer.
+async function getRenderedWorldCached(worldName) {
+    const cached = _linkedWorldRenderCache.get(worldName);
+    if (cached) return cached;
+    let data = null;
+    try { data = await window.getWorldInfoData(worldName); } catch (_) { /* missing or unreadable */ }
+    const entries = data?.entries ? Object.values(data.entries).filter(e => e && typeof e === 'object') : [];
+    const out = { count: entries.length, html: entries.length ? renderLorebookEntriesHtml(entries) : '' };
+    _linkedWorldRenderCache.set(worldName, out);
+    return out;
+}
+
+// Same-gen ordering token: aux add/remove re-populate without a modal navigation, so the
+// gen guard alone lets a slow older run land after a fresher one; last-started wins instead.
+let _linkedBoxRunId = 0;
+
 /**
  * Populate the "Linked Lorebook" box in the detail modal from the card's primary
- * link (data.extensions.world). Mirrors the embedded-lorebook box, shown directly
- * below it. Fetches the standalone world file async so it never blocks modal paint;
- * the gen guard drops the result if the user navigated to another character first.
+ * link (data.extensions.world) plus the character's additional (charLore) books.
+ * Mirrors the embedded-lorebook box, shown directly below it. Fetches world files
+ * async so it never blocks modal paint; the gen guard drops the result if the user
+ * navigated to another character first.
  * @param {Object} char
  */
 async function populateLinkedLorebookBox(char) {
     const box = document.getElementById('modalLinkedLorebookBox');
     if (!box) return;
+    // Reset like every async modal surface: hidden until this char's data lands, so a slow
+    // no-opener settings fetch can't leave the previous character's box painted.
+    box.style.display = 'none';
     const worldName = char?.data?.extensions?.world || '';
-    if (!worldName) { box.style.display = 'none'; return; }
+
+    const gen = _modalOpenGen;
+    const run = ++_linkedBoxRunId;
+    const stale = () => gen !== _modalOpenGen || run !== _linkedBoxRunId;
+    let auxBooks = [];
+    try { auxBooks = await window.getCharAdditionalLorebooks(char?.avatar) || []; } catch (_) { /* shown without aux */ }
+    if (stale()) return;
+    // A book that is both primary and additional renders once, as the primary.
+    auxBooks = auxBooks.filter(b => b && b !== worldName);
+    if (!worldName && !auxBooks.length) { box.style.display = 'none'; return; }
 
     const nameEl = document.getElementById('linkedLorebookName');
     const countEl = document.getElementById('linkedLorebookEntryCount');
     const contentEl = document.getElementById('modalLinkedLorebookContent');
-    if (nameEl) nameEl.textContent = worldName;
+    if (nameEl) nameEl.textContent = worldName || 'Additional only';
 
-    // Cache hit: paint synchronously, no fetch.
-    const cached = _linkedWorldRenderCache.get(worldName);
-    if (cached) {
-        if (cached.count === 0) { box.style.display = 'none'; return; }
-        if (countEl) countEl.innerText = cached.count;
-        if (contentEl) contentEl.innerHTML = cached.html;
-        box.style.display = 'block';
-        return;
+    const primary = worldName ? await getRenderedWorldCached(worldName) : { count: 0, html: '' };
+    if (stale()) return; // navigated away or superseded mid-fetch
+    const auxRendered = [];
+    for (const b of auxBooks) {
+        const r = await getRenderedWorldCached(b);
+        if (stale()) return;
+        auxRendered.push({ name: b, ...r });
     }
 
-    const gen = _modalOpenGen;
-    let data = null;
-    try { data = await window.getWorldInfoData(worldName); } catch (_) { /* missing or unreadable */ }
-    if (gen !== _modalOpenGen) return; // navigated away mid-fetch
+    const total = primary.count + auxRendered.reduce((n, r) => n + r.count, 0);
+    // Nothing renderable anywhere (empty or missing files) hides the box, same as the
+    // old primary-only behavior.
+    if (total === 0) { box.style.display = 'none'; return; }
 
-    // World files store entries as an object keyed by uid; flatten to an array for the renderer.
-    const entries = data?.entries ? Object.values(data.entries).filter(e => e && typeof e === 'object') : [];
-    if (!entries.length) {
-        _linkedWorldRenderCache.set(worldName, { count: 0, html: '' });
-        box.style.display = 'none';
-        return;
-    }
+    const auxHtml = auxRendered.map(r => `
+        <details class="detail-collapsible linked-aux-book">
+            <summary><i class="fa-solid fa-book"></i> ${escapeHtml(r.name)} (${r.count} ${r.count === 1 ? 'entry' : 'entries'}) <span class="linked-aux-tag">Additional</span></summary>
+            <div class="detail-collapsible-body">${r.html}</div>
+        </details>`).join('');
 
-    const html = renderLorebookEntriesHtml(entries);
-    _linkedWorldRenderCache.set(worldName, { count: entries.length, html });
-    if (countEl) countEl.innerText = entries.length;
-    if (contentEl) contentEl.innerHTML = html;
+    if (countEl) countEl.innerText = total;
+    if (contentEl) contentEl.innerHTML = primary.html + auxHtml;
     box.style.display = 'block';
 }
 
@@ -17887,6 +18889,13 @@ async function fetchDirectImportFile(url, signal) {
     return new File([dl.arrayBuffer], nameFromUrl(), { type: 'image/png' });
 }
 
+// ST's import endpoint responds with the extensionless base name, while everything
+// downstream (avatar lookups, /characters/get, folder resolution) keys on the real
+// .png filename; canonicalize at the seam.
+function ensurePngExt(name) {
+    return /\.png$/i.test(String(name)) ? name : `${name}.png`;
+}
+
 async function importLocalCharacter(file) {
     try {
         const arrayBuffer = await file.arrayBuffer();
@@ -17985,7 +18994,7 @@ async function importLocalCharacter(file) {
         
         return {
             success: true,
-            fileName: result.file_name || file.name,
+            fileName: ensurePngExt(result.file_name || file.name),
             characterName: characterName,
             embeddedMediaUrls: importEmbeddedUrls,
             lorebookMediaUrls: importLorebookUrls,
@@ -18380,7 +19389,7 @@ startImportBtn?.addEventListener('click', async () => {
         let skippedDirectCandidates = 0;
 
         for (const line of lines) {
-            const provider = window.ProviderRegistry?.getProviderForUrl(line);
+            const provider = window.ProviderRegistry?.getProviderForUrl(line, { accept: (p) => !!p.parseUrl?.(line) });
             if (provider) {
                 const identifier = provider.parseUrl(line);
                 if (identifier) {
@@ -18647,12 +19656,15 @@ startImportBtn?.addEventListener('click', async () => {
             
             // Determine folder name for media downloads
             let folderName;
-            if (result.galleryId) {
+            if (result.galleryId && getSetting('uniqueGalleryFolders')) {
                 const safeName = result.characterName.replace(/[<>:"/\\|?*]/g, '_').trim();
                 folderName = `${safeName}_${result.galleryId}`;
                 debugLog('[Import] Using unique gallery folder:', folderName);
             } else {
-                folderName = resolveGalleryFolderName(result.fileName || result.characterName);
+                // Name-first: media downloads run before the batch's characters enter
+                // allCharacters, and a deduped filename stem (sam3) can never recover the
+                // name; the name IS the off-mode folder in every window.
+                folderName = resolveGalleryFolderName(result.characterName || result.fileName);
                 debugLog('[Import] Using name-based folder:', folderName);
             }
             
@@ -18839,6 +19851,8 @@ startImportBtn?.addEventListener('click', async () => {
                 // Incremental adds dont touch the browse In-Library lookup; invalidate the
                 // shared base so the next Online-tab open reflects the new characters.
                 window.ProviderRegistry?.invalidateBrowseLookupBase?.();
+                // Surgical adds bypass processAndRender, so nothing else repaints the grid.
+                if ((getCurrentView() || 'characters') === 'characters') performSearch();
             }
 
             // Also refresh the main SillyTavern window's character list (fire-and-forget)
@@ -18877,11 +19891,14 @@ let importSummaryDownloadState = {
 function getImportSummaryFolderName(charInfo) {
     // resolveGalleryFolderName is unsafe here — allCharacters may not be refreshed yet
     // with this import's gallery_id, so build the name directly matching buildUniqueGalleryFolderName.
-    if (charInfo?.galleryId) {
+    if (charInfo?.galleryId && getSetting('uniqueGalleryFolders')) {
         const safeName = (charInfo.name || 'Unknown').replace(/[<>:"/\\|?*]/g, '_').trim();
         return `${safeName}_${charInfo.galleryId}`;
     }
-    return resolveGalleryFolderName(charInfo?.avatar || charInfo?.name);
+    // Name-first for the same reason as the import loop: the summary can be acted on
+    // before the imported char lands in allCharacters, and the name is the off-mode
+    // folder in every window.
+    return resolveGalleryFolderName(charInfo?.name || charInfo?.avatar);
 }
 
 function resetImportSummaryDownloads() {
@@ -19343,6 +20360,9 @@ async function toggleCharNamePreference(char) {
 // Tracks which provider the link modal is currently showing
 let linkModalActiveProvider = null;
 
+// Session-sticky source filter for the link-modal name search ('all' or a provider id)
+let linkSearchSourceFilter = 'all';
+
 /**
  * Open the provider link modal (works for any provider, not just ChubAI)
  * @param {Object} [char] - Character to link (sets activeChar if provided)
@@ -19451,13 +20471,29 @@ function openProviderLinkModal(char) {
         const nameInput = document.getElementById('providerLinkSearchName');
         const creatorInput = document.getElementById('providerLinkSearchCreator');
         const urlInput = document.getElementById('providerLinkUrlInput');
-        
+
         const creator = activeChar.creator || activeChar.data?.creator || '';
-        
+
         if (nameInput) nameInput.value = charName;
         if (creatorInput) creatorInput.value = creator;
         if (urlInput) urlInput.value = '';
         if (searchResults) searchResults.innerHTML = '';
+
+        // Rebuild the source filter from currently-enabled searchable providers (enablement can change mid-session)
+        const sourceSelect = document.getElementById('providerLinkSourceSelect');
+        if (sourceSelect) {
+            const disabledSet = new Set(getSetting('disabledProviders') || []);
+            const searchable = (window.ProviderRegistry?.getAllProviders() || [])
+                .filter(p => p.supportsBulkLink && !disabledSet.has(p.id));
+            if (linkSearchSourceFilter !== 'all' && !searchable.some(p => p.id === linkSearchSourceFilter)) {
+                linkSearchSourceFilter = 'all';
+            }
+            sourceSelect.innerHTML = '<option value="all">All providers</option>'
+                + searchable.map(p => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)}</option>`).join('');
+            sourceSelect.value = linkSearchSourceFilter;
+            sourceSelect._customSelect?.refresh?.();
+            sourceSelect._customSelect?.relockWidth?.();
+        }
     }
 
     modal.classList.add('visible');
@@ -19480,8 +20516,11 @@ async function searchProvidersForLink(name, creator) {
     
     try {
         const registry = window.ProviderRegistry;
-        const providers = registry ? registry.getAllProviders().filter(p => p.supportsBulkLink) : [];
-        
+        const disabledSet = new Set(getSetting('disabledProviders') || []);
+        const providers = registry ? registry.getAllProviders().filter(p =>
+            p.supportsBulkLink && !disabledSet.has(p.id)
+            && (linkSearchSourceFilter === 'all' || p.id === linkSearchSourceFilter)) : [];
+
         if (providers.length === 0) {
             resultsContainer.innerHTML = '<div class="provider-link-search-empty"><i class="fa-solid fa-exclamation-triangle"></i> No providers available</div>';
             return;
@@ -19517,7 +20556,10 @@ async function searchProvidersForLink(name, creator) {
             const avatarUrl = provider?.getResultAvatarUrl?.(result) || result.avatarUrl || '';
             const rating = result.rating ? result.rating.toFixed(1) : '';
             const starCount = result.starCount || 0;
-            const creator = (result.fullPath || '').split('/')[0];
+            // Providers whose fullPath is a bare id (janitorai, botbooru, wyvern, pygmalion) have
+            // no author segment to split off, so the fallback would print the id as the creator.
+            // Use the explicit field when the provider supplies one.
+            const creator = result.creator || (result.fullPath || '').split('/')[0];
             
             const statsHtml = [
                 rating ? `<span><i class="fa-solid fa-star"></i> ${rating}</span>` : '',
@@ -19609,21 +20651,11 @@ async function linkToProviderUrl(url) {
     const btn = document.getElementById('providerLinkUrlBtn');
     
     const registry = window.ProviderRegistry;
-    const providers = registry ? registry.getAllProviders() : [];
-    
-    // Find which provider can handle this URL
-    let matchedProvider = null;
-    let parsedPath = null;
-    for (const provider of providers) {
-        if (provider.canHandleUrl?.(url)) {
-            parsedPath = provider.parseUrl?.(url);
-            if (parsedPath) {
-                matchedProvider = provider;
-                break;
-            }
-        }
-    }
-    
+
+    // Enabled-first tie-break + parse requirement both live in getProviderForUrl now.
+    const matchedProvider = registry?.getProviderForUrl(url, { accept: (p) => !!p.parseUrl?.(url) }) || null;
+    const parsedPath = matchedProvider?.parseUrl?.(url) || null;
+
     if (!matchedProvider || !parsedPath) {
         showToast('URL not recognized by any provider', 'error');
         return;
@@ -19914,6 +20946,15 @@ document.getElementById('providerLinkUrlInput')?.addEventListener('keydown', (e)
     if (e.key === 'Enter') {
         e.preventDefault();
         document.getElementById('providerLinkUrlBtn')?.click();
+    }
+});
+
+document.getElementById('providerLinkSourceSelect')?.addEventListener('change', (e) => {
+    linkSearchSourceFilter = e.target.value || 'all';
+    // Live-refilter only when results are already showing; a pre-search change just applies later.
+    const name = document.getElementById('providerLinkSearchName')?.value || '';
+    if (name.trim() && document.getElementById('providerLinkSearchResults')?.childElementCount) {
+        searchProvidersForLink(name, document.getElementById('providerLinkSearchCreator')?.value || '');
     }
 });
 
@@ -21033,7 +22074,16 @@ window.openGalleryInfoModal = openGalleryInfoModal;
 
 document.getElementById('galleryInfoBtn')?.addEventListener('click', () => openGalleryInfoModal());
 
-// Deep-link from the DataCat/JanitorAI settings hint into the matching help section
+// Cross-references between help sections. Delegated because the panels are static markup and a
+// bare href="#id" would fight the modal's own scroll container and leave a hash on the URL.
+document.getElementById('galleryInfoModal')?.addEventListener('click', (e) => {
+    const link = e.target.closest('a[data-help-jump]');
+    if (!link) return;
+    e.preventDefault();
+    document.getElementById(link.dataset.helpJump)?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+});
+
+// Deep-link from the DataCat settings hint into the matching help section
 document.getElementById('hampterHelpLink')?.addEventListener('click', (e) => {
     e.preventDefault();
     document.getElementById('gallerySettingsModal')?.classList.remove('visible');
@@ -23165,7 +24215,7 @@ function showBulkSummary(wasAborted = false, skippedCompleted = 0) {
                 <span class="total-value">${totalDownloaded}</span>
                 <span class="total-label">Total Downloaded</span>
             </div>
-            <div class="total-item skipped" title="${(totals.filenameSkipped + totals.galleryFilenameSkipped) > 0 ? `${totalSkipped} total already local \u2014 ${totals.filenameSkipped + totals.galleryFilenameSkipped} matched by filename` : 'Total files already present locally'}">
+            <div class="total-item skipped" title="${(totals.filenameSkipped + totals.galleryFilenameSkipped) > 0 ? `${totalSkipped} total already local, ${totals.filenameSkipped + totals.galleryFilenameSkipped} matched by filename` : 'Total files already present locally'}">
                 <i class="fa-solid fa-check"></i>
                 <span class="total-value">${totalSkipped}</span>
                 <span class="total-label">Already Local</span>
@@ -23798,8 +24848,10 @@ function replaceMediaUrlsInText(text, urlMap) {
  * @param {string} firstMes - Original first message
  * @param {Array} altGreetings - Original alternate greetings
  * @param {string} creatorNotes - Original creator notes
+ * @param {number} [gen] - Modal generation to write under; defaults to the current one. Callers
+ *   that awaited before calling should pass the generation they captured before those awaits.
  */
-async function applyMediaLocalizationToModal(char, desc, firstMes, altGreetings, creatorNotes, gen) {
+async function applyMediaLocalizationToModal(char, desc, firstMes, altGreetings, creatorNotes, gen = _modalOpenGen) {
     const avatar = char?.avatar;
     const charName = char?.name || char?.data?.name || '';
     // Use proper gallery folder name (may include _uuid suffix)
@@ -23810,7 +24862,8 @@ async function applyMediaLocalizationToModal(char, desc, firstMes, altGreetings,
     }
     
     const urlMap = await buildMediaLocalizationMap(folderName, avatar);
-    if (gen !== undefined && gen !== _modalOpenGen) return;
+    // Unconditional: a swap during the fetch means these writes belong to the previous card.
+    if (gen !== _modalOpenGen) return;
     
     if (Object.keys(urlMap).length === 0) {
         return;
@@ -26935,8 +27988,19 @@ function setupCreatorNotesResize(iframe, onSettled) {
             // Initial measurements with delays for CSS parsing
             measureAndApply();
             setTimeout(measureAndApply, 50);
-            // reveal once the early measures have settled a near-final height, while still behind the opacity/bridge curtain
-            setTimeout(() => { measureAndApply(); settle(); }, 150);
+            // Reveal behind the curtain at near-final height; image-heavy notes wait for pending images (capped) so they dont show mid-reflow.
+            const pendingImgs = Array.from(doc.images).filter(img => !img.complete);
+            if (pendingImgs.length === 0) {
+                setTimeout(() => { measureAndApply(); settle(); }, 150);
+            } else {
+                let waiting = pendingImgs.length;
+                const imgDone = () => { if (--waiting === 0) { measureAndApply(); settle(); } };
+                pendingImgs.forEach(img => {
+                    img.addEventListener('load', imgDone, { once: true });
+                    img.addEventListener('error', imgDone, { once: true });
+                });
+                setTimeout(() => { measureAndApply(); settle(); }, 1200);
+            }
             setTimeout(measureAndApply, 400);
 
         } catch (e) {
@@ -26960,8 +28024,8 @@ function setupCreatorNotesResize(iframe, onSettled) {
  */
 function cleanupCreatorNotesContainer(container) {
     if (!container) return;
-    const iframe = container.querySelector('iframe');
-    if (iframe) {
+    // All iframes, not the first: the reveal bridge legitimately holds two during a re-render window.
+    for (const iframe of container.querySelectorAll('iframe')) {
         // Disconnect the ResizeObserver to break circular references
         if (iframe._resizeObserver) {
             try { iframe._resizeObserver.disconnect(); } catch (e) { /* ignore */ }
@@ -26983,9 +28047,16 @@ function renderCreatorNotesSecure(content, charName, container) {
         return;
     }
 
-    // Disconnect old observers but leave DOM in place; the prior render bridges the new iframe's first paint.
-    const oldIframe = container.querySelector('iframe');
-    if (oldIframe) {
+    renderCardHtmlSecure(content, charName, container);
+}
+
+/** Sandboxed-iframe render for any third-party card field; authored CSS applies inside the frame, never to the app. */
+function renderCardHtmlSecure(content, charName, container) {
+    if (!content || !container) return;
+
+    // Disconnect old observers but leave DOM in place; the prior render bridges the new iframe's
+    // first paint. All iframes, not the first: a re-render inside the bridge window finds two.
+    for (const oldIframe of container.querySelectorAll('iframe')) {
         if (oldIframe._resizeObserver) {
             try { oldIframe._resizeObserver.disconnect(); } catch (e) { /* ignore */ }
             oldIframe._resizeObserver = null;
@@ -27000,10 +28071,24 @@ function renderCreatorNotesSecure(content, charName, container) {
 
     const iframeDoc = buildCreatorNotesIframeDoc(hardened);
     const initialHeight = estimateCreatorNotesHeight(hardened);
+
+    // Bridge only for the same character; identity changes and empty containers hold the slot
+    // with estimate-sized skeletons (padded to land where the first text line renders).
+    const renderKey = charName || '';
+    if (container.childElementCount === 0 || container._clnCharKey !== renderKey) {
+        const lineCount = Math.max(3, Math.min(8, Math.round(initialHeight / 45)));
+        let bars = '';
+        for (let i = 0; i < lineCount; i++) bars += `<div class="cl-skeleton-line${i % 3 === 2 ? ' short' : ''}"></div>`;
+        container.innerHTML = `<div class="cl-notes-skeleton" style="padding: var(--space-md) var(--space-2xs) var(--space-sm);">${bars}</div>`;
+    }
+    container._clnCharKey = renderKey;
+
     const iframe = createCreatorNotesIframe(iframeDoc, initialHeight);
 
     const priorChildren = Array.from(container.children);
     const hasBridge = priorChildren.length > 0;
+    // Skeleton bridges fade the content in; real-content bridges swap instantly (cross-fades looked bad on fast prev/next).
+    const fadeIn = !hasBridge || priorChildren.every(el => el.classList?.contains('cl-notes-skeleton'));
 
     // Keep prior notes visible until the new iframe loads, then swap instantly (cross-fading looked bad on fast prev/next).
     // Iframe stays opacity 0 until load so unstyled content never flashes; a render token drops superseded late renders.
@@ -27021,7 +28106,7 @@ function renderCreatorNotesSecure(content, charName, container) {
     // Override the iframe cssText min-height too; measureAndApply re-floors via height post-load.
     iframe.style.minHeight = '0';
     iframe.style.opacity = '0';
-    iframe.style.transition = hasBridge ? '' : 'opacity 0.25s ease-out';
+    iframe.style.transition = fadeIn ? 'opacity 0.25s ease-out' : '';
 
     const myToken = (container._clnRenderToken = (container._clnRenderToken || 0) + 1);
     container.appendChild(iframe);
@@ -27037,17 +28122,21 @@ function renderCreatorNotesSecure(content, charName, container) {
             try { iframe.remove(); } catch (e) { /* ignore */ }
             return;
         }
-        // Instant swap: drop the prior notes + any stale pending frames, settle the new one back in flow.
+        // Join the flow at the bridge height, then morph to the settled height so the sections below slide instead of snapping.
+        const targetHeight = iframe.style.height;
+        const fromHeight = container.offsetHeight;
         priorChildren.forEach(el => { try { el.remove(); } catch (e) { /* ignore */ } });
+        iframe.style.transition = '';
         iframe.style.position = '';
         iframe.style.top = '';
         iframe.style.left = '';
         iframe.style.right = '';
-        iframe.style.opacity = '1';
         container.style.position = prevContainerPosition;
-        // showing at the settled height now, so enable a height transition: late image/font loads after
-        // reveal morph smoothly instead of snapping the box.
-        iframe.style.transition = (hasBridge ? '' : 'opacity 0.25s ease-out, ') + 'height 0.2s ease-out';
+        iframe.style.height = `${fromHeight}px`;
+        void iframe.offsetHeight;
+        iframe.style.transition = (fadeIn ? 'opacity 0.25s ease-out, ' : '') + 'height 0.25s ease-out';
+        iframe.style.opacity = '1';
+        iframe.style.height = targetHeight;
     };
 
     // Reveal once the height has settled (driven by setupCreatorNotesResize) so the settle snaps stay hidden
@@ -27240,7 +28329,7 @@ function initCreatorNotesHandlers() {
             e.preventDefault();
             e.stopPropagation(); // Prevent toggling the details
 
-            const charName = document.getElementById('modalCharName')?.textContent || 'Character';
+            const charName = getCharacterName(activeChar) || 'Character';
 
             if (window.currentCreatorNotesContent) {
                 // Build localization map if enabled for this character
@@ -27498,7 +28587,7 @@ function openAltGreetingsFullscreen(greetings, charName, urlMap) {
  * Call this after modal content is loaded
  */
 function initContentExpandHandlers() {
-    const charName = document.getElementById('modalCharName')?.textContent || 'Character';
+    const charName = getCharacterName(activeChar) || 'Character';
     
     // First Message expand - clickable title
     // Use stored handler references to prevent listener accumulation across modal opens
@@ -28030,6 +29119,7 @@ window.getGalleryThumbUrl = getGalleryThumbUrl;
 window.createThumbLoader = createThumbLoader;
 window.getCharacterGalleryInfo = getCharacterGalleryInfo;
 window.getCharacterGalleryId = getCharacterGalleryId;
+window.extensionsReady = extensionsReady;
 window.getExistingImageFolders = getExistingImageFolders;
 window.deleteCharacter = deleteCharacter;
 window.showDeleteConfirmation = showDeleteConfirmation;
@@ -28061,30 +29151,28 @@ window.onViewExit = onViewExit;
 window.renderLoadingState = renderLoadingState;
 window.renderSkeletonGrid = renderSkeletonGrid;
 window.renderEmptyState = renderEmptyState;
-window.updateMobileFilterIndicator = updateMobileFilterIndicator;
 window.getActiveFilterState = getActiveFilterState;
 window.getCharacterAvatarStThumbUrl = getCharacterAvatarStThumbUrl;
 window.getCharacterAvatarUrl = getCharacterAvatarUrl;
 window.notifySTCharacterEdited = notifySTCharacterEdited;
+window.copyTextToClipboard = copyTextToClipboard;
+window.isStShallowMode = () => window.stShallowMode === true;
 window.getListingNameFromExtensions = getListingNameFromExtensions;
 window.bumpAvatarCacheBust = bumpAvatarCacheBust;
 window.getDisplayTagline = getDisplayTagline;
 window.getCharacterName = getCharacterName;
 window.formatRichText = formatRichText;
+window.renderLorebookEntriesHtml = renderLorebookEntriesHtml;
 window.loadCharInMain = loadCharInMain;
 window.debugLog = debugLog;
 window.performSearch = performSearch;
 window.toggleFavoritesFilter = toggleFavoritesFilter;
 window.toggleCharacterFavorite = toggleCharacterFavorite;
 window.updateCharacterCardFavoriteStatus = updateCharacterCardFavoriteStatus;
-window.toggleAdvFilterPanel = toggleAdvFilterPanel;
-window.closeAdvFilterPanel = closeAdvFilterPanel;
 window.evaluateChatAdvancedFilters = evaluateChatAdvancedFilters;
 window.resetChatFilterCaches = resetChatFilterCaches;
 window.getAdvFilterRulesForChats = getAdvFilterRulesForChats;
 window.refreshPlaylistFilterIfActive = refreshPlaylistFilterIfActive;
-window.populatePlaylistDropdown = populatePlaylistDropdown;
-window.renderSidebarPlaylists = renderSidebarPlaylists;
 window.refreshPlaylistBadges = refreshPlaylistBadges;
 window.showElement = show;
 window.hideElement = hide;
@@ -28110,7 +29198,6 @@ window.setSetting = setSetting;
 window.setSettings = setSettings;
 window.getProviderExcludeTags = getProviderExcludeTags;
 window.setProviderExcludeTags = setProviderExcludeTags;
-window.openThemeCustomizer = openThemeCustomizer;
 window.applyCustomCSS = applyCustomCSS;
 window.CUSTOM_CSS_MAX_BYTES = CUSTOM_CSS_MAX_BYTES;
 
@@ -28128,6 +29215,7 @@ window.calculateHash = calculateHash;
 window.getExistingFileHashes = getExistingFileHashes;
 window.getExistingFileIndex = getExistingFileIndex;
 window.extractSanitizedUrlName = extractSanitizedUrlName;
+window.sanitizeMediaFilename = sanitizeMediaFilename;
 window.buildDedupState = buildDedupState;
 window.downloadCharacterMedia = downloadCharacterMedia;
 window.markMediaLocalizationComplete = markMediaLocalizationComplete;
@@ -28140,6 +29228,7 @@ window.ENDPOINTS = ENDPOINTS;
 
 // Creator Notes - shared between local modal and browse preview
 window.renderCreatorNotesSecure = renderCreatorNotesSecure;
+window.renderCardHtmlSecure = renderCardHtmlSecure;
 window.cleanupCreatorNotesContainer = cleanupCreatorNotesContainer;
 
 // Provider System - hooks set by provider modules at load time
@@ -28291,6 +29380,108 @@ window.renameWorldInfo = async function(oldName, newName) {
     // failure leaves a harmless duplicate rather than data loss.
     await window.deleteWorldInfo(oldName);
     return true;
+};
+
+// ========================================
+// Additional character lorebooks (charLore)
+// ========================================
+
+// ST stores these in client module state + settings.json (keyed by avatar filename minus
+// extension), not on the card. Live reads/writes go through the __clCharLore accessor the
+// ST-side index.js puts on ST's window; without that handle (opener closed, tab opened from
+// a bookmark) reads fall back to the persisted settings copy and writes are refused.
+function getCharLoreBridge() {
+    try {
+        const host = getHostWindow();
+        return host?.__clCharLore || null;
+    } catch { return null; }
+}
+
+window.canEditCharLore = function() {
+    return !!getCharLoreBridge();
+};
+
+// Fallback-path cache only: the settings blob read can lag ST's debounced save anyway,
+// so a short TTL costs nothing; bridge reads stay live so our own writes are never stale.
+let _charLoreSettingsCache = { at: 0, data: null };
+
+window.getAllCharLore = async function() {
+    const bridge = getCharLoreBridge();
+    if (bridge) {
+        try {
+            const list = await bridge.list();
+            if (Array.isArray(list)) return list;
+        } catch { /* fall through to settings read */ }
+    }
+    if (Date.now() - _charLoreSettingsCache.at < 15000 && _charLoreSettingsCache.data) {
+        return _charLoreSettingsCache.data;
+    }
+    const st = await fetchStSettings();
+    // null = NO source succeeded; distinct from [] = readable and genuinely empty.
+    // Batch-transfer keys destructive-vs-omit manifest semantics on this difference,
+    // so a response without a parseable settings blob is also "not readable".
+    if (!st?.settings) return null;
+    const charLore = st.settings.world_info_settings?.world_info?.charLore;
+    const list = Array.isArray(charLore) ? charLore : [];
+    _charLoreSettingsCache = { at: Date.now(), data: list };
+    return list;
+};
+
+// The charLore key for an avatar: filename minus extension, ST's getCharaFilename shape.
+// The index.js bridge keeps its own copy (ST realm, cant import from here).
+window.charLoreKey = function(avatar) {
+    return String(avatar || '').replace(/\.[^/.]+$/, '');
+};
+
+/**
+ * The additional (aux) lorebook names for one character.
+ * @param {string} avatar - avatar filename (extension ok, stripped internally)
+ * @returns {Promise<string[]>}
+ */
+window.getCharAdditionalLorebooks = async function(avatar) {
+    const key = window.charLoreKey(avatar);
+    if (!key) return [];
+    const bridge = getCharLoreBridge();
+    if (bridge) {
+        try {
+            const books = await bridge.getFor(avatar);
+            if (Array.isArray(books)) return books;
+        } catch { /* fall through to the list read */ }
+    }
+    const all = await window.getAllCharLore();
+    const entry = (all || []).find(e => e?.name === key);
+    const books = Array.isArray(entry?.extraBooks) ? entry.extraBooks : [];
+    return [...new Set(books.filter(b => typeof b === 'string' && b))];
+};
+
+/**
+ * Replace a character's additional lorebook list. Requires the ST window (live write).
+ * @param {string} avatar
+ * @param {string[]} books
+ * @returns {Promise<boolean>} Success
+ */
+window.setCharAdditionalLorebooks = async function(avatar, books) {
+    const bridge = getCharLoreBridge();
+    if (!bridge) return false;
+    try {
+        return (await bridge.set(avatar, books)) === true;
+    } catch {
+        return false;
+    }
+};
+
+// Sweeps for the manager's rename/delete flows. Return the touched-entry count, or
+// null when the bridge is unreachable (distinct from 0 = nothing referenced the world).
+window.charLoreRenameWorld = async function(oldName, newName) {
+    const bridge = getCharLoreBridge();
+    if (!bridge) return null;
+    try { return await bridge.renameWorld(oldName, newName); } catch { return null; }
+};
+
+window.charLoreRemoveWorld = async function(name) {
+    const bridge = getCharLoreBridge();
+    if (!bridge) return null;
+    try { return await bridge.removeWorld(name); } catch { return null; }
 };
 
 /**

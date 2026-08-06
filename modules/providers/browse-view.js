@@ -6,8 +6,10 @@ import { CHUB_API_BASE, getChubHeaders, extractNodes } from './chub/chub-api.js'
 import { BOTBOORU_BASE, fetchBotbooruUser } from './botbooru/botbooru-api.js';
 import { fetchCharactersByOwner, getCharacterPageUrl } from './pygmalion/pygmalion-api.js';
 import { WYVERN_API_BASE, WYVERN_SITE_BASE, getWyvernHeaders } from './wyvern/wyvern-api.js';
-import { fetchDatacatCreatorCharacters, fetchSaucepanCompanionsOfUser, fetchDatacatCharacter, submitExtraction, fetchExtractionStatus } from './datacat/datacat-api.js';
-import { getSearchToken, JANNY_SEARCH_URL, JANNY_SITE_BASE } from './janny/janny-api.js';
+import { fetchDatacatCreatorCharacters, fetchDatacatCharacter, submitExtraction, fetchExtractionStatus } from './datacat/datacat-api.js';
+import { fetchSaucepanCompanionsOfUser } from './saucepan/saucepan-api.js';
+import { fetchJanitoraiCharacters } from './janitorai/janitorai-api.js';
+import { meiliMultiSearch } from './janny/janny-api.js';
 import { searchCards, isCtSessionActive } from './chartavern/chartavern-api.js';
 
 // ── Shared In-Library lookup base ────────────────────────
@@ -375,7 +377,9 @@ const CD_ADAPTERS = {
             } else {
                 const PAGE = 80;
                 for (let offset = 0; ; offset += PAGE) {
-                    const data = await fetchDatacatCreatorCharacters(ref.creatorId, { limit: PAGE, offset, sortBy: 'chat_count' });
+                    // Tolerant on purpose: a mid-pagination failure keeps the partial list (only
+                    // a first-page failure aborts below); the fetcher itself throws classified now
+                    const data = await fetchDatacatCreatorCharacters(ref.creatorId, { limit: PAGE, offset, sortBy: 'chat_count' }).catch(() => null);
                     if (!data) {
                         if (offset === 0) throw new Error('DataCat creator fetch failed');
                         break;
@@ -421,40 +425,127 @@ const CD_ADAPTERS = {
             return { ok: true, avatarFileName: result.fileName, summaryArgs };
         },
     },
+    saucepan: {
+        // The companions endpoint returns the author's whole catalogue in one shot,
+        // so there is no pagination loop here unlike the DataCat adapter.
+        async fetchAll(view) {
+            const handle = view._cdRef?.handle;
+            if (!handle) return [];
+            const data = await fetchSaucepanCompanionsOfUser(handle);
+            const results = [];
+            const seen = new Set();
+            for (const hit of (data?.characters || [])) {
+                const id = cdCharId(hit);
+                if (id == null || id === '' || seen.has(String(id))) continue;
+                seen.add(String(id));
+                results.push({
+                    key: String(id),
+                    name: hit.name || hit.display_name || '',
+                    creator: hit.creator_name || view._cdRef?.name || handle,
+                    raw: hit,
+                });
+            }
+            return results;
+        },
+        async importOne(view, card) {
+            const provider = CoreAPI.getProvider('saucepan');
+            if (!provider?.importCharacter) return { ok: false, error: 'Provider not available' };
+            const hit = card.raw;
+            const result = await provider.importCharacter(card.key, hit, {});
+            if (!result.success) return { ok: false, error: result.error || 'Import failed' };
+            const summaryArgs = {
+                galleryCharacters: result.hasGallery ? [{
+                    name: result.characterName,
+                    fullPath: result.fullPath,
+                    provider: provider,
+                    linkInfo: { id: result.providerCharId, fullPath: result.fullPath },
+                    url: `https://saucepan.ai/companion/${result.providerCharId}`,
+                    avatar: result.fileName,
+                    galleryId: result.galleryId,
+                }] : [],
+                mediaCharacters: cdHasMedia(result) ? [cdMediaEntry(result)] : [],
+            };
+            return { ok: true, avatarFileName: result.fileName, summaryArgs };
+        },
+    },
+    janitorai: {
+        async fetchAll(view) {
+            const creatorId = view._cdRef?.creatorId;
+            if (!creatorId) return [];
+            const results = [];
+            const seen = new Set();
+            const MAX_PAGES = 200;
+            for (let page = 1; page <= MAX_PAGES; page++) {
+                let data;
+                try {
+                    data = await fetchJanitoraiCharacters({
+                        creatorIds: [creatorId],
+                        page,
+                        sort: 'latest',
+                        mode: CoreAPI.getSetting('janitoraiNsfw') === true ? 'all' : 'sfw',
+                    });
+                } catch (e) {
+                    // Anonymous listing gates after page 1; keep what the open pages yielded
+                    // instead of throwing away the run. A first-page failure is a real error.
+                    if (page > 1) break;
+                    throw e;
+                }
+                const hits = data?.characters || [];
+                let added = 0;
+                for (const hit of hits) {
+                    const id = cdCharId(hit);
+                    if (id == null || id === '' || seen.has(String(id))) continue;
+                    seen.add(String(id));
+                    results.push({
+                        key: String(id),
+                        name: hit.name || '',
+                        creator: hit.creator_name || view._cdRef?.name || '',
+                        raw: hit,
+                    });
+                    added++;
+                }
+                // Stop on a short page or one that added nothing new, so a server that clamps the
+                // page number cannot spin this to MAX_PAGES.
+                if (!added || hits.length < (data?.pageSize || 34)) break;
+            }
+            return results;
+        },
+        async importOne(view, card) {
+            const provider = CoreAPI.getProvider('janitorai');
+            if (!provider?.importCharacter) return { ok: false, error: 'Provider not available' };
+            await new Promise(r => setTimeout(r, 2000));
+            const result = await provider.importCharacter(card.key, card.raw, { requireDefinition: true });
+            if (!result.success) {
+                if (/rate limit/i.test(result.error || '')) {
+                    await new Promise(r => setTimeout(r, 13000));
+                }
+                return { ok: false, error: result.error || 'Import failed' };
+            }
+            return {
+                ok: true,
+                avatarFileName: result.fileName,
+                summaryArgs: {
+                    galleryCharacters: [],
+                    mediaCharacters: cdHasMedia(result) ? [cdMediaEntry(result)] : [],
+                },
+            };
+        },
+    },
     jannyai: {
         async fetchAll(view) {
             const authorName = view._cdRef?.creatorName;
             if (!authorName) return [];
             const wanted = authorName.toLowerCase();
             const nsfw = CoreAPI.getSetting('jannyNsfw') === true;
-            const token = await getSearchToken();
-            const headers = {
-                'Accept': '*/*',
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${token}`,
-                'Origin': JANNY_SITE_BASE,
-                'Referer': `${JANNY_SITE_BASE}/`,
-                'x-meilisearch-client': 'Meilisearch instant-meilisearch (v0.19.0) ; Meilisearch JavaScript (v0.41.0)',
-            };
             const results = [];
             const seen = new Set();
             const MAX_PAGES = 50;
             for (let page = 1; page <= MAX_PAGES; page++) {
-                const body = JSON.stringify({ queries: [{
-                    indexUid: 'janny-characters',
-                    q: authorName,
-                    filter: nsfw ? [] : ['isNsfw = false'],
-                    hitsPerPage: 80,
+                const data = await meiliMultiSearch({
+                    search: authorName,
                     page,
-                }] });
-                let resp;
-                try {
-                    resp = await fetch(JANNY_SEARCH_URL, { method: 'POST', headers, body });
-                } catch (_) {
-                    resp = await fetchWithProxy(JANNY_SEARCH_URL, { method: 'POST', headers, body });
-                }
-                if (!resp.ok) throw new Error(`JannyAI search error ${resp.status}`);
-                const data = await resp.json();
+                    filters: nsfw ? [] : ['isNsfw = false'],
+                });
                 const result = data?.results?.[0];
                 const hits = result?.hits || [];
                 for (const hit of hits) {
@@ -1634,9 +1725,11 @@ export class BrowseView {
         const charCount = creator.characterCount != null ? creator.characterCount : -1;
         const initial = (creator.name || '?').charAt(0).toUpperCase();
         const initialsColor = this._getInitialsColor(creator.name || creator.id || '');
+        const rawId = String(creator.id ?? '');
+        const idAttr = CoreAPI.escapeHtml?.(rawId) ?? rawId;
 
         return `
-            <div class="follow-mgr-card" data-creator-id="${creator.id}"
+            <div class="follow-mgr-card" data-creator-id="${idAttr}"
                  style="animation-delay: ${index * 0.04}s">
                 <div class="follow-mgr-card-avatar">
                     ${avatarUrl

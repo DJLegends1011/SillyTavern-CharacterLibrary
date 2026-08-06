@@ -8,7 +8,7 @@
 // (the first direct attempt rejects, the origin is cached, ST's /proxy/
 // carries everything after; Authorization survives the proxy).
 
-import { fetchWithProxy as _rawFetchWithProxy, CL_HELPER_PLUGIN_BASE } from '../provider-utils.js';
+import { fetchWithProxy as _rawFetchWithProxy, CL_HELPER_PLUGIN_BASE, readJsonClassified } from '../provider-utils.js';
 
 // ========================================
 // CONSTANTS
@@ -135,7 +135,7 @@ export function getBotbooruDownloadUrl(id, kind = 'png') {
  * results additionally require a token whose account has show_nsfw on.
  * @param {{ sort?: string, q?: string, sfwOnly?: boolean, minTokens?: number,
  *           timeWindow?: string, curatedSort?: string, limit?: number, offset?: number }} params
- * @returns {Promise<{total: number, posts: Array}|null>}
+ * @returns {Promise<{total: number, posts: Array}>} failures throw classified errors
  */
 export async function fetchBotbooruPosts(params = {}) {
     const qs = new URLSearchParams();
@@ -152,13 +152,8 @@ export async function fetchBotbooruPosts(params = {}) {
     if (params.uploadedBefore) qs.set('uploaded_before', params.uploadedBefore);
     qs.set('limit', String(params.limit ?? 40));
     qs.set('offset', String(params.offset ?? 0));
-    try {
-        const resp = await fetchWithProxy(`${BOTBOORU_BASE}/posts/?${qs}`, { headers: getBotbooruHeaders(true) });
-        return await resp.json();
-    } catch (e) {
-        debugLog('[Botbooru] posts fetch failed:', e.message);
-        return null;
-    }
+    const resp = await fetchWithProxy(`${BOTBOORU_BASE}/posts/?${qs}`, { headers: getBotbooruHeaders(true) });
+    return readJsonClassified(resp);
 }
 
 // ========================================

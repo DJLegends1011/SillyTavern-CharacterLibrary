@@ -465,7 +465,7 @@ const PRESET_ICONS = [
     'fa-solid fa-person-running', 'fa-solid fa-person-dress', 'fa-solid fa-people-group',
     'fa-solid fa-children', 'fa-solid fa-baby', 'fa-solid fa-user-ninja', 'fa-solid fa-user-astronaut',
     'fa-solid fa-spider', 'fa-solid fa-crow', 'fa-solid fa-fish', 'fa-solid fa-otter',
-    'fa-solid fa-hippo', 'fa-solid fa-frog', 'fa-solid fa-horse', 'fa-solid fa-paw-claws',
+    'fa-solid fa-hippo', 'fa-solid fa-frog', 'fa-solid fa-horse', 'fa-solid fa-paw',
     'fa-solid fa-camera', 'fa-solid fa-pen-nib', 'fa-solid fa-paintbrush', 'fa-solid fa-scissors',
     'fa-solid fa-guitar', 'fa-solid fa-headphones', 'fa-solid fa-microphone',
     'fa-solid fa-tv', 'fa-solid fa-film', 'fa-solid fa-clapperboard',

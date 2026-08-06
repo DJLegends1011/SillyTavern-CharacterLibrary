@@ -20,7 +20,7 @@ export const PYGMALION_ASSETS_BASE = 'https://assets.pygmalion.chat';
 // NETWORK
 // ========================================
 
-import { fetchWithProxy } from '../provider-utils.js';
+import { fetchWithProxy, readJsonClassified } from '../provider-utils.js';
 export { fetchWithProxy };
 export { slugify, stripHtml, formatNumber } from '../provider-utils.js';
 
@@ -87,21 +87,14 @@ export async function searchCharacters(opts = {}) {
             },
             body: JSON.stringify(message)
         });
-        if (!resp.ok) {
-            // authFailed tag drives re-auth flow in callers; tag only on real auth statuses so transient 5xx / network blips dont masquerade as expired-token.
-            const err = new Error(`Search failed (${resp.status})`);
-            if (resp.status === 401 || resp.status === 403) err.authFailed = true;
-            throw err;
-        }
-        return resp.json();
+        return readJsonClassified(resp);
     }
 
     const url = buildGetUrl('CharacterSearch', message);
     const resp = await fetchWithProxy(url, {
         headers: { 'Accept': 'application/json' }
     });
-    if (!resp.ok) throw new Error(`Search failed (${resp.status})`);
-    return resp.json();
+    return readJsonClassified(resp);
 }
 
 /**
@@ -125,16 +118,14 @@ export async function fetchCharacterDetail(characterMetaId, characterVersionId, 
             },
             body: JSON.stringify(message)
         });
-        if (!resp.ok) throw new Error(`Character fetch failed (${resp.status})`);
-        return resp.json();
+        return readJsonClassified(resp);
     }
 
     const url = buildGetUrl('Character', message);
     const resp = await fetchWithProxy(url, {
         headers: { 'Accept': 'application/json' }
     });
-    if (!resp.ok) throw new Error(`Character fetch failed (${resp.status})`);
-    return resp.json();
+    return readJsonClassified(resp);
 }
 
 /**
@@ -158,16 +149,14 @@ export async function fetchCharactersByOwner(userId, orderBy = 'approved_at', pa
             },
             body: JSON.stringify(message)
         });
-        if (!resp.ok) throw new Error(`Owner characters fetch failed (${resp.status})`);
-        return resp.json();
+        return readJsonClassified(resp);
     }
 
     const url = buildGetUrl('CharactersByOwnerID', message);
     const resp = await fetchWithProxy(url, {
         headers: { 'Accept': 'application/json' }
     });
-    if (!resp.ok) throw new Error(`Owner characters fetch failed (${resp.status})`);
-    return resp.json();
+    return readJsonClassified(resp);
 }
 
 /**
@@ -263,12 +252,7 @@ export async function getFollowedUsers(token, opts = {}) {
         },
         body: JSON.stringify(message)
     });
-    if (!resp.ok) {
-        const err = new Error(`GetFollowedUsers failed (${resp.status})`);
-        if (resp.status === 401 || resp.status === 403) err.authFailed = true;
-        throw err;
-    }
-    return resp.json();
+    return readJsonClassified(resp);
 }
 
 /**
@@ -287,12 +271,7 @@ export async function toggleFollowUser(token, userId) {
         },
         body: JSON.stringify({ userId })
     });
-    if (!resp.ok) {
-        const err = new Error(`ToggleFollowUser failed (${resp.status})`);
-        if (resp.status === 401 || resp.status === 403) err.authFailed = true;
-        throw err;
-    }
-    return resp.json();
+    return readJsonClassified(resp);
 }
 
 // ========================================

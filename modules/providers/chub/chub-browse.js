@@ -2,7 +2,7 @@
 
 import { BrowseView } from '../browse-view.js';
 import CoreAPI from '../../core-api.js';
-import { IMG_PLACEHOLDER, formatNumber, BROWSE_PURIFY_CONFIG, skeletonLines, deferRender, deferCall, isMobileMode, finishBrowseImport, proxyEncode } from '../provider-utils.js';
+import { IMG_PLACEHOLDER, formatNumber, BROWSE_PURIFY_CONFIG, skeletonLines, deferRender, deferCall, isMobileMode, finishBrowseImport, proxyEncode, readJsonClassified, renderBrowseError } from '../provider-utils.js';
 import {
     CHUB_API_BASE,
     CHUB_GATEWAY_BASE,
@@ -37,6 +37,7 @@ const {
     getCharacterGalleryId,
     deleteCharacter,
     renderCreatorNotesSecure,
+    renderCardHtmlSecure,
     cleanupCreatorNotesContainer,
     checkCharacterForDuplicatesAsync,
     showPreImportDuplicateWarning,
@@ -111,6 +112,7 @@ let chubTimelineAuthorPage = 1;      // Per-author supplemental page (increments
 let chubTimelineAuthorHasMore = false; // True if any author returned a full page of results
 let chubTimelineSort = 'newest'; // Sort for timeline view (client-side)
 let chubUserFavoriteIds = new Set(); // Cache of user's favorited character IDs
+let chubFavoriteIdsFetchedAt = 0;    // lets per-card reads reuse the Set instead of refetching 500 rows
 let chubTimelineRenderToken = 0; // Cancels in-flight chunked timeline renders
 let chubTimelineLoadInFlight = false;
 let chubCardLookup = new Map();
@@ -2023,19 +2025,12 @@ async function loadChubTimeline(forceRefresh = false, _isAutoPage = false, _appe
             headers
         });
         
-        if (!response.ok) {
-            const errorText = await response.text();
-            console.error('[ChubTimeline] Error response:', response.status, errorText);
-            
-            if (response.status === 401) {
-                renderTimelineEmpty('login');
-                return;
-            }
-            throw new Error(`API error: ${response.status}`);
+        if (response.status === 401) {
+            renderTimelineEmpty('login');
+            return;
         }
-        
-        const data = await response.json();
-        
+        const data = await readJsonClassified(response);
+
         // Extract response data (may be nested under 'data')
         const responseData = data.data || data;
         
@@ -2166,16 +2161,14 @@ async function loadChubTimeline(forceRefresh = false, _isAutoPage = false, _appe
     } catch (e) {
         console.error('[ChubTimeline] Load error:', e);
         if (grid) {
-            grid.innerHTML = `
-                <div class="chub-timeline-empty">
-                    <i class="fa-solid fa-exclamation-triangle"></i>
-                    <h3>Failed to Load Timeline</h3>
-                    <p>${escapeHtml(e.message)}</p>
-                    <button class="action-btn primary browse-retry-btn">
-                        <i class="fa-solid fa-refresh"></i> Retry
-                    </button>
-                </div>
-            `;
+            renderBrowseError(grid, {
+                provider: 'chub',
+                error: e,
+                title: 'Failed to Load Timeline',
+                view: 'timeline',
+                flags: { token: !!chubToken },
+                retry: () => loadChubTimeline(true),
+            });
         }
     } finally {
         if (!_isAutoPage) chubTimelineLoadInFlight = false;
@@ -2380,7 +2373,6 @@ function sortTimelineCharacters(characters) {
 }
 
 function _handleTimelineCardClick(e) {
-    if (e.target.closest('.browse-retry-btn')) { loadChubTimeline(true); return; }
     if (e.target.closest('.browse-add-token-btn')) { openChubTokenModal(); return; }
     const authorLink = e.target.closest('.browse-card-creator-link');
     if (authorLink) {
@@ -2958,14 +2950,8 @@ async function loadChubCharacters(forceRefresh = false) {
             headers
         });
         
-        if (!response.ok) {
-            const errorText = await response.text();
-            console.error('ChubAI response:', errorText);
-            throw new Error(`API error: ${response.status}`);
-        }
-        
-        const data = await response.json();
-        
+        const data = await readJsonClassified(response);
+
         if (thisToken !== chubLoadToken) return;
         if (!chubDelegatesInitialized) return;
         
@@ -3004,8 +2990,7 @@ async function loadChubCharacters(forceRefresh = false) {
         // Targets a full page (24) of visible cards per user action; capped at
         // 3 extra fetches to avoid runaway requests when most results are owned.
         // Cost: up to 3 additional lightweight search API calls (JSON-only, no
-        // image data). The extra card objects in chubCharacters are ~1-2 KB each
-        // and the bidirectional image observer already manages decoded-image memory.
+        // image data); the extra card objects in chubCharacters are ~1-2 KB each.
         const chubHasClientFilters = chubFilterHideOwned || chubFilterHidePossible;
         if (chubHasClientFilters && chubHasMore) {
             const isFiltered = (c) => {
@@ -3061,16 +3046,13 @@ async function loadChubCharacters(forceRefresh = false) {
         if (thisToken !== chubLoadToken) return;
         console.error('ChubAI load error:', e);
         if (chubCurrentPage === 1) {
-            grid.innerHTML = `
-                <div class="browse-error">
-                    <i class="fa-solid fa-exclamation-triangle"></i>
-                    <h3>Failed to load ChubAI</h3>
-                    <p>${escapeHtml(e.message)}</p>
-                    <button class="action-btn primary browse-retry-btn">
-                        <i class="fa-solid fa-refresh"></i> Retry
-                    </button>
-                </div>
-            `;
+            renderBrowseError(grid, {
+                provider: 'chub',
+                error: e,
+                title: 'Failed to load ChubAI',
+                flags: { token: !!chubToken, nsfw: chubNsfwEnabled },
+                retry: () => loadChubCharacters(true),
+            });
         } else {
             showToast('Failed to load more: ' + e.message, 'error');
         }
@@ -3089,12 +3071,16 @@ async function loadChubCharacters(forceRefresh = false) {
  * Fetch and cache user's favorite character IDs
  * Used for filtering in timeline view
  */
-async function fetchChubUserFavoriteIds() {
+async function fetchChubUserFavoriteIds({ maxAgeMs = 0 } = {}) {
     if (!chubToken) {
         chubUserFavoriteIds = new Set();
+        chubFavoriteIdsFetchedAt = 0;
         return;
     }
-    
+    // No-arg callers (the timeline filter paths) keep refetch-always freshness; only opted-in
+    // readers accept an aged Set.
+    if (maxAgeMs > 0 && chubFavoriteIdsFetchedAt && (Date.now() - chubFavoriteIdsFetchedAt) < maxAgeMs) return;
+
     try {
         const url = `${CHUB_GATEWAY_BASE}/api/favorites?first=500`;
         const response = await fetch(url, {
@@ -3105,11 +3091,12 @@ async function fetchChubUserFavoriteIds() {
                 'CH-API-KEY': chubToken
             }
         });
-        
+
         if (response.ok) {
             const data = await response.json();
             const nodes = data.nodes || data.data || [];
             chubUserFavoriteIds = new Set(nodes.map(n => n.id || n.project_id).filter(Boolean));
+            chubFavoriteIdsFetchedAt = Date.now();
             debugLog('[ChubAI] Cached', chubUserFavoriteIds.size, 'favorite IDs');
         }
     } catch (e) {
@@ -3151,11 +3138,7 @@ async function loadChubFavorites(forceRefresh = false, loadToken = 0) {
             }
         });
         
-        if (!response.ok) {
-            throw new Error(`Failed to load favorites: ${response.status}`);
-        }
-        
-        const data = await response.json();
+        const data = await readJsonClassified(response);
         debugLog('[ChubAI] Favorites response:', data);
         
         if (loadToken && loadToken !== chubLoadToken) return;
@@ -3237,16 +3220,14 @@ async function loadChubFavorites(forceRefresh = false, loadToken = 0) {
         if (loadToken && loadToken !== chubLoadToken) return;
         console.error('[ChubAI] Favorites load error:', e);
         if (chubCurrentPage === 1) {
-            grid.innerHTML = `
-                <div class="browse-empty-state">
-                    <i class="fa-solid fa-exclamation-triangle"></i>
-                    <h3>Failed to load favorites</h3>
-                    <p>${escapeHtml(e.message)}</p>
-                    <button class="action-btn primary browse-retry-btn">
-                        <i class="fa-solid fa-refresh"></i> Retry
-                    </button>
-                </div>
-            `;
+            renderBrowseError(grid, {
+                provider: 'chub',
+                error: e,
+                title: 'Failed to load favorites',
+                view: 'favorites',
+                flags: { token: !!chubToken },
+                retry: () => loadChubCharacters(true),
+            });
         } else {
             showToast('Failed to load more: ' + e.message, 'error');
         }
@@ -3314,8 +3295,6 @@ function setupChubGridDelegates() {
     const grid = document.getElementById('chubGrid');
     if (grid) {
         grid.addEventListener('click', (e) => {
-            if (e.target.closest('.browse-retry-btn')) { loadChubCharacters(true); return; }
-
             const authorLink = e.target.closest('.browse-card-creator-link');
             if (authorLink) {
                 e.stopPropagation();
@@ -3746,7 +3725,7 @@ async function openChubCharPreview(char) {
         requestAnimationFrame(() => {
             if (def.personality) {
                 descSection.style.display = 'block';
-                deferRender(descEl, () => safePurify(formatRichText(def.personality, char.name, true), BROWSE_PURIFY_CONFIG));
+                deferCall(descEl, () => renderCardHtmlSecure(def.personality, char.name, descEl));
                 descEl.dataset.fullContent = def.personality;
             } else if (descSection) {
                 descSection.style.display = 'none';
@@ -3975,52 +3954,24 @@ async function updateChubFavoriteButton(char) {
             debugLog('[ChubAI] Cannot check favorite status: no character id');
             return;
         }
-        
-        favoriteBtn.classList.add('loading');
-        
-        // Try to get user's favorites list and check if this char is in it
-        // The gateway endpoint might not support GET for single item, so we check differently
-        const url = `${CHUB_GATEWAY_BASE}/api/favorites?first=500`;
-        debugLog('[ChubAI] Checking favorites list for:', charId);
-        
-        const response = await fetch(url, {
-            method: 'GET',
-            headers: {
-                'Accept': 'application/json',
-                'samwise': chubToken,
-                'CH-API-KEY': chubToken
-            }
-        });
-        
-        favoriteBtn.classList.remove('loading');
-        
-        if (response.ok) {
-            const data = await response.json();
-            debugLog('[ChubAI] Favorites response:', data);
 
-            let isFavorited = false;
-            const nodes = data.nodes || data.data || data || [];
-            if (Array.isArray(nodes)) {
-                isFavorited = nodes.some(fav => {
-                    const favId = fav.id || fav.project_id || fav.node?.id;
-                    return favId === charId || String(favId) === String(charId);
-                });
-            }
-            
-            // Store state on character for persistence
-            char._isFavorited = isFavorited;
-            
-            if (isFavorited) {
-                favoriteBtn.classList.add('favorited');
-                favoriteBtn.querySelector('i').className = 'fa-solid fa-heart';
-                favoriteBtn.title = 'Remove from favorites on ChubAI';
-                debugLog('[ChubAI] Character is in favorites');
-            } else {
-                char._isFavorited = false;
-                debugLog('[ChubAI] Character is NOT in favorites');
-            }
-        } else {
-            debugLog('[ChubAI] Favorites check failed:', response.status);
+        favoriteBtn.classList.add('loading');
+        // Membership rides the session favorites Set; distinct-card opens within the window
+        // cost nothing instead of one 500-row fetch each.
+        await fetchChubUserFavoriteIds({ maxAgeMs: 5 * 60_000 });
+        favoriteBtn.classList.remove('loading');
+
+        const isFavorited = chubUserFavoriteIds.has(charId)
+            || chubUserFavoriteIds.has(String(charId))
+            || chubUserFavoriteIds.has(Number(charId));
+
+        // Store state on character for persistence
+        char._isFavorited = isFavorited;
+
+        if (isFavorited) {
+            favoriteBtn.classList.add('favorited');
+            favoriteBtn.querySelector('i').className = 'fa-solid fa-heart';
+            favoriteBtn.title = 'Remove from favorites on ChubAI';
         }
     } catch (e) {
         favoriteBtn.classList.remove('loading');
@@ -4083,6 +4034,9 @@ async function toggleChubCharFavorite() {
                 favoriteBtn.querySelector('i').className = 'fa-regular fa-heart';
                 favoriteBtn.title = 'Add to favorites on ChubAI';
                 chubSelectedChar._isFavorited = false;
+                // Keep the session Set honest so aged reads (other card objects) agree.
+                chubUserFavoriteIds.delete(charId);
+                chubUserFavoriteIds.delete(Number(charId));
                 const currentCount = parseInt(favoriteCountEl.textContent.replace(/[KM]/g, '')) || 0;
                 if (currentCount > 0) {
                     chubSelectedChar.n_favorites = (chubSelectedChar.n_favorites || 1) - 1;
@@ -4094,6 +4048,7 @@ async function toggleChubCharFavorite() {
                 favoriteBtn.querySelector('i').className = 'fa-solid fa-heart';
                 favoriteBtn.title = 'Remove from favorites on ChubAI';
                 chubSelectedChar._isFavorited = true;
+                chubUserFavoriteIds.add(charId);
                 chubSelectedChar.n_favorites = (chubSelectedChar.n_favorites || 0) + 1;
                 favoriteCountEl.textContent = formatNumber(chubSelectedChar.n_favorites);
                 showToast('Added to ChubAI favorites!', 'success');

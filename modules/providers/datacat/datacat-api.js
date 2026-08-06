@@ -3,9 +3,9 @@
 // Sections: Network, Metadata, Browse/Search, Tags, V2 Card Builder, Extraction, MeiliSearch
 
 import CoreAPI from '../../core-api.js';
-import { CL_HELPER_PLUGIN_BASE, slugify, stripHtml, fetchWithProxy } from '../provider-utils.js';
-import { getSearchToken, JANNY_SEARCH_URL, JANNY_SITE_BASE, TAG_MAP as JANNY_TAG_MAP } from '../janny/janny-api.js';
-import { isJanitorBridgeAvailable, janitorBridgeFetch } from './janitor-bridge.js';
+import { CL_HELPER_PLUGIN_BASE, slugify, stripHtml, readJsonClassified, classifyErrorPage } from '../provider-utils.js';
+import { meiliMultiSearch, TAG_MAP as JANNY_TAG_MAP } from '../janny/janny-api.js';
+import { isJanitorBridgeAvailable, janitorBridgeFetch } from '../janitor-bridge.js';
 
 export { slugify, stripHtml, JANNY_TAG_MAP };
 
@@ -844,20 +844,14 @@ export async function fetchDatacatCreator(creatorId) {
  * @param {number} [opts.limit=24]
  * @param {number} [opts.offset=0]
  * @param {string} [opts.sortBy='chat_count']
- * @returns {Promise<{total: number, list: Object[]}|null>}
+ * @returns {Promise<{total: number, list: Object[]}|null>} null only for a missing id; failures throw classified errors
  */
 export async function fetchDatacatCreatorCharacters(creatorId, opts = {}) {
     if (!creatorId) return null;
     const { limit = 24, offset = 0, sortBy = 'chat_count' } = opts;
-    try {
-        const response = await dcFetch(`/api/creators/${creatorId}/characters?limit=${limit}&offset=${offset}&sortBy=${sortBy}`);
-        if (!response.ok) return null;
-        const data = await response.json();
-        return { total: data.total || 0, list: data.list || [] };
-    } catch (e) {
-        console.error('[DataCat] fetchDatacatCreatorCharacters failed:', creatorId, e);
-        return null;
-    }
+    const response = await dcFetch(`/api/creators/${creatorId}/characters?limit=${limit}&offset=${offset}&sortBy=${sortBy}`);
+    const data = await readJsonClassified(response);
+    return { total: data.total || 0, list: data.list || [] };
 }
 
 /**
@@ -906,23 +900,17 @@ export async function fetchDatacatYoursCharacters(opts = {}) {
  * @param {string} [opts.search] - Full text search (matches character AND creator names)
  * @param {string} [opts.sortBy] - Result order; the endpoint honors only 'score' (verified live)
  * @param {number} [opts.minTotalTokens=MIN_TOTAL_TOKENS]
- * @returns {Promise<{totalCount: number, characters: Object[]}|null>}
+ * @returns {Promise<{totalCount: number, characters: Object[]}>} failures throw classified errors
  */
 export async function fetchRecentPublic(opts = {}) {
     const { limit = 24, offset = 0, tagIds = [], search = '', sortBy = '', minTotalTokens = MIN_TOTAL_TOKENS } = opts;
-    try {
-        let path = `/api/characters/recent-public?limit=${limit}&offset=${offset}&summary=1&minTotalTokens=${minTotalTokens}`;
-        if (tagIds.length > 0) path += `&tagIds=${tagIds.join(',')}`;
-        if (search) path += `&search=${encodeURIComponent(search)}`;
-        if (sortBy) path += `&sortBy=${encodeURIComponent(sortBy)}`;
-        const response = await dcFetch(path);
-        if (!response.ok) return null;
-        const data = await response.json();
-        return { totalCount: data.totalCount || 0, characters: data.characters || [] };
-    } catch (e) {
-        console.error('[DataCat] fetchRecentPublic failed:', e);
-        return null;
-    }
+    let path = `/api/characters/recent-public?limit=${limit}&offset=${offset}&summary=1&minTotalTokens=${minTotalTokens}`;
+    if (tagIds.length > 0) path += `&tagIds=${tagIds.join(',')}`;
+    if (search) path += `&search=${encodeURIComponent(search)}`;
+    if (sortBy) path += `&sortBy=${encodeURIComponent(sortBy)}`;
+    const response = await dcFetch(path);
+    const data = await readJsonClassified(response);
+    return { totalCount: data.totalCount || 0, characters: data.characters || [] };
 }
 
 /**
@@ -932,25 +920,19 @@ export async function fetchRecentPublic(opts = {}) {
  * @param {string} [opts.sortBy='score'] - 'score' | 'fresh' | 'chat_count'
  * @param {number} [opts.limit24=80] - Max characters for last-24h window
  * @param {number} [opts.limitWeek=20] - Max characters for this-week window
- * @returns {Promise<{sortBy: string, last24h: Object[], thisWeek: Object[]}|null>}
+ * @returns {Promise<{sortBy: string, last24h: Object[], thisWeek: Object[]}>} failures throw classified errors
  */
 export async function fetchFreshCharacters(opts = {}) {
     const { sortBy = 'score', limit24 = 80, limitWeek = 20 } = opts;
-    try {
-        const path = `/api/characters/fresh?summary=1&sortBy=${sortBy}&limit24=${limit24}&limitWeek=${limitWeek}`;
-        const response = await dcFetch(path);
-        if (!response.ok) return null;
-        const data = await response.json();
-        const w = data.windows || {};
-        return {
-            sortBy: data.sortBy || sortBy,
-            last24h: w.last24h?.characters || [],
-            thisWeek: w.thisWeek?.characters || [],
-        };
-    } catch (e) {
-        console.error('[DataCat] fetchFreshCharacters failed:', e);
-        return null;
-    }
+    const path = `/api/characters/fresh?summary=1&sortBy=${sortBy}&limit24=${limit24}&limitWeek=${limitWeek}`;
+    const response = await dcFetch(path);
+    const data = await readJsonClassified(response);
+    const w = data.windows || {};
+    return {
+        sortBy: data.sortBy || sortBy,
+        last24h: w.last24h?.characters || [],
+        thisWeek: w.thisWeek?.characters || [],
+    };
 }
 
 /**
@@ -1390,44 +1372,14 @@ export async function searchMeiliJanny(opts = {}) {
         filters.push(tagClauses.join(' AND '));
     }
 
-    const sortArr = MEILI_SORT_MAP[sort] || MEILI_SORT_MAP.janny_newest;
-
-    const body = {
-        queries: [{
-            indexUid: 'janny-characters',
-            q: search,
-            facets: ['isNsfw', 'tagIds'],
-            filter: filters,
-            hitsPerPage: limit,
-            page,
-        }]
-    };
-
-    if (sortArr.length > 0) body.queries[0].sort = sortArr;
-
-    const token = await getSearchToken();
-    const headers = {
-        'Accept': '*/*',
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`,
-        'Origin': JANNY_SITE_BASE,
-        'Referer': `${JANNY_SITE_BASE}/`,
-        'x-meilisearch-client': 'Meilisearch instant-meilisearch (v0.19.0) ; Meilisearch JavaScript (v0.41.0)',
-    };
-
-    let response;
-    try {
-        response = await fetch(JANNY_SEARCH_URL, { method: 'POST', headers, body: JSON.stringify(body) });
-    } catch (_) {
-        response = await fetchWithProxy(JANNY_SEARCH_URL, { method: 'POST', headers, body: JSON.stringify(body) });
-    }
-
-    if (!response.ok) {
-        const text = await response.text().catch(() => '');
-        throw new Error(`MeiliSearch error ${response.status}: ${text.slice(0, 200)}`);
-    }
-
-    const data = await response.json();
+    const data = await meiliMultiSearch({
+        search,
+        page,
+        limit,
+        filters,
+        facets: ['isNsfw', 'tagIds'],
+        sort: MEILI_SORT_MAP[sort] || MEILI_SORT_MAP.janny_newest,
+    });
     const result = data?.results?.[0] || {};
     const hits = result.hits || [];
 
@@ -1454,10 +1406,12 @@ const HAMPTER_API_BASE = 'https://janitorai.com/hampter/characters';
  * @param {string} [opts.search='']
  * @param {boolean} [opts.nsfw=true] - false adds mode=sfw
  * @param {string} [opts.authToken] - JanitorAI bearer; unlocks page 2+ of these sorts (rides either transport)
+ * @param {boolean} [opts.allowClearance=false] - let a Cloudflare block spend a clearance-refresh
+ *   tab. Only browse, which the user just asked for, opts in; anything background leaves it off.
  * @returns {Promise<{characters: Object[], total: number, page: number, pageSize: number}>}
  */
 export async function fetchHampterCharacters(opts = {}) {
-    const { sort = 'trending', page = 1, search = '', nsfw = true, authToken = '' } = opts;
+    const { sort = 'trending', page = 1, search = '', nsfw = true, authToken = '', allowClearance = false } = opts;
     const params = new URLSearchParams({ sort, page: String(page) });
     if (search) params.set('search', search);
     if (!nsfw) params.set('mode', 'sfw');
@@ -1472,7 +1426,7 @@ export async function fetchHampterCharacters(opts = {}) {
     if (isJanitorBridgeAvailable()) {
         let res = null;
         try {
-            res = await janitorBridgeFetch(url, authToken);
+            res = await janitorBridgeFetch(url, authToken, { allowClearance });
         } catch { res = null; }
         if (res) {
             if (res.status === 401) {
@@ -1482,7 +1436,7 @@ export async function fetchHampterCharacters(opts = {}) {
                 throw gated;
             }
             if (!res.ok) {
-                const blocked = new Error(`Hampter HTTP ${res.status}`);
+                const blocked = new Error(classifyErrorPage(res.body, res.status) || `Hampter HTTP ${res.status}`);
                 blocked.code = 'HAMPTER_BLOCKED';
                 blocked.status = res.status;
                 throw blocked;
@@ -1490,7 +1444,7 @@ export async function fetchHampterCharacters(opts = {}) {
             try {
                 data = JSON.parse(res.body);
             } catch {
-                throw new Error('JanitorAI bridge returned non-JSON body');
+                throw new Error(classifyErrorPage(res.body, res.status) || 'JanitorAI bridge returned non-JSON body');
             }
         }
     }
@@ -1575,168 +1529,4 @@ function normalizeMeiliHit(hit) {
         totalTokens: hit.totalToken || 0,
         _source: 'meilisearch',
     };
-}
-
-// ========================================
-// SAUCEPAN (saucepan.ai search API)
-// ========================================
-
-// Saucepan calls go through cl-helper (/saucepan-proxy/*), not ST's /proxy/.
-// Reason: Saucepan responds with zstd-compressed bodies; ST's /proxy/ forwards
-// them without the Content-Encoding header, leaving the browser unable to
-// decode them. cl-helper negotiates gzip/br/deflate (and falls back to native
-// zstd decompress) before returning plain JSON to the client.
-const SAUCEPAN_PROXY_BASE = `${CL_HELPER_PLUGIN_BASE}/saucepan-proxy`;
-const SAUCEPAN_CDN_BASE = 'https://cdn.saucepan.ai/images';
-
-const SAUCEPAN_ORDER_MAP = {
-    saucepan_new: 'created',
-    saucepan_trending: 'trending',
-    saucepan_popular: 'popularity',
-};
-
-async function saucepanFetch(method, apiPath, body) {
-    if (!_apiRequest) throw new Error('Saucepan: apiRequest not bound (cl-helper required)');
-    const url = `${SAUCEPAN_PROXY_BASE}${apiPath}`;
-    return method === 'POST'
-        ? _apiRequest(url, 'POST', body)
-        : _apiRequest(url);
-}
-
-/**
- * Search Saucepan companions via the Saucepan API (proxied through cl-helper).
- * Returns results normalized to DataCat-compatible shape.
- * @param {Object} opts
- * @param {string} [opts.search='']
- * @param {number} [opts.page=1]
- * @param {number} [opts.limit=96]
- * @param {string} [opts.sort='saucepan_new']
- * @param {boolean} [opts.openDefinitionOnly=true]
- * @param {string[]} [opts.tags=[]] - Tag slugs to include (AND match)
- * @param {string[]} [opts.excludedTags=[]] - Tag slugs to exclude
- * @returns {Promise<{characters: Object[], totalCount: number, totalPages: number}>}
- */
-export async function searchSaucepan(opts = {}) {
-    const {
-        search = '',
-        page = 1,
-        limit = 96,
-        sort = 'saucepan_new',
-        openDefinitionOnly = true,
-        tags = [],
-        excludedTags = [],
-    } = opts;
-    const orderBy = SAUCEPAN_ORDER_MAP[sort] || 'created';
-    const offset = Math.max(0, (page - 1) * limit);
-
-    const body = {
-        text_search: search || null,
-        tags: Array.isArray(tags) ? tags : [],
-        excluded_tags: Array.isArray(excludedTags) ? excludedTags : [],
-        fandom_tags: [],
-        excluded_fandom_tags: [],
-        match_all_fandom_tags: false,
-        limit,
-        offset,
-        sus: true,
-        extra_spicy: null,
-        order_by: orderBy,
-        asc: false,
-        posted_at_from: null,
-        posted_at_to: null,
-        match_all_tags: true,
-        hide_hidden_content: false,
-        open_definition_only: openDefinitionOnly,
-    };
-
-    let response;
-    try {
-        response = await saucepanFetch('POST', '/api/v1/search', body);
-    } catch (err) {
-        throw new Error(`Saucepan search failed: ${err.message}`);
-    }
-    if (!response.ok) throw new Error(`Saucepan HTTP ${response.status}`);
-
-    const data = await response.json();
-    const companions = data?.companions || [];
-    const totalCount = data?.total_count || 0;
-    const totalPages = limit > 0 ? Math.ceil(totalCount / limit) : 0;
-
-    return {
-        characters: companions.map(normalizeSaucepanHit),
-        totalCount,
-        totalPages,
-    };
-}
-
-function normalizeSaucepanHit(hit) {
-    const imageId = hit?.image?.id || '';
-    const avatar = imageId ? `${SAUCEPAN_CDN_BASE}/${imageId}/card` : '';
-    const tags = Array.isArray(hit.tags) ? hit.tags : [];
-
-    return {
-        character_id: hit.id,
-        name: hit.display_name || hit.name || 'Unknown',
-        avatar,
-        description: hit.short_description || '',
-        tags,
-        creator_name: hit.author_handle || '',
-        creator_id: hit.author_id || '',
-        createdAt: hit.posted_at || '',
-        isNsfw: !!hit.sus,
-        totalTokens: hit.card_token_count || 0,
-        chat_count: hit.chat_count || 0,
-        message_count: hit.interaction_count || 0,
-        favorite_count: hit.favorite_count || 0,
-        portrait_count: hit.portrait_count || 0,
-        scenario_count: hit.scenario_count || 0,
-        lorebook_count: hit.lorebook_count || 0,
-        locked_starting_message: !!hit.locked_starting_message,
-        primary_content_source_kind: 'saucepan',
-        _source: 'saucepan',
-    };
-}
-
-/**
- * Fetch all companions authored by a Saucepan handle.
- * The endpoint returns the full list in one response (no real pagination
- * support: limit/offset are ignored server-side, total_count == count).
- * @param {string} handle - Saucepan author handle
- * @returns {Promise<{characters: Object[], totalCount: number}>}
- */
-export async function fetchSaucepanCompanionsOfUser(handle) {
-    if (!handle) return { characters: [], totalCount: 0 };
-    let response;
-    try {
-        response = await saucepanFetch('GET', `/api/v1/companions-of-user?handle=${encodeURIComponent(handle)}`);
-    } catch (err) {
-        throw new Error(`Saucepan creator fetch failed: ${err.message}`);
-    }
-    if (!response.ok) throw new Error(`Saucepan HTTP ${response.status}`);
-    const data = await response.json();
-    const companions = data?.companions || [];
-    return {
-        characters: companions.map(normalizeSaucepanHit),
-        totalCount: data?.total_count ?? companions.length,
-    };
-}
-
-/**
- * Fetch a single Saucepan companion's detail by id.
- * Returns the raw `companion` object, or null on failure.
- * The detail endpoint exposes `open_definition` (boolean), which the
- * search/listing endpoint does not include.
- * @param {string} id
- * @returns {Promise<Object|null>}
- */
-export async function fetchSaucepanCompanion(id) {
-    if (!id) return null;
-    try {
-        const response = await saucepanFetch('GET', `/api/v1/companion?id=${encodeURIComponent(id)}`);
-        if (!response.ok) return null;
-        const data = await response.json();
-        return data?.companion || null;
-    } catch {
-        return null;
-    }
 }

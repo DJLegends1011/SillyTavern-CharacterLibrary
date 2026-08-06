@@ -989,10 +989,12 @@ function getProviderSource(char) {
 const PROVIDER_SOURCE_MAP = [
     ['chub', 'ChubAI'],
     ['chartavern', 'CharacterTavern'],
-    ['jannyai', 'JanitorAI'],
+    ['janitorai', 'JanitorAI'],
+    ['jannyai', 'JannyAI'],
     ['pygmalion', 'Pygmalion'],
     ['wyvern', 'Wyvern'],
     ['datacat', 'DataCat'],
+    ['saucepan', 'Saucepan'],
     ['botbooru', 'Botbooru'],
 ];
 
@@ -2183,7 +2185,7 @@ function renderResults(recommendations) {
 
     resultsEl.innerHTML = `
         <div class="recommender-results-header">
-            <i class="fa-solid fa-sparkles"></i>
+            <i class="fa-solid fa-wand-magic-sparkles"></i>
             <span>${cards.length} Recommendation${cards.length !== 1 ? 's' : ''}</span>
             <button class="recommender-playlist-all-btn" title="Add all to playlist"><i class="fa-solid fa-list-ul"></i></button>
             <button id="recommenderRerollBtn" class="recommender-reroll-btn" title="Reroll: same prompt, exclude these picks"><i class="fa-solid fa-dice"></i><span class="recommender-reroll-label">Reroll</span></button>

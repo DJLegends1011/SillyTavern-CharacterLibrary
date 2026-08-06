@@ -454,6 +454,16 @@ async function runBundleExport(selected, includeWorlds) {
     let existingFolders = await CoreAPI.getExistingImageFolders();
     if (!existingFolders || existingFolders.size === 0) existingFolders = null;
 
+    // One charLore snapshot for the whole run. null = unreadable, and then auxWorlds is
+    // OMITTED from every manifest entry: an explicit [] means "restore none" on an
+    // overwrite import, so a failed read must never masquerade as it.
+    let charLoreList = null;
+    try { charLoreList = await CoreAPI.getAllCharLore(); } catch (_) { charLoreList = null; }
+    if (!Array.isArray(charLoreList)) {
+        charLoreList = null;
+        logLine('Additional-lorebook links could not be read; bundle will omit them', 'warn');
+    }
+
     try {
         for (let i = 0; i < selected.length; i++) {
             if (state.abort) break;
@@ -541,6 +551,17 @@ async function runBundleExport(selected, includeWorlds) {
                     charWorlds.add(linkedWorld);
                 }
 
+                // Additional (charLore) books live in ST settings, not on the card, so the refs
+                // travel in the manifest; the files ride the lorebook scope like every other
+                // referenced world. Derived from the run-level snapshot, one read for the run.
+                let auxWorlds = null;
+                if (charLoreList) {
+                    const key = CoreAPI.charLoreKey(char.avatar);
+                    const loreEntry = charLoreList.find(e => e?.name === key);
+                    auxWorlds = [...new Set((loreEntry?.extraBooks || []).filter(b => typeof b === 'string' && b))];
+                    if (includeWorlds) auxWorlds.forEach(b => worldNames.add(b));
+                }
+
                 manifest.characters.push({
                     avatar: char.avatar,
                     name: displayName,
@@ -551,6 +572,10 @@ async function runBundleExport(selected, includeWorlds) {
                     chatFiles,
                     gallery,
                     worlds: [...charWorlds],
+                    // Source primary ref rides the manifest so the import's re-point never
+                    // depends on a post-refresh live read (stale under ST lazy loading).
+                    primaryWorld: (typeof linkedWorld === 'string' && linkedWorld) ? linkedWorld : '',
+                    ...(auxWorlds !== null ? { auxWorlds } : {}),
                 });
                 stats.chars++;
             } catch (charErr) {
@@ -562,12 +587,25 @@ async function runBundleExport(selected, includeWorlds) {
 
         if (includeWorlds && !state.abort && worldNames.size > 0) {
             setProgress(1, 'Collecting lorebooks...');
+            // /worldinfo/get answers a DELETED world with a 200 {entries:{}} dummy, so a dangling
+            // ref would ship as a phantom empty book; filter against the real file list instead.
+            // null Set = fail open (the list is also [] on error, and an empty filter must not
+            // strip every book from the pack).
+            let existingWorlds = null;
+            const worldList = await CoreAPI.listWorldInfoFiles();
+            if (Array.isArray(worldList) && worldList.length > 0) {
+                existingWorlds = new Set(worldList.map(w => String(w.file_id || '').toLowerCase()));
+            }
             // Numbered entry names sidestep world names the zip spec cant hold; the
             // manifest maps them back.
             manifest.worlds = [];
             let worldIndex = 0;
             for (const worldName of worldNames) {
                 if (state.abort) break;
+                if (existingWorlds && !existingWorlds.has(worldName.toLowerCase())) {
+                    logLine(`Lorebook "${worldName}" not found on this instance; skipped`, 'warn');
+                    continue;
+                }
                 try {
                     const data = await CoreAPI.getWorldInfoData(worldName);
                     if (!data) {
@@ -661,6 +699,9 @@ function renderImportReview() {
 
     const existingAvatars = new Set(CoreAPI.getAllCharacters().map(c => c.avatar));
     const worldCount = Array.isArray(manifest.worlds) ? manifest.worlds.length : 0;
+    // A pack exported without the worlds scope still carries aux-link refs; without this
+    // count the checkbox would never render and those refs would be silently unrestorable.
+    const auxRefCount = manifest.characters.reduce((n, e) => n + (Array.isArray(e.auxWorlds) ? e.auxWorlds.length : 0), 0);
 
     const rows = manifest.characters.map((entry, idx) => {
         const exists = existingAvatars.has(entry.avatar);
@@ -685,10 +726,12 @@ function renderImportReview() {
             <label class="btx-policy-row"><input type="radio" name="btxPolicy" value="overwrite"><span><strong>Overwrite</strong> - replace the card in place, add the bundled chats and gallery</span></label>
             <label class="btx-policy-row"><input type="radio" name="btxPolicy" value="copy"><span><strong>Import as copy</strong> - keep both (the copy shares the gallery folder)</span></label>
         </div>
-        ${worldCount ? `
+        ${(worldCount || auxRefCount) ? `
         <label class="btx-worlds-check">
             <input type="checkbox" id="btxImportWorlds" checked>
-            <span>Import ${worldCount} bundled lorebook${worldCount !== 1 ? 's' : ''} (existing names are skipped)</span>
+            <span>${worldCount
+                ? `Import ${worldCount} bundled lorebook${worldCount !== 1 ? 's' : ''} (identical books are reused; a different book with the same name imports as "Name (2)")`
+                : `Restore ${auxRefCount} additional-lorebook link${auxRefCount !== 1 ? 's' : ''} (no book files in this bundle; links only apply to books already on this instance)`}</span>
         </label>` : ''}`;
 
     footer.innerHTML = `
@@ -714,6 +757,63 @@ function renderImportReview() {
 // IMPORT: RUN
 // ========================================
 
+// Identity-aware world restore: same NAME is not same BOOK. Entry content decides at a
+// collision (equal = reuse, different = import as a deduped "Name (N)"); the returned map
+// re-points every ref kind. Existing "(N)" copies are hash-checked first so re-imports
+// reuse their own dedupes instead of stacking new ones.
+async function resolveBundleWorlds(zip, manifest) {
+    const map = new Map(); // manifest name -> final target name (target's actual casing)
+    // Collision checks are case-insensitive, matching the rename guard: /worldinfo/edit
+    // overwrites through case-insensitive filesystems (Windows/macOS), so a case-differing
+    // "fresh" name would clobber a different book. Reused refs take the target's actual
+    // casing (ST's client world_names lookups are case-sensitive). On a Linux host this
+    // can dedupe a genuinely distinct case-differing name; a redundant copy, never a loss.
+    const existingByLower = new Map((await CoreAPI.listWorldInfoFiles() || []).map(w => [w.file_id.toLowerCase(), w.file_id]));
+    const entriesHash = (data) => CoreAPI.crc32(enc.encode(JSON.stringify(data?.entries ?? {})));
+    for (const world of manifest.worlds || []) {
+        if (state.abort) break;
+        if (!world?.name || !world?.file) continue;
+        try {
+            const bytes = await readZipEntry(zip, world.file);
+            const data = bytes ? tryParseJson(dec.decode(bytes)) : null;
+            if (!data) {
+                logLine(`Lorebook "${world.name}" is missing or corrupt in the bundle`, 'warn');
+                continue;
+            }
+            const bundledHash = entriesHash(data);
+            let reused = null;
+            let candidate = world.name;
+            for (let n = 2; existingByLower.has(candidate.toLowerCase()); n++) {
+                const actual = existingByLower.get(candidate.toLowerCase());
+                const target = await CoreAPI.getWorldInfoData(actual);
+                if (target && entriesHash(target) === bundledHash) { reused = actual; break; }
+                candidate = `${world.name} (${n})`;
+            }
+            if (reused) {
+                map.set(world.name, reused);
+                logLine(reused === world.name
+                    ? `Lorebook "${world.name}" already present with identical content; reused`
+                    : `Lorebook "${world.name}" matches existing "${reused}"; reused`, 'info');
+                continue;
+            }
+            const saved = await CoreAPI.saveWorldInfoData(candidate, data);
+            if (saved === false) {
+                logLine(`Lorebook "${world.name}" failed to save`, 'warn');
+                continue;
+            }
+            existingByLower.set(candidate.toLowerCase(), candidate);
+            map.set(world.name, candidate);
+            logLine(candidate === world.name
+                ? `Lorebook "${world.name}" imported`
+                : `Lorebook "${world.name}" differs from the existing book of that name; imported as "${candidate}"`,
+            candidate === world.name ? 'success' : 'warn');
+        } catch (worldErr) {
+            logLine(`Lorebook "${world.name}" failed (${worldErr.message})`, 'warn');
+        }
+    }
+    return { map, existingByLower };
+}
+
 async function runBundleImport() {
     const { zip, manifest } = state;
     if (!zip || !manifest) return;
@@ -735,7 +835,22 @@ async function runBundleImport() {
 
     const existingAvatars = new Set(CoreAPI.getAllCharacters().map(c => c.avatar));
     const results = [];
-    const stats = { imported: 0, skipped: 0, failed: 0, chats: 0, files: 0 };
+    const stats = { imported: 0, skipped: 0, failed: 0, chats: 0, files: 0, aux: 0 };
+
+    // Worlds resolve BEFORE the character loop: chat headers are written during it and
+    // need the final (possibly deduped) book names.
+    let worldNameMap = new Map();
+    let worldsOnTarget = null; // Map<lowercased file_id, actual file_id>
+    if (includeWorlds && Array.isArray(manifest.worlds) && manifest.worlds.length > 0) {
+        setProgress(0, 'Resolving lorebooks...');
+        try {
+            const resolved = await resolveBundleWorlds(zip, manifest);
+            worldNameMap = resolved.map;
+            worldsOnTarget = resolved.existingByLower;
+        } catch (worldErr) {
+            logLine(`Lorebook import failed: ${worldErr.message}`, 'warn');
+        }
+    }
 
     for (let i = 0; i < entries.length; i++) {
         if (state.abort) break;
@@ -791,7 +906,7 @@ async function runBundleImport() {
             // keepGalleryId rides along so the restore pass can put the local gallery_id
             // back AFTER fetchCharacters(true); writing it here would build the payload
             // from the stale pre-overwrite in-memory card.
-            results.push({ entry, newAvatar, keepGalleryId, keepVersionUid });
+            results.push({ entry, newAvatar, keepGalleryId, keepVersionUid, overwrote: collision && policy === 'overwrite' });
             stats.imported++;
             const effectiveGalleryId = keepGalleryId || entry.galleryId || null;
 
@@ -806,6 +921,12 @@ async function runBundleImport() {
                     if (!bytes) continue;
                     const chat = dec.decode(bytes).split('\n').map(tryParseJson).filter(Boolean);
                     if (chat.length === 0) continue;
+                    // Chat-bound lore rides the header line; re-point it when identity
+                    // resolution landed that book under a deduped name.
+                    const bound = chat[0]?.chat_metadata?.world_info;
+                    if (bound && worldNameMap.has(bound) && worldNameMap.get(bound) !== bound) {
+                        chat[0].chat_metadata.world_info = worldNameMap.get(bound);
+                    }
                     const saveResp = await CoreAPI.apiRequest('/chats/save', 'POST', {
                         avatar_url: newAvatar,
                         file_name: chatFile.replace(/\.jsonl$/i, ''),
@@ -865,37 +986,32 @@ async function runBundleImport() {
         }
     }
 
-    if (includeWorlds && !state.abort && Array.isArray(manifest.worlds) && manifest.worlds.length > 0) {
-        setProgress(1, 'Importing lorebooks...');
-        try {
-            const existing = new Set((await CoreAPI.listWorldInfoFiles() || []).map(w => w.file_id));
-            for (const world of manifest.worlds) {
-                if (state.abort) break;
-                if (!world?.name || !world?.file) continue;
-                if (existing.has(world.name)) {
-                    logLine(`Lorebook "${world.name}" already exists; skipped`, 'info');
-                    continue;
-                }
-                const bytes = await readZipEntry(zip, world.file);
-                const data = bytes ? tryParseJson(dec.decode(bytes)) : null;
-                if (!data) {
-                    logLine(`Lorebook "${world.name}" is missing or corrupt in the bundle`, 'warn');
-                    continue;
-                }
-                const saved = await CoreAPI.saveWorldInfoData(world.name, data);
-                logLine(saved !== false ? `Lorebook "${world.name}" imported` : `Lorebook "${world.name}" failed to save`, saved !== false ? 'success' : 'warn');
-            }
-        } catch (worldErr) {
-            logLine(`Lorebook import failed: ${worldErr.message}`, 'warn');
-        }
+    // Cancel skips the restore pass: the close path hides the modal immediately, and an
+    // invisible writer would race any post-cancel edit to a just-imported character.
+    if (state.abort && results.length > 0) {
+        logLine(`Cancelled before metadata restore; ${results.length} imported character${results.length !== 1 ? 's' : ''} keep as-imported names/favorites`, 'warn');
     }
-
-    if (results.length > 0) {
+    if (results.length > 0 && !state.abort) {
         setProgress(1, 'Restoring metadata...');
         // Populate allCharacters with the freshly imported cards so we can grab live
         // refs; guard it so a refresh hiccup cant strand the modal on this step.
         try { await CoreAPI.fetchCharacters(true); } catch (e) { logLine(`Character refresh failed: ${e.message}`, 'warn'); }
+
+        // Additional-lorebook refs need the ST-window bridge (the checkbox gates them
+        // together with the files; old packs without auxWorlds never touch aux state).
+        // The warn also covers the explicit-empty overwrite: clearing IS a write.
+        const canAux = CoreAPI.canEditCharLore();
+        const wantsAux = includeWorlds && results.some(r =>
+            Array.isArray(r.entry.auxWorlds) && (r.entry.auxWorlds.length > 0 || r.overwrote));
+        if (wantsAux && !canAux) {
+            logLine('Additional lorebook links not restored: open the Library from SillyTavern and re-import, or relink them manually', 'warn');
+        }
+        if (includeWorlds && canAux && !worldsOnTarget && results.some(r => Array.isArray(r.entry.auxWorlds))) {
+            try { worldsOnTarget = new Map((await CoreAPI.listWorldInfoFiles() || []).map(w => [w.file_id.toLowerCase(), w.file_id])); } catch (_) { worldsOnTarget = new Map(); }
+        }
+
         for (const r of results) {
+            if (state.abort) break;
             try {
                 // ST's import sanitizes data.name and unsets fav + the recent-chat pointer
                 // and resets create_date to import time; put the source values back. Use
@@ -924,8 +1040,42 @@ async function runBundleImport() {
                 if (r.keepVersionUid && live.data?.extensions?.version_uid !== r.keepVersionUid) {
                     dataUpdates['extensions.version_uid'] = r.keepVersionUid;
                 }
+                // Primary lorebook ref rides the card; re-point it when identity resolution
+                // landed that book under a deduped name. The SOURCE ref comes from the
+                // manifest: the live in-memory read is stale under ST lazy loading with the
+                // overwrite policy (the shallow-recovery cache holds the pre-overwrite
+                // extensions). Old packs without the field fall back to the live read.
+                const srcPrimary = typeof r.entry.primaryWorld === 'string'
+                    ? r.entry.primaryWorld
+                    : (live.data?.extensions?.world || '');
+                if (srcPrimary && worldNameMap.has(srcPrimary) && worldNameMap.get(srcPrimary) !== srcPrimary) {
+                    dataUpdates['extensions.world'] = worldNameMap.get(srcPrimary);
+                }
                 if (Object.keys(dataUpdates).length || Object.keys(rootFields).length) {
                     await CoreAPI.writeCardFields(live, dataUpdates, { rootFields });
+                }
+
+                // Additional-lorebook refs: map to final names, restore only refs whose book
+                // actually exists here (a generic name that never shipped stays unclaimed).
+                // An explicit empty source list still writes, so overwrite restores "none".
+                if (includeWorlds && canAux && Array.isArray(r.entry.auxWorlds)) {
+                    // Unmapped names (book not in the bundle) resolve to the target's actual
+                    // casing when a case-differing book exists there.
+                    const mapped = [...new Set(r.entry.auxWorlds
+                        .filter(b => typeof b === 'string' && b)
+                        .map(b => worldNameMap.get(b) || b))];
+                    const present = [...new Set(mapped
+                        .map(b => worldsOnTarget?.get(b.toLowerCase()))
+                        .filter(Boolean))];
+                    const skippedAux = mapped.length - present.length;
+                    if (present.length > 0 || r.entry.auxWorlds.length === 0) {
+                        const okAux = await CoreAPI.setCharAdditionalLorebooks(r.newAvatar, present);
+                        if (okAux) stats.aux += present.length;
+                        else logLine(`${r.entry.name}: additional lorebook links could not be written`, 'warn');
+                    }
+                    if (skippedAux > 0) {
+                        logLine(`${r.entry.name}: ${skippedAux} additional lorebook link${skippedAux === 1 ? '' : 's'} skipped (book not in this bundle or on this instance)`, 'warn');
+                    }
                 }
             } catch (restoreErr) {
                 logLine(`${r.entry.name}: metadata restore failed (${restoreErr.message})`, 'warn');
@@ -940,7 +1090,7 @@ async function runBundleImport() {
     }
 
     setProgress(1, state.abort ? 'Import cancelled' : 'Import complete');
-    logLine(`Imported ${stats.imported}, skipped ${stats.skipped}, failed ${stats.failed} (${stats.chats} chats, ${stats.files} gallery files)`, stats.failed ? 'warn' : 'success');
+    logLine(`Imported ${stats.imported}, skipped ${stats.skipped}, failed ${stats.failed} (${stats.chats} chats, ${stats.files} gallery files${stats.aux ? `, ${stats.aux} additional lorebook link${stats.aux !== 1 ? 's' : ''}` : ''})`, stats.failed ? 'warn' : 'success');
     state.running = false;
     renderDoneFooter();
 }

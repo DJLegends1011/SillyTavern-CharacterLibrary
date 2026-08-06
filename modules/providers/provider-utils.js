@@ -31,10 +31,12 @@ export function scrollBrowseListTop() {
 // XSS gate for any third-party browse content rendered via innerHTML.
 // Never bypass; never duplicate this config per-provider.
 export const BROWSE_PURIFY_CONFIG = {
+    // no style tag: a <style> in inline-rendered content is document-global and restyles the whole
+    // app; fields that carry authored CSS render through the sandboxed iframe path instead
     ALLOWED_TAGS: [
         'p', 'br', 'hr', 'div', 'span', 'strong', 'b', 'em', 'i', 'u', 's', 'del',
         'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote', 'code', 'pre',
-        'ul', 'ol', 'li', 'a', 'img', 'center', 'font', 'style',
+        'ul', 'ol', 'li', 'a', 'img', 'center', 'font',
         'table', 'thead', 'tbody', 'tr', 'th', 'td', 'details', 'summary'
     ],
     ALLOWED_ATTR: [
@@ -152,12 +154,46 @@ function errorSnippetFromText(text) {
     return `: ${t.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200)}`;
 }
 
-async function errorBodySnippet(resp) {
-    try {
-        return errorSnippetFromText(await resp.text());
-    } catch {
-        return '';
+// Cloudflare interstitial signatures (block page, JS challenge, managed challenge)
+export function isCloudflareBlockPage(text) {
+    return /Attention Required! \| Cloudflare|cf-error-details|Just a moment|__cf_chl/i.test((text || '').slice(0, 2000));
+}
+
+// Recognizable error-page signatures get an actionable message, else null.
+// Exported for transports that never hold a Response object: janitorai's hampter chain returns
+// a plain {ok, status, body} from whichever of its three legs answered, so it cannot use
+// readJsonClassified but still needs the same classification.
+export function classifyErrorPage(text, status) {
+    const head = (text || '').slice(0, 2000);
+    if (head.startsWith('CORS proxy is disabled')) {
+        return 'CORS proxy is disabled. Set enableCorsProxy: true in SillyTavern\'s config.yaml and restart the server';
     }
+    // Served as HTTP 200 HTML during upstream maintenance / load shedding.
+    if (/JanitorAI\s*-\s*Waiting Room/i.test(head)) {
+        return 'JanitorAI is in its waiting room (high load or maintenance). This clears on their side; retry in a minute';
+    }
+    if (isCloudflareBlockPage(head)) {
+        return `Cloudflare blocked this request from your SillyTavern server (HTTP ${status})`;
+    }
+    return null;
+}
+
+// The status/bodySnippet fields feed the copy-diagnostics report on browse error banners
+function classifiedError(message, status, text) {
+    const err = new Error(message);
+    err.classified = true;
+    err.status = status;
+    err.bodySnippet = (text || '').slice(0, 300);
+    return err;
+}
+
+function httpFailureError(status, text) {
+    const pageMsg = classifyErrorPage(text, status);
+    const err = classifiedError(pageMsg || `HTTP ${status}${errorSnippetFromText(text)}`, status, text);
+    // Real auth statuses only, never a classified block page: Cloudflare challenges commonly
+    // arrive as 403 and must not masquerade as an expired token; 5xx stays untagged likewise.
+    if (!pageMsg && (status === 401 || status === 403)) err.authFailed = true;
+    return err;
 }
 
 /**
@@ -184,24 +220,163 @@ export async function fetchWithProxy(url, opts = {}) {
         let directResponse;
         try {
             directResponse = await fetch(url, opts);
-        } catch (_) {
+        } catch (e) {
+            if (e?.name === 'AbortError') throw e; // caller intent, not a CORS signal - must not poison the cache
             // fetch() rejects on CORS/network errors - fall through to proxy
             _proxyOrigins.add(origin);
         }
         if (directResponse) {
-            if (!directResponse.ok) throw new Error(`HTTP ${directResponse.status}${await errorBodySnippet(directResponse)}`);
+            if (!directResponse.ok) throw httpFailureError(directResponse.status, await directResponse.text().catch(() => ''));
             return directResponse;
         }
     }
-    const r = await fetch(`/proxy/${proxyEncode(url)}`, opts);
+    let r;
+    try {
+        r = await fetch(`/proxy/${proxyEncode(url)}`, opts);
+    } catch (e) {
+        if (e?.name === 'AbortError') throw e;
+        // Same-origin reject means ST itself is unreachable, not a provider problem
+        throw classifiedError('Could not reach your SillyTavern server (connection dropped or ST is not running)', null, '');
+    }
     if (!r.ok) {
         const t = await r.text().catch(() => '');
-        if (r.status === 404 && t.includes('CORS proxy is disabled')) {
-            throw new Error('CORS proxy is disabled. Set enableCorsProxy: true in SillyTavern\'s config.yaml and restart the server');
+        // ST's corsProxy middleware answers a bare sendStatus(500) when its own server-side
+        // fetch failed (no route, DNS, VPN down); upstream 500s carry real bodies.
+        if (r.status === 500 && t.trim() === 'Internal Server Error') {
+            throw classifiedError(`Your SillyTavern server could not reach ${origin} (network, DNS, or VPN problem)`, 500, t);
         }
-        throw new Error(`HTTP ${r.status}${errorSnippetFromText(t)}`);
+        // A Cloudflare-blocked proxy leg is unrecoverable server-side; evict the origin so
+        // the next call retries the browser-direct leg, which can pass where ST cannot.
+        if (isCloudflareBlockPage(t)) _proxyOrigins.delete(origin);
+        throw httpFailureError(r.status, t);
     }
     return r;
+}
+
+// ========================================
+// BROWSE ERROR BANNER
+// ========================================
+
+let _envInfoPromise = null;
+let _browseErrorDelegateWired = false;
+
+// Gathered once per session, and only when someone actually clicks the report button
+function gatherEnvInfo() {
+    if (!_envInfoPromise) {
+        _envInfoPromise = (async () => {
+            const [manifest, helper, st, corsProxy] = await Promise.all([
+                fetch('../manifest.json', { cache: 'no-cache' }).then(r => r.json()).catch(() => null),
+                (async () => {
+                    try { return await (await CoreAPI.apiRequest(`${CL_HELPER_PLUGIN_BASE}/health`)).json(); } catch { return null; }
+                })(),
+                fetch('/version').then(r => r.json()).catch(() => null),
+                // Probing with our own origin trips ST's circular-request check (400) when the
+                // proxy is enabled, so nothing leaves the server; disabled answers a 404 + text.
+                fetch(`/proxy/${proxyEncode(location.origin)}`).then(async r => {
+                    if (r.status !== 404) return true;
+                    const t = await r.text().catch(() => '');
+                    return t.includes('CORS proxy is disabled') ? false : true;
+                }).catch(() => null),
+            ]);
+            return {
+                cl: manifest?.version || 'unknown',
+                helper: helper?.ok ? `v${helper.version}` : 'absent',
+                basicAuth: helper?.ok ? !!helper.basicAuth : null,
+                st: st?.pkgVersion || 'unknown',
+                corsProxy,
+            };
+        })();
+    }
+    return _envInfoPromise;
+}
+
+const onOff = (v) => (v === null || v === undefined ? 'unknown' : (v ? 'on' : 'off'));
+
+async function buildBrowseErrorReport(c) {
+    const env = await gatherEnvInfo();
+    const err = c.error || {};
+    const flags = Object.entries(c.flags || {}).map(([k, v]) => `${k}=${v}`).join(' | ');
+    const lines = [
+        `Character Library v${env.cl} browse error report (${c.time})`,
+        `provider: ${c.provider} | view: ${c.view}`,
+        `error: ${err.message || String(err)}`,
+    ];
+    if (err.status != null) lines.push(`http: ${err.status}`);
+    if (err.bodySnippet) lines.push(`body: ${err.bodySnippet}`);
+    if (flags) lines.push(`settings: ${flags}`);
+    lines.push(`cl-helper: ${env.helper} | ST: ${env.st}`);
+    lines.push(`env: corsProxy=${onOff(env.corsProxy)} | basicAuth=${onOff(env.basicAuth)} | lazyLoad=${onOff(CoreAPI.isStShallowMode())} | mode=${isMobileMode() ? 'mobile' : 'desktop'} | online=${onOff(navigator.onLine)}`);
+    lines.push(`ua: ${navigator.userAgent}`);
+    return lines.join('\n');
+}
+
+function wireBrowseErrorDelegate() {
+    if (_browseErrorDelegateWired) return;
+    _browseErrorDelegateWired = true;
+    document.addEventListener('click', async (e) => {
+        // Ctx rides the clicked banner itself: stale banners in hidden sections (eg. a
+        // chub browse banner behind an open timeline) must not fire another view's retry.
+        const ctx = e.target.closest('.browse-error-banner')?._browseErrorCtx;
+        if (!ctx) return;
+        if (e.target.closest('.browse-banner-retry')) {
+            ctx.retry?.();
+            return;
+        }
+        if (e.target.closest('.browse-banner-report')) {
+            const ok = await CoreAPI.copyTextToClipboard(await buildBrowseErrorReport(ctx));
+            CoreAPI.showToast(ok ? 'Error report copied to clipboard' : 'Could not copy to clipboard', ok ? 'success' : 'error');
+        }
+    });
+}
+
+/**
+ * Render the canonical browse error banner into a grid; retry and the
+ * copy-report button are armed by one shared document-level delegate.
+ * flags must stay set/unset booleans; never token or cookie values.
+ * @param {HTMLElement} grid
+ * @param {Object} opts
+ * @param {string} opts.provider - provider id for the report
+ * @param {Error|Object} opts.error - ideally a readJsonClassified error (status/bodySnippet ride into the report)
+ * @param {string} [opts.message] - display line, defaults to error.message
+ * @param {string} [opts.title] - optional heading line
+ * @param {string} [opts.view] - browse | timeline | favorites | creator, may carry a sort suffix
+ * @param {Object} [opts.flags] - eg. { token: true, nsfw: false }
+ * @param {Function} [opts.retry] - omit to render without a Retry button
+ */
+export function renderBrowseError(grid, { provider, error, message, title, view = 'browse', flags = {}, retry } = {}) {
+    if (!grid) return;
+    wireBrowseErrorDelegate();
+    const esc = CoreAPI.escapeHtml;
+    grid.innerHTML = `
+        <div class="browse-error-banner">
+            <i class="fa-solid fa-exclamation-triangle"></i>
+            ${title ? `<h3>${esc(title)}</h3>` : ''}
+            <p>${esc(message || error?.message || 'Unknown error')}</p>
+            <div class="browse-error-actions">
+                ${retry ? '<button class="glass-btn browse-banner-retry"><i class="fa-solid fa-redo"></i> Retry</button>' : ''}
+                <button class="glass-btn browse-banner-report"><i class="fa-solid fa-copy"></i> Copy error report</button>
+            </div>
+        </div>
+    `;
+    const banner = grid.querySelector('.browse-error-banner');
+    if (banner) banner._browseErrorCtx = { provider, error, view, flags, retry, time: new Date().toISOString() };
+}
+
+/**
+ * Read a JSON-expected Response, classifying failures (ISP/Cloudflare error
+ * pages, the disabled CORS proxy) into actionable errors instead of parser noise.
+ * @param {Response} resp
+ * @returns {Promise<any>}
+ */
+export async function readJsonClassified(resp) {
+    const text = await resp.text().catch(() => '');
+    if (resp.ok) {
+        try { return JSON.parse(text); } catch { /* classified below */ }
+    }
+    throw !resp.ok
+        ? httpFailureError(resp.status, text)
+        : classifiedError(classifyErrorPage(text, resp.status)
+            || `The provider returned an error page instead of data (HTTP ${resp.status})`, resp.status, text);
 }
 
 // ========================================
@@ -219,6 +394,28 @@ export function slugify(name) {
         .replace(/[^a-z0-9]+/g, '-')
         .replace(/^-|-$/g, '')
         .substring(0, 60);
+}
+
+/**
+ * Decode common HTML entities without stripping tags. JanitorAI's listing endpoints
+ * (Meili + Hampter) return creator-notes HTML escaped (&lt;p&gt;...&lt;/p&gt;) rather than
+ * raw, so consumers expecting real HTML must decode first.
+ * @param {string} s
+ * @returns {string}
+ */
+export function decodeHtmlEntities(s) {
+    if (!s || typeof s !== 'string') return s || '';
+    if (s.indexOf('&') === -1) return s;
+    return s
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'")
+        .replace(/&apos;/g, "'")
+        .replace(/&nbsp;/g, ' ')
+        .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(parseInt(n, 10)))
+        .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCharCode(parseInt(h, 16)))
+        .replace(/&amp;/g, '&');
 }
 
 /**
@@ -304,26 +501,69 @@ export function formatNumber(num) {
 // IMAGE PROCESSING
 // ========================================
 
+// Avatars ride inside the card PNG for the rest of its life, and the import re-encodes whatever
+// arrives to lossless PNG, which inflates a compressed source several times over. SillyTavern's
+// own canonical avatar is 512x768 and it never downscales on import, so an outsized one is paid
+// for on the upload, on disk, and on every later decode.
+//
+// Budget by AREA rather than by long edge: a long-edge cap punishes extreme aspect ratios hardest,
+// since a very tall card loses nearly all its width before its height comes into range, while an
+// area budget bounds the decode and the re-encode the same way whatever the shape. The edge clamp
+// is a separate backstop for panorama shapes, which can satisfy the area budget and still blow past
+// what a canvas will allocate.
+const MAX_AVATAR_PIXELS = 8_000_000;
+const MAX_AVATAR_EDGE = 8192;
+
+// PNG keeps its dimensions in the mandatory first chunk, so an oversized one is spotted
+// without paying for a decode. null means unreadable, which keeps the untouched fast path.
+function pngDimensions(buffer) {
+    if (buffer.byteLength < 24) return null;
+    const view = new DataView(buffer);
+    if (view.getUint32(12) !== 0x49484452) return null;
+    return { width: view.getUint32(16), height: view.getUint32(20) };
+}
+
+// One policy shared by the passthrough check and the resize, so the two cannot drift apart.
+function avatarScale(width, height) {
+    if (!width || !height) return 1;
+    return Math.min(
+        1,
+        Math.sqrt(MAX_AVATAR_PIXELS / (width * height)),
+        MAX_AVATAR_EDGE / Math.max(width, height),
+    );
+}
+
 /**
- * Ensure a buffer is PNG format. Returns the buffer as-is if already PNG,
- * otherwise converts via OffscreenCanvas with api.convertImageToPng fallback.
+ * Ensure a buffer is PNG format, downscaled to a sane avatar size. Returns an already-PNG
+ * buffer as-is unless it is oversized; otherwise converts via OffscreenCanvas with an
+ * api.convertImageToPng fallback.
  * @param {ArrayBuffer} imageBuffer
  * @param {Object} [api] - CoreAPI reference for convertImageToPng fallback
  * @returns {Promise<ArrayBuffer|null>}
  */
 export async function ensurePng(imageBuffer, api) {
-    if (!imageBuffer) return null;
+    // An empty or truncated body still resolves as a buffer, and the header read throws on it.
+    if (!imageBuffer || imageBuffer.byteLength < 4) return null;
 
     const header = new Uint8Array(imageBuffer, 0, 4);
     const isPng = header[0] === 0x89 && header[1] === 0x50 && header[2] === 0x4E && header[3] === 0x47;
-    if (isPng) return imageBuffer;
+    if (isPng) {
+        const dims = pngDimensions(imageBuffer);
+        if (!dims || avatarScale(dims.width, dims.height) === 1) return imageBuffer;
+    }
 
     try {
         const blob = new Blob([imageBuffer]);
         const bitmap = await createImageBitmap(blob);
-        const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+        const scale = avatarScale(bitmap.width, bitmap.height);
+        const width = Math.max(1, Math.round(bitmap.width * scale));
+        const height = Math.max(1, Math.round(bitmap.height * scale));
+        if (scale < 1) {
+            CoreAPI.debugLog(`[ProviderUtils] avatar ${bitmap.width}x${bitmap.height} scaled to ${width}x${height}`);
+        }
+        const canvas = new OffscreenCanvas(width, height);
         const ctx = canvas.getContext('2d');
-        ctx.drawImage(bitmap, 0, 0);
+        ctx.drawImage(bitmap, 0, 0, width, height);
         bitmap.close();
         const pngBlob = await canvas.convertToBlob({ type: 'image/png' });
         return await pngBlob.arrayBuffer();
@@ -415,6 +655,13 @@ export function assignGalleryId(card, options, api) {
 // IMPORT PIPELINE
 // ========================================
 
+// ST's import endpoint responds with the extensionless base name, while everything
+// downstream (avatar lookups, /characters/get, folder resolution) keys on the real
+// .png filename; canonicalize at the seam.
+function ensurePngExt(name) {
+    return /\.png$/i.test(String(name)) ? name : `${name}.png`;
+}
+
 /**
  * Shared import-to-SillyTavern pipeline. Handles PNG conversion, card
  * embedding, upload to ST's import endpoint, and result normalization.
@@ -496,9 +743,7 @@ export async function importFromPng({
     const rawName = characterCard.data?.name;
     if (result.file_name && rawName && ST_ILLEGAL_NAME_CHARS.test(rawName)) {
         // ST returns file_name without the extension; merge-attributes needs it.
-        const avatarWithExt = String(result.file_name).toLowerCase().endsWith('.png')
-            ? result.file_name
-            : `${result.file_name}.png`;
+        const avatarWithExt = ensurePngExt(result.file_name);
         let restoreOk = false;
         try {
             // CARVE-OUT from the "no direct merge-attributes" architectural rule: this fires during the import round-trip, before CL has the new char in its allCharacters list, so applyCardFieldUpdates' avatar lookup would fail. The write is a single scalar data.name field with no extension namespace involved, so no preflight or sentinel handling is needed.
@@ -528,7 +773,7 @@ export async function importFromPng({
 
     return {
         success: true,
-        fileName: result.file_name || fileName,
+        fileName: ensurePngExt(result.file_name || fileName),
         characterName: characterCard.data?.name || characterName,
         hasGallery,
         providerCharId,
@@ -546,11 +791,29 @@ export async function importFromPng({
 // ========================================
 
 /**
+ * Resolve the stable filename identity for one gallery image.
+ *
+ * A provider that knows its media's identity supplies `name` directly; inferring from the
+ * URL is only the fallback, because a CDN that ends the path in a variant word
+ * (.../<id>/card) collapses every image onto that word. Every consumer of this identity
+ * (fast-skip lookup, post-save index update, and the saved filename) MUST call this, or
+ * the index gets keyed under a name the file was never saved with and later images
+ * false-match the first one.
+ * @param {Object} imageInfo - { url, name? }
+ * @param {Object} api - CoreAPI reference
+ * @returns {string}
+ */
+export function resolveGalleryMediaName(imageInfo, api) {
+    if (imageInfo?.name) return api?.sanitizeMediaFilename?.(String(imageInfo.name)) || '';
+    return api?.extractSanitizedUrlName?.(imageInfo?.url) || '';
+}
+
+/**
  * Save a downloaded media file to a character's gallery folder.
  * Uses the naming convention: {prefix}_{hash8}_{sanitizedName}.{ext}
  *
  * @param {Object} downloadResult - { arrayBuffer, contentType }
- * @param {Object} imageInfo - { url, id?, nsfw? }
+ * @param {Object} imageInfo - { url, id?, name?, nsfw? }
  * @param {string} folderName - gallery folder name
  * @param {string} contentHash - SHA-256 hash of the file content
  * @param {string} filePrefix - naming prefix (e.g. 'chubgallery')
@@ -575,7 +838,7 @@ export async function saveGalleryImage(downloadResult, imageInfo, folderName, co
             if (urlMatch) extension = urlMatch[1].toLowerCase();
         }
 
-        const sanitizedName = api.extractSanitizedUrlName?.(imageInfo.url) || 'gallery_image';
+        const sanitizedName = resolveGalleryMediaName(imageInfo, api) || 'gallery_image';
         const shortHash = (contentHash?.length >= 8) ? contentHash.substring(0, 8) : 'nohash00';
         const filenameBase = `${filePrefix}_${shortHash}_${sanitizedName}`;
 
