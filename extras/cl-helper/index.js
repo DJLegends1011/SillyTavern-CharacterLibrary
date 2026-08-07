@@ -3208,10 +3208,21 @@ async function extractHiddenDefinition(page, token, detail) {
         : null;
     const prevSource = prev.api || prev.source || 'janitor';
     const selected = resolveSelectedPresetKey(snapshot.data);
+    // A never-configured account reports no key at all, so the set falls back to the canonical
+    // name. Restore has to clear that same key or our selection outlives the preset we delete.
+    const presetKey = selected.key || SELECTED_PRESET_KEYS[0];
 
     // Never override a context length we cannot put back; the user would inherit it in their chats.
-    if (typeof prevGeneration?.context_length !== 'number') {
-        throw new Error('Could not read your JanitorAI generation settings, so nothing was changed. Open JanitorAI settings once in this browser and try again.');
+    // An account that never opened API settings is the exception: janitorai reports it as
+    // materialized:false with settings:null, so there is nothing of the user's to preserve, and
+    // refusing to extract would protect state they never created. Those restore to a conventional
+    // default instead, which is inert while the source stays 'janitor'.
+    const neverConfigured = snapshot.data?.materialized === false;
+    const restoreGeneration = typeof prevGeneration?.context_length === 'number'
+        ? prevGeneration
+        : (neverConfigured ? { ...(prevGeneration || {}), context_length: 4096 } : null);
+    if (!restoreGeneration) {
+        throw new Error('Could not read your JanitorAI generation settings, so nothing was changed. Open your API settings on janitorai.com in any browser signed in to this account, save them once, then try again.');
     }
 
     // No fixed affix, so a persona left behind by a failed run reads as noise rather than a marker.
@@ -3244,7 +3255,7 @@ async function extractHiddenDefinition(page, token, detail) {
 
         await page.evaluate(janitoraiCall('PATCH', '/hampter/api-settings', {
             source: 'proxy',
-            [selected.key || SELECTED_PRESET_KEYS[0]]: proxyId,
+            [presetKey]: proxyId,
             // A bounded context makes the server rewrite the prompt, losing the section
             // boundaries the definition is read from.
             generation_settings: { context_length: 0 },
@@ -3356,10 +3367,11 @@ async function extractHiddenDefinition(page, token, detail) {
         }
         await page.evaluate(janitoraiCall('PATCH', '/hampter/api-settings', {
             source: prevSource,
-            // Null is meaningful here (nothing was selected), so send it whenever the key was found.
-            ...(selected.key ? { [selected.key]: selected.value } : {}),
+            // Null is meaningful here: it is what "nothing was selected" looks like, and it is
+            // also the right value for an account that had no selection before we made one.
+            [presetKey]: selected.value,
             // Replayed wholesale; rebuilding it would swap tuning values we dont model for defaults.
-            ...(prevGeneration ? { generation_settings: prevGeneration } : {}),
+            generation_settings: restoreGeneration,
         }, token)).catch(() => {});
     }
 }
