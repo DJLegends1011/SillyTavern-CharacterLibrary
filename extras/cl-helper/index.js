@@ -2946,7 +2946,10 @@ function registerJanitoraiBrowserRoutes(router) {
                 if (!token) {
                     // Naming the session cookies we can see separates "the sign-in was refused"
                     // from "a session exists but we could not read it".
-                    const seen = after.map(c => c.name).filter(n => n.startsWith(JANITORAI_COOKIE));
+                    // Session cookie and chunks only; a fresh login leaves PKCE verifiers on the
+                    // same prefix.
+                    const chunkName = new RegExp(`^${JANITORAI_COOKIE}\\.\\d+$`);
+                    const seen = after.map(c => c.name).filter(n => n === JANITORAI_COOKIE || chunkName.test(n));
                     if (seen.length) {
                         throw new Error(`Signed in, but the session cookie could not be read (${seen.join(', ')}). Please report this.`);
                     }
@@ -3189,6 +3192,16 @@ function resolveSelectedPresetKey(data) {
     return { key: null, value: null };
 }
 
+// An empty legacy_config is truthy, so a first-truthy pick hides the scope that really holds it.
+function resolveSettingsSource(data) {
+    for (const scope of [data?.settings, data?.legacy_config, data]) {
+        if (!scope || typeof scope !== 'object') continue;
+        const value = scope.api || scope.source;
+        if (value) return String(value);
+    }
+    return '';
+}
+
 /** Flatten an unexpected prompt-request body into one short line for the error toast. */
 function promptErrorSnippet(body) {
     const flat = String(body || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
@@ -3201,40 +3214,63 @@ function promptErrorSnippet(body) {
  * persona name into the prompt, so a sentinel round-trips back to the macro exactly.
  */
 async function extractHiddenDefinition(page, token, detail) {
+    // Rare and user-driven, so it narrates itself. Shapes only, never the token or the definition.
+    const started = Date.now();
+    const step = (msg) => console.log(`[cl-helper] extract +${((Date.now() - started) / 1000).toFixed(1)}s ${msg}`);
+    step(`begin character=${detail?.id || 'unknown'} token=${token ? 'yes' : 'no'}`);
+
     const snapshot = await page.evaluate(janitoraiCall('GET', '/hampter/api-settings', null, token));
+    step(`settings HTTP ${snapshot.status} materialized=${snapshot.data?.materialized ?? 'absent'} `
+        + `source=${resolveSettingsSource(snapshot.data) || 'none'} `
+        + `scopes=${JSON.stringify({ settings: snapshot.data?.settings === null ? null : Object.keys(snapshot.data?.settings || {}).length, legacy: Object.keys(snapshot.data?.legacy_config || {}).length, presets: (snapshot.data?.proxy_configs || []).length })}`);
     const prev = snapshot.data?.legacy_config || snapshot.data?.settings || {};
     const prevGeneration = prev.generation_settings && typeof prev.generation_settings === 'object'
         ? prev.generation_settings
         : null;
-    const prevSource = prev.api || prev.source || 'janitor';
+    const prevSource = resolveSettingsSource(snapshot.data) || 'janitor';
     const selected = resolveSelectedPresetKey(snapshot.data);
-    // A never-configured account reports no key at all, so the set falls back to the canonical
-    // name. Restore has to clear that same key or our selection outlives the preset we delete.
+    // The set falls back to the canonical key, so restore must clear that one or our selection
+    // outlives the preset we delete.
     const presetKey = selected.key || SELECTED_PRESET_KEYS[0];
 
-    // Never override a context length we cannot put back; the user would inherit it in their chats.
-    // An account that never opened API settings is the exception: janitorai reports it as
-    // materialized:false with settings:null, so there is nothing of the user's to preserve, and
-    // refusing to extract would protect state they never created. Those restore to a conventional
-    // default instead, which is inert while the source stays 'janitor'.
+    // Never override a context length we cant put back. Exception: a never-configured account
+    // (ie. materialized:false) has nothing to preserve, so it gets a default rather than a refusal.
     const neverConfigured = snapshot.data?.materialized === false;
     const restoreGeneration = typeof prevGeneration?.context_length === 'number'
         ? prevGeneration
         : (neverConfigured ? { ...(prevGeneration || {}), context_length: 4096 } : null);
     if (!restoreGeneration) {
+        step('abort: no readable context_length and the account is not flagged never-configured');
         throw new Error('Could not read your JanitorAI generation settings, so nothing was changed. Open your API settings on janitorai.com in any browser signed in to this account, save them once, then try again.');
     }
+    step(`plan neverConfigured=${neverConfigured} prevSource=${prevSource} presetKey=${presetKey} `
+        + `restoreCtx=${restoreGeneration.context_length}`);
 
     // No fixed affix, so a persona left behind by a failed run reads as noise rather than a marker.
     const userSentinel = randomHex(12).toUpperCase();
     let proxyId = null;
     let personaId = null;
     let chatId = null;
+    let profileRestore = null;
     try {
+        // A first chat on a fresh account raises a profile modal that eats the message. It gates
+        // on the profile name, so seeding one stops it appearing. Sentinel, so it round-trips.
+        const profile = await page.evaluate(janitoraiCall('GET', '/hampter/profiles/mine', null, token));
+        const priorName = typeof profile.data?.name === 'string' ? profile.data.name : '';
+        const priorAppearance = typeof profile.data?.profile === 'string' ? profile.data.profile : '';
+        step(`profile HTTP ${profile.status} defaultPersona=${priorName ? 'set' : 'EMPTY'}`);
+        if (profile.status < 400 && !priorName.trim()) {
+            const set = await page.evaluate(janitoraiCall('PATCH', '/hampter/profiles/mine', {
+                name: userSentinel, profile: priorAppearance || '',
+            }, token));
+            step(`profile seed HTTP ${set.status}`);
+            if (set.status < 400) profileRestore = { name: priorName, profile: priorAppearance };
+        }
         const persona = await page.evaluate(janitoraiCall('POST', '/hampter/personas', {
             appearance: '', avatar: '', groupId: null, name: userSentinel, pronouns: null,
         }, token));
         personaId = persona.data?.id || null;
+        step(`persona HTTP ${persona.status} id=${personaId || 'none'}`);
 
         // Ephemeral range: nothing listens there by convention, so this cant reach a local
         // model server the user is running on a well-known port.
@@ -3251,45 +3287,167 @@ async function extractHiddenDefinition(page, token, detail) {
         }, token));
         const cfgs = created.data?.proxy_configs || [];
         proxyId = cfgs.length ? cfgs[cfgs.length - 1].id : null;
+        step(`preset HTTP ${created.status} id=${proxyId || 'none'} port=${deadPort}`);
         if (!proxyId) throw new Error(`JanitorAI rejected the temporary preset (HTTP ${created.status})`);
 
-        await page.evaluate(janitoraiCall('PATCH', '/hampter/api-settings', {
+        const switched = await page.evaluate(janitoraiCall('PATCH', '/hampter/api-settings', {
             source: 'proxy',
             [presetKey]: proxyId,
             // A bounded context makes the server rewrite the prompt, losing the section
             // boundaries the definition is read from.
             generation_settings: { context_length: 0 },
         }, token));
+        if (switched.status >= 400) {
+            throw new Error(`JanitorAI refused the temporary settings change (HTTP ${switched.status}).`);
+        }
+        // Only the proxy source assembles the prompt in-browser, so an ignored switch would
+        // surface 45s later as a missing prompt and read like a rate limit.
+        const confirm = await page.evaluate(janitoraiCall('GET', '/hampter/api-settings', null, token));
+        const appliedSource = resolveSettingsSource(confirm.data);
+        step(`switch PATCH ${switched.status} -> readback source=${appliedSource || 'none'} `
+            + `materialized=${confirm.data?.materialized ?? 'absent'}`);
+        if (appliedSource !== 'proxy') {
+            // Carry the shape it reported: without it this is indistinguishable from a switch
+            // that worked but hid the value somewhere this walk does not look.
+            const shape = JSON.stringify({
+                source: appliedSource || null,
+                materialized: confirm.data?.materialized ?? null,
+                settings: confirm.data?.settings === null ? null : Object.keys(confirm.data?.settings || {}),
+                legacy: Object.keys(confirm.data?.legacy_config || {}),
+                presets: (confirm.data?.proxy_configs || []).length,
+            });
+            throw new Error(`JanitorAI did not switch to the temporary preset, so the definition cannot be read (HTTP ${switched.status}, it reported ${shape}). Open your API settings on janitorai.com once, then try again.`);
+        }
 
         const chat = await page.evaluate(janitoraiCall('POST', '/hampter/chats',
             personaId ? { character_id: detail.id, persona_id: personaId } : { character_id: detail.id }, token));
         chatId = chat.data?.id;
+        step(`chat HTTP ${chat.status} id=${chatId || 'none'}`);
         if (!chatId) throw new Error(`Could not open a chat with that character (HTTP ${chat.status})`);
 
         const capture = page.captureResponse(/generateAlpha/, { timeout: 45000 });
         try {
             await page.goto(`${JANITORAI_ORIGIN}/chats/${chatId}`, { timeout: CDP_NAV_TIMEOUT });
-            await new Promise(r => setTimeout(r, 8000));
+
+            // The page carries several textareas (character notes, drawers), most of them
+            // offscreen, so the composer is identified by the Send control next to it rather
+            // than by being first in the document.
+            const findComposer = `
+                (() => {
+                    const shown = (el) => !!el && el.getClientRects().length > 0 && !el.disabled && !el.readOnly;
+                    const buttons = [...document.querySelectorAll('button')].filter(b => !b.disabled);
+                    // janitorai puts the label in the text, not the aria-label.
+                    const named = (b) => ((b.getAttribute('aria-label') || '') + ' ' + (b.textContent || '')).trim();
+                    const send = buttons.find(b => /^send$/i.test(named(b)))
+                        || buttons.reverse().find(b => /send/i.test(named(b)));
+                    const scope = send && (send.closest('form') || send.parentElement?.parentElement);
+                    // The placeholder identifies the composer; document order does not, since
+                    // other visible textareas exist and their order isnt stable.
+                    const areas = [...document.querySelectorAll('textarea')].filter(shown);
+                    const ta = areas.find(t => /enter to send|type a message/i.test(t.placeholder || ''))
+                        || (scope ? [...scope.querySelectorAll('textarea')].find(shown) : null)
+                        || areas[0] || null;
+                    return { ta, send };
+                })()`;
+
+            // A cold page outlasts any fixed sleep, and a warm one isready long before it.
+            let hasComposer = false;
+            for (let i = 0; i < 20 && !hasComposer; i++) {
+                await new Promise(r => setTimeout(r, 1000));
+                hasComposer = await page.evaluate(`(() => !!${findComposer}.ta)()`).catch(() => false);
+            }
+            step(`composer ${hasComposer ? 'ready' : 'MISSING'}`);
+            if (!hasComposer) {
+                // Which page we ended on, and what message boxes it offered.
+                const shape = await page.evaluate(`
+                    (() => JSON.stringify({
+                        url: location.pathname,
+                        title: document.title.slice(0, 40),
+                        textareas: [...document.querySelectorAll('textarea')].map(t => ({
+                            ph: (t.placeholder || '').slice(0, 20),
+                            shown: t.getClientRects().length > 0,
+                            disabled: t.disabled, ro: t.readOnly,
+                        })),
+                    }))()`).catch(() => 'unreadable');
+                throw new Error(`The chat page never rendered a message box (${shape}).`);
+            }
 
             // The composer can be in "press button to send" mode, where Enter only inserts a
-            // linebreak and nothing is sent. Click the send control; Enter is the fallback.
-            const sent = await page.evaluate(`
+            // linebreak. Click the send control, then fall back to a real Enter keypress.
+            const fill = await page.evaluate(`
                 (() => {
-                    const ta = document.querySelector('textarea');
+                    const found = ${findComposer};
+                    const ta = found.ta;
                     if (!ta) return { ok: false, why: 'no composer' };
+                    // Tagged so later checks read THIS box, not whichever textarea comes first.
+                    ta.setAttribute('data-cl-composer', '1');
                     const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
                     setter.call(ta, 'hi');
                     ta.dispatchEvent(new Event('input', { bubbles: true }));
-                    const form = ta.closest('form') || ta.parentElement?.parentElement || document.body;
-                    const btn = [...form.querySelectorAll('button')].reverse()
-                        .find(b => !b.disabled && (/send/i.test(b.getAttribute('aria-label') || '') || b.querySelector('svg')));
-                    if (!btn) return { ok: false, why: 'no send control' };
-                    btn.click();
-                    return { ok: true };
+                    ta.focus();
+                    const btn = found.send;
+                    if (btn) btn.click();
+                    return {
+                        ok: true, clicked: !!btn,
+                        placeholder: (ta.placeholder || '').slice(0, 24),
+                        label: btn ? (btn.getAttribute('aria-label') || btn.textContent || '').trim().slice(0, 24) : '',
+                    };
                 })()`);
-            if (!sent?.ok) throw new Error(`Could not send the priming message (${sent?.why || 'unknown'})`);
+            step(`fill ok=${!!fill?.ok} composer="${fill?.placeholder ?? ''}" `
+                + `clicked=${fill?.clicked ? fill.label || 'unlabelled' : 'no button'}`);
+            if (!fill?.ok) throw new Error(`Could not send the priming message (${fill?.why || 'unknown'})`);
+
+            // The box clears on send, so text still sitting there means it didnt go out.
+            const composerEmpty = async () => {
+                for (let i = 0; i < 3; i++) {
+                    await new Promise(r => setTimeout(r, 700));
+                    const still = await page.evaluate(
+                        '(() => { const t = document.querySelector("textarea[data-cl-composer]"); return !t || !t.value.trim(); })()'
+                    ).catch(() => false);
+                    if (still) return true;
+                }
+                return false;
+            };
+
+            let cleared = await composerEmpty();
+            step(`after click composerEmpty=${cleared}`);
+            if (!cleared) {
+                step('falling back to a real Enter keypress');
+                for (const type of ['keyDown', 'keyUp']) {
+                    await page.send('Input.dispatchKeyEvent', {
+                        type, key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13,
+                        nativeVirtualKeyCode: 13, ...(type === 'keyDown' ? { text: '\r' } : {}),
+                    }).catch(() => {});
+                }
+                cleared = await composerEmpty();
+                step(`after Enter composerEmpty=${cleared}`);
+                if (!cleared) {
+                    // Otherwise a swallowed send looks exactly like a model that never answered.
+                    const shape = await page.evaluate(`
+                        (() => {
+                            const ta = document.querySelector('textarea[data-cl-composer]');
+                            const form = ta && (ta.closest('form') || ta.parentElement?.parentElement) || document.body;
+                            return JSON.stringify({
+                                textareas: [...document.querySelectorAll('textarea')].map(t => ({
+                                    ph: (t.placeholder || '').slice(0, 20),
+                                    shown: t.getClientRects().length > 0,
+                                    chosen: t.hasAttribute('data-cl-composer'),
+                                    value: (t.value || '').slice(0, 12),
+                                    disabled: t.disabled, ro: t.readOnly,
+                                })),
+                                clicked: ${fill.clicked ? 'true' : 'false'},
+                                buttons: [...form.querySelectorAll('button')].slice(0, 8).map(b => ({
+                                    label: (b.getAttribute('aria-label') || b.textContent || '').trim().slice(0, 24),
+                                    disabled: b.disabled, svg: !!b.querySelector('svg'),
+                                })),
+                            });
+                        })()`).catch(() => 'unreadable');
+                    throw new Error(`The priming message would not send (${shape}).`);
+                }
+            }
 
             const body = await capture.wait();
+            step(`generateAlpha ${body ? `captured ${String(body).length} bytes` : 'NOT SEEN (45s)'}`);
             if (!body) throw new Error('JanitorAI never assembled the prompt. It may be rate limiting; try again shortly.');
 
             // The payload is the whole chat request, not just the definition:
@@ -3365,14 +3523,23 @@ async function extractHiddenDefinition(page, token, detail) {
                     } catch { return 0; }
                 })()`).catch(() => {});
         }
-        await page.evaluate(janitoraiCall('PATCH', '/hampter/api-settings', {
+        const restored = await page.evaluate(janitoraiCall('PATCH', '/hampter/api-settings', {
             source: prevSource,
             // Null is meaningful here: it is what "nothing was selected" looks like, and it is
             // also the right value for an account that had no selection before we made one.
             [presetKey]: selected.value,
             // Replayed wholesale; rebuilding it would swap tuning values we dont model for defaults.
             generation_settings: restoreGeneration,
-        }, token)).catch(() => {});
+        }, token)).catch(() => null);
+        // The restore is the part nobody notices breaking.
+        step(`restore source=${prevSource} ctx=${restoreGeneration.context_length} HTTP ${restored?.status ?? 'failed'}`);
+
+        // Leave the account as found; their own first-run prompt still belongs to them.
+        if (profileRestore) {
+            const undone = await page.evaluate(janitoraiCall('PATCH', '/hampter/profiles/mine', profileRestore, token))
+                .catch(() => null);
+            step(`profile restore HTTP ${undone?.status ?? 'failed'}`);
+        }
     }
 }
 
