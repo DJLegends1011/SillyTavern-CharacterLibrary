@@ -2719,6 +2719,24 @@ https://jannyai.com/characters/uuid_slug
                                         </button>
                                         <span class="settings-hint" id="janitoraiBrowserLoginHint"></span>
                                     </div>
+                                    <div class="provider-link-divider"><span>or use a session token</span></div>
+                                    <div class="settings-row">
+                                        <span class="settings-hint">Use this if you sign in to JanitorAI with <strong>Google, Discord, X or Apple</strong> (those accounts have no password to give here), or if the sign-in above keeps failing. Log in at <strong>janitorai.com</strong>, open DevTools (F12) &rarr; <strong>Application &rarr; Cookies &rarr; janitorai.com</strong>, and copy the value of the <strong>sb-auth-auth-token</strong> cookie. If you see <strong>sb-auth-auth-token.0</strong> and <strong>.1</strong> instead of one cookie, paste their values joined in order. The session refreshes itself afterwards, the same as signing in above.</span>
+                                    </div>
+                                    <div class="settings-row">
+                                        <label>Token:</label>
+                                        <div class="settings-input-group">
+                                            <input type="password" id="settingsJanitoraiToken" placeholder="Paste the sb-auth-auth-token cookie value" autocomplete="off" spellcheck="false">
+                                            <button id="toggleJanitoraiTokenVisibility" class="glass-btn icon-only" title="Show/Hide">
+                                                <i class="fa-solid fa-eye"></i>
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div class="settings-row" style="gap: var(--space-sm);">
+                                        <button id="saveJanitoraiTokenBtn" class="settings-action-btn primary">
+                                            <i class="fa-solid fa-key"></i> Use Token
+                                        </button>
+                                    </div>
                                 </div>
                                 <div class="settings-group">
                                     <div class="settings-group-title"><i class="fa-solid fa-rotate"></i> Update Checks</div>
@@ -3595,7 +3613,7 @@ https://jannyai.com/characters/uuid_slug
     <div id="toastContainer" class="toast-container"></div>
 
     <!-- Scripts -->
-    <script src="library.js?v=196"></script>
+    <script src="library.js?v=197"></script>
     <script type="module" src="../modules/module-loader.js?v=47"></script>
     <script src="library-mobile.js?v=25"></script>
 </body>

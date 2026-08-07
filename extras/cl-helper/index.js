@@ -2947,15 +2947,90 @@ function registerJanitoraiBrowserRoutes(router) {
                     // Naming the session cookies we can see separates "the sign-in was refused"
                     // from "a session exists but we could not read it".
                     const seen = after.map(c => c.name).filter(n => n.startsWith(JANITORAI_COOKIE));
-                    throw new Error(seen.length
-                        ? `Signed in, but the session cookie could not be read (${seen.join(', ')}). Please report this.`
-                        : 'Login did not produce a session. Wrong credentials, or a captcha needs solving in that browser.');
+                    if (seen.length) {
+                        throw new Error(`Signed in, but the session cookie could not be read (${seen.join(', ')}). Please report this.`);
+                    }
+                    // What the page says separates a refused password from an unsolved captcha
+                    // from an account that has no password at all; without it every cause reads
+                    // the same and the user has nothing to act on.
+                    const state = await page.evaluate(`
+                        (() => {
+                            const seen = new Set();
+                            const text = [...document.querySelectorAll('[role="alert"], [class*="error" i], [class*="Error"]')]
+                                .map(el => (el.textContent || '').trim())
+                                .filter(t => t && t.length < 160 && !seen.has(t) && seen.add(t));
+                            return { path: location.pathname, title: document.title, message: text[0] || '' };
+                        })()`).catch(() => null);
+                    const said = state?.message
+                        ? ` JanitorAI said: "${state.message}".`
+                        : (state?.title ? ` The page was "${state.title}".` : '');
+                    throw new Error(`Login did not produce a session.${said}`);
                 }
                 return { session: cookie };
             });
             res.json({ ok: true, ...result });
         } catch (err) {
             console.warn('[cl-helper] JanitorAI browser login failed:', err.message);
+            res.status(502).json({ ok: false, error: err.message });
+        }
+    });
+
+    // Puts a session Character Library already holds into the browser. A pasted token authorises
+    // our own API calls on its own, but the chat UI renders no composer for a signed-out browser,
+    // so extraction needs the session to exist there as a cookie too.
+    router.post('/janitorai-browser-session', async (req, res) => {
+        const { token, refreshToken } = req.body ?? {};
+        if (typeof token !== 'string' || !token) {
+            return res.status(400).json({ error: 'token is required' });
+        }
+        for (const t of [token, refreshToken]) {
+            if (t !== undefined && (typeof t !== 'string' || t.length > 4096)) {
+                return res.status(400).json({ error: 'Invalid token' });
+            }
+        }
+
+        try {
+            const endpoint = await resolveBrowserEndpoint(req);
+            const applied = await withJanitoraiPage(endpoint, async (page) => {
+                // Cookies are origin-scoped, so the page has to be on janitorai.com before one
+                // can be written for it.
+                await page.goto(`${JANITORAI_ORIGIN}/`, { timeout: CDP_NAV_TIMEOUT });
+                return await injectJanitoraiSession(page, token, refreshToken);
+            });
+            if (!applied) throw new Error('The browser refused the session cookie.');
+            res.json({ ok: true });
+        } catch (err) {
+            console.warn('[cl-helper] JanitorAI browser session push failed:', err.message);
+            res.status(502).json({ ok: false, error: err.message });
+        }
+    });
+
+    // Signs the browser out, so a "logged out" Character Library is not sitting next to a browser
+    // that still holds the account. Cloudflare's own cookies are kept deliberately: they are not
+    // account state, and dropping them buys a fresh challenge for nothing. No navigation either,
+    // Network.getCookies filters by url on its own.
+    router.post('/janitorai-browser-logout', async (req, res) => {
+        try {
+            const endpoint = await resolveBrowserEndpoint(req);
+            const cleared = await withJanitoraiPage(endpoint, async (page) => {
+                const cookies = await page.cookies([JANITORAI_ORIGIN]);
+                const names = [];
+                for (const c of cookies) {
+                    if (c.name === 'cf_clearance' || c.name === '__cf_bm') continue;
+                    try {
+                        await page.send('Network.deleteCookies', {
+                            name: c.name,
+                            domain: c.domain || 'janitorai.com',
+                            path: c.path || '/',
+                        });
+                        names.push(c.name);
+                    } catch { /* one stubborn cookie must not abandon the rest */ }
+                }
+                return names;
+            });
+            res.json({ ok: true, cleared });
+        } catch (err) {
+            console.warn('[cl-helper] JanitorAI browser logout failed:', err.message);
             res.status(502).json({ ok: false, error: err.message });
         }
     });
