@@ -111,9 +111,10 @@ export { slugify, stripHtml } from '../provider-utils.js';
  * @param {string[]} [opts.facets]
  * @param {string[]} [opts.sort] - empty for relevance
  * @param {boolean} [opts.highlight] - add the crop/highlight attributes the browse grids render
+ * @param {AbortSignal} [opts.signal]
  * @returns {Promise<Object>} raw multi-search response ({ results: [...] })
  */
-export async function meiliMultiSearch({ search = '', page = 1, limit = 80, filters = [], facets = [], sort = [], highlight = false } = {}) {
+export async function meiliMultiSearch({ search = '', page = 1, limit = 80, filters = [], facets = [], sort = [], highlight = false, signal } = {}) {
     const query = {
         indexUid: 'janny-characters',
         q: search,
@@ -142,11 +143,13 @@ export async function meiliMultiSearch({ search = '', page = 1, limit = 80, filt
     };
 
     const body = JSON.stringify({ queries: [query] });
+    const requestInit = { method: 'POST', headers, body, signal };
     let response;
     try {
-        response = await fetch(JANNY_SEARCH_URL, { method: 'POST', headers, body });
-    } catch (_) {
-        response = await fetchWithProxy(JANNY_SEARCH_URL, { method: 'POST', headers, body });
+        response = await fetch(JANNY_SEARCH_URL, requestInit);
+    } catch (e) {
+        if (e?.name === 'AbortError') throw e;
+        response = await fetchWithProxy(JANNY_SEARCH_URL, requestInit);
     }
     return readJsonClassified(response);
 }

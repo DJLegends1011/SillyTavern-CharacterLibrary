@@ -2,7 +2,9 @@
 
 import { slugify, stripHtml, decodeHtmlEntities, CL_HELPER_PLUGIN_BASE, classifyErrorPage } from '../provider-utils.js';
 import { getValidJanitoraiToken, janitoraiForceRefresh } from '../janitor-session.js';
+import { JANNY_IMAGE_BASE, meiliMultiSearch, resolveTagNames } from '../janny/janny-api.js';
 import { buildJanitoraiFavoritesPath, normalizeFavoritePageMeta, normalizeFavoriteState } from './janitorai-favorites.js';
+import { buildJanitoraiMeiliRequest, normalizeJanitoraiMeiliPage } from './janitorai-meili-latest.js';
 import CoreAPI from '../../core-api.js';
 
 export { slugify, stripHtml, decodeHtmlEntities };
@@ -317,6 +319,17 @@ export async function fetchJanitoraiFavorites(opts = {}) {
         characters: (data?.data || []).map(normalizeHampterHit),
         ...normalizeFavoritePageMeta(data, opts.page || 1, HAMPTER_PAGE_SIZE),
     };
+}
+
+/** Loads the experimental newest-first listing from Janny's public Meili index. */
+export async function fetchJanitoraiMeiliLatest(opts = {}) {
+    const request = buildJanitoraiMeiliRequest(opts);
+    const response = await meiliMultiSearch({ ...request, signal: opts.signal });
+    return normalizeJanitoraiMeiliPage(response, {
+        imageBase: JANNY_IMAGE_BASE,
+        resolveTagNames,
+        excludeTagIds: opts.excludeTagIds || [],
+    });
 }
 
 const FAVORITE_MEMBERSHIP_PATH = id => `/favorites/myfavorites/${id}`;

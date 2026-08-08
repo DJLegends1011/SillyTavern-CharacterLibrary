@@ -419,9 +419,28 @@ test('rejects stale browse loads and stale preview selections', () => {
     }), false);
 });
 
-test('favorites has priority over the normal Hampter source', () => {
-    assert.equal(chooseJanitoraiSource({ favorites: true }), 'favorites');
-    assert.equal(chooseJanitoraiSource({ favorites: false }), 'hampter');
+test('source priority is favorites, then Meili, then Hampter', () => {
+    assert.equal(chooseJanitoraiSource({ favorites: true, sort: 'meili_latest' }), 'favorites');
+    assert.equal(chooseJanitoraiSource({ favorites: false, sort: 'meili_latest' }), 'meili');
+    assert.equal(chooseJanitoraiSource({ favorites: false, sort: 'latest' }), 'hampter');
+});
+
+test('Following stays on Hampter when the browse sort is Meili Latest', () => {
+    assert.equal(chooseJanitoraiSource({
+        mode: 'following',
+        favorites: false,
+        sort: 'meili_latest',
+    }), 'hampter');
+});
+
+test('a Meili response is stale immediately after switching to Hampter', () => {
+    assert.equal(isJanitoraiLoadCurrent({
+        capturedToken: 8,
+        currentToken: 9,
+        capturedSource: 'meili',
+        currentSource: 'hampter',
+        active: true,
+    }), false);
 });
 
 test('favorites retain their grid for Cloudflare and waiting-room failures', () => {

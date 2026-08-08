@@ -8,6 +8,7 @@ import {
     HAMPTER_SORTS,
     fetchJanitoraiCharacters,
     fetchJanitoraiFavorites,
+    fetchJanitoraiMeiliLatest,
     fetchJanitoraiFavoriteState,
     fetchJanitoraiCharacter,
     fetchJanitoraiTags,
@@ -30,6 +31,7 @@ import {
     tagKey,
     pingHampterQueue,
 } from './janitorai-api.js';
+import { JANITORAI_MEILI_SORT } from './janitorai-meili-latest.js';
 import {
     JanitoraiFavoriteCache,
     chooseJanitoraiSource,
@@ -105,8 +107,10 @@ let jaTagCatalogue = [];
 
 let view;
 
+const JANITORAI_SORTS = [...HAMPTER_SORTS, JANITORAI_MEILI_SORT];
+
 function currentJanitoraiSource() {
-    return chooseJanitoraiSource({ favorites: jaFilterFavorites });
+    return chooseJanitoraiSource({ mode: jaMode, favorites: jaFilterFavorites, sort: jaSortMode });
 }
 
 function resetFavoritePaging() {
@@ -419,19 +423,31 @@ async function loadCharacters(append = false) {
         const excludeTagIds = following ? [] : await resolvePersistentExcludes();
         if (following) jaUnresolvedExcludes = (getProviderExcludeTags('janitorai') || []).map(n => tagKey(n));
         if (!isCurrentLoad(thisToken, source)) return;
+        const allExcludeTagIds = [...new Set([...jaExcludeTags, ...excludeTagIds])];
         const clientExcludeTagIds = source === 'favorites'
-            ? [...new Set([...jaExcludeTags, ...excludeTagIds])]
+            ? allExcludeTagIds
             : [];
         const fetchPage = async () => {
             const page = source === 'favorites' ? jaFavoritesPage : jaCurrentPage;
             if (source === 'favorites') {
                 return fetchJanitoraiFavorites({
                     signal,
-                    sort: jaSortMode,
+                    sort: HAMPTER_SORTS.includes(jaSortMode) ? jaSortMode : 'latest',
                     page,
                     search: jaCurrentSearch,
                     mode: jaNsfwEnabled ? 'all' : 'sfw',
                     tagIds: [...jaIncludeTags],
+                });
+            }
+            if (source === 'meili') {
+                return fetchJanitoraiMeiliLatest({
+                    signal,
+                    search: jaCurrentSearch,
+                    page,
+                    limit: 80,
+                    nsfwEnabled: jaNsfwEnabled,
+                    includeTagIds: [...jaIncludeTags],
+                    excludeTagIds: allExcludeTagIds,
                 });
             }
             return fetchJanitoraiCharacters({
@@ -442,7 +458,7 @@ async function loadCharacters(append = false) {
                 search: jaCurrentSearch,
                 mode: jaNsfwEnabled ? 'all' : 'sfw',
                 tagIds: [...jaIncludeTags],
-                excludeTagIds: [...new Set([...jaExcludeTags, ...excludeTagIds])],
+                excludeTagIds: allExcludeTagIds,
                 creatorIds,
             });
         };
@@ -461,7 +477,9 @@ async function loadCharacters(append = false) {
 
         let rawFavoriteRows = source === 'favorites' ? data.characters.length : 0;
         let hits = data.characters.filter(hit => passesSourceFilters(hit, source, clientExcludeTagIds));
-        jaTotalPages = data.total > 0 ? Math.ceil(data.total / (data.pageSize || HAMPTER_PAGE_SIZE)) : 0;
+        jaTotalPages = source === 'meili'
+            ? data.totalPages
+            : (data.total > 0 ? Math.ceil(data.total / (data.pageSize || HAMPTER_PAGE_SIZE)) : 0);
         if (source === 'favorites') jaFavoritesHasMore = data.hasMore;
 
         // Client filters can empty a page, so pull a few more while pages remain.
@@ -475,6 +493,7 @@ async function loadCharacters(append = false) {
             else jaCurrentPage++;
             data = await fetchPage();
             if (!isCurrentLoad(thisToken, source)) return;
+            if (source === 'meili') jaTotalPages = data.totalPages;
             if (source === 'favorites') {
                 jaFavoriteCache.seed(data.characters.map(hit => hit.character_id));
                 jaFavoritesHasMore = data.hasMore;
@@ -489,7 +508,11 @@ async function loadCharacters(append = false) {
         } else {
             jaCharacters = hits;
         }
-        jaHasMore = source === 'favorites' ? jaFavoritesHasMore : jaCurrentPage < jaTotalPages;
+        jaHasMore = source === 'favorites'
+            ? jaFavoritesHasMore
+            : source === 'meili'
+                ? data.hasMore
+                : jaCurrentPage < jaTotalPages;
         jaQueueWatchSince = 0;
 
         renderGrid(jaCharacters, append);
@@ -572,6 +595,19 @@ function restoreFavoriteResults(savedFavorites) {
 function handleLoadError(err, append, grid, source = currentJanitoraiSource(), savedFavorites = null) {
     const code = err?.code;
     const waitingRoom = /waiting room/i.test(err?.message || '');
+    if (source === 'meili') {
+        if (append) jaCurrentPage = Math.max(1, jaCurrentPage - 1);
+        renderBrowseError(grid, {
+            provider: 'janitorai',
+            error: err,
+            title: 'Meili Latest failed',
+            message: `JannyAI's experimental search source could not load: ${err.message}`,
+            view: jaMode,
+            flags: { source: 'meili', nsfw: jaNsfwEnabled },
+            retry: () => loadCharacters(false),
+        });
+        return;
+    }
     if (shouldRetainJanitoraiFavoriteResults({ source, code, waitingRoom })) {
         restoreFavoriteResults(savedFavorites);
         renderGrid(jaCharacters, false);
@@ -1837,7 +1873,7 @@ function clearCreatorFilter(reload = true) {
     _returnToFollowing = false;
     // Resync jaSortMode to the main sort select, which creator entry left untouched.
     const mainSort = document.getElementById('janitoraiSortSelect');
-    if (mainSort && HAMPTER_SORTS.includes(mainSort.value)) jaSortMode = mainSort.value;
+    if (mainSort && JANITORAI_SORTS.includes(mainSort.value)) jaSortMode = mainSort.value;
     if (reload) {
         jaCharacters = [];
         loadCharacters(false);
@@ -1858,7 +1894,7 @@ function doSearch() {
     // results to whatever matches AND happens to be ranking right now. A query always wants
     // relevance; the sort select stays live, so a deliberate ordering is still one click away.
     const sortSelect = document.getElementById('janitoraiSortSelect');
-    if (val && sortSelect && jaSortMode !== 'relevance') {
+    if (val && sortSelect && jaSortMode !== 'relevance' && jaSortMode !== JANITORAI_MEILI_SORT) {
         jaSortMode = 'relevance';
         sortSelect.value = 'relevance';
         sortSelect._customSelect?.update?.();
@@ -1970,7 +2006,7 @@ function initView() {
 
     on('janitoraiSortSelect', 'change', () => {
         const el = document.getElementById('janitoraiSortSelect');
-        if (el && HAMPTER_SORTS.includes(el.value)) jaSortMode = el.value;
+        if (el && JANITORAI_SORTS.includes(el.value)) jaSortMode = el.value;
         const input = document.getElementById('janitoraiSearchInput');
         if (input) jaCurrentSearch = input.value.trim();
         loadCharacters(false);
@@ -2178,6 +2214,7 @@ class JanitoraiBrowseView extends BrowseView {
                 { value: 'trending', label: 'Trending' },
                 { value: 'trending24', label: 'Trending (24h)' },
                 { value: 'latest', label: 'Latest' },
+                { value: 'meili_latest', label: 'Latest (Meili)' },
                 { value: 'relevance', label: 'Relevance' },
             ],
             // Empty: the following feed accepts no sort.
@@ -2264,6 +2301,9 @@ class JanitoraiBrowseView extends BrowseView {
                     </optgroup>
                     <optgroup label="Date">
                         ${sortOpt('latest', '🆕 Latest')}
+                    </optgroup>
+                    <optgroup label="Experimental">
+                        ${sortOpt('meili_latest', '🧪 Latest (Meili)')}
                     </optgroup>
                     <optgroup label="Search">
                         ${sortOpt('relevance', '🔍 Relevance')}
@@ -2540,11 +2580,9 @@ class JanitoraiBrowseView extends BrowseView {
             jaMode = defaults.view;
         }
         syncModeChrome();
-        if (defaults.sort && HAMPTER_SORTS.includes(defaults.sort)) {
-            jaSortMode = defaults.sort;
-            const el = document.getElementById('janitoraiSortSelect');
-            if (el) { el.value = defaults.sort; el._customSelect?.update?.(); }
-        }
+        jaSortMode = JANITORAI_SORTS.includes(defaults.sort) ? defaults.sort : 'popular';
+        const sortEl = document.getElementById('janitoraiSortSelect');
+        if (sortEl) { sortEl.value = jaSortMode; sortEl._customSelect?.update?.(); }
         if (defaults.hideOwned) {
             jaFilterHideOwned = true;
             const el = document.getElementById('janitoraiFilterHideOwned');

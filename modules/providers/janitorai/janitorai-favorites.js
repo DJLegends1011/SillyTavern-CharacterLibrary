@@ -2,8 +2,11 @@ export function normalizeJanitoraiId(value) {
     return value == null ? '' : String(value).trim().toLowerCase();
 }
 
-export function chooseJanitoraiSource({ favorites } = {}) {
-    return favorites ? 'favorites' : 'hampter';
+export function chooseJanitoraiSource({ mode, favorites, sort } = {}) {
+    if (mode === 'following') return 'hampter';
+    if (favorites) return 'favorites';
+    if (sort === 'meili_latest') return 'meili';
+    return 'hampter';
 }
 
 export function shouldRetainJanitoraiFavoriteResults({ source, code, waitingRoom = false } = {}) {
