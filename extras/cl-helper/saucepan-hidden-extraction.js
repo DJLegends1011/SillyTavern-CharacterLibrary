@@ -396,3 +396,49 @@ export async function extractSaucepanHiddenDefinition({
         }
     }
 }
+
+export function createSaucepanHiddenExtractionHandler({
+    getToken,
+    extractor = extractSaucepanHiddenDefinition,
+} = {}) {
+    let busy = false;
+    const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const safeErrorPrefixes = [
+        'Install cloudflared',
+        'This companion does not allow custom providers',
+        'Timed out waiting for cloudflared',
+        'Timed out waiting for Saucepan',
+        'Captured prompt section markers',
+        'Captured prompt is missing',
+        'Captured Companion Core is empty',
+    ];
+
+    return async function saucepanHiddenExtractionHandler(request, response) {
+        const token = getToken?.();
+        if (!token) {
+            return response.status(401).json({ success: false, error: 'Saucepan login is required' });
+        }
+
+        const companionId = request.body?.companionId;
+        if (typeof companionId !== 'string' || !uuidPattern.test(companionId)) {
+            return response.status(400).json({ success: false, error: 'A valid Saucepan companion ID is required' });
+        }
+        if (busy) {
+            return response.status(409).json({ success: false, error: 'A Saucepan hidden extraction is already running' });
+        }
+
+        busy = true;
+        try {
+            const result = await extractor({ token, companionId });
+            return response.json({ success: true, ...result });
+        } catch (error) {
+            const message = String(error?.message || '');
+            const safeMessage = safeErrorPrefixes.some(prefix => message.startsWith(prefix))
+                ? message
+                : 'Saucepan hidden extraction failed';
+            return response.status(502).json({ success: false, error: safeMessage });
+        } finally {
+            busy = false;
+        }
+    };
+}

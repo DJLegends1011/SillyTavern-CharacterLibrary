@@ -5,6 +5,7 @@ import test from 'node:test';
 
 import {
     canUseSaucepanCustomProvider,
+    createSaucepanHiddenExtractionHandler,
     createSaucepanCaptureListener,
     extractSaucepanHiddenDefinition,
     parseSaucepanCapturedMessages,
@@ -27,6 +28,21 @@ function jsonResponse(data, status = 200) {
         status,
         headers: { 'content-type': 'application/json' },
     });
+}
+
+function createExpressResponse() {
+    return {
+        statusCode: 200,
+        body: undefined,
+        status(code) {
+            this.statusCode = code;
+            return this;
+        },
+        json(body) {
+            this.body = body;
+            return this;
+        },
+    };
 }
 
 async function withCaptureListener(callback, options) {
@@ -344,4 +360,55 @@ test('attempts all available cleanup when captured prompt parsing fails', async 
 
     assert.equal(responses.length, 0);
     assert.deepEqual(cleanup, ['tunnel', 'capture']);
+});
+
+test('hidden extraction handler validates auth and companion IDs', async () => {
+    const noAuth = createSaucepanHiddenExtractionHandler({
+        getToken: () => null,
+        extractor: async () => assert.fail('extractor should not run'),
+    });
+    const noAuthResponse = createExpressResponse();
+    await noAuth({ body: { companionId: 'ade077f0-112c-41c4-bdda-e6027d87b730' } }, noAuthResponse);
+    assert.equal(noAuthResponse.statusCode, 401);
+
+    const invalid = createSaucepanHiddenExtractionHandler({
+        getToken: () => 'token',
+        extractor: async () => assert.fail('extractor should not run'),
+    });
+    const invalidResponse = createExpressResponse();
+    await invalid({ body: { companionId: '../all-companions' } }, invalidResponse);
+    assert.equal(invalidResponse.statusCode, 400);
+});
+
+test('hidden extraction handler permits only one extraction at a time', async () => {
+    let release;
+    const blocked = new Promise(resolve => { release = resolve; });
+    const handler = createSaucepanHiddenExtractionHandler({
+        getToken: () => 'token',
+        extractor: async () => blocked,
+    });
+    const firstResponse = createExpressResponse();
+    const first = handler({ body: { companionId: 'ade077f0-112c-41c4-bdda-e6027d87b730' } }, firstResponse);
+
+    const secondResponse = createExpressResponse();
+    await handler({ body: { companionId: 'ade077f0-112c-41c4-bdda-e6027d87b730' } }, secondResponse);
+    assert.equal(secondResponse.statusCode, 409);
+
+    release({ assembled: { 'Companion Core': 'CORE' }, greeting: '' });
+    await first;
+    assert.equal(firstResponse.statusCode, 200);
+    assert.equal(firstResponse.body.success, true);
+});
+
+test('hidden extraction handler does not echo extractor secrets in errors', async () => {
+    const handler = createSaucepanHiddenExtractionHandler({
+        getToken: () => 'sauce-token',
+        extractor: async () => { throw new Error('upstream echoed sauce-token and prompt contents'); },
+    });
+    const response = createExpressResponse();
+    await handler({ body: { companionId: 'ade077f0-112c-41c4-bdda-e6027d87b730' } }, response);
+
+    assert.equal(response.statusCode, 502);
+    assert.equal(response.body.success, false);
+    assert.doesNotMatch(response.body.error, /sauce-token|prompt contents/i);
 });
