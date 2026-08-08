@@ -4444,18 +4444,87 @@ function setupSettingsModal() {
     }
     updateJanitoraiStatus();
 
+    // Token paste: the alternative to signing in through the browser. Social-login accounts have
+    // no password to submit, so for them this is the only way in.
+    const janitoraiTokenInputEl = document.getElementById('settingsJanitoraiToken');
+    const toggleJanitoraiTokenBtn = document.getElementById('toggleJanitoraiTokenVisibility');
+    const saveJanitoraiTokenBtn = document.getElementById('saveJanitoraiTokenBtn');
+
+    if (toggleJanitoraiTokenBtn && janitoraiTokenInputEl) {
+        toggleJanitoraiTokenBtn.onclick = () => {
+            const isPassword = janitoraiTokenInputEl.type === 'password';
+            janitoraiTokenInputEl.type = isPassword ? 'text' : 'password';
+            toggleJanitoraiTokenBtn.innerHTML = `<i class="fa-solid fa-eye${isPassword ? '-slash' : ''}"></i>`;
+        };
+    }
+    if (saveJanitoraiTokenBtn && janitoraiTokenInputEl) {
+        saveJanitoraiTokenBtn.onclick = async () => {
+            const raw = (janitoraiTokenInputEl.value || '').trim();
+            if (!raw) { showToast('Paste your sb-auth-auth-token cookie value first', 'warning'); return; }
+            const original = saveJanitoraiTokenBtn.innerHTML;
+            saveJanitoraiTokenBtn.disabled = true;
+            saveJanitoraiTokenBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Saving...';
+            try {
+                const res = await window.janitoraiSetSession?.(raw);
+                if (res?.ok) {
+                    janitoraiTokenInputEl.value = '';
+                    updateJanitoraiStatus();
+                    // The browser needs the session as a cookie of its own, or extraction opens a
+                    // chat page that is signed out. Best effort: browsing works either way.
+                    let inBrowser = false;
+                    try {
+                        const managed = janitoraiBrowserMode() === 'managed';
+                        const endpoint = (janitoraiEndpointInput?.value || '').trim();
+                        const push = await window.janitoraiBrowserSetSession?.(managed ? '' : endpoint);
+                        inBrowser = !!push?.ok;
+                    } catch { /* reported through the toast below */ }
+                    const who = res.email ? ' as ' + res.email : '';
+                    if (!res.hasRefresh) showToast('Logged in, but no refresh token was in that value; this session expires in ~3h. Copy the whole sb-auth-auth-token cookie for a lasting login.', 'warning', 9000);
+                    else if (inBrowser) showToast(`Signed in to JanitorAI${who}; the browser is signed in too`, 'success');
+                    else showToast(`Signed in to JanitorAI${who}. Browsing works, but the browser could not be signed in, so character extraction may not. Check that the browser is running and cl-helper is up to date.`, 'warning', 12000);
+                } else {
+                    showToast(res?.error || 'Could not save the session', 'error');
+                }
+            } catch (err) {
+                showToast(`Login error: ${err.message}`, 'error');
+            } finally {
+                saveJanitoraiTokenBtn.disabled = false;
+                saveJanitoraiTokenBtn.innerHTML = original;
+            }
+        };
+    }
+
     if (clearJanitoraiTokenBtn) {
-        clearJanitoraiTokenBtn.onclick = () => {
+        clearJanitoraiTokenBtn.onclick = async () => {
             // Also clears the stored credentials: janitoraiLogout() only drops the tokens, and a
             // button labelled Log Out leaving the password saved would surprise.
             window.janitoraiLogout?.();
+            if (janitoraiTokenInputEl) janitoraiTokenInputEl.value = '';
             setSettings({ janitoraiEmail: null, janitoraiPassword: null });
             const emailEl = document.getElementById('settingsJanitoraiEmail');
             const pwEl = document.getElementById('settingsJanitoraiPassword');
             if (emailEl) emailEl.value = '';
             if (pwEl) pwEl.value = '';
             updateJanitoraiStatus();
-            showToast('Logged out of JanitorAI', 'info');
+
+            // The browser keeps its own cookies, so without this a sign-in straight afterwards
+            // silently adopts the session the user just asked us to forget.
+            const original = clearJanitoraiTokenBtn.innerHTML;
+            clearJanitoraiTokenBtn.disabled = true;
+            clearJanitoraiTokenBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Logging out...';
+            let browserCleared = false;
+            try {
+                const managed = janitoraiBrowserMode() === 'managed';
+                const endpoint = (janitoraiEndpointInput?.value || '').trim();
+                const res = await window.janitoraiBrowserLogout?.(managed ? '' : endpoint);
+                browserCleared = !!res?.ok;
+            } catch { /* an unreachable browser still leaves the local session cleared */ }
+            clearJanitoraiTokenBtn.disabled = false;
+            clearJanitoraiTokenBtn.innerHTML = original;
+            updateJanitoraiStatus();
+            showToast(browserCleared
+                ? 'Logged out of JanitorAI, and the browser session was cleared'
+                : 'Logged out of JanitorAI, but the browser session could not be cleared, so it may still hold the account. Check that the browser is running and cl-helper is up to date.', browserCleared ? 'info' : 'warning', browserCleared ? 5000 : 9000);
         };
     }
 
@@ -4713,7 +4782,8 @@ function setupSettingsModal() {
                     ? `Signed in${res.email ? ' as ' + res.email : ''}; session adopted for browsing too`
                     : 'Browser signed in to JanitorAI', 'success');
             } catch (err) {
-                showToast(`Sign-in failed: ${err.message}`, 'error', 9000);
+                // Social-login accounts can never sign in here, so point at the token either way.
+                showToast(`Sign-in failed: ${err.message} If you use Google, Discord, X or Apple to sign in, or this keeps failing, paste a session token below instead.`, 'error', 14000);
             } finally {
                 janitoraiBrowserLoginBtn.disabled = false;
                 janitoraiBrowserLoginBtn.innerHTML = original;
