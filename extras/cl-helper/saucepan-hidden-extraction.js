@@ -40,6 +40,7 @@ export function parseSaucepanCapturedMessages(messages) {
 export async function createSaucepanCaptureListener({
     maxBodyBytes = 4 * 1024 * 1024,
     timeoutMs = 30_000,
+    shutdownTimeoutMs = 2_000,
 } = {}) {
     const providerPath = `/capture/${randomBytes(32).toString('hex')}/v1/chat/completions`;
     const apiKey = `cl-${randomBytes(32).toString('hex')}`;
@@ -48,6 +49,8 @@ export async function createSaucepanCaptureListener({
     let captureError;
     let claimed = false;
     let closed = false;
+    let captureTimeout;
+    const sockets = new Set();
 
     const settleWaiters = () => {
         while (waiters.length) {
@@ -80,6 +83,10 @@ export async function createSaucepanCaptureListener({
         }
 
         claimed = true;
+        request.setTimeout(timeoutMs, () => request.destroy(new Error('Saucepan capture request timed out')));
+        request.on('error', () => {
+            if (!response.writableEnded) response.destroy();
+        });
         const chunks = [];
         let receivedBytes = 0;
         let oversized = false;
@@ -107,6 +114,7 @@ export async function createSaucepanCaptureListener({
             }
 
             capturedPayload = payload;
+            clearTimeout(captureTimeout);
             settleWaiters();
             if (payload?.stream) {
                 const chunk = {
@@ -135,6 +143,10 @@ export async function createSaucepanCaptureListener({
             }));
         });
     });
+    server.on('connection', socket => {
+        sockets.add(socket);
+        socket.once('close', () => sockets.delete(socket));
+    });
 
     await new Promise((resolve, reject) => {
         const onError = error => {
@@ -150,12 +162,6 @@ export async function createSaucepanCaptureListener({
         server.listen(0, '127.0.0.1');
     });
 
-    const timeout = setTimeout(() => {
-        captureError = new Error('Timed out waiting for Saucepan to send the protected prompt');
-        settleWaiters();
-    }, timeoutMs);
-    timeout.unref?.();
-
     return {
         apiKey,
         port: server.address().port,
@@ -164,17 +170,38 @@ export async function createSaucepanCaptureListener({
             if (captureError) return Promise.reject(captureError);
             if (capturedPayload !== undefined) return Promise.resolve(capturedPayload);
             if (closed) return Promise.reject(new Error('Saucepan capture listener is closed'));
+            if (!captureTimeout) {
+                captureTimeout = setTimeout(() => {
+                    captureError = new Error('Timed out waiting for Saucepan to send the protected prompt');
+                    settleWaiters();
+                }, timeoutMs);
+                captureTimeout.unref?.();
+            }
             return new Promise((resolve, reject) => waiters.push({ resolve, reject }));
         },
         async close() {
             if (closed) return;
             closed = true;
-            clearTimeout(timeout);
+            clearTimeout(captureTimeout);
             if (capturedPayload === undefined && !captureError) {
                 captureError = new Error('Saucepan capture listener closed before receiving a prompt');
                 settleWaiters();
             }
-            await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+            const closePromise = new Promise((resolve, reject) => {
+                server.close(error => error ? reject(error) : resolve());
+            });
+            const closedGracefully = await Promise.race([
+                closePromise.then(() => true),
+                new Promise(resolve => {
+                    const timer = setTimeout(() => resolve(false), shutdownTimeoutMs);
+                    timer.unref?.();
+                }),
+            ]);
+            if (!closedGracefully) {
+                for (const socket of sockets) socket.destroy();
+                server.closeAllConnections?.();
+                await closePromise;
+            }
         },
     };
 }
@@ -184,6 +211,7 @@ export async function startCloudflaredQuickTunnel({
     command = process.env.CLOUDFLARED_PATH || 'cloudflared',
     spawnImpl = spawn,
     timeoutMs = 25_000,
+    shutdownTimeoutMs = 2_000,
 } = {}) {
     if (!Number.isInteger(port) || port < 1 || port > 65_535) {
         throw new Error('A valid loopback port is required for the Saucepan capture tunnel');
@@ -211,13 +239,14 @@ export async function startCloudflaredQuickTunnel({
     let output = '';
     let resolveExit;
     const exitPromise = new Promise(resolve => { resolveExit = resolve; });
+    const markExited = () => {
+        if (exited) return;
+        exited = true;
+        resolveExit();
+    };
 
     const urlPromise = new Promise((resolve, reject) => {
-        const timeout = setTimeout(() => {
-            reject(new Error('Timed out waiting for cloudflared to publish a Quick Tunnel URL'));
-        }, timeoutMs);
-        timeout.unref?.();
-
+        let timeout;
         const finish = (callback, value) => {
             clearTimeout(timeout);
             child.stdout?.off('data', onData);
@@ -231,6 +260,10 @@ export async function startCloudflaredQuickTunnel({
             publishedUrl = match[0];
             finish(resolve, publishedUrl);
         };
+        timeout = setTimeout(() => {
+            finish(reject, new Error('Timed out waiting for cloudflared to publish a Quick Tunnel URL'));
+        }, timeoutMs);
+        timeout.unref?.();
         child.stdout?.on('data', onData);
         child.stderr?.on('data', onData);
         child.on('error', error => {
@@ -241,35 +274,45 @@ export async function startCloudflaredQuickTunnel({
             finish(reject, new Error(message));
         });
         child.on('exit', code => {
-            exited = true;
-            resolveExit();
+            markExited();
             if (!publishedUrl) finish(reject, new Error(`cloudflared exited before publishing a Quick Tunnel URL (code ${code ?? 'unknown'})`));
         });
+        child.on('close', markExited);
     });
+
+    const waitForExit = async () => {
+        if (exited) return true;
+        return Promise.race([
+            exitPromise.then(() => true),
+            new Promise(resolve => {
+                const timer = setTimeout(() => resolve(false), shutdownTimeoutMs);
+                timer.unref?.();
+            }),
+        ]);
+    };
+    const stopChild = async () => {
+        if (exited) return;
+        child.kill?.('SIGTERM');
+        if (await waitForExit()) return;
+        child.kill?.('SIGKILL');
+        if (await waitForExit()) return;
+        throw new Error('Could not stop cloudflared after forced termination');
+    };
 
     let url;
     try {
         url = await urlPromise;
     } catch (error) {
-        if (!exited) child.kill?.('SIGTERM');
+        try { await stopChild(); } catch { /* preserve the startup error */ }
         throw error;
     }
 
-    let closed = false;
+    let closePromise;
     return {
         url,
-        async close() {
-            if (closed) return;
-            closed = true;
-            if (exited) return;
-            child.kill?.('SIGTERM');
-            await Promise.race([
-                exitPromise,
-                new Promise(resolve => {
-                    const timer = setTimeout(resolve, 2_000);
-                    timer.unref?.();
-                }),
-            ]);
+        close() {
+            closePromise ||= stopChild();
+            return closePromise;
         },
     };
 }
@@ -280,36 +323,49 @@ export async function extractSaucepanHiddenDefinition({
     fetchImpl = fetch,
     openCapture = createSaucepanCaptureListener,
     openTunnel = startCloudflaredQuickTunnel,
+    remoteTimeoutMs = 20_000,
+    cleanupTimeoutMs = 5_000,
 } = {}) {
     if (!token) throw new Error('Saucepan authentication is required');
     if (!companionId) throw new Error('A Saucepan companion ID is required');
 
     const baseUrl = 'https://saucepan.ai';
-    const request = async (method, path, body) => {
-        const response = await fetchImpl(`${baseUrl}${path}`, {
-            method,
-            headers: {
-                authorization: `Bearer ${token}`,
-                accept: '*/*',
-                origin: baseUrl,
-                referer: `${baseUrl}/`,
-                'user-agent': 'Mozilla/5.0 (SillyTavern Character Library)',
-                'x-saucepan-client-version': '1',
-                ...(body === undefined ? {} : { 'content-type': 'application/json' }),
-            },
-            ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-        });
-        let data;
+    const request = async (method, path, body, requestTimeoutMs = remoteTimeoutMs) => {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
+        timeout.unref?.();
         try {
-            data = await response.json();
-        } catch {
-            data = null;
+            const response = await fetchImpl(`${baseUrl}${path}`, {
+                method,
+                signal: controller.signal,
+                headers: {
+                    authorization: `Bearer ${token}`,
+                    accept: '*/*',
+                    origin: baseUrl,
+                    referer: `${baseUrl}/`,
+                    'user-agent': 'Mozilla/5.0 (SillyTavern Character Library)',
+                    'x-saucepan-client-version': '1',
+                    ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+                },
+                ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+            });
+            let data;
+            try {
+                data = await response.json();
+            } catch {
+                data = null;
+            }
+            if (!response.ok) {
+                const detail = data?.error?.message || data?.error || data?.message;
+                throw new Error(detail || `Saucepan HTTP ${response.status}`);
+            }
+            return data;
+        } catch (error) {
+            if (controller.signal.aborted) throw new Error('Saucepan request timed out');
+            throw error;
+        } finally {
+            clearTimeout(timeout);
         }
-        if (!response.ok) {
-            const detail = data?.error?.message || data?.error || data?.message;
-            throw new Error(detail || `Saucepan HTTP ${response.status}`);
-        }
-        return data;
     };
 
     const companion = await request('GET', `/api/v2/companions/${encodeURIComponent(companionId)}`);
@@ -322,6 +378,9 @@ export async function extractSaucepanHiddenDefinition({
     let providerId;
     let chatId;
     let generationId;
+    let result;
+    let failure;
+    const cleanupFailures = [];
     try {
         capture = await openCapture();
         tunnel = await openTunnel({ port: capture.port });
@@ -366,40 +425,63 @@ export async function extractSaucepanHiddenDefinition({
 
         const captured = await capture.waitForCapture();
         const parsed = parseSaucepanCapturedMessages(captured?.messages);
-        return {
+        result = {
             assembled: {
                 'Companion Core': parsed.core,
                 'Example Dialogue': parsed.exampleDialogue,
             },
             greeting: parsed.greeting,
         };
+    } catch (error) {
+        failure = error;
     } finally {
-        if (chatId && generationId) {
+        const attemptCleanup = async (label, action) => {
             try {
-                await request('POST', '/api/v2/chat/cancel', { chat_id: chatId, generation_id: generationId });
-            } catch { /* best-effort cleanup */ }
-        }
-        if (chatId) {
-            try {
-                await request('DELETE', '/api/v1/chat', { chat_id: chatId });
-            } catch { /* best-effort cleanup */ }
-        }
-        if (providerId) {
-            try {
-                await request('DELETE', '/api/v1/openai_provider/config', { config_id: providerId });
-            } catch { /* best-effort cleanup */ }
-        }
+                await action();
+            } catch {
+                cleanupFailures.push(label);
+            }
+        };
         if (tunnel) {
-            try {
-                await tunnel.close();
-            } catch { /* best-effort cleanup */ }
+            await attemptCleanup('Quick Tunnel shutdown', () => tunnel.close());
         }
         if (capture) {
-            try {
-                await capture.close();
-            } catch { /* best-effort cleanup */ }
+            await attemptCleanup('capture listener shutdown', () => capture.close());
+        }
+        if (chatId && generationId) {
+            await attemptCleanup('generation cancellation', () => request(
+                'POST',
+                '/api/v2/chat/cancel',
+                { chat_id: chatId, generation_id: generationId },
+                cleanupTimeoutMs,
+            ));
+        }
+        if (chatId) {
+            await attemptCleanup('temporary chat deletion', () => request(
+                'DELETE',
+                '/api/v1/chat',
+                { chat_id: chatId },
+                cleanupTimeoutMs,
+            ));
+        }
+        if (providerId) {
+            await attemptCleanup('temporary provider deletion', () => request(
+                'DELETE',
+                '/api/v1/openai_provider/config',
+                { config_id: providerId },
+                cleanupTimeoutMs,
+            ));
         }
     }
+
+    const cleanupWarning = cleanupFailures.length
+        ? `Temporary cleanup was incomplete: ${cleanupFailures.join(', ')}`
+        : '';
+    if (failure) {
+        if (cleanupWarning) failure.cleanupWarning = cleanupWarning;
+        throw failure;
+    }
+    return cleanupWarning ? { ...result, cleanupWarning } : result;
 }
 
 export function createSaucepanHiddenExtractionHandler({
@@ -411,6 +493,7 @@ export function createSaucepanHiddenExtractionHandler({
     const safeErrorPrefixes = [
         'Install cloudflared',
         'This companion does not allow custom providers',
+        'Saucepan request timed out',
         'Timed out waiting for cloudflared',
         'Timed out waiting for Saucepan',
         'Captured prompt section markers',
@@ -441,7 +524,15 @@ export function createSaucepanHiddenExtractionHandler({
             const safeMessage = safeErrorPrefixes.some(prefix => message.startsWith(prefix))
                 ? message
                 : 'Saucepan hidden extraction failed';
-            return response.status(502).json({ success: false, error: safeMessage });
+            const cleanupWarning = String(error?.cleanupWarning || '');
+            const safeCleanupWarning = /^Temporary cleanup was incomplete: (?:(?:Quick Tunnel shutdown|capture listener shutdown|generation cancellation|temporary chat deletion|temporary provider deletion)(?:, )?)+$/.test(cleanupWarning)
+                ? cleanupWarning
+                : '';
+            return response.status(502).json({
+                success: false,
+                error: safeMessage,
+                ...(safeCleanupWarning ? { cleanupWarning: safeCleanupWarning } : {}),
+            });
         } finally {
             busy = false;
         }

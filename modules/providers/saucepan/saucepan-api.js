@@ -626,6 +626,7 @@ export async function submitSaucepanExtraction(companionUrl, { allowPartial = fa
         }
 
         const defLocked = companion?.open_definition === false;
+        let cleanupWarning = '';
         if (allowHiddenCapture && defLocked && !assembled['Companion Core'] && canUseSaucepanHiddenCapture(companion)) {
             const captureResponse = await _apiRequest(
                 `${CL_HELPER_PLUGIN_BASE}/saucepan-extract-hidden`,
@@ -639,8 +640,10 @@ export async function submitSaucepanExtraction(companionUrl, { allowPartial = fa
                     success: false,
                     error: captureData?.error || `Hidden extraction failed (HTTP ${captureResponse.status})`,
                     locked: true,
+                    cleanupWarning: captureData?.cleanupWarning || '',
                 };
             }
+            cleanupWarning = captureData.cleanupWarning || '';
             if (captureData.assembled?.['Companion Core']) {
                 assembled['Companion Core'] = captureData.assembled['Companion Core'];
             }
@@ -662,7 +665,15 @@ export async function submitSaucepanExtraction(companionUrl, { allowPartial = fa
             return { success: false, error: "This companion's definition is locked by its creator", locked: true };
         }
 
-        return { success: true, assembled, greetings, greetingsUnavailable, partial, profileDescription };
+        return {
+            success: true,
+            assembled,
+            greetings,
+            greetingsUnavailable,
+            partial,
+            profileDescription,
+            ...(cleanupWarning ? { cleanupWarning } : {}),
+        };
     } catch (e) {
         console.error('[Saucepan] submitSaucepanExtraction failed:', e);
         return { success: false, error: e.message };
@@ -756,8 +767,14 @@ export async function fetchSaucepanV2Card(hit, { allowHiddenCapture = false } = 
     );
     if (!result.success) {
         console.warn('[Saucepan] Native extraction failed:', result.error);
-        if (allowHiddenCapture) throw new Error(result.error || 'Saucepan hidden extraction failed');
+        if (allowHiddenCapture) {
+            const error = new Error(result.error || 'Saucepan hidden extraction failed');
+            if (result.cleanupWarning) error.cleanupWarning = result.cleanupWarning;
+            throw error;
+        }
         return null;
     }
-    return buildV2FromSaucepan(hit, result);
+    const card = buildV2FromSaucepan(hit, result);
+    if (card && result.cleanupWarning) card._saucepanCleanupWarning = result.cleanupWarning;
+    return card;
 }

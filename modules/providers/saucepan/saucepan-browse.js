@@ -1263,7 +1263,7 @@ function renderHiddenCaptureCTA(hit, name) {
                     <i class="fa-solid fa-shield-halved saucepan-modal-extract-icon"></i>
                 </div>
                 <p class="saucepan-modal-extract-message">This creator allows custom providers.</p>
-                <p class="saucepan-modal-extract-hint">For this one card, Character Library can create a temporary Saucepan provider and chat, receive the prompt through a short-lived Cloudflare Quick Tunnel, then delete the temporary Saucepan state. The definition stays in memory for local import and is not published.</p>
+                <p class="saucepan-modal-extract-hint">For this one card, Character Library can create a temporary Saucepan provider and chat, receive the prompt through a short-lived Cloudflare Quick Tunnel, then attempt to delete the temporary Saucepan state. The definition stays in memory for local import and is not published; you will be warned if cleanup is incomplete.</p>
                 <button class="action-btn primary saucepan-modal-extract-btn" id="saucepanHiddenCaptureBtn">
                     <i class="fa-solid fa-file-import"></i> Extract for local import
                 </button>
@@ -1281,10 +1281,15 @@ function renderHiddenCaptureCTA(hit, name) {
                 if (!v2Card?.data) throw new Error('Hidden extraction did not return a character definition');
                 if (!saucepanSelectedChar || getCharId(saucepanSelectedChar) !== charId) return;
                 paintSaucepanV2Card(hit, v2Card, name);
-                showToast('Definition extracted for local import', 'success');
+                if (v2Card._saucepanCleanupWarning) {
+                    showToast(v2Card._saucepanCleanupWarning, 'warning');
+                } else {
+                    showToast('Definition extracted for local import', 'success');
+                }
             } catch (error) {
                 debugLog('[SaucepanBrowse] Hidden extraction failed:', error);
                 showToast(error?.message || 'Hidden extraction failed', 'error');
+                if (error?.cleanupWarning) showToast(error.cleanupWarning, 'warning');
                 if (saucepanSelectedChar && getCharId(saucepanSelectedChar) === charId) {
                     renderExtractionUnavailable({ locked: true });
                 }

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
+import { request as httpRequest } from 'node:http';
 import { PassThrough } from 'node:stream';
 import test from 'node:test';
 
@@ -43,6 +44,18 @@ function createExpressResponse() {
             return this;
         },
     };
+}
+
+const delay = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
+
+function delayedFailure(options, milliseconds = 100) {
+    return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('late upstream failure')), milliseconds);
+        options.signal?.addEventListener('abort', () => {
+            clearTimeout(timer);
+            reject(options.signal.reason);
+        }, { once: true });
+    });
 }
 
 async function withCaptureListener(callback, options) {
@@ -186,6 +199,45 @@ test('capture listener rejects oversized request bodies', async () => {
     }, { maxBodyBytes: 64 });
 });
 
+test('capture delivery timeout starts when capture waiting begins', async () => {
+    const listener = await createSaucepanCaptureListener({ timeoutMs: 30 });
+    try {
+        await delay(40);
+        let settled = false;
+        const waiting = listener.waitForCapture().finally(() => { settled = true; });
+        await delay(5);
+        assert.equal(settled, false);
+        await assert.rejects(waiting, /timed out/i);
+    } finally {
+        await listener.close();
+    }
+});
+
+test('capture listener forcibly closes a request that never finishes its body', async () => {
+    const listener = await createSaucepanCaptureListener({ timeoutMs: 30, shutdownTimeoutMs: 20 });
+    const request = httpRequest({
+        host: '127.0.0.1',
+        port: listener.port,
+        path: listener.providerPath,
+        method: 'POST',
+        headers: {
+            authorization: `Bearer ${listener.apiKey}`,
+            'content-type': 'application/json',
+            'content-length': '100',
+        },
+    });
+    request.on('error', () => {});
+    request.write('{');
+    await delay(5);
+
+    const closedPromptly = await Promise.race([
+        listener.close().then(() => true),
+        delay(150).then(() => false),
+    ]);
+    request.destroy();
+    assert.equal(closedPromptly, true);
+});
+
 test('starts cloudflared for the loopback listener and returns only a Quick Tunnel URL', async () => {
     const child = createFakeChild();
     let invocation;
@@ -230,6 +282,44 @@ test('reports a helpful error when cloudflared is not installed', async () => {
             return child;
         },
     }), /install cloudflared/i);
+});
+
+test('forces cloudflared to stop when it ignores graceful termination', async () => {
+    const child = createFakeChild();
+    const signals = [];
+    child.kill = signal => {
+        signals.push(signal);
+        if (signal === 'SIGKILL') queueMicrotask(() => child.emit('exit', 1, signal));
+        return true;
+    };
+    const tunnelPromise = startCloudflaredQuickTunnel({
+        port: 43123,
+        shutdownTimeoutMs: 10,
+        spawnImpl() {
+            queueMicrotask(() => child.stderr.write('https://quiet-river.trycloudflare.com\n'));
+            return child;
+        },
+    });
+
+    const tunnel = await tunnelPromise;
+    await tunnel.close();
+    assert.deepEqual(signals, ['SIGTERM', 'SIGKILL']);
+});
+
+test('reports failure when cloudflared survives forced termination', async () => {
+    const child = createFakeChild();
+    child.kill = () => true;
+    const tunnelPromise = startCloudflaredQuickTunnel({
+        port: 43123,
+        shutdownTimeoutMs: 10,
+        spawnImpl() {
+            queueMicrotask(() => child.stderr.write('https://quiet-river.trycloudflare.com\n'));
+            return child;
+        },
+    });
+
+    const tunnel = await tunnelPromise;
+    await assert.rejects(tunnel.close(), /could not stop cloudflared/i);
 });
 
 test('runs one temporary Saucepan provider/chat lifecycle and cleans up every resource', async () => {
@@ -362,6 +452,82 @@ test('attempts all available cleanup when captured prompt parsing fails', async 
     assert.deepEqual(cleanup, ['tunnel', 'capture']);
 });
 
+test('bounds Saucepan requests and still closes local resources after a remote stall', async () => {
+    const cleanup = [];
+    let requestCount = 0;
+    const startedAt = Date.now();
+    await assert.rejects(extractSaucepanHiddenDefinition({
+        token: 'saucepan-token',
+        companionId: 'ade077f0-112c-41c4-bdda-e6027d87b730',
+        remoteTimeoutMs: 15,
+        cleanupTimeoutMs: 15,
+        fetchImpl: async (_url, options) => {
+            requestCount++;
+            if (requestCount === 1) return jsonResponse({ providers_profile: 'custom_and_vetted' });
+            return delayedFailure(options);
+        },
+        openCapture: async () => ({
+            apiKey: 'capture-key',
+            port: 43123,
+            providerPath: '/capture/secret/v1/chat/completions',
+            close: async () => cleanup.push('capture'),
+        }),
+        openTunnel: async () => ({
+            url: 'https://quiet-river.trycloudflare.com',
+            close: async () => cleanup.push('tunnel'),
+        }),
+    }), /timed out/i);
+
+    assert.equal(Date.now() - startedAt < 80, true);
+    assert.deepEqual(cleanup, ['tunnel', 'capture']);
+});
+
+test('reports cleanup warnings while continuing every independent cleanup step', async () => {
+    const events = [];
+    let requestCount = 0;
+    const result = await extractSaucepanHiddenDefinition({
+        token: 'saucepan-token',
+        companionId: 'ade077f0-112c-41c4-bdda-e6027d87b730',
+        cleanupTimeoutMs: 15,
+        fetchImpl: async (url, options) => {
+            requestCount++;
+            if (requestCount === 1) return jsonResponse({ providers_profile: 'custom_and_vetted' });
+            if (requestCount === 2) return jsonResponse({ config_id: 'provider-1' });
+            if (requestCount === 3) return jsonResponse({ chat_id: 'chat-1' });
+            if (requestCount === 4) return jsonResponse({ generation_id: 'generation-1' });
+            const action = `${options.method} ${new URL(url).pathname}`;
+            events.push(action);
+            if (requestCount === 5) return delayedFailure(options);
+            return jsonResponse({});
+        },
+        openCapture: async () => ({
+            apiKey: 'capture-key',
+            port: 43123,
+            providerPath: '/capture/secret/v1/chat/completions',
+            waitForCapture: async () => ({
+                messages: [{
+                    role: 'system',
+                    content: '[ Background ]\nCORE\n[ Example Dialogue ]\nEXAMPLE\n[ User Description ]\nPERSONA',
+                }],
+            }),
+            close: async () => events.push('capture'),
+        }),
+        openTunnel: async () => ({
+            url: 'https://quiet-river.trycloudflare.com',
+            close: async () => events.push('tunnel'),
+        }),
+    });
+
+    assert.match(result.cleanupWarning, /generation cancellation/i);
+    assert.deepEqual(events, [
+        'tunnel',
+        'capture',
+        'POST /api/v2/chat/cancel',
+        'DELETE /api/v1/chat',
+        'DELETE /api/v1/openai_provider/config',
+    ]);
+});
+
 test('hidden extraction handler validates auth and companion IDs', async () => {
     const noAuth = createSaucepanHiddenExtractionHandler({
         getToken: () => null,
@@ -403,7 +569,11 @@ test('hidden extraction handler permits only one extraction at a time', async ()
 test('hidden extraction handler does not echo extractor secrets in errors', async () => {
     const handler = createSaucepanHiddenExtractionHandler({
         getToken: () => 'sauce-token',
-        extractor: async () => { throw new Error('upstream echoed sauce-token and prompt contents'); },
+        extractor: async () => {
+            const error = new Error('upstream echoed sauce-token and prompt contents');
+            error.cleanupWarning = 'Temporary cleanup was incomplete: temporary provider deletion';
+            throw error;
+        },
     });
     const response = createExpressResponse();
     await handler({ body: { companionId: 'ade077f0-112c-41c4-bdda-e6027d87b730' } }, response);
@@ -411,4 +581,5 @@ test('hidden extraction handler does not echo extractor secrets in errors', asyn
     assert.equal(response.statusCode, 502);
     assert.equal(response.body.success, false);
     assert.doesNotMatch(response.body.error, /sauce-token|prompt contents/i);
+    assert.equal(response.body.cleanupWarning, 'Temporary cleanup was incomplete: temporary provider deletion');
 });
