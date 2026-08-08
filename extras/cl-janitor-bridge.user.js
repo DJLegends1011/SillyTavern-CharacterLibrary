@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Character Library - JanitorAI Bridge
 // @namespace    https://github.com/Sillyanonymous/SillyTavern-CharacterLibrary
-// @version      1.3.0
+// @version      1.3.1
 // @description  Lets Character Library reach Cloudflare-gated pages from your own browser: DataCat's JanitorAI Hampter sorts and JannyAI card definitions. Not used by the JanitorAI provider, which needs a real browser.
 // @author       Sillyanonymous
 // @match        *://*/*
@@ -11,7 +11,6 @@
 // @grant        GM.xmlHttpRequest
 // @grant        GM_openInTab
 // @run-at       document-idle
-// @noframes
 // ==/UserScript==
 
 /*
@@ -68,6 +67,8 @@
 
     // Only run on the Character Library page (the manifest @match is broad; this narrows it without
     // needing to know the user's SillyTavern host). CL announces itself with a page marker.
+    // Frames are deliberately NOT excluded: CL's embedded pane mode IS an iframe, so @noframes
+    // would make the bridge unreachable there. Every other frame exits on the next line.
     const isCLPage = /\/SillyTavern-CharacterLibrary\/app\/library\.html/i.test(location.pathname)
         || !!document.querySelector('meta[name="character-library"]');
     if (!isCLPage) return;

@@ -2218,9 +2218,30 @@ function janitoraiCall(method, path, body, token) {
     })()`;
 }
 
+const JANITORAI_COOKIE = 'sb-auth-auth-token';
+// Browsers cap a cookie near 4KB, so supabase splits a larger session across `<name>.0`, `.1`,
+// ... and then does NOT write the unsuffixed one. Whether a given account crosses the line
+// depends on its JWT claims, which is why an exact-name read works for some people and reports
+// a perfectly good session as missing for others.
+const JANITORAI_COOKIE_CHUNK_LIMIT = 3180;
+
+/** Join the session cookie back together, chunked or not. '' when absent. */
+function readJanitoraiCookie(cookies) {
+    const whole = cookies.find(c => c.name === JANITORAI_COOKIE)?.value;
+    if (whole) return whole;
+    const chunks = cookies
+        .map(c => ({ n: Number(new RegExp(`^${JANITORAI_COOKIE}\\.(\\d+)$`).exec(c.name)?.[1]), value: c.value }))
+        .filter(c => Number.isInteger(c.n))
+        .sort((a, b) => a.n - b.n);
+    // A gap means a chunk expired or was evicted; a partial join decodes to garbage, so treat
+    // the session as absent rather than handing back half a token.
+    if (!chunks.length || chunks.some((c, i) => c.n !== i)) return '';
+    return chunks.map(c => c.value).join('');
+}
+
 /** Pull the access token out of janitorai's supabase session cookie. '' when absent. */
 function readJanitoraiToken(cookies) {
-    const raw = cookies.find(c => c.name === 'sb-auth-auth-token')?.value;
+    const raw = readJanitoraiCookie(cookies);
     if (!raw) return { token: '', cookie: '' };
     try {
         const dec = decodeURIComponent(raw);
@@ -2340,17 +2361,35 @@ async function injectJanitoraiSession(page, accessToken, refreshToken) {
     };
     const value = 'base64-' + Buffer.from(JSON.stringify(session), 'utf8').toString('base64');
 
+    // Match supabase's own storage shape: one cookie when it fits, otherwise numbered chunks and
+    // no unsuffixed cookie. A single oversized cookie is dropped by the browser, which reads to
+    // the site as signed out.
+    const parts = [];
+    if (value.length <= JANITORAI_COOKIE_CHUNK_LIMIT) {
+        parts.push([JANITORAI_COOKIE, value]);
+    } else {
+        for (let i = 0, n = 0; i < value.length; i += JANITORAI_COOKIE_CHUNK_LIMIT, n++) {
+            parts.push([`${JANITORAI_COOKIE}.${n}`, value.slice(i, i + JANITORAI_COOKIE_CHUNK_LIMIT)]);
+        }
+    }
+
     try {
-        await page.send('Network.setCookie', {
-            name: 'sb-auth-auth-token',
-            value,
-            domain: 'janitorai.com',
-            path: '/',
-            secure: false,
-            httpOnly: false,
-            sameSite: 'Lax',
-            expires: expiresAt,
-        });
+        // Stale cookies from the other shape would otherwise win the read and pin a dead session.
+        for (const name of [JANITORAI_COOKIE, ...Array.from({ length: 8 }, (_, i) => `${JANITORAI_COOKIE}.${i}`)]) {
+            try { await page.send('Network.deleteCookies', { name, domain: 'janitorai.com', path: '/' }); } catch {}
+        }
+        for (const [name, chunk] of parts) {
+            await page.send('Network.setCookie', {
+                name,
+                value: chunk,
+                domain: 'janitorai.com',
+                path: '/',
+                secure: false,
+                httpOnly: false,
+                sameSite: 'Lax',
+                expires: expiresAt,
+            });
+        }
         return true;
     } catch {
         return false;
@@ -2863,6 +2902,11 @@ function registerJanitoraiBrowserRoutes(router) {
                 await page.goto(`${JANITORAI_ORIGIN}/login`, { timeout: CDP_NAV_TIMEOUT });
                 await new Promise(r => setTimeout(r, 6000));
 
+                // A browser that is already signed in has nothing to log into: janitorai serves
+                // no form, and re-driving one would only risk the session it already holds.
+                const existing = readJanitoraiToken(await page.cookies([JANITORAI_ORIGIN]));
+                if (existing.token) return { session: existing.cookie };
+
                 // React tracks value through its own descriptor, so a plain el.value = x is
                 // reverted on the next render; go through the native setter and fire input.
                 const filled = await page.evaluate(`
@@ -2878,7 +2922,14 @@ function registerJanitoraiBrowserRoutes(router) {
                         set(pw, ${JSON.stringify(password)});
                         return true;
                     })()`);
-                if (!filled) throw new Error('Could not find the login form on janitorai.com');
+                if (!filled) {
+                    // Which page we landed on is the whole diagnosis: a challenge, a block, or
+                    // the app itself all present as "no form" and need different answers.
+                    const title = String(await page.evaluate('document.title').catch(() => '') || '').slice(0, 80);
+                    throw new Error(CF_CHALLENGE_RE.test(title)
+                        ? `janitorai.com answered the login page with "${title}" instead of the form. Cloudflare is challenging or blocking this browser; run the connection test, and if it passes, try again in a few minutes.`
+                        : `Could not find the login form on janitorai.com (the page was "${title || 'untitled'}").`);
+                }
 
                 await new Promise(r => setTimeout(r, 2500));
                 await page.evaluate(`
@@ -2890,15 +2941,99 @@ function registerJanitoraiBrowserRoutes(router) {
                     })()`);
                 await new Promise(r => setTimeout(r, 13000));
 
-                const { token, cookie } = readJanitoraiToken(await page.cookies([JANITORAI_ORIGIN]));
+                const after = await page.cookies([JANITORAI_ORIGIN]);
+                const { token, cookie } = readJanitoraiToken(after);
                 if (!token) {
-                    throw new Error('Login did not produce a session. Wrong credentials, or a captcha needs solving in that browser.');
+                    // Naming the session cookies we can see separates "the sign-in was refused"
+                    // from "a session exists but we could not read it".
+                    // Session cookie and chunks only; a fresh login leaves PKCE verifiers on the
+                    // same prefix.
+                    const chunkName = new RegExp(`^${JANITORAI_COOKIE}\\.\\d+$`);
+                    const seen = after.map(c => c.name).filter(n => n === JANITORAI_COOKIE || chunkName.test(n));
+                    if (seen.length) {
+                        throw new Error(`Signed in, but the session cookie could not be read (${seen.join(', ')}). Please report this.`);
+                    }
+                    // What the page says separates a refused password from an unsolved captcha
+                    // from an account that has no password at all; without it every cause reads
+                    // the same and the user has nothing to act on.
+                    const state = await page.evaluate(`
+                        (() => {
+                            const seen = new Set();
+                            const text = [...document.querySelectorAll('[role="alert"], [class*="error" i], [class*="Error"]')]
+                                .map(el => (el.textContent || '').trim())
+                                .filter(t => t && t.length < 160 && !seen.has(t) && seen.add(t));
+                            return { path: location.pathname, title: document.title, message: text[0] || '' };
+                        })()`).catch(() => null);
+                    const said = state?.message
+                        ? ` JanitorAI said: "${state.message}".`
+                        : (state?.title ? ` The page was "${state.title}".` : '');
+                    throw new Error(`Login did not produce a session.${said}`);
                 }
                 return { session: cookie };
             });
             res.json({ ok: true, ...result });
         } catch (err) {
             console.warn('[cl-helper] JanitorAI browser login failed:', err.message);
+            res.status(502).json({ ok: false, error: err.message });
+        }
+    });
+
+    // Puts a session Character Library already holds into the browser. A pasted token authorises
+    // our own API calls on its own, but the chat UI renders no composer for a signed-out browser,
+    // so extraction needs the session to exist there as a cookie too.
+    router.post('/janitorai-browser-session', async (req, res) => {
+        const { token, refreshToken } = req.body ?? {};
+        if (typeof token !== 'string' || !token) {
+            return res.status(400).json({ error: 'token is required' });
+        }
+        for (const t of [token, refreshToken]) {
+            if (t !== undefined && (typeof t !== 'string' || t.length > 4096)) {
+                return res.status(400).json({ error: 'Invalid token' });
+            }
+        }
+
+        try {
+            const endpoint = await resolveBrowserEndpoint(req);
+            const applied = await withJanitoraiPage(endpoint, async (page) => {
+                // Cookies are origin-scoped, so the page has to be on janitorai.com before one
+                // can be written for it.
+                await page.goto(`${JANITORAI_ORIGIN}/`, { timeout: CDP_NAV_TIMEOUT });
+                return await injectJanitoraiSession(page, token, refreshToken);
+            });
+            if (!applied) throw new Error('The browser refused the session cookie.');
+            res.json({ ok: true });
+        } catch (err) {
+            console.warn('[cl-helper] JanitorAI browser session push failed:', err.message);
+            res.status(502).json({ ok: false, error: err.message });
+        }
+    });
+
+    // Signs the browser out, so a "logged out" Character Library is not sitting next to a browser
+    // that still holds the account. Cloudflare's own cookies are kept deliberately: they are not
+    // account state, and dropping them buys a fresh challenge for nothing. No navigation either,
+    // Network.getCookies filters by url on its own.
+    router.post('/janitorai-browser-logout', async (req, res) => {
+        try {
+            const endpoint = await resolveBrowserEndpoint(req);
+            const cleared = await withJanitoraiPage(endpoint, async (page) => {
+                const cookies = await page.cookies([JANITORAI_ORIGIN]);
+                const names = [];
+                for (const c of cookies) {
+                    if (c.name === 'cf_clearance' || c.name === '__cf_bm') continue;
+                    try {
+                        await page.send('Network.deleteCookies', {
+                            name: c.name,
+                            domain: c.domain || 'janitorai.com',
+                            path: c.path || '/',
+                        });
+                        names.push(c.name);
+                    } catch { /* one stubborn cookie must not abandon the rest */ }
+                }
+                return names;
+            });
+            res.json({ ok: true, cleared });
+        } catch (err) {
+            console.warn('[cl-helper] JanitorAI browser logout failed:', err.message);
             res.status(502).json({ ok: false, error: err.message });
         }
     });
@@ -3057,6 +3192,16 @@ function resolveSelectedPresetKey(data) {
     return { key: null, value: null };
 }
 
+// An empty legacy_config is truthy, so a first-truthy pick hides the scope that really holds it.
+function resolveSettingsSource(data) {
+    for (const scope of [data?.settings, data?.legacy_config, data]) {
+        if (!scope || typeof scope !== 'object') continue;
+        const value = scope.api || scope.source;
+        if (value) return String(value);
+    }
+    return '';
+}
+
 /** Flatten an unexpected prompt-request body into one short line for the error toast. */
 function promptErrorSnippet(body) {
     const flat = String(body || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
@@ -3069,29 +3214,63 @@ function promptErrorSnippet(body) {
  * persona name into the prompt, so a sentinel round-trips back to the macro exactly.
  */
 async function extractHiddenDefinition(page, token, detail) {
+    // Rare and user-driven, so it narrates itself. Shapes only, never the token or the definition.
+    const started = Date.now();
+    const step = (msg) => console.log(`[cl-helper] extract +${((Date.now() - started) / 1000).toFixed(1)}s ${msg}`);
+    step(`begin character=${detail?.id || 'unknown'} token=${token ? 'yes' : 'no'}`);
+
     const snapshot = await page.evaluate(janitoraiCall('GET', '/hampter/api-settings', null, token));
+    step(`settings HTTP ${snapshot.status} materialized=${snapshot.data?.materialized ?? 'absent'} `
+        + `source=${resolveSettingsSource(snapshot.data) || 'none'} `
+        + `scopes=${JSON.stringify({ settings: snapshot.data?.settings === null ? null : Object.keys(snapshot.data?.settings || {}).length, legacy: Object.keys(snapshot.data?.legacy_config || {}).length, presets: (snapshot.data?.proxy_configs || []).length })}`);
     const prev = snapshot.data?.legacy_config || snapshot.data?.settings || {};
     const prevGeneration = prev.generation_settings && typeof prev.generation_settings === 'object'
         ? prev.generation_settings
         : null;
-    const prevSource = prev.api || prev.source || 'janitor';
+    const prevSource = resolveSettingsSource(snapshot.data) || 'janitor';
     const selected = resolveSelectedPresetKey(snapshot.data);
+    // The set falls back to the canonical key, so restore must clear that one or our selection
+    // outlives the preset we delete.
+    const presetKey = selected.key || SELECTED_PRESET_KEYS[0];
 
-    // Never override a context length we cannot put back; the user would inherit it in their chats.
-    if (typeof prevGeneration?.context_length !== 'number') {
-        throw new Error('Could not read your JanitorAI generation settings, so nothing was changed. Open JanitorAI settings once in this browser and try again.');
+    // Never override a context length we cant put back. Exception: a never-configured account
+    // (ie. materialized:false) has nothing to preserve, so it gets a default rather than a refusal.
+    const neverConfigured = snapshot.data?.materialized === false;
+    const restoreGeneration = typeof prevGeneration?.context_length === 'number'
+        ? prevGeneration
+        : (neverConfigured ? { ...(prevGeneration || {}), context_length: 4096 } : null);
+    if (!restoreGeneration) {
+        step('abort: no readable context_length and the account is not flagged never-configured');
+        throw new Error('Could not read your JanitorAI generation settings, so nothing was changed. Open your API settings on janitorai.com in any browser signed in to this account, save them once, then try again.');
     }
+    step(`plan neverConfigured=${neverConfigured} prevSource=${prevSource} presetKey=${presetKey} `
+        + `restoreCtx=${restoreGeneration.context_length}`);
 
     // No fixed affix, so a persona left behind by a failed run reads as noise rather than a marker.
     const userSentinel = randomHex(12).toUpperCase();
     let proxyId = null;
     let personaId = null;
     let chatId = null;
+    let profileRestore = null;
     try {
+        // A first chat on a fresh account raises a profile modal that eats the message. It gates
+        // on the profile name, so seeding one stops it appearing. Sentinel, so it round-trips.
+        const profile = await page.evaluate(janitoraiCall('GET', '/hampter/profiles/mine', null, token));
+        const priorName = typeof profile.data?.name === 'string' ? profile.data.name : '';
+        const priorAppearance = typeof profile.data?.profile === 'string' ? profile.data.profile : '';
+        step(`profile HTTP ${profile.status} defaultPersona=${priorName ? 'set' : 'EMPTY'}`);
+        if (profile.status < 400 && !priorName.trim()) {
+            const set = await page.evaluate(janitoraiCall('PATCH', '/hampter/profiles/mine', {
+                name: userSentinel, profile: priorAppearance || '',
+            }, token));
+            step(`profile seed HTTP ${set.status}`);
+            if (set.status < 400) profileRestore = { name: priorName, profile: priorAppearance };
+        }
         const persona = await page.evaluate(janitoraiCall('POST', '/hampter/personas', {
             appearance: '', avatar: '', groupId: null, name: userSentinel, pronouns: null,
         }, token));
         personaId = persona.data?.id || null;
+        step(`persona HTTP ${persona.status} id=${personaId || 'none'}`);
 
         // Ephemeral range: nothing listens there by convention, so this cant reach a local
         // model server the user is running on a well-known port.
@@ -3108,45 +3287,167 @@ async function extractHiddenDefinition(page, token, detail) {
         }, token));
         const cfgs = created.data?.proxy_configs || [];
         proxyId = cfgs.length ? cfgs[cfgs.length - 1].id : null;
+        step(`preset HTTP ${created.status} id=${proxyId || 'none'} port=${deadPort}`);
         if (!proxyId) throw new Error(`JanitorAI rejected the temporary preset (HTTP ${created.status})`);
 
-        await page.evaluate(janitoraiCall('PATCH', '/hampter/api-settings', {
+        const switched = await page.evaluate(janitoraiCall('PATCH', '/hampter/api-settings', {
             source: 'proxy',
-            [selected.key || SELECTED_PRESET_KEYS[0]]: proxyId,
+            [presetKey]: proxyId,
             // A bounded context makes the server rewrite the prompt, losing the section
             // boundaries the definition is read from.
             generation_settings: { context_length: 0 },
         }, token));
+        if (switched.status >= 400) {
+            throw new Error(`JanitorAI refused the temporary settings change (HTTP ${switched.status}).`);
+        }
+        // Only the proxy source assembles the prompt in-browser, so an ignored switch would
+        // surface 45s later as a missing prompt and read like a rate limit.
+        const confirm = await page.evaluate(janitoraiCall('GET', '/hampter/api-settings', null, token));
+        const appliedSource = resolveSettingsSource(confirm.data);
+        step(`switch PATCH ${switched.status} -> readback source=${appliedSource || 'none'} `
+            + `materialized=${confirm.data?.materialized ?? 'absent'}`);
+        if (appliedSource !== 'proxy') {
+            // Carry the shape it reported: without it this is indistinguishable from a switch
+            // that worked but hid the value somewhere this walk does not look.
+            const shape = JSON.stringify({
+                source: appliedSource || null,
+                materialized: confirm.data?.materialized ?? null,
+                settings: confirm.data?.settings === null ? null : Object.keys(confirm.data?.settings || {}),
+                legacy: Object.keys(confirm.data?.legacy_config || {}),
+                presets: (confirm.data?.proxy_configs || []).length,
+            });
+            throw new Error(`JanitorAI did not switch to the temporary preset, so the definition cannot be read (HTTP ${switched.status}, it reported ${shape}). Open your API settings on janitorai.com once, then try again.`);
+        }
 
         const chat = await page.evaluate(janitoraiCall('POST', '/hampter/chats',
             personaId ? { character_id: detail.id, persona_id: personaId } : { character_id: detail.id }, token));
         chatId = chat.data?.id;
+        step(`chat HTTP ${chat.status} id=${chatId || 'none'}`);
         if (!chatId) throw new Error(`Could not open a chat with that character (HTTP ${chat.status})`);
 
         const capture = page.captureResponse(/generateAlpha/, { timeout: 45000 });
         try {
             await page.goto(`${JANITORAI_ORIGIN}/chats/${chatId}`, { timeout: CDP_NAV_TIMEOUT });
-            await new Promise(r => setTimeout(r, 8000));
+
+            // The page carries several textareas (character notes, drawers), most of them
+            // offscreen, so the composer is identified by the Send control next to it rather
+            // than by being first in the document.
+            const findComposer = `
+                (() => {
+                    const shown = (el) => !!el && el.getClientRects().length > 0 && !el.disabled && !el.readOnly;
+                    const buttons = [...document.querySelectorAll('button')].filter(b => !b.disabled);
+                    // janitorai puts the label in the text, not the aria-label.
+                    const named = (b) => ((b.getAttribute('aria-label') || '') + ' ' + (b.textContent || '')).trim();
+                    const send = buttons.find(b => /^send$/i.test(named(b)))
+                        || buttons.reverse().find(b => /send/i.test(named(b)));
+                    const scope = send && (send.closest('form') || send.parentElement?.parentElement);
+                    // The placeholder identifies the composer; document order does not, since
+                    // other visible textareas exist and their order isnt stable.
+                    const areas = [...document.querySelectorAll('textarea')].filter(shown);
+                    const ta = areas.find(t => /enter to send|type a message/i.test(t.placeholder || ''))
+                        || (scope ? [...scope.querySelectorAll('textarea')].find(shown) : null)
+                        || areas[0] || null;
+                    return { ta, send };
+                })()`;
+
+            // A cold page outlasts any fixed sleep, and a warm one isready long before it.
+            let hasComposer = false;
+            for (let i = 0; i < 20 && !hasComposer; i++) {
+                await new Promise(r => setTimeout(r, 1000));
+                hasComposer = await page.evaluate(`(() => !!${findComposer}.ta)()`).catch(() => false);
+            }
+            step(`composer ${hasComposer ? 'ready' : 'MISSING'}`);
+            if (!hasComposer) {
+                // Which page we ended on, and what message boxes it offered.
+                const shape = await page.evaluate(`
+                    (() => JSON.stringify({
+                        url: location.pathname,
+                        title: document.title.slice(0, 40),
+                        textareas: [...document.querySelectorAll('textarea')].map(t => ({
+                            ph: (t.placeholder || '').slice(0, 20),
+                            shown: t.getClientRects().length > 0,
+                            disabled: t.disabled, ro: t.readOnly,
+                        })),
+                    }))()`).catch(() => 'unreadable');
+                throw new Error(`The chat page never rendered a message box (${shape}).`);
+            }
 
             // The composer can be in "press button to send" mode, where Enter only inserts a
-            // linebreak and nothing is sent. Click the send control; Enter is the fallback.
-            const sent = await page.evaluate(`
+            // linebreak. Click the send control, then fall back to a real Enter keypress.
+            const fill = await page.evaluate(`
                 (() => {
-                    const ta = document.querySelector('textarea');
+                    const found = ${findComposer};
+                    const ta = found.ta;
                     if (!ta) return { ok: false, why: 'no composer' };
+                    // Tagged so later checks read THIS box, not whichever textarea comes first.
+                    ta.setAttribute('data-cl-composer', '1');
                     const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
                     setter.call(ta, 'hi');
                     ta.dispatchEvent(new Event('input', { bubbles: true }));
-                    const form = ta.closest('form') || ta.parentElement?.parentElement || document.body;
-                    const btn = [...form.querySelectorAll('button')].reverse()
-                        .find(b => !b.disabled && (/send/i.test(b.getAttribute('aria-label') || '') || b.querySelector('svg')));
-                    if (!btn) return { ok: false, why: 'no send control' };
-                    btn.click();
-                    return { ok: true };
+                    ta.focus();
+                    const btn = found.send;
+                    if (btn) btn.click();
+                    return {
+                        ok: true, clicked: !!btn,
+                        placeholder: (ta.placeholder || '').slice(0, 24),
+                        label: btn ? (btn.getAttribute('aria-label') || btn.textContent || '').trim().slice(0, 24) : '',
+                    };
                 })()`);
-            if (!sent?.ok) throw new Error(`Could not send the priming message (${sent?.why || 'unknown'})`);
+            step(`fill ok=${!!fill?.ok} composer="${fill?.placeholder ?? ''}" `
+                + `clicked=${fill?.clicked ? fill.label || 'unlabelled' : 'no button'}`);
+            if (!fill?.ok) throw new Error(`Could not send the priming message (${fill?.why || 'unknown'})`);
+
+            // The box clears on send, so text still sitting there means it didnt go out.
+            const composerEmpty = async () => {
+                for (let i = 0; i < 3; i++) {
+                    await new Promise(r => setTimeout(r, 700));
+                    const still = await page.evaluate(
+                        '(() => { const t = document.querySelector("textarea[data-cl-composer]"); return !t || !t.value.trim(); })()'
+                    ).catch(() => false);
+                    if (still) return true;
+                }
+                return false;
+            };
+
+            let cleared = await composerEmpty();
+            step(`after click composerEmpty=${cleared}`);
+            if (!cleared) {
+                step('falling back to a real Enter keypress');
+                for (const type of ['keyDown', 'keyUp']) {
+                    await page.send('Input.dispatchKeyEvent', {
+                        type, key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13,
+                        nativeVirtualKeyCode: 13, ...(type === 'keyDown' ? { text: '\r' } : {}),
+                    }).catch(() => {});
+                }
+                cleared = await composerEmpty();
+                step(`after Enter composerEmpty=${cleared}`);
+                if (!cleared) {
+                    // Otherwise a swallowed send looks exactly like a model that never answered.
+                    const shape = await page.evaluate(`
+                        (() => {
+                            const ta = document.querySelector('textarea[data-cl-composer]');
+                            const form = ta && (ta.closest('form') || ta.parentElement?.parentElement) || document.body;
+                            return JSON.stringify({
+                                textareas: [...document.querySelectorAll('textarea')].map(t => ({
+                                    ph: (t.placeholder || '').slice(0, 20),
+                                    shown: t.getClientRects().length > 0,
+                                    chosen: t.hasAttribute('data-cl-composer'),
+                                    value: (t.value || '').slice(0, 12),
+                                    disabled: t.disabled, ro: t.readOnly,
+                                })),
+                                clicked: ${fill.clicked ? 'true' : 'false'},
+                                buttons: [...form.querySelectorAll('button')].slice(0, 8).map(b => ({
+                                    label: (b.getAttribute('aria-label') || b.textContent || '').trim().slice(0, 24),
+                                    disabled: b.disabled, svg: !!b.querySelector('svg'),
+                                })),
+                            });
+                        })()`).catch(() => 'unreadable');
+                    throw new Error(`The priming message would not send (${shape}).`);
+                }
+            }
 
             const body = await capture.wait();
+            step(`generateAlpha ${body ? `captured ${String(body).length} bytes` : 'NOT SEEN (45s)'}`);
             if (!body) throw new Error('JanitorAI never assembled the prompt. It may be rate limiting; try again shortly.');
 
             // The payload is the whole chat request, not just the definition:
@@ -3222,13 +3523,23 @@ async function extractHiddenDefinition(page, token, detail) {
                     } catch { return 0; }
                 })()`).catch(() => {});
         }
-        await page.evaluate(janitoraiCall('PATCH', '/hampter/api-settings', {
+        const restored = await page.evaluate(janitoraiCall('PATCH', '/hampter/api-settings', {
             source: prevSource,
-            // Null is meaningful here (nothing was selected), so send it whenever the key was found.
-            ...(selected.key ? { [selected.key]: selected.value } : {}),
+            // Null is meaningful here: it is what "nothing was selected" looks like, and it is
+            // also the right value for an account that had no selection before we made one.
+            [presetKey]: selected.value,
             // Replayed wholesale; rebuilding it would swap tuning values we dont model for defaults.
-            ...(prevGeneration ? { generation_settings: prevGeneration } : {}),
-        }, token)).catch(() => {});
+            generation_settings: restoreGeneration,
+        }, token)).catch(() => null);
+        // The restore is the part nobody notices breaking.
+        step(`restore source=${prevSource} ctx=${restoreGeneration.context_length} HTTP ${restored?.status ?? 'failed'}`);
+
+        // Leave the account as found; their own first-run prompt still belongs to them.
+        if (profileRestore) {
+            const undone = await page.evaluate(janitoraiCall('PATCH', '/hampter/profiles/mine', profileRestore, token))
+                .catch(() => null);
+            step(`profile restore HTTP ${undone?.status ?? 'failed'}`);
+        }
     }
 }
 

@@ -497,6 +497,22 @@ export async function browserLogin(email, password, endpoint) {
     }, { timeoutMs: 120000 });
 }
 
+/** Signs the browser in with a session we already hold, so extraction works after a pasted token. */
+export async function browserSetSession(endpoint) {
+    const token = (await getValidJanitoraiToken()) || '';
+    if (!token) return { ok: false, error: 'No JanitorAI session is stored' };
+    return callHelper('/janitorai-browser-session', {
+        ...browserTarget(endpoint),
+        token,
+        refreshToken: CoreAPI.getSetting('janitoraiRefreshToken') || '',
+    }, { timeoutMs: 90000 });
+}
+
+/** Drops the account cookies from the browser, keeping its Cloudflare pass. */
+export async function browserLogout(endpoint) {
+    return callHelper('/janitorai-browser-logout', browserTarget(endpoint), { timeoutMs: 60000 });
+}
+
 /**
  * Public definitions land on `detail` (extracted:false); withheld ones on `definition` (extracted:true).
  * @returns {Promise<{detail: Object, definition: string, extracted: boolean}>}
