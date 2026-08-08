@@ -482,6 +482,40 @@ test('bounds Saucepan requests and still closes local resources after a remote s
     assert.deepEqual(cleanup, ['tunnel', 'capture']);
 });
 
+test('reports an unknown mutation outcome when a successful response body stalls', async () => {
+    const cleanup = [];
+    let requestCount = 0;
+    await assert.rejects(extractSaucepanHiddenDefinition({
+        token: 'saucepan-token',
+        companionId: 'ade077f0-112c-41c4-bdda-e6027d87b730',
+        remoteTimeoutMs: 15,
+        fetchImpl: async (_url, options) => {
+            requestCount++;
+            if (requestCount === 1) return jsonResponse({ providers_profile: 'custom_and_vetted' });
+            return {
+                ok: true,
+                status: 200,
+                json: () => delayedFailure(options),
+            };
+        },
+        openCapture: async () => ({
+            apiKey: 'capture-key',
+            port: 43123,
+            providerPath: '/capture/secret/v1/chat/completions',
+            close: async () => cleanup.push('capture'),
+        }),
+        openTunnel: async () => ({
+            url: 'https://quiet-river.trycloudflare.com',
+            close: async () => cleanup.push('tunnel'),
+        }),
+    }), error => {
+        assert.match(error.message, /timed out/i);
+        assert.match(error.cleanupWarning, /outcome unknown/i);
+        return true;
+    });
+    assert.deepEqual(cleanup, ['tunnel', 'capture']);
+});
+
 test('reports cleanup warnings while continuing every independent cleanup step', async () => {
     const events = [];
     let requestCount = 0;

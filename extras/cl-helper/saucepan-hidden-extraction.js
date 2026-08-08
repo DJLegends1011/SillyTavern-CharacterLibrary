@@ -352,7 +352,8 @@ export async function extractSaucepanHiddenDefinition({
             let data;
             try {
                 data = await response.json();
-            } catch {
+            } catch (error) {
+                if (controller.signal.aborted) throw error;
                 data = null;
             }
             if (!response.ok) {
@@ -361,7 +362,11 @@ export async function extractSaucepanHiddenDefinition({
             }
             return data;
         } catch (error) {
-            if (controller.signal.aborted) throw new Error('Saucepan request timed out');
+            if (controller.signal.aborted) {
+                const timeoutError = new Error('Saucepan request timed out');
+                timeoutError.outcomeUnknown = method !== 'GET';
+                throw timeoutError;
+            }
             throw error;
         } finally {
             clearTimeout(timeout);
@@ -474,6 +479,7 @@ export async function extractSaucepanHiddenDefinition({
         }
     }
 
+    if (failure?.outcomeUnknown) cleanupFailures.unshift('remote request outcome unknown');
     const cleanupWarning = cleanupFailures.length
         ? `Temporary cleanup was incomplete: ${cleanupFailures.join(', ')}`
         : '';
@@ -525,7 +531,7 @@ export function createSaucepanHiddenExtractionHandler({
                 ? message
                 : 'Saucepan hidden extraction failed';
             const cleanupWarning = String(error?.cleanupWarning || '');
-            const safeCleanupWarning = /^Temporary cleanup was incomplete: (?:(?:Quick Tunnel shutdown|capture listener shutdown|generation cancellation|temporary chat deletion|temporary provider deletion)(?:, )?)+$/.test(cleanupWarning)
+            const safeCleanupWarning = /^Temporary cleanup was incomplete: (?:(?:remote request outcome unknown|Quick Tunnel shutdown|capture listener shutdown|generation cancellation|temporary chat deletion|temporary provider deletion)(?:, )?)+$/.test(cleanupWarning)
                 ? cleanupWarning
                 : '';
             return response.status(502).json({
