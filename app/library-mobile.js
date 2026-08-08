@@ -3852,6 +3852,7 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
         function injectKebabIntoModal(modal) {
             const controls = modal.querySelector('.modal-controls');
             if (!controls) return;
+            controls.classList.toggle('has-browse-favorite-actions', !!modal.querySelector('.browse-fav-toggle'));
 
             if (!controls.querySelector('.mobile-more-actions-btn')) {
                 const btn = document.createElement('button');

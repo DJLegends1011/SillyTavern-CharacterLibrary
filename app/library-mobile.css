@@ -1027,6 +1027,14 @@ html.cl-browse-quick-import.cl-mobile .mobile-quick-import-btn {
 html:not(.cl-browse-quick-import).cl-mobile .mobile-more-actions-btn {
     display: inline-flex;
 }
+/* A provider favorite lives in hidden header metadata, so quick-import cannot replace the
+   pancake menu for these previews. Import remains available as the menu's original action. */
+html.cl-mobile .browse-char-modal .modal-controls.has-browse-favorite-actions .mobile-more-actions-btn {
+    display: inline-flex;
+}
+html.cl-mobile .browse-char-modal .modal-controls.has-browse-favorite-actions .mobile-quick-import-btn {
+    display: none;
+}
 html.cl-mobile .mobile-more-actions-btn,
 html.cl-mobile .mobile-quick-import-btn {
     align-items: center;

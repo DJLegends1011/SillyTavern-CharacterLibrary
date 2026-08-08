@@ -7,9 +7,12 @@ import {
     HAMPTER_PAGE_SIZE,
     HAMPTER_SORTS,
     fetchJanitoraiCharacters,
+    fetchJanitoraiFavorites,
+    fetchJanitoraiFavoriteState,
     fetchJanitoraiCharacter,
     fetchJanitoraiTags,
     fetchJanitoraiFollowing,
+    setJanitoraiFavorite,
     setJanitoraiFollow,
     searchJanitoraiCreators,
     resolveJanitoraiTagIds,
@@ -27,6 +30,16 @@ import {
     tagKey,
     pingHampterQueue,
 } from './janitorai-api.js';
+import {
+    JanitoraiFavoriteCache,
+    chooseJanitoraiSource,
+    emptyJanitoraiFavoriteBrowseState,
+    isJanitoraiFavoriteAuthError,
+    isJanitoraiLoadCurrent,
+    isJanitoraiSelectionCurrent,
+    matchesJanitoraiFavoriteCreator,
+    shouldRetainJanitoraiFavoriteResults,
+} from './janitorai-favorites.js';
 
 const {
     onElement: on,
@@ -70,6 +83,11 @@ let jaMode = 'browse';
 
 let jaFilterHideOwned = false;
 let jaFilterHidePossible = false;
+let jaFilterFavorites = false;
+let jaFavoritesPage = 1;
+let jaFavoritesHasMore = true;
+const jaFavoriteCache = new JanitoraiFavoriteCache();
+let jaFavoriteMembershipPromise = null;
 /** @type {Set<number>} */
 let jaIncludeTags = new Set();
 /** @type {Set<number>} */
@@ -86,6 +104,67 @@ let jaFollowedLoaded = false;
 let jaTagCatalogue = [];
 
 let view;
+
+function currentJanitoraiSource() {
+    return chooseJanitoraiSource({ favorites: jaFilterFavorites });
+}
+
+function resetFavoritePaging() {
+    jaFavoritesPage = 1;
+    jaFavoritesHasMore = true;
+}
+
+function setFavoriteFilter(active) {
+    jaFilterFavorites = !!active;
+    document.getElementById('janitoraiFilterFavorites')?.toggleAttribute('checked', jaFilterFavorites);
+    const checkbox = document.getElementById('janitoraiFilterFavorites');
+    if (checkbox) checkbox.checked = jaFilterFavorites;
+}
+
+function syncFavoriteIdentity() {
+    const status = janitoraiSessionStatus();
+    const loggedIn = !!status?.loggedIn;
+    const changed = jaFavoriteCache.syncIdentity(loggedIn ? (status.identity || '') : '');
+    if (loggedIn) jaFavoriteCache.seed(status.favoriteIds || []);
+
+    if (!loggedIn) {
+        jaFavoriteCache.clear('');
+        if (jaFilterFavorites) {
+            setFavoriteFilter(false);
+            resetFavoritePaging();
+            updateFiltersButton();
+        }
+    }
+    return { status, changed };
+}
+
+async function ensureFavoriteMembershipLoaded({ force = false, signal, loadToken = null } = {}) {
+    const { status } = syncFavoriteIdentity();
+    if (!status?.loggedIn) return false;
+    if (!force && jaFavoriteCache.complete) return true;
+    if (!force && jaFavoriteMembershipPromise) return jaFavoriteMembershipPromise;
+
+    const identity = jaFavoriteCache.identity;
+    jaFavoriteMembershipPromise = (async () => {
+        const ids = [];
+        let page = 1;
+        let hasMore = true;
+        while (hasMore) {
+            const result = await fetchJanitoraiFavorites({ page, mode: 'all', sort: 'latest', signal });
+            if (identity !== jaFavoriteCache.identity
+                || (loadToken !== null && !isCurrentLoad(loadToken, 'favorites'))) return false;
+            ids.push(...result.characters.map(hit => hit.character_id));
+            hasMore = result.hasMore;
+            page++;
+        }
+        if (identity !== jaFavoriteCache.identity
+            || (loadToken !== null && !isCurrentLoad(loadToken, 'favorites'))) return false;
+        jaFavoriteCache.replace(ids);
+        return true;
+    })();
+    try { return await jaFavoriteMembershipPromise; }
+    finally { jaFavoriteMembershipPromise = null; }
+}
 
 // ========================================
 // LOCAL LIBRARY LOOKUP
@@ -200,15 +279,44 @@ async function resolvePersistentExcludes() {
     return ids;
 }
 
-function passesClientFilters(hit) {
+function passesClientFilters(hit, clientExcludeTagIds = []) {
     if (jaFilterHideOwned && isCharInLocalLibrary(hit)) return false;
     if (jaFilterHidePossible && isCharPossibleMatchObj(hit)) return false;
+    if (clientExcludeTagIds.length && (hit.tags || []).some(tag => clientExcludeTagIds.includes(Number(tag.id)))) return false;
     if (jaUnresolvedExcludes.length) {
         // tagKey on both sides: hampter catalogue names carry an emoji prefix ("👨 Male")
         const names = (hit.tags || []).map(t => tagKey(t.name));
         if (jaUnresolvedExcludes.some(ex => names.includes(ex))) return false;
     }
     return true;
+}
+
+function passesSourceFilters(hit, source, clientExcludeTagIds) {
+    return passesClientFilters(hit, clientExcludeTagIds)
+        && (source !== 'favorites' || matchesJanitoraiFavoriteCreator(hit, jaCreatorFilter));
+}
+
+function isCurrentLoad(token, source) {
+    return isJanitoraiLoadCurrent({
+        capturedToken: token,
+        currentToken: jaLoadToken,
+        capturedSource: source,
+        currentSource: currentJanitoraiSource(),
+        active: delegatesInitialized,
+    });
+}
+
+function renderFavoriteEmpty(grid, filtered) {
+    if (!grid) return;
+    grid.innerHTML = `
+        <div style="grid-column: 1 / -1; padding: 40px; text-align: center; color: var(--text-muted);">
+            <i class="fa-solid fa-heart" style="font-size: 2rem; opacity: 0.5;"></i>
+            <p style="margin-top: 12px; font-weight: 600;">${filtered ? 'No favorites match these filters' : 'No JanitorAI favorites yet'}</p>
+            <p style="margin-top: 8px; font-size: 0.9em;">${filtered
+        ? 'Relax your search, tags, NSFW, or library filters.'
+        : 'Favorite characters on JanitorAI and they will appear here.'}</p>
+        </div>
+    `;
 }
 
 // CF Waiting Room holds the queue spot in a cookie that dies after 2 minutes of silence, so the
@@ -276,6 +384,7 @@ async function loadCharacters(append = false) {
     if (append && jaIsLoading) return;
     stopQueueWatch();
     const thisToken = ++jaLoadToken;
+    const source = currentJanitoraiSource();
     jaIsLoading = true;
     try { jaFetchController?.abort(); } catch { /* already settled */ }
     jaFetchController = new AbortController();
@@ -283,9 +392,15 @@ async function loadCharacters(append = false) {
 
     const grid = document.getElementById(activeGridId());
     const loadMoreBtn = document.getElementById(jaMode === 'following' ? 'janitoraiFollowingLoadMoreBtn' : 'janitoraiLoadMoreBtn');
+    const savedFavorites = source === 'favorites' ? {
+        characters: jaCharacters,
+        page: append ? Math.max(1, jaFavoritesPage - 1) : jaFavoritesPage,
+        hasMore: jaFavoritesHasMore,
+    } : null;
 
     if (!append) {
-        jaCurrentPage = 1;
+        if (source === 'favorites') resetFavoritePaging();
+        else jaCurrentPage = 1;
         // Reset here so the previous query cannot repaint under a new filter.
         jaCharacters = [];
         jaGridRenderedCount = 0;
@@ -297,27 +412,44 @@ async function loadCharacters(append = false) {
     }
 
     try {
-        const following = jaMode === 'following';
+        const following = source === 'hampter' && jaMode === 'following';
         const creatorIds = (!following && jaCreatorFilter) ? [jaCreatorFilter.id] : [];
 
         // The following feed takes no tag params, so excludes apply client-side by name.
         const excludeTagIds = following ? [] : await resolvePersistentExcludes();
         if (following) jaUnresolvedExcludes = (getProviderExcludeTags('janitorai') || []).map(n => tagKey(n));
-        if (thisToken !== jaLoadToken) return;
+        if (!isCurrentLoad(thisToken, source)) return;
+        const clientExcludeTagIds = source === 'favorites'
+            ? [...new Set([...jaExcludeTags, ...excludeTagIds])]
+            : [];
+        const fetchPage = async () => {
+            const page = source === 'favorites' ? jaFavoritesPage : jaCurrentPage;
+            if (source === 'favorites') {
+                return fetchJanitoraiFavorites({
+                    signal,
+                    sort: jaSortMode,
+                    page,
+                    search: jaCurrentSearch,
+                    mode: jaNsfwEnabled ? 'all' : 'sfw',
+                    tagIds: [...jaIncludeTags],
+                });
+            }
+            return fetchJanitoraiCharacters({
+                signal,
+                following,
+                sort: jaSortMode,
+                page,
+                search: jaCurrentSearch,
+                mode: jaNsfwEnabled ? 'all' : 'sfw',
+                tagIds: [...jaIncludeTags],
+                excludeTagIds: [...new Set([...jaExcludeTags, ...excludeTagIds])],
+                creatorIds,
+            });
+        };
 
-        const data = await fetchJanitoraiCharacters({
-            signal,
-            following,
-            sort: jaSortMode,
-            page: jaCurrentPage,
-            search: jaCurrentSearch,
-            mode: jaNsfwEnabled ? 'all' : 'sfw',
-            tagIds: [...jaIncludeTags],
-            excludeTagIds: [...new Set([...jaExcludeTags, ...excludeTagIds])],
-            creatorIds,
-        });
-
-        if (thisToken !== jaLoadToken || !delegatesInitialized) return;
+        let data = await fetchPage();
+        if (!isCurrentLoad(thisToken, source)) return;
+        if (source === 'favorites') jaFavoriteCache.seed(data.characters.map(hit => hit.character_id));
 
         // Nobody followed reads as an empty feed; say so instead of "no characters found".
         if (following && !data.total && !append) {
@@ -327,27 +459,28 @@ async function loadCharacters(append = false) {
             return;
         }
 
-        let hits = data.characters.filter(passesClientFilters);
+        let rawFavoriteRows = source === 'favorites' ? data.characters.length : 0;
+        let hits = data.characters.filter(hit => passesSourceFilters(hit, source, clientExcludeTagIds));
         jaTotalPages = data.total > 0 ? Math.ceil(data.total / (data.pageSize || HAMPTER_PAGE_SIZE)) : 0;
+        if (source === 'favorites') jaFavoritesHasMore = data.hasMore;
 
         // Client filters can empty a page, so pull a few more while pages remain.
         let autoFetches = 0;
-        while (hits.length < 12 && jaCurrentPage < jaTotalPages && autoFetches < 3 && delegatesInitialized) {
+        while (hits.length < 12
+            && (source === 'favorites' ? jaFavoritesHasMore : jaCurrentPage < jaTotalPages)
+            && (source === 'favorites' || autoFetches < 3)
+            && delegatesInitialized) {
             autoFetches++;
-            jaCurrentPage++;
-            const more = await fetchJanitoraiCharacters({
-                signal,
-                following,
-                sort: jaSortMode,
-                page: jaCurrentPage,
-                search: jaCurrentSearch,
-                mode: jaNsfwEnabled ? 'all' : 'sfw',
-                tagIds: [...jaIncludeTags],
-                excludeTagIds: [...new Set([...jaExcludeTags, ...excludeTagIds])],
-                creatorIds,
-            });
-            if (thisToken !== jaLoadToken || !delegatesInitialized) return;
-            hits = hits.concat(more.characters.filter(passesClientFilters));
+            if (source === 'favorites') jaFavoritesPage++;
+            else jaCurrentPage++;
+            data = await fetchPage();
+            if (!isCurrentLoad(thisToken, source)) return;
+            if (source === 'favorites') {
+                jaFavoriteCache.seed(data.characters.map(hit => hit.character_id));
+                jaFavoritesHasMore = data.hasMore;
+                rawFavoriteRows += data.characters.length;
+            }
+            hits = hits.concat(data.characters.filter(hit => passesSourceFilters(hit, source, clientExcludeTagIds)));
         }
 
         if (append) {
@@ -356,12 +489,14 @@ async function loadCharacters(append = false) {
         } else {
             jaCharacters = hits;
         }
-        jaHasMore = jaCurrentPage < jaTotalPages;
+        jaHasMore = source === 'favorites' ? jaFavoritesHasMore : jaCurrentPage < jaTotalPages;
         jaQueueWatchSince = 0;
 
         renderGrid(jaCharacters, append);
 
-        if (!append && jaCharacters.length === 0 && grid) {
+        if (!append && jaCharacters.length === 0 && source === 'favorites') {
+            renderFavoriteEmpty(grid, rawFavoriteRows > 0);
+        } else if (!append && jaCharacters.length === 0 && grid) {
             grid.innerHTML = `
                 <div style="grid-column: 1 / -1; padding: 40px; text-align: center; color: var(--text-muted);">
                     <i class="fa-solid fa-ghost" style="font-size: 2rem; opacity: 0.5;"></i>
@@ -371,13 +506,21 @@ async function loadCharacters(append = false) {
             `;
         }
 
-        debugLog('[JanitoraiBrowse] Loaded', hits.length, 'characters, page', jaCurrentPage, '/', jaTotalPages);
+        if (source === 'favorites') {
+            // Populate complete membership in the background; visible favorite cards were seeded above.
+            void ensureFavoriteMembershipLoaded({ signal, loadToken: thisToken }).catch(err => {
+                if (isCurrentLoad(thisToken, source) && isJanitoraiFavoriteAuthError(err?.code)) {
+                    handleFavoriteAuthFailure(err, document.getElementById(activeGridId()));
+                }
+            });
+        }
+        debugLog('[JanitoraiBrowse] Loaded', hits.length, 'characters, page', source === 'favorites' ? jaFavoritesPage : jaCurrentPage, '/', jaTotalPages);
     } catch (err) {
-        if (thisToken !== jaLoadToken) return;
+        if (!isCurrentLoad(thisToken, source)) return;
         // A cancellation is not a failure, so do not show an error banner.
         if (err?.name === 'AbortError') return;
         console.error('[JanitoraiBrowse] Load error:', err);
-        handleLoadError(err, append, grid);
+        handleLoadError(err, append, grid, source, savedFavorites);
     } finally {
         if (thisToken === jaLoadToken) {
             jaIsLoading = false;
@@ -389,11 +532,60 @@ async function loadCharacters(append = false) {
     }
 }
 
-function handleLoadError(err, append, grid) {
+function handleFavoriteAuthFailure(err, grid) {
     const code = err?.code;
+    jaFavoriteCache.clear('');
+    setFavoriteFilter(false);
+    const empty = emptyJanitoraiFavoriteBrowseState();
+    jaCharacters = empty.characters;
+    jaCurrentPage = 1;
+    jaFavoritesPage = empty.favoritesPage;
+    jaFavoritesHasMore = empty.favoritesHasMore;
+    jaHasMore = empty.hasMore;
+    jaTotalPages = empty.totalPages;
+    jaGridRenderedCount = empty.rendered;
+    jaModeCache.browse = null;
+    jaModeCache.following = null;
+    updateFiltersButton();
+    showToast(code === 'HAMPTER_TOKEN_EXPIRED'
+            ? 'Your JanitorAI session expired. Re-paste your token in Settings to view favorites.'
+            : 'Sign in under Janitor Settings to view your favorites.', 'warning', 7000);
+    if (grid) {
+        grid.innerHTML = `
+            <div style="grid-column: 1 / -1; padding: 40px; text-align: center; color: var(--text-muted); max-width: 560px; margin: 0 auto;">
+                <i class="fa-solid fa-user-lock" style="font-size: 2rem; color: #f5a623;"></i>
+                <p style="margin-top: 12px; color: var(--text-primary);"><strong>JanitorAI sign-in required</strong></p>
+                <p style="margin-top: 8px; font-size: 0.9em;">Add your JanitorAI session in Settings &gt; Online &gt; JanitorAI, then try My Favorites again.</p>
+            </div>
+        `;
+    }
+}
+
+function restoreFavoriteResults(savedFavorites) {
+    if (!savedFavorites) return;
+    jaCharacters = savedFavorites.characters;
+    jaFavoritesPage = savedFavorites.page;
+    jaFavoritesHasMore = savedFavorites.hasMore;
+    jaHasMore = savedFavorites.hasMore;
+}
+
+function handleLoadError(err, append, grid, source = currentJanitoraiSource(), savedFavorites = null) {
+    const code = err?.code;
+    const waitingRoom = /waiting room/i.test(err?.message || '');
+    if (shouldRetainJanitoraiFavoriteResults({ source, code, waitingRoom })) {
+        restoreFavoriteResults(savedFavorites);
+        renderGrid(jaCharacters, false);
+        showToast(waitingRoom
+            ? 'JanitorAI queue is active. Your favorites are still shown; try again shortly.'
+            : code === 'HAMPTER_RATE_LIMITED'
+                ? 'JanitorAI is rate limiting. Your favorites are still shown; try again in a moment.'
+                : 'Cloudflare blocked this refresh. Your favorites are still shown; try again after checking Janitor Settings.', 'warning', 7000);
+        return;
+    }
+
     // Before the code branches: waiting-room errors carry HAMPTER_BLOCKED and would hit the
-    // Cloudflare copy below.
-    if (/waiting room/i.test(err?.message || '')) {
+    // Cloudflare copy below. Favorites returned above so their existing cards stay visible.
+    if (waitingRoom) {
         startQueueWatch();
         if (append) {
             jaCurrentPage = Math.max(1, jaCurrentPage - 1);
@@ -403,7 +595,12 @@ function handleLoadError(err, append, grid) {
         renderQueueBanner(grid, err, err?.queueWaitMinutes);
         return;
     }
-    const gated = code === 'HAMPTER_LOGIN_REQUIRED' || code === 'HAMPTER_TOKEN_EXPIRED';
+
+    const gated = isJanitoraiFavoriteAuthError(code);
+    if (source === 'favorites' && gated) {
+        handleFavoriteAuthFailure(err, grid);
+        return;
+    }
 
     if (gated && append) {
         // Anonymous access stops after page 1; end pagination cleanly rather than erroring.
@@ -513,11 +710,157 @@ const MODAL_TEXT_IDS = [
     'janitoraiCharTags',
 ];
 
+export function currentFavoriteCount(hit) {
+    const rawCount = hit?.favorite_count;
+    if (rawCount === null || rawCount === undefined
+        || (typeof rawCount === 'string' && rawCount.trim() === '')) return null;
+    const count = Number(rawCount);
+    return Number.isFinite(count) ? Math.max(0, count) : null;
+}
+
+function paintJanitoraiFavoriteButton({ favorited, count, loading }) {
+    const btn = document.getElementById('janitoraiCharFavoriteBtn');
+    if (!btn) return;
+    const isFavorited = !!favorited;
+    btn.classList.toggle('favorited', isFavorited);
+    btn.classList.toggle('loading', !!loading);
+    btn.title = janitoraiSessionStatus()?.loggedIn
+        ? (isFavorited ? 'Remove from favorites on JanitorAI' : 'Add to favorites on JanitorAI')
+        : 'Add your JanitorAI session in Settings to manage favorites';
+    btn.setAttribute('aria-label', btn.title);
+    const icon = btn.querySelector('i');
+    if (icon) icon.className = isFavorited ? 'fa-solid fa-heart' : 'fa-regular fa-heart';
+    const countEl = document.getElementById('janitoraiCharFavoriteCount');
+    if (countEl) {
+        countEl.hidden = count === null || count === undefined;
+        countEl.textContent = countEl.hidden ? '' : formatNumber(count);
+    }
+}
+
+export function isJanitoraiFavoriteOperationCurrent({
+    capturedToken,
+    currentToken,
+    capturedId,
+    selectedId,
+    capturedIdentity,
+    currentIdentity,
+    cacheIdentity,
+}) {
+    return isJanitoraiSelectionCurrent({
+        capturedToken,
+        currentToken,
+        capturedId,
+        selectedId,
+    }) && String(capturedIdentity || '') === String(currentIdentity || '')
+        && String(capturedIdentity || '') === String(cacheIdentity || '');
+}
+
+function isJanitoraiFavoriteSelectionCurrent(id, token, identity) {
+    const status = janitoraiSessionStatus();
+    return isJanitoraiFavoriteOperationCurrent({
+        capturedToken: token,
+        currentToken: jaDetailToken,
+        capturedId: id,
+        selectedId: jaSelectedChar?.character_id || jaSelectedChar?.id,
+        capturedIdentity: identity,
+        currentIdentity: status?.identity || '',
+        cacheIdentity: jaFavoriteCache.identity,
+    });
+}
+
+function applyConfirmedJanitoraiFavorite(hit, state) {
+    const id = hit?.character_id || hit?.id;
+    if (!id || !state || typeof state.favorited !== 'boolean') return;
+
+    jaFavoriteCache.set(id, state.favorited);
+    const update = candidate => {
+        candidate._isFavorited = state.favorited;
+        candidate.favorite_count = state.count;
+    };
+    update(hit);
+    jaCharacters.filter(candidate => String(candidate.character_id || candidate.id) === String(id)).forEach(update);
+
+    if (jaFilterFavorites && !state.favorited) {
+        jaCharacters = jaCharacters.filter(candidate => String(candidate.character_id || candidate.id) !== String(id));
+        jaGridRenderedCount = 0;
+        renderGrid(jaCharacters, false);
+        if (jaCharacters.length === 0) renderFavoriteEmpty(document.getElementById(activeGridId()), false);
+    }
+
+    if (jaSelectedChar === hit) {
+        paintJanitoraiFavoriteButton({ favorited: state.favorited, count: state.count, loading: false });
+    }
+}
+
+async function resolveJanitoraiFavoriteState(hit, token, identity) {
+    const id = hit?.character_id || hit?.id;
+    if (!id) return;
+
+    const paintIfCurrent = state => {
+        if (!isJanitoraiFavoriteSelectionCurrent(id, token, identity)) return false;
+        paintJanitoraiFavoriteButton({ favorited: state.favorited, count: state.count, loading: false });
+        return true;
+    };
+    if (typeof hit._isFavorited === 'boolean') {
+        paintIfCurrent({ favorited: hit._isFavorited, count: currentFavoriteCount(hit) });
+        return;
+    }
+
+    const cached = jaFavoriteCache.get(id);
+    if (typeof cached === 'boolean') {
+        paintIfCurrent({ favorited: cached, count: currentFavoriteCount(hit) });
+        return;
+    }
+
+    try {
+        const state = await fetchJanitoraiFavoriteState(id);
+        if (!state || !isJanitoraiFavoriteSelectionCurrent(id, token, identity)) return;
+        applyConfirmedJanitoraiFavorite(hit, state);
+    } catch {
+        if (isJanitoraiFavoriteSelectionCurrent(id, token, identity)) {
+            paintJanitoraiFavoriteButton({ favorited: false, count: null, loading: false });
+        }
+    }
+}
+
+async function toggleJanitoraiFavorite() {
+    const hit = jaSelectedChar;
+    const id = hit?.character_id || hit?.id;
+    const btn = document.getElementById('janitoraiCharFavoriteBtn');
+    if (!id || btn?.classList.contains('loading')) return;
+    const { status } = syncFavoriteIdentity();
+    if (!status?.loggedIn) {
+        showToast('Add your JanitorAI session in Settings to manage favorites.', 'warning', 7000);
+        return;
+    }
+
+    const desired = !btn.classList.contains('favorited');
+    const token = jaDetailToken;
+    const identity = status.identity || '';
+    const priorCount = currentFavoriteCount(hit);
+    paintJanitoraiFavoriteButton({ favorited: !desired, count: priorCount, loading: true });
+    try {
+        const state = await setJanitoraiFavorite(id, desired);
+        if (!state || state.favorited !== desired) {
+            throw new Error('JanitorAI did not confirm the favorite change');
+        }
+        if (!isJanitoraiFavoriteSelectionCurrent(id, token, identity)) return;
+        applyConfirmedJanitoraiFavorite(hit, state);
+    } catch {
+        if (!isJanitoraiFavoriteSelectionCurrent(id, token, identity)) return;
+        paintJanitoraiFavoriteButton({ favorited: !desired, count: priorCount, loading: false });
+        showToast('Could not update the JanitorAI favorite. Please try again.', 'error', 7000);
+    }
+}
+
 function openPreviewModal(hit) {
     jaSelectedChar = hit;
 
     const modal = document.getElementById('janitoraiCharModal');
     if (!modal) return;
+    const token = ++jaDetailToken;
+    const { status } = syncFavoriteIdentity();
+    const favoriteIdentity = status?.identity || '';
     CoreAPI.resetBrowseSectionCollapseState(modal);
 
     const name = hit.name || 'Unknown';
@@ -543,6 +886,8 @@ function openPreviewModal(hit) {
         : 'Unknown';
     setTokenStat(hit.total_tokens || 0);
     setHiddenNotice(null);
+    paintJanitoraiFavoriteButton({ favorited: false, count: null, loading: false });
+    if (status?.loggedIn) void resolveJanitoraiFavoriteState(hit, token, favoriteIdentity);
 
     const tagsEl = document.getElementById('janitoraiCharTags');
     tagsEl.innerHTML = (hit.tags || []).map(t => `<span class="browse-tag">${escapeHtml(t.name || '')}</span>`).join('');
@@ -590,7 +935,6 @@ function openPreviewModal(hit) {
     const body = modal.querySelector('.browse-char-body');
     if (body) body.scrollTop = 0;
 
-    const token = ++jaDetailToken;
     jaDetailPromise = fetchAndPopulateDetails(hit, token);
 }
 
@@ -1227,7 +1571,7 @@ function updateTagsButton() {
 function updateFiltersButton() {
     const btn = document.getElementById('janitoraiFiltersBtn');
     if (!btn) return;
-    const count = [jaFilterHideOwned, jaFilterHidePossible].filter(Boolean).length;
+    const count = [jaFilterFavorites, jaFilterHideOwned, jaFilterHidePossible].filter(Boolean).length;
     btn.classList.toggle('has-filters', count > 0);
     const span = btn.querySelector('span');
     if (span) span.textContent = count > 0 ? `Features (${count})` : 'Features';
@@ -1256,7 +1600,7 @@ const jaModeCache = { browse: null, following: null };
 
 // A cache entry taken under a different query signature is stale and discarded on restore.
 function jaQuerySignature() {
-    return JSON.stringify([jaSortMode, jaNsfwEnabled, jaCurrentSearch, jaCreatorFilter?.id || null, [...jaIncludeTags].sort(), [...jaExcludeTags].sort()]);
+    return JSON.stringify([currentJanitoraiSource(), jaSortMode, jaNsfwEnabled, jaCurrentSearch, jaCreatorFilter?.id || null, [...jaIncludeTags].sort(), [...jaExcludeTags].sort()]);
 }
 
 function stashModeState(mode) {
@@ -1283,6 +1627,11 @@ function restoreModeState(mode) {
 
 function setMode(mode) {
     if (jaMode === mode) return;
+    if (mode !== 'browse' && jaFilterFavorites) {
+        setFavoriteFilter(false);
+        resetFavoritePaging();
+        updateFiltersButton();
+    }
     stashModeState(jaMode);
     jaMode = mode;
 
@@ -1524,12 +1873,14 @@ function doSearch() {
 
 let delegatesInitialized = false;
 let modalEventsAttached = false;
+let favoriteSessionListenerAttached = false;
 
 function initView() {
     jaNsfwEnabled = getSetting('janitoraiNsfw') === true;
 
     // Seed checkboxes from state every init: the flags survive a provider switch but the markup is rebuilt.
     for (const [id, value] of [
+        ['janitoraiFilterFavorites', jaFilterFavorites],
         ['janitoraiFilterHideOwned', jaFilterHideOwned],
         ['janitoraiFilterHidePossible', jaFilterHidePossible],
     ]) {
@@ -1542,6 +1893,20 @@ function initView() {
 
     if (delegatesInitialized) return;
     delegatesInitialized = true;
+    syncFavoriteIdentity();
+
+    if (!favoriteSessionListenerAttached) {
+        favoriteSessionListenerAttached = true;
+        window.addEventListener('janitorai:session-changed', () => {
+            const wasFavorites = jaFilterFavorites;
+            const { status, changed } = syncFavoriteIdentity();
+            if ((wasFavorites && (!status?.loggedIn || changed)) && delegatesInitialized) {
+                ++jaLoadToken;
+                try { jaFetchController?.abort(); } catch { /* already settled */ }
+                loadCharacters(false);
+            }
+        });
+    }
 
     const sortEl = document.getElementById('janitoraiSortSelect');
     if (sortEl) CoreAPI.initCustomSelect?.(sortEl);
@@ -1585,7 +1950,8 @@ function initView() {
     });
 
     on('janitoraiLoadMoreBtn', 'click', () => {
-        jaCurrentPage++;
+        if (currentJanitoraiSource() === 'favorites') jaFavoritesPage++;
+        else jaCurrentPage++;
         loadCharacters(true);
     });
 
@@ -1692,6 +2058,22 @@ function initView() {
         updateFiltersButton();
         loadCharacters(false);
     });
+    on('janitoraiFilterFavorites', 'change', (e) => {
+        if (e.target.checked && !janitoraiSessionStatus()?.loggedIn) {
+            setFavoriteFilter(false);
+            updateFiltersButton();
+            showToast('Sign in under Settings > Online > JanitorAI to view your favorites.', 'info', 7000);
+            return;
+        }
+        setFavoriteFilter(e.target.checked);
+        resetFavoritePaging();
+        if (jaFilterFavorites) {
+            clearCreatorFilter(false);
+            if (jaMode !== 'browse') setMode('browse');
+        }
+        updateFiltersButton();
+        loadCharacters(false);
+    });
 
     view._registerDropdownDismiss([
         { dropdownId: 'janitoraiTagsDropdown', buttonId: 'janitoraiTagsBtn' },
@@ -1734,6 +2116,7 @@ function initView() {
         on('janitoraiImportBtn', 'click', () => {
             if (jaSelectedChar) importCharacter(jaSelectedChar);
         });
+        on('janitoraiCharFavoriteBtn', 'click', toggleJanitoraiFavorite);
 
         // The recover button is rebuilt each preview open, so delegate off the container.
         document.getElementById('janitoraiHiddenNotice')?.addEventListener('click', (e) => {
@@ -1908,6 +2291,9 @@ class JanitoraiBrowseView extends BrowseView {
                     <i class="fa-solid fa-sliders"></i> <span>Features</span>
                 </button>
                 <div id="janitoraiFiltersDropdown" class="dropdown-menu browse-features-dropdown hidden" style="width: 260px;">
+                    <div class="dropdown-section-title">Personal <span style="font-size: 0.8em; opacity: 0.6;">(requires login)</span>:</div>
+                    <label class="filter-checkbox"><input type="checkbox" id="janitoraiFilterFavorites"> <i class="fa-solid fa-heart" style="color: #e74c3c;"></i> My Favorites</label>
+                    <hr style="margin: 8px 0; border-color: var(--glass-border);">
                     <div class="dropdown-section-title">Library:</div>
                     <label class="filter-checkbox"><input type="checkbox" id="janitoraiFilterHideOwned"> <i class="fa-solid fa-check"></i> Hide Owned Characters</label>
                     <label class="filter-checkbox"><input type="checkbox" id="janitoraiFilterHidePossible"> <i class="fa-solid fa-check" style="color: #f0a500;"></i> Hide Possible Matches</label>
@@ -2019,6 +2405,10 @@ class JanitoraiBrowseView extends BrowseView {
                         <h2 id="janitoraiCharName">Character Name</h2>
                         <p class="browse-char-meta">
                             by <a id="janitoraiCharCreator" href="#" class="creator-link browse-meta-identity" title="Click to see all characters by this creator">Creator</a>
+                            <span id="janitoraiCharFavoriteBtn" class="janitorai-fav-btn-inline browse-fav-toggle" title="Add to favorites on JanitorAI">
+                                <i class="fa-regular fa-heart"></i>
+                                <span id="janitoraiCharFavoriteCount" hidden></span>
+                            </span>
                         </p>
                     </div>
                 </div>
@@ -2126,7 +2516,8 @@ class JanitoraiBrowseView extends BrowseView {
     canLoadMore() { return jaHasMore && !jaIsLoading; }
 
     loadMore() {
-        jaCurrentPage++;
+        if (currentJanitoraiSource() === 'favorites') jaFavoritesPage++;
+        else jaCurrentPage++;
         loadCharacters(true);
     }
 
@@ -2180,6 +2571,9 @@ class JanitoraiBrowseView extends BrowseView {
 
     activate(container, options = {}) {
         if (options.domRecreated) {
+            syncFavoriteIdentity();
+            setFavoriteFilter(false);
+            resetFavoritePaging();
             jaCurrentSearch = '';
             jaCreatorFilter = null;
             jaCharacters = [];

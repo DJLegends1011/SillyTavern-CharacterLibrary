@@ -2,6 +2,7 @@
 
 import { slugify, stripHtml, decodeHtmlEntities, CL_HELPER_PLUGIN_BASE, classifyErrorPage } from '../provider-utils.js';
 import { getValidJanitoraiToken, janitoraiForceRefresh } from '../janitor-session.js';
+import { buildJanitoraiFavoritesPath, normalizeFavoritePageMeta, normalizeFavoriteState } from './janitorai-favorites.js';
 import CoreAPI from '../../core-api.js';
 
 export { slugify, stripHtml, decodeHtmlEntities };
@@ -300,6 +301,64 @@ function normalizeHampterHit(hit) {
         message_count: hit.stats?.message || 0,
         total_tokens: hit.total_tokens || hit.token_counts?.total_tokens || 0,
     };
+}
+
+// ========================================
+// FAVORITES
+// ========================================
+
+/**
+ * Loads an authenticated favorite-character page. JanitorAI accepts the same mode, sort,
+ * search, and include-tag filters as its standard listing, plus favorites=true.
+ */
+export async function fetchJanitoraiFavorites(opts = {}) {
+    const data = await hampterFetch(buildJanitoraiFavoritesPath(opts), { signal: opts.signal });
+    return {
+        characters: (data?.data || []).map(normalizeHampterHit),
+        ...normalizeFavoritePageMeta(data, opts.page || 1, HAMPTER_PAGE_SIZE),
+    };
+}
+
+const FAVORITE_MEMBERSHIP_PATH = id => `/favorites/myfavorites/${id}`;
+const FAVORITE_COUNT_PATH = id => `/favorites/character/${id}/count`;
+
+/**
+ * Reads the authoritative membership bit and its separately exposed favorite count.
+ * A count failure leaves the confirmed membership intact but reports an unknown count.
+ */
+export async function fetchJanitoraiFavoriteState(id, { signal } = {}) {
+    if (!id) return null;
+    const characterId = String(id);
+    const favorited = await hampterFetch(FAVORITE_MEMBERSHIP_PATH(characterId), { signal });
+    if (typeof favorited !== 'boolean') return null;
+
+    let countPayload = null;
+    try {
+        countPayload = await hampterFetch(FAVORITE_COUNT_PATH(characterId), { signal });
+    } catch (err) {
+        // Cancellation is caller intent, unlike the optional count's transient failure.
+        if (err?.name === 'AbortError') throw err;
+    }
+
+    return normalizeFavoriteState(
+        { favorited, favoritesCount: countPayload?.favoritesCount },
+        { statePath: ['favorited'], countPath: ['favoritesCount'] },
+    );
+}
+
+/**
+ * Writes favorite membership, then re-reads the two authoritative state endpoints because
+ * JanitorAI returns an empty 201 body for the mutation.
+ */
+export async function setJanitoraiFavorite(id, favorited, { signal } = {}) {
+    if (!id) return null;
+    const characterId = String(id);
+    await hampterFetch(favorited ? '/favorites/favorite' : '/favorites/unfavorite', {
+        signal,
+        method: 'POST',
+        jsonBody: { characterId },
+    });
+    return fetchJanitoraiFavoriteState(characterId, { signal });
 }
 
 // ========================================

@@ -2,10 +2,12 @@
 // JANITORAI_ANON_KEY is JanitorAI's public publishable key, safe to ship in client code.
 
 import CoreAPI from '../core-api.js';
+import { extractFavoriteSeed } from './janitorai/janitorai-favorites.js';
 
 const JANITORAI_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1jbXp4dHpvbW1wbnhreW5kZGJvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MjgzNzA3NDAsImV4cCI6MjA0Mzk0Njc0MH0.UfRPni4ga9Lmin8j0JjV5ouuK9bXp8tsqPJ8pMTDDAI';
 const JANITORAI_AUTH_BASE = 'https://mcmzxtzommpnxkynddbo.supabase.co/auth/v1';
 const JANITORAI_TOKEN_URL = `${JANITORAI_AUTH_BASE}/token`;
+const JANITORAI_JWT_FAVORITE_PATHS = Object.freeze([]);
 
 function janitoraiAuthHeaders() {
     return { 'apikey': JANITORAI_ANON_KEY, 'Authorization': `Bearer ${JANITORAI_ANON_KEY}`, 'Content-Type': 'application/json' };
@@ -14,8 +16,20 @@ function janitoraiAuthHeaders() {
 export function decodeJanitoraiClaims(jwt) {
     try {
         const p = JSON.parse(atob(String(jwt).split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
-        return { email: p.email || '', expMs: (p.exp || 0) * 1000 };
-    } catch { return { email: '', expMs: 0 }; }
+        return {
+            email: p.email || '',
+            expMs: (p.exp || 0) * 1000,
+            subject: String(p.sub || ''),
+            favoriteIds: extractFavoriteSeed(p, JANITORAI_JWT_FAVORITE_PATHS),
+        };
+    } catch { return { email: '', expMs: 0, subject: '', favoriteIds: [] }; }
+}
+
+function notifyJanitoraiSessionChanged(token = '') {
+    const { subject, favoriteIds } = decodeJanitoraiClaims(token);
+    window.dispatchEvent(new CustomEvent('janitorai:session-changed', {
+        detail: { identity: subject, favoriteIds },
+    }));
 }
 
 // Seeded from a pasted session cookie: direct login is captcha-gated and unusable from this origin.
@@ -92,21 +106,26 @@ export async function janitoraiVerifyToken(accessToken) {
 // One shared in-flight refresh: the refresh token is single-use, so concurrent loads must not race it.
 
 let _refreshInFlight = null;
+let _sessionRevision = 0;
 
 async function doRefresh() {
     if (_refreshInFlight) return _refreshInFlight;
+    const revision = _sessionRevision;
     _refreshInFlight = (async () => {
         const rt = CoreAPI.getSetting('janitoraiRefreshToken');
         const res = await janitoraiRefreshGrant(rt);
+        if (revision !== _sessionRevision) return CoreAPI.getSetting('janitoraiToken') || '';
         if (res.access_token) {
             CoreAPI.setSetting('janitoraiToken', res.access_token);
             if (res.refresh_token) CoreAPI.setSetting('janitoraiRefreshToken', res.refresh_token);
+            notifyJanitoraiSessionChanged(res.access_token);
             return res.access_token;
         }
         // Wipe the stored session only when the refresh token is definitively dead, never on a transient blip.
         if (res.dead) {
             CoreAPI.setSetting('janitoraiToken', null);
             CoreAPI.setSetting('janitoraiRefreshToken', null);
+            notifyJanitoraiSessionChanged();
         }
         return '';
     })();
@@ -150,21 +169,32 @@ export async function janitoraiSetSession(pasted) {
                 : 'That session is expired or invalid. Copy a fresh cookie after logging in again.' };
         }
     }
+    _sessionRevision += 1;
     CoreAPI.setSetting('janitoraiToken', token);
     CoreAPI.setSetting('janitoraiRefreshToken', pair.refresh_token || null);
+    notifyJanitoraiSessionChanged(token);
     return { ok: true, email: decodeJanitoraiClaims(token).email || email, hasRefresh: !!pair.refresh_token };
 }
 
 export function janitoraiLogout() {
+    _sessionRevision += 1;
     CoreAPI.setSetting('janitoraiToken', null);
     CoreAPI.setSetting('janitoraiRefreshToken', null);
+    notifyJanitoraiSessionChanged();
 }
 
 export function janitoraiSessionStatus() {
     const tok = CoreAPI.getSetting('janitoraiToken') || '';
     if (!tok) return { loggedIn: false };
-    const { email, expMs } = decodeJanitoraiClaims(tok);
-    return { loggedIn: true, email, expMs, hasRefresh: !!CoreAPI.getSetting('janitoraiRefreshToken') };
+    const { email, expMs, subject, favoriteIds } = decodeJanitoraiClaims(tok);
+    return {
+        loggedIn: true,
+        email,
+        expMs,
+        hasRefresh: !!CoreAPI.getSetting('janitoraiRefreshToken'),
+        identity: subject,
+        favoriteIds,
+    };
 }
 
 let initialized = false;
