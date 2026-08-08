@@ -290,6 +290,11 @@ export async function extractSaucepanHiddenDefinition({
             method,
             headers: {
                 authorization: `Bearer ${token}`,
+                accept: '*/*',
+                origin: baseUrl,
+                referer: `${baseUrl}/`,
+                'user-agent': 'Mozilla/5.0 (SillyTavern Character Library)',
+                'x-saucepan-client-version': '1',
                 ...(body === undefined ? {} : { 'content-type': 'application/json' }),
             },
             ...(body === undefined ? {} : { body: JSON.stringify(body) }),
