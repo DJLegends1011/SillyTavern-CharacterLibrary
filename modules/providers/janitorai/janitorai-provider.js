@@ -19,6 +19,8 @@ import {
     extractViaBrowser,
     testBrowserEndpoint,
     browserLogin,
+    browserLogout,
+    browserSetSession,
     decodeHtmlEntities,
 } from './janitorai-api.js';
 
@@ -67,6 +69,8 @@ class JanitoraiProvider extends ProviderBase {
         // Window bridge: library.js is a classic script and cannot import from a module.
         window.janitoraiTestBrowserEndpoint = testBrowserEndpoint;
         window.janitoraiBrowserLogin = browserLogin;
+        window.janitoraiBrowserLogout = browserLogout;
+        window.janitoraiBrowserSetSession = browserSetSession;
         window.janitoraiFetchCharacter = fetchJanitoraiCharacter;
     }
 
