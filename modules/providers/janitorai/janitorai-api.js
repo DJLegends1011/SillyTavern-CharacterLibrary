@@ -277,6 +277,20 @@ export function hasHiddenDefinition(detail) {
     return !detail.personality;
 }
 
+/**
+ * Locked definition AND no proxy: the state the prompt capture cannot reach, because proxy mode
+ * is the only mode janitorai hands the assembled prompt back in. The character DETAIL names the
+ * flag `allow_proxy`; a listing ROW names it `is_proxy_enabled`. Check both on both sources so the
+ * grid banner (has the row) and import (has only the detail) agree. Confirmed correlation, not
+ * advisory: these cards were seen to fail extraction with "proxies are forbidden".
+ */
+export function isLockedNoProxy(detail, hit) {
+    if (!hasHiddenDefinition(detail)) return false;
+    const proxy = detail?.is_proxy_enabled ?? detail?.allow_proxy
+        ?? hit?.is_proxy_enabled ?? hit?.allow_proxy;
+    return proxy === false;
+}
+
 function normalizeHampterHit(hit) {
     const tagNames = [
         ...(hit.tags || []).map(t => ({ name: t.name, slug: t.slug || t.name?.toLowerCase(), id: t.id })),
@@ -299,6 +313,9 @@ function normalizeHampterHit(hit) {
         chat_count: hit.stats?.chat || 0,
         message_count: hit.stats?.message || 0,
         total_tokens: hit.total_tokens || hit.token_counts?.total_tokens || 0,
+        // Kept raw, not defaulted: absent and false mean different things to isLockedNoProxy, and
+        // the row is the only place this is believable (a row's showdefinition always lies).
+        is_proxy_enabled: hit.is_proxy_enabled,
     };
 }
 
@@ -345,19 +362,6 @@ export async function pingHampterQueue() {
     }
 }
 
-// No short-blurb field on janitorai; excerpt description rather than store a second copy.
-const TAGLINE_MAX = 200;
-
-function taglineExcerpt(html) {
-    const text = stripHtml(decodeHtmlEntities(html || '')).replace(/\s+/g, ' ').trim();
-    if (!text) return '';
-    const firstSentence = text.match(/^.*?[.!?](?=\s|$)/)?.[0] || text;
-    const base = firstSentence.length <= TAGLINE_MAX ? firstSentence : text;
-    if (base.length <= TAGLINE_MAX) return base;
-    const cut = base.slice(0, TAGLINE_MAX);
-    const lastSpace = cut.lastIndexOf(' ');
-    return `${(lastSpace > TAGLINE_MAX * 0.6 ? cut.slice(0, lastSpace) : cut).trimEnd()}...`;
-}
 
 /** Strip the leading emoji + space the site prefixes onto display names ("👨 Male" -> "male"). */
 export function tagKey(s) {
@@ -530,6 +534,50 @@ export async function extractViaBrowser(characterId, endpoint) {
 }
 
 /**
+ * Best effort for a locked definition whose creator forbids proxies. Returns MODEL OUTPUT under
+ * janitorai's own field names; callers must keep it labelled as recovered, never treat it as the
+ * creator's file. `onProgress(phase)` receives coarse phases ('setup'|'definition'|'extras'|'done')
+ * while the run is in flight, for a progress hint; it is best-effort and never blocks the result.
+ * @returns {Promise<{personality: string, scenario: string, exampleDialogs: string, firstMessage: string, recovered: string}>}
+ */
+export async function recoverViaBrowser(characterId, endpoint, onProgress) {
+    const token = (await getValidJanitoraiToken()) || '';
+    const refreshToken = CoreAPI.getSetting('janitoraiRefreshToken') || '';
+    const jobId = `rec_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+
+    // Poll the coarse phase while the long POST runs. Best-effort, stops when it settles.
+    let polling = !!onProgress;
+    const pollLoop = (async () => {
+        let last = null;
+        while (polling) {
+            await new Promise(r => setTimeout(r, 2500));
+            if (!polling) break;
+            try {
+                const r = await CoreAPI.apiRequest(
+                    `${CL_HELPER_PLUGIN_BASE}/janitorai-recover-progress?job=${encodeURIComponent(jobId)}`, 'GET');
+                const j = await r.json();
+                if (j?.phase && j.phase !== last) { last = j.phase; onProgress(j.phase); }
+            } catch { /* progress is a hint, not a requirement */ }
+        }
+    })();
+
+    try {
+        // Must outlast the helper's own budget (60s for generation to start, up to 240s of
+        // streaming, plus navigation and the send) or the client aborts a run that is still working.
+        return await callHelper('/janitorai-recover', {
+            ...browserTarget(endpoint),
+            characterId,
+            jobId,
+            token: token || undefined,
+            refreshToken: refreshToken || undefined,
+        }, { timeoutMs: 420000 });
+    } finally {
+        polling = false;
+        await pollLoop.catch(() => {});
+    }
+}
+
+/**
  * `path` is hampter-relative; the /hampter prefix is added here because cl-helper validates an
  * origin-relative path.
  * @returns {Promise<{status: number, body: string}>}
@@ -662,11 +710,21 @@ export function buildV2FromJanitorai(detail, opts = {}) {
         ...(detail.custom_tags || []).map(t => (typeof t === 'string' ? t : t?.name || '')),
     ].map(t => decodeHtmlEntities(t)).filter(Boolean);
 
-    const description = opts.definition || detail.personality || '';
+    // A no-proxy recovery arrives under janitorai's own field names and is MODEL OUTPUT, so it
+    // lands on its own branch: every field comes from the recovery, and the card is stamped.
+    const rec = opts.recovered || null;
+    const description = rec?.personality || opts.definition || detail.personality || '';
     // Padded with nulls and invisible-character placeholders that would import as blank greetings.
-    const altGreetings = (detail.first_messages || [])
+    // A LOCKED card strips greetings from the standalone character endpoint, so a no-proxy recovery
+    // supplies them from the chat read instead; ordinary hidden cards keep first_messages[] ungated.
+    const greetingSource = (detail.first_messages && detail.first_messages.length)
+        ? detail.first_messages
+        : (rec?.firstMessages || []);
+    const rawGreetings = greetingSource
         .map(g => (typeof g === 'string' ? g : g?.first_message || g?.message || ''))
         .filter(g => g && /[\p{L}\p{N}]/u.test(g));
+    const firstMes = detail.first_message || opts.firstMessage || rec?.firstMessage || rawGreetings[0] || '';
+    const altGreetings = rawGreetings.filter(g => g !== firstMes);
 
     return {
         spec: 'chara_card_v2',
@@ -675,9 +733,9 @@ export function buildV2FromJanitorai(detail, opts = {}) {
             name: decodeHtmlEntities(detail.chat_name || detail.name || 'Unknown'),
             description,
             personality: '',
-            scenario: detail.scenario || '',
-            first_mes: detail.first_message || opts.firstMessage || '',
-            mes_example: detail.example_dialogs || '',
+            scenario: detail.scenario || rec?.scenario || '',
+            first_mes: firstMes,
+            mes_example: detail.example_dialogs || rec?.exampleDialogs || '',
             system_prompt: '',
             post_history_instructions: '',
             creator_notes: decodeHtmlEntities(detail.description || ''),
@@ -690,9 +748,13 @@ export function buildV2FromJanitorai(detail, opts = {}) {
                     id: detail.id,
                     creatorId: detail.creator_id || null,
                     creatorName: decodeHtmlEntities(detail.creator_name || '') || null,
-                    tagline: taglineExcerpt(detail.description) || null,
                     definitionHidden: hasHiddenDefinition(detail) || undefined,
                     extracted: opts.definition ? true : undefined,
+                    // Provenance travels with the card: this text came from the site's model, not
+                    // the creator's file, so update checks can refuse to diff it and a later real
+                    // extraction can supersede it.
+                    recovered: rec ? 'jllm' : undefined,
+                    recoveredAt: rec ? new Date().toISOString() : undefined,
                 },
             },
             character_book: extractCharacterBookFromScripts(detail) || undefined,
