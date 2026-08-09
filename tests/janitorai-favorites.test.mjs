@@ -481,7 +481,7 @@ test('Janitor preview exposes the shared mobile favorite hook and compact inline
     assert.match(browse, /function resolveJanitoraiFavoriteState\(hit, token, identity\)/);
     assert.match(browse, /function toggleJanitoraiFavorite\(\)/);
     assert.match(browse, /on\('janitoraiCharFavoriteBtn', 'click', toggleJanitoraiFavorite\)/);
-    assert.match(browse, /if \(status\?\.loggedIn\) void resolveJanitoraiFavoriteState\(hit, token, favoriteIdentity\)/);
+    assert.match(browse, /if \(status\?\.loggedIn\) void resolveJanitoraiFavoriteState\(hit, favoriteToken, favoriteIdentity\)/);
     assert.match(mobile, /querySelector\('\.browse-fav-toggle'\)/);
     assert.match(mobile, /Unfavorite/);
     assert.match(css, /\.janitorai-fav-btn-inline/);
@@ -505,14 +505,75 @@ test('Janitor preview mirrors the Chub and Botbooru favorite stat treatment', as
 
     assert.equal(janitoraiFavoriteDisplayCount({ favorite_count: 12 }), 12);
     assert.equal(janitoraiFavoriteDisplayCount({ favorite_count: 12 }, 13), 13);
-    assert.equal(janitoraiFavoriteDisplayCount({}, null), 0);
+    assert.equal(janitoraiFavoriteDisplayCount({}, null), null);
     assert.equal(janitoraiFavoriteDisplayCount({ favorite_count: 12 }, 0), 0);
     assert.match(browse, /janitoraiCharCreator[^>]*>Creator<\/a>\s*•\s*<span id="janitoraiCharFavoriteBtn"/);
-    assert.match(browse, /id="janitoraiCharFavoriteCount">0<\/span>/);
+    assert.match(browse, /id="janitoraiCharFavoriteCount" hidden><\/span>/);
     assert.match(css, /\.janitorai-fav-btn-inline i\s*\{[^}]*color:\s*#ff6b6b;/s);
     assert.match(css, /#janitoraiCharFavoriteCount\s*\{[^}]*color:\s*var\(--text-primary\);/s);
-    assert.match(loader, /const MODULE_CSS_VERSION = 81;/);
-    assert.match(libraryHtml, /module-loader\.js\?v=48/);
+    assert.match(loader, /const MODULE_CSS_VERSION = 82;/);
+    assert.match(libraryHtml, /module-loader\.js\?v=49/);
+});
+
+test('an account change invalidates and re-resolves an open favorite preview', async () => {
+    const { applyJanitoraiFavoriteSessionChange } = await import('../modules/providers/janitorai/janitorai-browse.js');
+    const hit = { character_id: 'character-a', favorite_count: 12, _isFavorited: true };
+    const otherHit = { character_id: 'character-b', _isFavorited: false };
+    const paints = [];
+    const resolutions = [];
+    let token = 4;
+
+    assert.equal(applyJanitoraiFavoriteSessionChange({
+        changed: true,
+        status: { loggedIn: true, identity: 'account-b' },
+        hit,
+        rows: [otherHit],
+        nextToken: () => ++token,
+        paint: state => paints.push(state),
+        resolve: (...args) => resolutions.push(args),
+    }), true);
+    assert.equal(token, 5);
+    assert.equal('_isFavorited' in hit, false);
+    assert.equal('_isFavorited' in otherHit, false);
+    assert.deepEqual(paints, [{ favorited: null, count: 12, loading: true }]);
+    assert.deepEqual(resolutions, [[hit, 5, 'account-b']]);
+});
+
+test('logout leaves an open favorite preview unknown without resolving it', async () => {
+    const { applyJanitoraiFavoriteSessionChange } = await import('../modules/providers/janitorai/janitorai-browse.js');
+    const hit = { character_id: 'character-a' };
+    const paints = [];
+    let resolved = false;
+
+    assert.equal(applyJanitoraiFavoriteSessionChange({
+        changed: true,
+        status: { loggedIn: false, identity: '' },
+        hit,
+        nextToken: () => 9,
+        paint: state => paints.push(state),
+        resolve: () => { resolved = true; },
+    }), true);
+    assert.deepEqual(paints, [{ favorited: null, count: null, loading: false }]);
+    assert.equal(resolved, false);
+});
+
+test('an account change clears cached row membership without an open preview', async () => {
+    const { applyJanitoraiFavoriteSessionChange } = await import('../modules/providers/janitorai/janitorai-browse.js');
+    const rows = [
+        { character_id: 'character-a', _isFavorited: true },
+        { character_id: 'character-b', _isFavorited: false },
+    ];
+
+    assert.equal(applyJanitoraiFavoriteSessionChange({
+        changed: true,
+        status: { loggedIn: true, identity: 'account-b' },
+        hit: null,
+        rows,
+        nextToken: () => 10,
+        paint: () => assert.fail('no preview should be painted'),
+        resolve: () => assert.fail('no preview should be resolved'),
+    }), false);
+    assert.deepEqual(rows.map(row => '_isFavorited' in row), [false, false]);
 });
 
 test('Janitor favorite mutations reject a response from a different account', async () => {
@@ -553,6 +614,9 @@ test('mobile quick-import mode keeps the favorite pancake menu reachable', async
     assert.match(mobile, /controls\.classList\.toggle\('has-browse-favorite-actions', !!modal\.querySelector\('\.browse-fav-toggle'\)\)/);
     assert.match(mobile, /\.action-btn:not\(\.mobile-more-actions-btn\)/);
     assert.match(mobile, /faved \? 'Unfavorite' : 'Favorite'/);
+    assert.match(mobile, /classList\.contains\('unresolved'\)/);
+    assert.match(mobile, /Loading favorite status/);
+    assert.match(mobile, /Retry favorite status/);
     assert.match(mobileCss, /\.modal-controls\.has-browse-favorite-actions \.mobile-more-actions-btn[^{]*\{\s*display: inline-flex;/s);
     assert.match(mobileCss, /\.modal-controls\.has-browse-favorite-actions \.mobile-quick-import-btn[^{]*\{\s*display: none;/s);
 });
@@ -560,5 +624,5 @@ test('mobile quick-import mode keeps the favorite pancake menu reachable', async
 test('Janitor mobile favorite assets use the bumped cache-buster references', async () => {
     const libraryHtml = await readFile(new URL('../app/library.html', import.meta.url), 'utf8');
     assert.match(libraryHtml, /library-mobile\.css\?v=38/);
-    assert.match(libraryHtml, /library-mobile\.js\?v=26/);
+    assert.match(libraryHtml, /library-mobile\.js\?v=27/);
 });

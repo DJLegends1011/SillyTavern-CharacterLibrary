@@ -30,6 +30,7 @@
 .janitorai-fav-btn-inline:hover i { transform: scale(1.15); }
 .janitorai-fav-btn-inline.favorited i { font-weight: 900; }
 .janitorai-fav-btn-inline.loading { pointer-events: none; opacity: 0.6; }
+.janitorai-fav-btn-inline.unresolved:not(.loading) { opacity: 0.75; }
 #janitoraiCharFavoriteCount { color: var(--text-primary); }
 
 #janitoraiCharModal .browse-char-meta { overflow-wrap: anywhere; }

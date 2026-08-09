@@ -733,6 +733,7 @@ async function loadFollowedCreators() {
 // ========================================
 
 let jaDetailToken = 0;
+let jaFavoriteToken = 0;
 let jaDetailPromise = null;
 // What the notes pane currently shows, so the detail only re-renders when it has more.
 let jaPaintedNotes = '';
@@ -756,27 +757,60 @@ export function currentFavoriteCount(hit) {
 
 export function janitoraiFavoriteDisplayCount(hit, confirmedCount) {
     return currentFavoriteCount({ favorite_count: confirmedCount })
-        ?? currentFavoriteCount(hit)
-        ?? 0;
+        ?? currentFavoriteCount(hit);
 }
 
 function paintJanitoraiFavoriteButton({ favorited, count, loading }) {
     const btn = document.getElementById('janitoraiCharFavoriteBtn');
     if (!btn) return;
-    const isFavorited = !!favorited;
+    const loggedIn = !!janitoraiSessionStatus()?.loggedIn;
+    const hasState = typeof favorited === 'boolean';
+    const isFavorited = favorited === true;
     btn.classList.toggle('favorited', isFavorited);
+    btn.classList.toggle('unresolved', !hasState);
     btn.classList.toggle('loading', !!loading);
-    btn.title = janitoraiSessionStatus()?.loggedIn
-        ? (isFavorited ? 'Remove from favorites on JanitorAI' : 'Add to favorites on JanitorAI')
-        : 'Add your JanitorAI session in Settings to manage favorites';
+    btn.setAttribute('aria-disabled', String(!loggedIn || !!loading));
+    btn.title = !loggedIn
+        ? 'Add your JanitorAI session in Settings to manage favorites'
+        : loading
+            ? 'Loading favorite status from JanitorAI'
+            : hasState
+                ? (isFavorited ? 'Remove from favorites on JanitorAI' : 'Add to favorites on JanitorAI')
+                : 'Could not load favorite status; activate to retry';
     btn.setAttribute('aria-label', btn.title);
     const icon = btn.querySelector('i');
     if (icon) icon.className = isFavorited ? 'fa-solid fa-heart' : 'fa-regular fa-heart';
     const countEl = document.getElementById('janitoraiCharFavoriteCount');
     if (countEl) {
-        countEl.hidden = false;
-        countEl.textContent = formatNumber(janitoraiFavoriteDisplayCount(null, count));
+        const displayCount = janitoraiFavoriteDisplayCount(null, count);
+        countEl.hidden = displayCount === null;
+        countEl.textContent = displayCount === null ? '' : formatNumber(displayCount);
     }
+}
+
+export function applyJanitoraiFavoriteSessionChange({
+    changed,
+    status,
+    hit,
+    rows = [],
+    nextToken,
+    paint,
+    resolve,
+}) {
+    if (!changed) return false;
+    for (const candidate of [hit, ...rows]) {
+        if (candidate && typeof candidate === 'object') delete candidate._isFavorited;
+    }
+    if (!hit) return false;
+    const token = nextToken();
+    const loggedIn = !!status?.loggedIn;
+    paint({
+        favorited: null,
+        count: currentFavoriteCount(hit),
+        loading: loggedIn,
+    });
+    if (loggedIn) resolve(hit, token, status.identity || '');
+    return true;
 }
 
 export function isJanitoraiFavoriteOperationCurrent({
@@ -801,7 +835,7 @@ function isJanitoraiFavoriteSelectionCurrent(id, token, identity) {
     const status = janitoraiSessionStatus();
     return isJanitoraiFavoriteOperationCurrent({
         capturedToken: token,
-        currentToken: jaDetailToken,
+        currentToken: jaFavoriteToken,
         capturedId: id,
         selectedId: jaSelectedChar?.character_id || jaSelectedChar?.id,
         capturedIdentity: identity,
@@ -866,7 +900,7 @@ async function resolveJanitoraiFavoriteState(hit, token, identity) {
     } catch {
         if (isJanitoraiFavoriteSelectionCurrent(id, token, identity)) {
             paintJanitoraiFavoriteButton({
-                favorited: false,
+                favorited: null,
                 count: janitoraiFavoriteDisplayCount(hit),
                 loading: false,
             });
@@ -885,9 +919,19 @@ async function toggleJanitoraiFavorite() {
         return;
     }
 
-    const desired = !btn.classList.contains('favorited');
-    const token = jaDetailToken;
     const identity = status.identity || '';
+    if (btn.classList.contains('unresolved')) {
+        paintJanitoraiFavoriteButton({
+            favorited: null,
+            count: currentFavoriteCount(hit),
+            loading: true,
+        });
+        await resolveJanitoraiFavoriteState(hit, jaFavoriteToken, identity);
+        return;
+    }
+
+    const desired = !btn.classList.contains('favorited');
+    const token = jaFavoriteToken;
     const priorCount = janitoraiFavoriteDisplayCount(hit);
     paintJanitoraiFavoriteButton({ favorited: !desired, count: priorCount, loading: true });
     try {
@@ -910,6 +954,7 @@ function openPreviewModal(hit) {
     const modal = document.getElementById('janitoraiCharModal');
     if (!modal) return;
     const token = ++jaDetailToken;
+    const favoriteToken = ++jaFavoriteToken;
     const { status } = syncFavoriteIdentity();
     const favoriteIdentity = status?.identity || '';
     CoreAPI.resetBrowseSectionCollapseState(modal);
@@ -938,11 +983,11 @@ function openPreviewModal(hit) {
     setTokenStat(hit.total_tokens || 0);
     setHiddenNotice(null);
     paintJanitoraiFavoriteButton({
-        favorited: false,
+        favorited: null,
         count: janitoraiFavoriteDisplayCount(hit),
-        loading: false,
+        loading: !!status?.loggedIn,
     });
-    if (status?.loggedIn) void resolveJanitoraiFavoriteState(hit, token, favoriteIdentity);
+    if (status?.loggedIn) void resolveJanitoraiFavoriteState(hit, favoriteToken, favoriteIdentity);
 
     const tagsEl = document.getElementById('janitoraiCharTags');
     tagsEl.innerHTML = (hit.tags || []).map(t => `<span class="browse-tag">${escapeHtml(t.name || '')}</span>`).join('');
@@ -1406,6 +1451,7 @@ function cleanupCharModal() {
 
 function closePreviewModal() {
     jaDetailToken++;
+    jaFavoriteToken++;
     jaDetailPromise = null;
     cleanupCharModal();
     const modal = document.getElementById('janitoraiCharModal');
@@ -1955,6 +2001,15 @@ function initView() {
         window.addEventListener('janitorai:session-changed', () => {
             const wasFavorites = jaFilterFavorites;
             const { status, changed } = syncFavoriteIdentity();
+            applyJanitoraiFavoriteSessionChange({
+                changed,
+                status,
+                hit: jaSelectedChar,
+                rows: jaCharacters,
+                nextToken: () => ++jaFavoriteToken,
+                paint: paintJanitoraiFavoriteButton,
+                resolve: (hit, token, identity) => void resolveJanitoraiFavoriteState(hit, token, identity),
+            });
             if ((wasFavorites && (!status?.loggedIn || changed)) && delegatesInitialized) {
                 ++jaLoadToken;
                 try { jaFetchController?.abort(); } catch { /* already settled */ }
@@ -2466,7 +2521,7 @@ class JanitoraiBrowseView extends BrowseView {
                             by <a id="janitoraiCharCreator" href="#" class="creator-link browse-meta-identity" title="Click to see all characters by this creator">Creator</a> •
                             <span id="janitoraiCharFavoriteBtn" class="janitorai-fav-btn-inline browse-fav-toggle" title="Add to favorites on JanitorAI">
                                 <i class="fa-regular fa-heart"></i>
-                                <span id="janitoraiCharFavoriteCount">0</span>
+                                <span id="janitoraiCharFavoriteCount" hidden></span>
                             </span>
                         </p>
                     </div>
@@ -2685,6 +2740,7 @@ class JanitoraiBrowseView extends BrowseView {
         jaQueueWatchSince = 0;
         // Bump both tokens so an in-flight listing or detail response is discarded.
         jaDetailToken++;
+        jaFavoriteToken++;
         jaLoadToken++;
         // Reset or an in-flight load leaves the guard set and the next entry can never page.
         jaIsLoading = false;

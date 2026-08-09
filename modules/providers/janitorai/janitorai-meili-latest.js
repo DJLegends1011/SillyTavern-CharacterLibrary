@@ -4,6 +4,23 @@ function finiteNumber(value, fallback = 0) {
     return Number.isFinite(Number(value)) ? Number(value) : fallback;
 }
 
+function positiveInteger(value, fallback = 1) {
+    const number = Number(value);
+    return Number.isInteger(number) && number > 0 ? number : fallback;
+}
+
+function createdAtIso(hit) {
+    if (typeof hit?.createdAt === 'string' && !Number.isNaN(Date.parse(hit.createdAt))) {
+        return hit.createdAt;
+    }
+    const rawStamp = hit?.createdAtStamp;
+    if (rawStamp === null || rawStamp === undefined || rawStamp === '') return '';
+    const stamp = Number(rawStamp);
+    if (!Number.isFinite(stamp)) return '';
+    const date = new Date(stamp * 1000);
+    return Number.isNaN(date.getTime()) ? '' : date.toISOString();
+}
+
 export function buildJanitoraiMeiliRequest({
     search = '', page = 1, limit = 80, nsfwEnabled = false, includeTagIds = [],
 } = {}) {
@@ -24,7 +41,7 @@ export function buildJanitoraiMeiliRequest({
 export function normalizeJanitoraiMeiliHit(hit, { imageBase = '', resolveTagNames = () => [] } = {}) {
     const ids = Array.isArray(hit?.tagIds) ? hit.tagIds.map(Number).filter(Number.isFinite) : [];
     const names = resolveTagNames(ids);
-    const created = hit?.createdAt || (hit?.createdAtStamp ? new Date(Number(hit.createdAtStamp) * 1000).toISOString() : '');
+    const created = createdAtIso(hit);
     const avatar = hit?.avatar && !/^https?:\/\//i.test(hit.avatar) ? `${imageBase}${hit.avatar}` : (hit?.avatar || '');
     return {
         character_id: hit?.id || '',
@@ -47,11 +64,13 @@ export function normalizeJanitoraiMeiliHit(hit, { imageBase = '', resolveTagName
 }
 
 export function normalizeJanitoraiMeiliPage(response, deps = {}) {
-    const result = response?.results?.[0] || {};
+    const result = Array.isArray(response?.results) ? (response.results[0] || {}) : {};
     const excluded = new Set((deps.excludeTagIds || []).map(Number));
-    const hits = (result.hits || []).filter(hit => !(hit.tagIds || []).some(id => excluded.has(Number(id))));
-    const page = Number(result.page) || 1;
-    const totalPages = Number(result.totalPages) || 1;
+    const sourceHits = Array.isArray(result.hits) ? result.hits : [];
+    const hits = sourceHits.filter(hit => hit && String(hit.id || '').trim()
+        && !(Array.isArray(hit.tagIds) ? hit.tagIds : []).some(id => excluded.has(Number(id))));
+    const page = positiveInteger(result.page);
+    const totalPages = positiveInteger(result.totalPages);
     return {
         characters: hits.map(hit => normalizeJanitoraiMeiliHit(hit, deps)),
         page,

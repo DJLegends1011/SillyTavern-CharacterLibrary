@@ -79,6 +79,37 @@ test('uses Meili totalPages and filters excluded numeric tags client-side', () =
     assert.equal(page.hasMore, true);
 });
 
+test('skips unusable Meili rows and tolerates malformed page fields', () => {
+    const page = normalizeJanitoraiMeiliPage({ results: [{
+        page: 'not-a-page',
+        totalPages: null,
+        hits: [
+            { id: '', name: 'Missing ID', createdAtStamp: 1_700_000_000 },
+            { id: 'bad-date', name: 'Bad Date', tagIds: 'not-an-array', createdAtStamp: 'never' },
+            { id: 'no-date', name: 'No Date', tagIds: [], createdAtStamp: null },
+        ],
+    }] }, deps);
+
+    assert.equal(page.page, 1);
+    assert.equal(page.totalPages, 1);
+    assert.equal(page.hasMore, false);
+    assert.deepEqual(page.characters.map(hit => ({ id: hit.character_id, created: hit.created_at, tags: hit.tags })), [
+        { id: 'bad-date', created: '', tags: [] },
+        { id: 'no-date', created: '', tags: [] },
+    ]);
+    assert.deepEqual(normalizeJanitoraiMeiliPage({ results: [{ hits: {} }] }, deps).characters, []);
+    assert.deepEqual(normalizeJanitoraiMeiliPage({ results: 'malformed' }, deps).characters, []);
+
+    const invalidPagination = normalizeJanitoraiMeiliPage({ results: [{
+        page: -2,
+        totalPages: 1.5,
+        hits: [{ id: 'valid', name: 'Valid' }],
+    }] }, deps);
+    assert.equal(invalidPagination.page, 1);
+    assert.equal(invalidPagination.totalPages, 1);
+    assert.equal(invalidPagination.hasMore, false);
+});
+
 test('aborts the Meili listing transport without falling through to the proxy', async (t) => {
     const previousFetch = globalThis.fetch;
     const previousWarn = console.warn;
