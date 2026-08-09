@@ -496,6 +496,25 @@ test('Janitor preview keeps an unknown favorite count distinct from authoritativ
     assert.equal(currentFavoriteCount({ favorite_count: 0 }), 0);
 });
 
+test('Janitor preview mirrors the Chub and Botbooru favorite stat treatment', async () => {
+    const { janitoraiFavoriteDisplayCount } = await import('../modules/providers/janitorai/janitorai-browse.js');
+    const browse = await readFile(new URL('../modules/providers/janitorai/janitorai-browse.js', import.meta.url), 'utf8');
+    const css = await readFile(new URL('../modules/providers/janitorai/janitorai-browse.css', import.meta.url), 'utf8');
+    const loader = await readFile(new URL('../modules/module-loader.js', import.meta.url), 'utf8');
+    const libraryHtml = await readFile(new URL('../app/library.html', import.meta.url), 'utf8');
+
+    assert.equal(janitoraiFavoriteDisplayCount({ favorite_count: 12 }), 12);
+    assert.equal(janitoraiFavoriteDisplayCount({ favorite_count: 12 }, 13), 13);
+    assert.equal(janitoraiFavoriteDisplayCount({}, null), 0);
+    assert.equal(janitoraiFavoriteDisplayCount({ favorite_count: 12 }, 0), 0);
+    assert.match(browse, /janitoraiCharCreator[^>]*>Creator<\/a>\s*•\s*<span id="janitoraiCharFavoriteBtn"/);
+    assert.match(browse, /id="janitoraiCharFavoriteCount">0<\/span>/);
+    assert.match(css, /\.janitorai-fav-btn-inline i\s*\{[^}]*color:\s*#ff6b6b;/s);
+    assert.match(css, /#janitoraiCharFavoriteCount\s*\{[^}]*color:\s*var\(--text-primary\);/s);
+    assert.match(loader, /const MODULE_CSS_VERSION = 81;/);
+    assert.match(libraryHtml, /module-loader\.js\?v=48/);
+});
+
 test('Janitor favorite mutations reject a response from a different account', async () => {
     const { isJanitoraiFavoriteOperationCurrent } = await import('../modules/providers/janitorai/janitorai-browse.js');
     assert.equal(isJanitoraiFavoriteOperationCurrent({

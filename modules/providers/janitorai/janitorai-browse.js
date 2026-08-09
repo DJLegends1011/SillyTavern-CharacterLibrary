@@ -754,6 +754,12 @@ export function currentFavoriteCount(hit) {
     return Number.isFinite(count) ? Math.max(0, count) : null;
 }
 
+export function janitoraiFavoriteDisplayCount(hit, confirmedCount) {
+    return currentFavoriteCount({ favorite_count: confirmedCount })
+        ?? currentFavoriteCount(hit)
+        ?? 0;
+}
+
 function paintJanitoraiFavoriteButton({ favorited, count, loading }) {
     const btn = document.getElementById('janitoraiCharFavoriteBtn');
     if (!btn) return;
@@ -768,8 +774,8 @@ function paintJanitoraiFavoriteButton({ favorited, count, loading }) {
     if (icon) icon.className = isFavorited ? 'fa-solid fa-heart' : 'fa-regular fa-heart';
     const countEl = document.getElementById('janitoraiCharFavoriteCount');
     if (countEl) {
-        countEl.hidden = count === null || count === undefined;
-        countEl.textContent = countEl.hidden ? '' : formatNumber(count);
+        countEl.hidden = false;
+        countEl.textContent = formatNumber(janitoraiFavoriteDisplayCount(null, count));
     }
 }
 
@@ -808,10 +814,11 @@ function applyConfirmedJanitoraiFavorite(hit, state) {
     const id = hit?.character_id || hit?.id;
     if (!id || !state || typeof state.favorited !== 'boolean') return;
 
+    const count = janitoraiFavoriteDisplayCount(hit, state.count);
     jaFavoriteCache.set(id, state.favorited);
     const update = candidate => {
         candidate._isFavorited = state.favorited;
-        candidate.favorite_count = state.count;
+        candidate.favorite_count = count;
     };
     update(hit);
     jaCharacters.filter(candidate => String(candidate.character_id || candidate.id) === String(id)).forEach(update);
@@ -824,7 +831,7 @@ function applyConfirmedJanitoraiFavorite(hit, state) {
     }
 
     if (jaSelectedChar === hit) {
-        paintJanitoraiFavoriteButton({ favorited: state.favorited, count: state.count, loading: false });
+        paintJanitoraiFavoriteButton({ favorited: state.favorited, count, loading: false });
     }
 }
 
@@ -834,7 +841,11 @@ async function resolveJanitoraiFavoriteState(hit, token, identity) {
 
     const paintIfCurrent = state => {
         if (!isJanitoraiFavoriteSelectionCurrent(id, token, identity)) return false;
-        paintJanitoraiFavoriteButton({ favorited: state.favorited, count: state.count, loading: false });
+        paintJanitoraiFavoriteButton({
+            favorited: state.favorited,
+            count: janitoraiFavoriteDisplayCount(hit, state.count),
+            loading: false,
+        });
         return true;
     };
     if (typeof hit._isFavorited === 'boolean') {
@@ -854,7 +865,11 @@ async function resolveJanitoraiFavoriteState(hit, token, identity) {
         applyConfirmedJanitoraiFavorite(hit, state);
     } catch {
         if (isJanitoraiFavoriteSelectionCurrent(id, token, identity)) {
-            paintJanitoraiFavoriteButton({ favorited: false, count: null, loading: false });
+            paintJanitoraiFavoriteButton({
+                favorited: false,
+                count: janitoraiFavoriteDisplayCount(hit),
+                loading: false,
+            });
         }
     }
 }
@@ -873,7 +888,7 @@ async function toggleJanitoraiFavorite() {
     const desired = !btn.classList.contains('favorited');
     const token = jaDetailToken;
     const identity = status.identity || '';
-    const priorCount = currentFavoriteCount(hit);
+    const priorCount = janitoraiFavoriteDisplayCount(hit);
     paintJanitoraiFavoriteButton({ favorited: !desired, count: priorCount, loading: true });
     try {
         const state = await setJanitoraiFavorite(id, desired);
@@ -922,7 +937,11 @@ function openPreviewModal(hit) {
         : 'Unknown';
     setTokenStat(hit.total_tokens || 0);
     setHiddenNotice(null);
-    paintJanitoraiFavoriteButton({ favorited: false, count: null, loading: false });
+    paintJanitoraiFavoriteButton({
+        favorited: false,
+        count: janitoraiFavoriteDisplayCount(hit),
+        loading: false,
+    });
     if (status?.loggedIn) void resolveJanitoraiFavoriteState(hit, token, favoriteIdentity);
 
     const tagsEl = document.getElementById('janitoraiCharTags');
@@ -2444,10 +2463,10 @@ class JanitoraiBrowseView extends BrowseView {
                     <div>
                         <h2 id="janitoraiCharName">Character Name</h2>
                         <p class="browse-char-meta">
-                            by <a id="janitoraiCharCreator" href="#" class="creator-link browse-meta-identity" title="Click to see all characters by this creator">Creator</a>
+                            by <a id="janitoraiCharCreator" href="#" class="creator-link browse-meta-identity" title="Click to see all characters by this creator">Creator</a> •
                             <span id="janitoraiCharFavoriteBtn" class="janitorai-fav-btn-inline browse-fav-toggle" title="Add to favorites on JanitorAI">
                                 <i class="fa-regular fa-heart"></i>
-                                <span id="janitoraiCharFavoriteCount" hidden></span>
+                                <span id="janitoraiCharFavoriteCount">0</span>
                             </span>
                         </p>
                     </div>

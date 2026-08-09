@@ -14,8 +14,7 @@
     cursor: pointer;
     padding: 2px 8px;
     border-radius: var(--radius-sm);
-    color: #ff6b6b;
-    transition: background 0.2s ease, opacity 0.2s ease;
+    transition: all 0.2s ease;
 }
 
 .janitorai-fav-btn-inline:hover,
@@ -23,8 +22,15 @@
     background: rgba(255, 100, 100, 0.12);
 }
 
+.janitorai-fav-btn-inline i {
+    color: #ff6b6b;
+    transition: transform 0.2s ease;
+}
+
+.janitorai-fav-btn-inline:hover i { transform: scale(1.15); }
 .janitorai-fav-btn-inline.favorited i { font-weight: 900; }
 .janitorai-fav-btn-inline.loading { pointer-events: none; opacity: 0.6; }
+#janitoraiCharFavoriteCount { color: var(--text-primary); }
 
 #janitoraiCharModal .browse-char-meta { overflow-wrap: anywhere; }
 
