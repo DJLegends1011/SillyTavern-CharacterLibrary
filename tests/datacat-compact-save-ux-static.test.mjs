@@ -19,7 +19,7 @@ const mobile = await readFile(
     'utf8',
 );
 
-test('DataCat exposes one detail-only folder heart', () => {
+test('DataCat exposes one detail-only folder heart inline with creator', () => {
     assert.match(
         browse,
         /<p class="browse-char-meta">[\s\S]{0,700}id="datacatFolderBtn"[\s\S]{0,250}browse-meta-action[\s\S]{0,250}title="Save to folder"[\s\S]{0,250}fa-regular fa-heart/,
@@ -77,4 +77,9 @@ test('mobile overflow omits hidden metadata actions', () => {
         mobile,
         /metaAction\.hidden \|\| metaAction\.style\.display === 'none' \|\| getComputedStyle\(metaAction\)\.display === 'none'/,
     );
+});
+
+test('DataCat folder heart skips redundant DOM updates', () => {
+    assert.match(browse, /const wasFav = btn\.classList\.contains\('favorited'\)/);
+    assert.match(browse, /if \(wasFav === \(saved === true\)\) return/);
 });

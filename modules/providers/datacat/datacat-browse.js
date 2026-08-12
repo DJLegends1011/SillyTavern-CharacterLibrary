@@ -310,12 +310,12 @@ function setDatacatFolderActionState(characterId, saved) {
     const btn = document.getElementById('datacatFolderBtn');
     if (!id || btn?.dataset?.datacatId !== id) return;
 
+    const wasFav = btn.classList.contains('favorited');
+    if (wasFav === (saved === true)) return;
+
     btn.classList.toggle('favorited', saved === true);
-    btn.innerHTML = saved
-        ? '<i class="fa-solid fa-heart"></i>'
-        : '<i class="fa-regular fa-heart"></i>';
-    btn.title = 'Save to folder';
-    btn.setAttribute('aria-label', 'Save to folder');
+    const icon = btn.querySelector('i');
+    if (icon) icon.className = saved ? 'fa-solid fa-heart' : 'fa-regular fa-heart';
 }
 function refreshDatacatOnlyYoursFilterIfActive() {
     if (!datacatFilterOnlyYours) return;
@@ -348,6 +348,13 @@ function syncDatacatCollectableCharacter(characterId, character) {
     datacatFollowingCharacters.forEach(apply);
 }
 
+let _folderControlFetchId = null;
+function setDatacatFolderBtnVisible(visible) {
+    const btn = document.getElementById('datacatFolderBtn');
+    const sep = document.getElementById('datacatFolderSep');
+    if (btn) btn.style.display = visible ? '' : 'none';
+    if (sep) sep.style.display = visible ? '' : 'none';
+}
 function updateDatacatModalFolderControl(characterId, hit = null, { refresh = false } = {}) {
     const id = String(characterId || '').trim();
     const btn = document.getElementById('datacatFolderBtn');
@@ -356,17 +363,21 @@ function updateDatacatModalFolderControl(characterId, hit = null, { refresh = fa
     btn.dataset.datacatId = id;
     btn.disabled = false;
     const eligible = canShowDatacatYoursControl(id, hit);
-    btn.style.display = eligible ? '' : 'none';
+    setDatacatFolderBtnVisible(eligible);
     if (!eligible) return;
 
     setDatacatFolderActionState(id, getDatacatYoursState(id, hit));
     if (!refresh) return;
 
+    if (_folderControlFetchId === id) return;
+    _folderControlFetchId = id;
     fetchDatacatYoursStatus(id).then(result => {
+        if (_folderControlFetchId !== id) return;
+        _folderControlFetchId = null;
         if (!result?.ok) return;
         setDatacatYoursState(id, result.collected === true);
         setDatacatFolderActionState(id, hasDatacatFolderMembership(result));
-    }).catch(() => {});
+    }).catch(() => { if (_folderControlFetchId === id) _folderControlFetchId = null; });
 }
 async function setDatacatMainMembership(characterId, saved, hit = null) {
     const id = String(characterId || '').trim();
@@ -4302,8 +4313,8 @@ const datacatBrowseView = new (class DatacatBrowseView extends BrowseView {
                     <div>
                         <h2 id="datacatCharName">Character Name</h2>
                         <p class="browse-char-meta">
-                            by <a id="datacatCharCreator" href="#" class="creator-link browse-meta-identity" title="Click to browse this creator's characters">Creator</a> •
-                            <button
+                            by <a id="datacatCharCreator" href="#" class="creator-link browse-meta-identity" title="Click to browse this creator's characters">Creator</a>
+                            <span id="datacatFolderSep" class="browse-meta-sep" style="display:none"> • </span><button
                                 type="button"
                                 id="datacatFolderBtn"
                                 class="browse-meta-action"
