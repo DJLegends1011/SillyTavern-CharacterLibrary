@@ -261,7 +261,7 @@ test('fetches authenticated favorite pages and normalizes their listing metadata
     await withHampterResponses([{
         status: 200,
         body: {
-            data: [{ id: 'character-1', chat_name: 'Witch', stats: { chat: 4 } }],
+            data: [{ id: 'character-1', chat_name: 'Witch', stats: { chat: 4 }, is_proxy_enabled: true }],
             total: 35,
             page: 1,
             size: 34,
@@ -283,6 +283,7 @@ test('fetches authenticated favorite pages and normalizes their listing metadata
                 chat_count: 4,
                 message_count: 0,
                 total_tokens: 0,
+                is_proxy_enabled: true,
             }],
             total: 35,
             page: 1,

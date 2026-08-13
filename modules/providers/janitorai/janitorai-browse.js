@@ -20,12 +20,14 @@ import {
     resolveJanitoraiAvatarUrl,
     janitoraiCharacterUrl,
     hasHiddenDefinition,
+    isLockedNoProxy,
     hydrateJanitoraiScripts,
     extractCharacterBookFromScripts,
     hasBrowserEndpoint,
     getBrowserMode,
     getBrowserEndpoint,
     extractViaBrowser,
+    recoverViaBrowser,
     stripHtml,
     decodeHtmlEntities,
     tagKey,
@@ -84,6 +86,9 @@ let jaGridRenderedCount = 0;
 let jaMode = 'browse';
 
 let jaFilterHideOwned = false;
+// Listing rows carry a believable is_proxy_enabled, unlike showdefinition, which always reads
+// false there. So this hides no-proxy rows, and only the preview can confirm a locked definition.
+let jaFilterHideNoProxy = false;
 let jaFilterHidePossible = false;
 let jaFilterFavorites = false;
 let jaFavoritesPage = 1;
@@ -287,6 +292,7 @@ function passesClientFilters(hit, clientExcludeTagIds = []) {
     if (jaFilterHideOwned && isCharInLocalLibrary(hit)) return false;
     if (jaFilterHidePossible && isCharPossibleMatchObj(hit)) return false;
     if (clientExcludeTagIds.length && (hit.tags || []).some(tag => clientExcludeTagIds.includes(Number(tag.id)))) return false;
+    if (jaFilterHideNoProxy && hit?.is_proxy_enabled === false) return false;
     if (jaUnresolvedExcludes.length) {
         // tagKey on both sides: hampter catalogue names carry an emoji prefix ("👨 Male")
         const names = (hit.tags || []).map(t => tagKey(t.name));
@@ -1083,17 +1089,33 @@ function setTokenStat(total) {
 }
 
 // tokens: the API's reported size for the withheld definition.
-function setHiddenNotice(tokens) {
+function setHiddenNotice(tokens, noProxy = false) {
     const el = document.getElementById('janitoraiHiddenNotice');
     if (!el) return;
     if (tokens === null || tokens === undefined) {
         el.style.display = 'none';
         el.innerHTML = '';
+        el.classList.remove('janitorai-noproxy-notice');
         return;
     }
     const size = tokens ? ` (~${formatNumber(tokens)} tokens)` : '';
     const configured = hasBrowserEndpoint();
     el.style.display = 'flex';
+    el.classList.toggle('janitorai-noproxy-notice', !!noProxy);
+    // No proxy means the prompt capture has nothing to read: asking the site's own model to
+    // repeat its context is all that is left, and what it returns is model output.
+    if (noProxy) {
+        el.innerHTML = `
+            <i class="fa-solid fa-lock"></i>
+            <span><strong>Locked definition, no proxy${size}.</strong> ${
+                configured
+                    ? 'The creator turned off proxy access, so it cannot be extracted normally. Character Library can ask the JanitorAI model to repeat it, which usually works but is not guaranteed to be exact.'
+                    : 'The creator turned off proxy access. Set up a browser in Settings to try recovering it anyway.'
+            }</span>
+            ${configured ? '<button id="janitoraiTryAnywayBtn" class="glass-btn" type="button"><i class="fa-solid fa-wand-magic-sparkles"></i> Try anyway</button>' : ''}
+        `;
+        return;
+    }
     // No browser means no definition and no greetings, so say so plainly.
     el.innerHTML = `
         <i class="fa-solid fa-eye-slash"></i>
@@ -1136,6 +1158,54 @@ async function recoverDefinitionIntoPreview() {
         if (token !== jaDetailToken) return;
         showToast(`Could not extract this character: ${err.message}`, 'error', 8000);
         if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-unlock"></i> Extract now'; }
+    }
+}
+
+// The no-proxy sibling of recoverDefinitionIntoPreview. What comes back is model output, so the
+// copy says so and the card carries the same warning into the library.
+// Coarse recovery phases from cl-helper, in the user's words. The model turn is the slow one.
+function recoverPhaseLabel(phase) {
+    return {
+        setup: 'Opening a chat...',
+        definition: 'Recovering the definition, the slow part...',
+        extras: 'Recovering the scenario...',
+        done: 'Building the card...',
+    }[phase] || 'Recovering...';
+}
+
+async function recoverLockedIntoPreview() {
+    const hit = jaSelectedChar;
+    const charId = hit?.character_id || hit?.id;
+    if (!charId) return;
+    const btn = document.getElementById('janitoraiTryAnywayBtn');
+    const setBtn = (label) => { if (btn) btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> ${label}`; };
+    if (btn) btn.disabled = true;
+    setBtn(recoverPhaseLabel('setup'));
+
+    const token = jaDetailToken;
+    try {
+        const rec = await recoverViaBrowser(String(charId), undefined, (phase) => {
+            if (token === jaDetailToken) setBtn(recoverPhaseLabel(phase));
+        });
+        if (token !== jaDetailToken) return;
+        if (!rec?.personality) throw new Error('Nothing came back');
+        if (jaSelectedChar && (jaSelectedChar.character_id || jaSelectedChar.id) === charId) {
+            jaSelectedChar._recoveredNoProxy = rec;
+        }
+        const name = hit.name || 'Unknown';
+        populateSectionSecure('janitoraiCharDescriptionSection', 'janitoraiCharDescription', rec.personality, name);
+        if (rec.scenario) populateSection('janitoraiCharScenarioSection', 'janitoraiCharScenario', rec.scenario, name);
+        if (rec.exampleDialogs) populateSection('janitoraiCharExamplesSection', 'janitoraiCharExamples', rec.exampleDialogs, name);
+        if (rec.firstMessage) {
+            populateSection('janitoraiCharFirstMsgSection', 'janitoraiCharFirstMsg', rec.firstMessage, name,
+                (el, text) => { el.dataset.fullContent = text; });
+        }
+        setHiddenNotice(null);
+        showToast('Recovered from the model. Check it before relying on it: this is not the creator file.', 'warning', 9000);
+    } catch (err) {
+        if (token !== jaDetailToken) return;
+        showToast(`Could not recover this character: ${err.message}`, 'error', 8000);
+        if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> Try anyway'; }
     }
 }
 
@@ -1193,7 +1263,7 @@ async function fetchAndPopulateDetails(hit, token) {
         setTokenStat(detail.token_counts?.total_tokens || hit.total_tokens || 0);
         setHiddenNotice(hasHiddenDefinition(detail)
             ? (detail.token_counts?.personality_tokens || 0)
-            : null);
+            : null, isLockedNoProxy(detail, hit));
         // The import path branches on the detail (public vs recovery), and it just arrived.
         const inLib = isCharInLocalLibrary(hit);
         setImportButtonState(inLib, !inLib && view.isCharPossibleMatch(name, detail.creator_name || hit.creator_name || ''));
@@ -1524,13 +1594,24 @@ async function importCharacter(hit) {
             }
         }
 
-        if (importBtn) importBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Importing...';
+        // Import will recover via the model here (a couple of minutes), so step the label through
+        // the phases rather than a bare "Importing".
+        const willRecover = !hit._recoveredNoProxy && isLockedNoProxy(detail, hit);
+        const setBtn = (html) => { if (importBtn) importBtn.innerHTML = html; };
+        setBtn(willRecover
+            ? `<i class="fa-solid fa-spinner fa-spin"></i> ${recoverPhaseLabel('setup')}`
+            : '<i class="fa-solid fa-spinner fa-spin"></i> Importing...');
 
         const result = await provider.importCharacter(String(charId), { _detail: detail }, {
+            onProgress: willRecover
+                ? (phase) => setBtn(`<i class="fa-solid fa-spinner fa-spin"></i> ${recoverPhaseLabel(phase)}`)
+                : undefined,
             inheritedGalleryId,
             // Already extracted in the preview: reuse it rather than paying for a second run.
             definition: hit._recoveredDefinition || '',
             firstMessage: hit._recoveredFirstMessage || '',
+            // Model output from the no-proxy path; the builder stamps it so the card says so.
+            recovered: hit._recoveredNoProxy || null,
         });
         if (!result.success) throw new Error(result.error || 'Import failed');
 
@@ -1672,7 +1753,7 @@ function updateTagsButton() {
 function updateFiltersButton() {
     const btn = document.getElementById('janitoraiFiltersBtn');
     if (!btn) return;
-    const count = [jaFilterFavorites, jaFilterHideOwned, jaFilterHidePossible].filter(Boolean).length;
+    const count = [jaFilterFavorites, jaFilterHideOwned, jaFilterHidePossible, jaFilterHideNoProxy].filter(Boolean).length;
     btn.classList.toggle('has-filters', count > 0);
     const span = btn.querySelector('span');
     if (span) span.textContent = count > 0 ? `Features (${count})` : 'Features';
@@ -1984,6 +2065,7 @@ function initView() {
         ['janitoraiFilterFavorites', jaFilterFavorites],
         ['janitoraiFilterHideOwned', jaFilterHideOwned],
         ['janitoraiFilterHidePossible', jaFilterHidePossible],
+        ['janitoraiFilterHideNoProxy', jaFilterHideNoProxy],
     ]) {
         const el = document.getElementById(id);
         if (el) el.checked = value;
@@ -2184,6 +2266,11 @@ function initView() {
         updateFiltersButton();
         loadCharacters(false);
     });
+    on('janitoraiFilterHideNoProxy', 'change', (e) => {
+        jaFilterHideNoProxy = e.target.checked;
+        updateFiltersButton();
+        loadCharacters(false);
+    });
 
     view._registerDropdownDismiss([
         { dropdownId: 'janitoraiTagsDropdown', buttonId: 'janitoraiTagsBtn' },
@@ -2231,6 +2318,7 @@ function initView() {
         // The recover button is rebuilt each preview open, so delegate off the container.
         document.getElementById('janitoraiHiddenNotice')?.addEventListener('click', (e) => {
             if (e.target.closest('#janitoraiRecoverBtn')) recoverDefinitionIntoPreview();
+            if (e.target.closest('#janitoraiTryAnywayBtn')) recoverLockedIntoPreview();
         });
 
         if (overlay) {
@@ -2411,6 +2499,8 @@ class JanitoraiBrowseView extends BrowseView {
                     <div class="dropdown-section-title">Library:</div>
                     <label class="filter-checkbox"><input type="checkbox" id="janitoraiFilterHideOwned"> <i class="fa-solid fa-check"></i> Hide Owned Characters</label>
                     <label class="filter-checkbox"><input type="checkbox" id="janitoraiFilterHidePossible"> <i class="fa-solid fa-check" style="color: #f0a500;"></i> Hide Possible Matches</label>
+                    <div class="dropdown-section-title">Definitions:</div>
+                    <label class="filter-checkbox" title="Creators who turn off proxy access make a locked definition unrecoverable by the normal extraction."><input type="checkbox" id="janitoraiFilterHideNoProxy"> <i class="fa-solid fa-lock"></i> Hide No-Proxy Characters</label>
                 </div>
             </div>
 

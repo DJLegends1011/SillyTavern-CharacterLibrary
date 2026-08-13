@@ -15,8 +15,10 @@ import {
     resolveJanitoraiAvatarUrl,
     janitoraiCharacterUrl,
     hasHiddenDefinition,
+    isLockedNoProxy,
     hasBrowserEndpoint,
     extractViaBrowser,
+    recoverViaBrowser,
     testBrowserEndpoint,
     browserLogin,
     browserLogout,
@@ -288,6 +290,9 @@ class JanitoraiProvider extends ProviderBase {
                     chat_count: detail.stats?.chat || 0,
                     message_count: detail.stats?.message || 0,
                     total_tokens: detail.token_counts?.total_tokens || 0,
+                    // Same reason as the listing normalizer: the locked-and-no-proxy notice reads
+                    // this, and absent must stay distinguishable from false.
+                    is_proxy_enabled: detail.is_proxy_enabled,
                 };
                 // The full detail rides along so the IMPORT skips its refetch; the preview
                 // modal still fetches its own fresh copy.
@@ -356,11 +361,20 @@ class JanitoraiProvider extends ProviderBase {
             let definition = options?.definition || '';
             let firstMessage = options?.firstMessage || '';
             let recoveryError = '';
-            if (!definition && hasHiddenDefinition(detail) && hasBrowserEndpoint()) {
+            // Model output from the no-proxy path, already paid for in the preview. It stands in
+            // for the definition, so the proxy capture below must not run and fail on top of it.
+            let recovered = options?.recovered || null;
+            if (!definition && !recovered && hasHiddenDefinition(detail) && hasBrowserEndpoint()) {
                 try {
-                    const rec = await extractViaBrowser(charId);
-                    if (rec?.definition) definition = rec.definition;
-                    if (rec?.firstMessage) firstMessage = rec.firstMessage;
+                    if (isLockedNoProxy(detail)) {
+                        // Proxy forbidden, so the capture cant work: ask the model instead (slow,
+                        // and MODEL OUTPUT).
+                        recovered = await recoverViaBrowser(charId, undefined, options?.onProgress);
+                    } else {
+                        const rec = await extractViaBrowser(charId);
+                        if (rec?.definition) definition = rec.definition;
+                        if (rec?.firstMessage) firstMessage = rec.firstMessage;
+                    }
                 } catch (e) {
                     recoveryError = e?.message || 'extraction failed';
                     console.warn('[JanitoraiProvider] definition recovery failed:', recoveryError);
@@ -369,7 +383,7 @@ class JanitoraiProvider extends ProviderBase {
                     }
                 }
             }
-            if (options?.requireDefinition && !definition && hasHiddenDefinition(detail)) {
+            if (options?.requireDefinition && !definition && !recovered && hasHiddenDefinition(detail)) {
                 if (recoveryError) throw new Error(`Hidden definition recovery failed: ${recoveryError}`);
                 throw new Error(hasBrowserEndpoint()
                     ? 'Hidden definition recovery returned nothing'
@@ -377,7 +391,7 @@ class JanitoraiProvider extends ProviderBase {
             }
 
             await hydrateJanitoraiScripts(detail);
-            const characterCard = buildV2FromJanitorai(detail, { definition, firstMessage });
+            const characterCard = buildV2FromJanitorai(detail, { definition, firstMessage, recovered });
             if (!characterCard?.data) throw new Error('Failed to build character card');
 
             characterCard.data.extensions.janitorai = {
