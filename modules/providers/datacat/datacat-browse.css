@@ -479,6 +479,14 @@ html.cl-mobile .datacat-lorebook-desc { font-size: var(--font-xs); }
     border: 1px solid rgba(255, 255, 255, 0.12);
     box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
 }
+.datacat-folder-picker-sticky {
+    position: sticky;
+    top: -8px;
+    z-index: 1;
+    background: inherit;
+    padding-top: 8px;
+    margin-top: -8px;
+}
 .datacat-folder-picker-heading {
     font-size: 0.75rem;
     text-transform: uppercase;

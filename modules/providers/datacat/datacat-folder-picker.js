@@ -1,4 +1,4 @@
-// DataCat folder picker - "Save to folder" dropdown for the preview modal.
+// DataCat folder picker - "Add to folder" dropdown for the preview modal.
 // Pure model helpers here are unit-tested; the DOM component follows in this file.
 
 /**
@@ -162,8 +162,10 @@ function rowHtml({ id, title, checked, icon = 'fa-folder' }) {
 function renderPickerBody(el, model, characterId, characterName) {
     el.dataset.collected = model.collected ? 'true' : 'false';
     el.innerHTML = `
-        <div class="datacat-folder-picker-heading">Save to folder</div>
-        ${rowHtml({ id: '__main__', title: 'Main', checked: model.mainChecked, icon: 'fa-star' })}
+        <div class="datacat-folder-picker-sticky">
+            <div class="datacat-folder-picker-heading">Add to folder</div>
+            ${rowHtml({ id: '__main__', title: 'Main', checked: model.mainChecked, icon: 'fa-star' })}
+        </div>
         ${model.rows.map(r => rowHtml(r)).join('')}
         <div class="datacat-folder-create-row">
             <input type="text" class="datacat-folder-create-input" placeholder="New folder name" maxlength="120">
@@ -175,14 +177,14 @@ function renderPickerBody(el, model, characterId, characterName) {
 
 function renderPickerError(el, message, characterId, characterName, { retry = true } = {}) {
     el.innerHTML = `
-        <div class="datacat-folder-picker-heading">Save to folder</div>
+        <div class="datacat-folder-picker-heading">Add to folder</div>
         <div class="datacat-folder-picker-error">${escapeHtml(message)}</div>
         ${retry ? '<button type="button" class="datacat-folder-retry-btn">Retry</button>' : ''}`;
     el.querySelector('.datacat-folder-retry-btn')?.addEventListener('click', () => loadAndRender(el, characterId, characterName));
 }
 
 async function loadAndRender(el, characterId, characterName) {
-    el.innerHTML = '<div class="datacat-folder-picker-heading">Save to folder</div><div class="datacat-folder-picker-loading"><i class="fa-solid fa-spinner fa-spin"></i></div>';
+    el.innerHTML = '<div class="datacat-folder-picker-heading">Add to folder</div><div class="datacat-folder-picker-loading"><i class="fa-solid fa-spinner fa-spin"></i></div>';
     try {
         if (!_folderCache) {
             const res = await fetchDatacatFolders();
