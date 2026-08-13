@@ -44,7 +44,11 @@ import {
     janitoraiVerifyToken,
     decodeJanitoraiClaims,
 } from './datacat-api.js';
-import { filterPickerFolders, applyDatacatFolderOrder } from './datacat-folder-picker.js';
+import {
+    filterPickerFolders,
+    applyDatacatFolderOrder,
+    invalidateDatacatFolderCache,
+} from './datacat-folder-picker.js';
 
 let api = null;
 
@@ -574,13 +578,17 @@ window.datacatValidateSession = async () => {
 window.datacatRestoreAccount = async () => {
     const pluginOk = await checkDcPluginAvailable();
     if (!pluginOk) return { valid: false, reason: 'cl-helper plugin not available' };
-    return restoreDatacatAccount();
+    const result = await restoreDatacatAccount();
+    if (result?.ok || result?.valid) invalidateDatacatFolderCache();
+    return result;
 };
 
 window.datacatLoginAccount = async (email, password) => {
     const pluginOk = await checkDcPluginAvailable();
     if (!pluginOk) return { ok: false, error: 'cl-helper plugin not available' };
-    return loginDatacatAccount(email, password);
+    const result = await loginDatacatAccount(email, password);
+    if (result?.ok) invalidateDatacatFolderCache();
+    return result;
 };
 
 window.datacatValidateAccount = async () => {
@@ -592,7 +600,9 @@ window.datacatValidateAccount = async () => {
 window.datacatLogoutAccount = async () => {
     const pluginOk = await checkDcPluginAvailable();
     if (!pluginOk) return { ok: false, error: 'cl-helper plugin not available' };
-    return logoutDatacatAccount();
+    const result = await logoutDatacatAccount();
+    if (result?.ok) invalidateDatacatFolderCache();
+    return result;
 };
 
 window.datacatRefreshToken = async () => {

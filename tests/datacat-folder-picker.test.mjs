@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 
 import {
     filterPickerFolders,
+    createDatacatFolderLoader,
     buildPickerModel,
     hasDatacatFolderMembership,
     applyDatacatFolderOrder,
@@ -29,6 +30,94 @@ describe('filterPickerFolders', () => {
     it('tolerates junk input', () => {
         assert.deepEqual(filterPickerFolders(null), []);
         assert.deepEqual(filterPickerFolders([{ id: '', title: 'x' }, null, { id: '5' }]), [{ id: '5', title: '' }]);
+    });
+});
+
+describe('createDatacatFolderLoader', () => {
+    it('shares one request between concurrent loads', async () => {
+        let requestCount = 0;
+        let resolveRequest;
+        const loader = createDatacatFolderLoader(() => {
+            requestCount += 1;
+            return new Promise(resolve => { resolveRequest = resolve; });
+        });
+
+        const first = loader.load();
+        const second = loader.load();
+        assert.equal(requestCount, 1);
+
+        resolveRequest({
+            ok: true,
+            folders: [{ id: 12, title: 'Favorites' }],
+        });
+
+        assert.deepEqual(await first, [{ id: '12', title: 'Favorites' }]);
+        assert.deepEqual(await second, [{ id: '12', title: 'Favorites' }]);
+        assert.equal(requestCount, 1);
+    });
+
+    it('does not retain an empty result as the session cache', async () => {
+        let requestCount = 0;
+        const loader = createDatacatFolderLoader(async () => {
+            requestCount += 1;
+            return requestCount === 1
+                ? { ok: true, folders: [] }
+                : { ok: true, folders: [{ id: 12, title: 'Favorites' }] };
+        });
+
+        assert.deepEqual(await loader.load(), []);
+        assert.deepEqual(await loader.load(), [{ id: '12', title: 'Favorites' }]);
+        assert.equal(requestCount, 2);
+    });
+
+    it('invalidates a populated cache when the account changes', async () => {
+        let requestCount = 0;
+        const loader = createDatacatFolderLoader(async () => {
+            requestCount += 1;
+            return {
+                ok: true,
+                folders: [{ id: requestCount, title: `Account ${requestCount}` }],
+            };
+        });
+
+        assert.deepEqual(await loader.load(), [{ id: '1', title: 'Account 1' }]);
+        assert.deepEqual(await loader.load(), [{ id: '1', title: 'Account 1' }]);
+        loader.invalidate();
+        assert.deepEqual(await loader.load(), [{ id: '2', title: 'Account 2' }]);
+        assert.equal(requestCount, 2);
+    });
+
+    it('does not let an invalidated in-flight request overwrite the new cache', async () => {
+        const requests = [];
+        const loader = createDatacatFolderLoader(() => new Promise(resolve => {
+            requests.push(resolve);
+        }));
+
+        const oldAccountLoad = loader.load();
+        loader.invalidate();
+        const newAccountLoad = loader.load();
+        assert.equal(requests.length, 2);
+
+        requests[1]({ ok: true, folders: [{ id: 2, title: 'New account' }] });
+        assert.deepEqual(await newAccountLoad, [{ id: '2', title: 'New account' }]);
+
+        requests[0]({ ok: true, folders: [{ id: 1, title: 'Old account' }] });
+        assert.deepEqual(await oldAccountLoad, [{ id: '1', title: 'Old account' }]);
+        assert.deepEqual(await loader.load(), [{ id: '2', title: 'New account' }]);
+        assert.equal(requests.length, 2);
+    });
+
+    it('allows a later load to recover after a rejected request', async () => {
+        let requestCount = 0;
+        const loader = createDatacatFolderLoader(async () => {
+            requestCount += 1;
+            if (requestCount === 1) return { ok: false, error: 'temporary failure' };
+            return { ok: true, folders: [{ id: 12, title: 'Favorites' }] };
+        });
+
+        await assert.rejects(loader.load(), /temporary failure/);
+        assert.deepEqual(await loader.load(), [{ id: '12', title: 'Favorites' }]);
+        assert.equal(requestCount, 2);
     });
 });
 

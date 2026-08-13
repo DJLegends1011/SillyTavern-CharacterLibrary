@@ -4507,13 +4507,14 @@ const datacatBrowseView = new (class DatacatBrowseView extends BrowseView {
             // in-memory account store is wiped on ST restart; re-pushing the saved
             // token here restores it. Best-effort and non-blocking -- the browse
             // grid below uses the anonymous session and doesn't depend on this.
-            if (getSetting('datacatAccountToken')) {
-                restoreDatacatAccount().then(res => {
+            const accountRestorePromise = getSetting('datacatAccountToken')
+                ? restoreDatacatAccount().then(res => {
                     if (!(res?.ok || res?.valid)) {
                         debugLog('[Datacat] account session restore on init failed:', res?.reason || res?.error || 'unknown');
                     }
-                }).catch(() => {});
-            }
+                    return res;
+                }).catch(() => null)
+                : Promise.resolve(null);
 
             const bootstrapDcSession = async () => {
                 const g = document.getElementById('datacatGrid');
@@ -4522,8 +4523,11 @@ const datacatBrowseView = new (class DatacatBrowseView extends BrowseView {
                 const token = await initDcSession(savedToken);
                 if (token) {
                     if (token !== savedToken) setSetting('datacatToken', token);
-                    if (isDatacatYoursSyncEnabled()) preloadDatacatFolderCache();
                     loadCharacters(false);
+                    if (isDatacatYoursSyncEnabled()) {
+                        await accountRestorePromise;
+                        preloadDatacatFolderCache();
+                    }
                 } else {
                     renderBrowseError(document.getElementById('datacatGrid'), {
                         provider: 'datacat',

@@ -29,6 +29,48 @@ export function filterPickerFolders(folders) {
 }
 
 /**
+ * Create a single-flight loader for the signed-in account's custom folders.
+ * Empty responses are returned to the current caller but are not retained, so
+ * a transient empty response cannot leave the picker stuck on Main all session.
+ * @param {() => Promise<{ok?: boolean, folders?: Array, error?: string}>} fetchFolders
+ * @returns {{load: () => Promise<{id: string, title: string}[]>, invalidate: () => void}}
+ */
+export function createDatacatFolderLoader(fetchFolders) {
+    let cachedFolders = null;
+    let inFlight = null;
+    let generation = 0;
+
+    return {
+        invalidate() {
+            generation += 1;
+            cachedFolders = null;
+            inFlight = null;
+        },
+
+        load() {
+            if (cachedFolders) return Promise.resolve(cachedFolders);
+            if (inFlight) return inFlight;
+
+            const requestGeneration = generation;
+            const request = (async () => {
+                const res = await fetchFolders();
+                if (!res?.ok) throw new Error(res?.error || 'Could not load folders');
+                const folders = filterPickerFolders(res.folders);
+                if (folders.length > 0 && generation === requestGeneration) {
+                    cachedFolders = folders;
+                }
+                return folders;
+            })();
+            const trackedRequest = request.finally(() => {
+                if (inFlight === trackedRequest) inFlight = null;
+            });
+            inFlight = trackedRequest;
+            return trackedRequest;
+        },
+    };
+}
+
+/**
  * Build the render model from the folder list + membership status.
  * @param {{folders?: Array, collected?: boolean, folderIds?: Array}} opts
  * @returns {{collected: boolean, mainChecked: boolean, rows: {id: string, title: string, checked: boolean}[]}}
@@ -116,7 +158,7 @@ let _hooks = {
     setMainSaved: async (_characterId, saved) => ({ ok: true, collected: saved === true }),
     setAnyFolderSaved: () => {},
 };
-let _folderCache = null;   // filtered [{id,title}] or null
+const _folderLoader = createDatacatFolderLoader(fetchDatacatFolders);
 let _openEl = null;
 let _backdropEl = null;
 let _openCharId = '';
@@ -128,14 +170,11 @@ export function initDatacatFolderPicker(hooks) {
 }
 
 export function invalidateDatacatFolderCache() {
-    _folderCache = null;
+    _folderLoader.invalidate();
 }
 
 export function preloadDatacatFolderCache() {
-    if (_folderCache) return;
-    fetchDatacatFolders().then(res => {
-        if (res?.ok) _folderCache = filterPickerFolders(res.folders);
-    }).catch(() => {});
+    return _folderLoader.load().catch(() => null);
 }
 
 export function closeDatacatFolderPicker() {
@@ -186,14 +225,10 @@ function renderPickerError(el, message, characterId, characterName, { retry = tr
 async function loadAndRender(el, characterId, characterName) {
     el.innerHTML = '<div class="datacat-folder-picker-heading">Add to folder</div><div class="datacat-folder-picker-loading"><i class="fa-solid fa-spinner fa-spin"></i></div>';
     try {
-        if (!_folderCache) {
-            const res = await fetchDatacatFolders();
-            if (!res?.ok) throw new Error(res?.error || 'Could not load folders');
-            _folderCache = filterPickerFolders(res.folders);
-        }
+        const folders = await _folderLoader.load();
         const status = await fetchDatacatYoursStatus(characterId);
         const model = buildPickerModel({
-            folders: applyDatacatFolderOrder(_folderCache, getSetting('datacatFolderOrder') || []),
+            folders: applyDatacatFolderOrder(folders, getSetting('datacatFolderOrder') || []),
             collected: status?.ok ? status.collected === true : _hooks.getMainSaved(characterId),
             folderIds: status?.ok ? status.folderIds : [],
         });
