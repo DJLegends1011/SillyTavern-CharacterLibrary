@@ -543,6 +543,8 @@ const DEFAULT_SETTINGS = {
     datacatPublicFeed: false,
     datacatReextractOnUpdate: false,
     datacatUseAccountForExtraction: true,
+    datacatEmail: null,
+    datacatPassword: null,
     datacatSyncYours: true,
     // Separate from the janitorai* pair below: the refresh token is single-use and rotates, so a
     // shared pair breaks whichever provider refreshes second.
@@ -3645,6 +3647,8 @@ function setupSettingsModal() {
             wyvernRefreshToken: preserveWyv ? getSetting('wyvernRefreshToken') : null,
             wyvernUid: preserveWyv ? getSetting('wyvernUid') : null,
             datacatToken: getSetting('datacatToken') || null,
+            datacatEmail: getSetting('datacatEmail') || null,
+            datacatPassword: getSetting('datacatPassword') || null,
             datacatJanitoraiToken: getSetting('datacatJanitoraiToken') || null,
             datacatJanitoraiRefreshToken: getSetting('datacatJanitoraiRefreshToken') || null,
             saucepanToken: getSetting('saucepanToken') || null,
@@ -3872,7 +3876,7 @@ function setupSettingsModal() {
 
         datacatAccountStatus.className = 'settings-status-badge inactive';
         datacatAccountStatus.innerHTML = `<i class="fa-solid fa-circle"></i> ${result?.error ? 'Error' : 'Signed out'}`;
-        if (datacatAccountLoginBtn) datacatAccountLoginBtn.style.display = '';
+        if (datacatAccountLoginBtn) { datacatAccountLoginBtn.style.display = ''; updateDatacatLoginBtnState(); }
         if (datacatAccountTokenConnectBtn) datacatAccountTokenConnectBtn.style.display = '';
         if (datacatAccountOpenLoginBtn) datacatAccountOpenLoginBtn.style.display = '';
         if (datacatAccountLogoutBtn) datacatAccountLogoutBtn.style.display = 'none';
@@ -4099,6 +4103,40 @@ function setupSettingsModal() {
         setSetting('datacatAccountUser', result.user || null);
     }
 
+    function updateDatacatLoginBtnState() {
+        if (!datacatAccountLoginBtn) return;
+        const email = (datacatAccountEmailInput?.value || '').trim();
+        const password = datacatAccountPasswordInput?.value || '';
+        datacatAccountLoginBtn.disabled = !email || !password;
+    }
+    datacatAccountEmailInput?.addEventListener('input', updateDatacatLoginBtnState);
+    datacatAccountPasswordInput?.addEventListener('input', updateDatacatLoginBtnState);
+
+    datacatAccountEmailInput?.addEventListener('change', () => {
+        setSetting('datacatEmail', datacatAccountEmailInput.value.trim() || null);
+    });
+    datacatAccountPasswordInput?.addEventListener('change', () => {
+        setSetting('datacatPassword', datacatAccountPasswordInput.value || null);
+    });
+
+    const toggleDcPwBtn = document.getElementById('toggleDatacatAccountPasswordVisibility');
+    if (toggleDcPwBtn && datacatAccountPasswordInput) {
+        toggleDcPwBtn.onclick = () => {
+            const isPassword = datacatAccountPasswordInput.type === 'password';
+            datacatAccountPasswordInput.type = isPassword ? 'text' : 'password';
+            toggleDcPwBtn.innerHTML = `<i class="fa-solid fa-eye${isPassword ? '-slash' : ''}"></i>`;
+        };
+    }
+
+    const toggleDcTokenBtn = document.getElementById('toggleDatacatAccountTokenVisibility');
+    if (toggleDcTokenBtn && datacatAccountTokenInput) {
+        toggleDcTokenBtn.onclick = () => {
+            const isPassword = datacatAccountTokenInput.type === 'password';
+            datacatAccountTokenInput.type = isPassword ? 'text' : 'password';
+            toggleDcTokenBtn.innerHTML = `<i class="fa-solid fa-eye${isPassword ? '-slash' : ''}"></i>`;
+        };
+    }
+
     if (datacatAccountLoginBtn) {
         datacatAccountLoginBtn.onclick = async () => {
             const email = (datacatAccountEmailInput?.value || '').trim();
@@ -4109,12 +4147,12 @@ function setupSettingsModal() {
             }
 
             datacatAccountLoginBtn.disabled = true;
-            datacatAccountLoginBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Logging in...';
+            datacatAccountLoginBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Signing in...';
             try {
                 const result = await window.datacatLoginAccount?.(email, password);
                 if (!result?.ok || !result?.accountToken) throw new Error(result?.error || result?.reason || 'Login failed');
                 storeDatacatAccountResult(result);
-                if (datacatAccountPasswordInput) datacatAccountPasswordInput.value = '';
+                setSettings({ datacatEmail: email, datacatPassword: password });
                 showToast('DataCat account connected', 'success');
                 renderDatacatAccountStatus({ valid: true, user: result.user });
             } catch (err) {
@@ -4122,7 +4160,8 @@ function setupSettingsModal() {
                 renderDatacatAccountStatus({ valid: false });
             } finally {
                 datacatAccountLoginBtn.disabled = false;
-                datacatAccountLoginBtn.innerHTML = '<i class="fa-solid fa-right-to-bracket"></i> Login';
+                datacatAccountLoginBtn.innerHTML = '<i class="fa-solid fa-right-to-bracket"></i> Sign In';
+                updateDatacatLoginBtnState();
             }
         };
     }
@@ -4170,13 +4209,26 @@ function setupSettingsModal() {
             try {
                 await window.datacatLogoutAccount?.();
             } catch {}
-            setSetting('datacatAccountToken', null);
-            setSetting('datacatAccountUser', null);
+            setSettings({ datacatAccountToken: null, datacatAccountUser: null, datacatEmail: null, datacatPassword: null });
+            if (datacatAccountEmailInput) datacatAccountEmailInput.value = '';
+            if (datacatAccountPasswordInput) datacatAccountPasswordInput.value = '';
             if (datacatAccountTokenInput) datacatAccountTokenInput.value = '';
             showToast('DataCat account disconnected', 'info');
             renderDatacatAccountStatus({ valid: false });
+            updateDatacatLoginBtnState();
         };
     }
+
+    function refreshDatacatAccountSettingsUi() {
+        if (datacatAccountEmailInput) datacatAccountEmailInput.value = getSetting('datacatEmail') || '';
+        if (datacatAccountPasswordInput) datacatAccountPasswordInput.value = getSetting('datacatPassword') || '';
+        updateDatacatLoginBtnState();
+    }
+    refreshDatacatAccountSettingsUi();
+
+    document.getElementById('settingsDatacatSection')?.addEventListener('toggle', (e) => {
+        if (e.target.open) refreshDatacatAccountSettingsUi();
+    });
 
     updateDatacatAccountStatus({ restore: true });
 
