@@ -3941,28 +3941,40 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
             const meta = modal.querySelector('.browse-char-meta');
             const stats = modal.querySelector('.browse-char-stats');
             if (!meta || !stats) return;
-            stats.querySelectorAll('.browse-stat-identity').forEach(n => n.remove());
+            const sources = [];
             meta.querySelectorAll('.browse-meta-identity').forEach(src => {
                 const name = (src.textContent || '').trim();
                 if (!name) return;
-                // Providers toggle identity rows via inline display on a wrapper span
                 for (let el = src; el && el !== meta; el = el.parentElement) {
                     if (el.style?.display === 'none') return;
                 }
+                sources.push({ src, name, title: src.title || 'Creator', icon: src.dataset.identityIcon || 'fa-solid fa-user-pen' });
+            });
+            const existing = stats.querySelectorAll('.browse-stat-identity');
+            if (existing.length === sources.length) {
+                let same = true;
+                for (let i = 0; i < sources.length; i++) {
+                    const label = existing[i].querySelector('span');
+                    if (!label || label.textContent !== sources[i].name) { same = false; break; }
+                }
+                if (same) return;
+            }
+            existing.forEach(n => n.remove());
+            for (const { src, name, title, icon: iconClass } of sources) {
                 const stat = document.createElement('div');
                 stat.className = 'browse-stat browse-stat-identity';
-                stat.title = src.title || 'Creator';
-                const icon = document.createElement('i');
-                icon.className = src.dataset.identityIcon || 'fa-solid fa-user-pen';
+                stat.title = title;
+                const ic = document.createElement('i');
+                ic.className = iconClass;
                 const label = document.createElement('span');
                 label.textContent = name;
-                stat.append(icon, label);
+                stat.append(ic, label);
                 stat.addEventListener('click', (ev) => {
                     ev.stopPropagation();
                     src.click();
                 });
                 stats.appendChild(stat);
-            });
+            }
         }
 
         function armIdentityMirror(modal) {

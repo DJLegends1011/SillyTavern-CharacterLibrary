@@ -352,8 +352,9 @@ let _folderControlFetchId = null;
 function setDatacatFolderBtnVisible(visible) {
     const btn = document.getElementById('datacatFolderBtn');
     const sep = document.getElementById('datacatFolderSep');
-    if (btn) btn.style.display = visible ? '' : 'none';
-    if (sep) sep.style.display = visible ? '' : 'none';
+    const val = visible ? '' : 'none';
+    if (btn && btn.style.display !== val) btn.style.display = val;
+    if (sep && sep.style.display !== val) sep.style.display = val;
 }
 function updateDatacatModalFolderControl(characterId, hit = null, { refresh = false } = {}) {
     const id = String(characterId || '').trim();
@@ -2839,7 +2840,7 @@ async function fetchAndPopulateDetails(hit, token) {
         const charCreatorName = character.creator_name || character.creatorName || '';
         if (charCreatorName) {
             const creatorEl = document.getElementById('datacatCharCreator');
-            if (creatorEl) creatorEl.textContent = charCreatorName;
+            if (creatorEl && creatorEl.textContent !== charCreatorName) creatorEl.textContent = charCreatorName;
             if (datacatSelectedChar && getCharId(datacatSelectedChar) === charId) {
                 datacatSelectedChar.creator_name = charCreatorName;
             }
