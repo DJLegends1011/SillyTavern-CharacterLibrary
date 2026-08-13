@@ -15,6 +15,7 @@ import {
     wyvernMetadataCache,
     fetchWyvernMetadata,
     buildCharacterCardFromWyvern,
+    getWyvernCharName,
     getAvatarUrl,
     getCharacterPageUrl,
     parseCharacterUrl,
@@ -349,9 +350,13 @@ class WyvernProvider extends ProviderBase {
 
             const results = [];
             for (const char of characters) {
-                const charName = (char.name || '').toLowerCase().trim();
+                // Match on both name forms: local cards imported before the chat_name remap still
+                // carry the listing title as their name.
+                const cleanName = getWyvernCharName(char).toLowerCase();
+                const listingName = (char.name || '').toLowerCase().trim();
                 const charCreator = (char.creator?.displayName || char.creator?.username || '').toLowerCase().trim();
-                const nameMatch = charName === normalizedName || charName.includes(normalizedName) || normalizedName.includes(charName);
+                const nameMatch = [cleanName, listingName].some(n =>
+                    n && (n === normalizedName || n.includes(normalizedName) || normalizedName.includes(n)));
                 const creatorMatch = !normalizedCreator || charCreator.includes(normalizedCreator);
                 if (nameMatch && creatorMatch) {
                     results.push(this._normalizeSearchResult(char));
@@ -380,7 +385,7 @@ class WyvernProvider extends ProviderBase {
                 throw new Error('Could not fetch character data from API');
             }
 
-            const characterName = metadata.name || 'Unknown';
+            const characterName = getWyvernCharName(metadata);
             const characterCard = buildCharacterCardFromWyvern(metadata);
 
             const metadataId = metadata.id;
@@ -455,7 +460,9 @@ class WyvernProvider extends ProviderBase {
         return {
             id: char.id || null,
             fullPath: char.id || '',
-            name: char.name || '',
+            // Clean name, not the listing title: the shared bulk-link scoring compares it
+            // against char.name, which imports now fill from chat_name.
+            name: getWyvernCharName(char),
             avatarUrl: getAvatarUrl(char),
             rating: 0,
             starCount: char.likes || 0,

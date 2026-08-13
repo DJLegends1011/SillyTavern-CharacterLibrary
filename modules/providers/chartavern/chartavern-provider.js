@@ -23,6 +23,7 @@ import {
     isCtSessionActive,
     ctSetCookie,
     ctValidateSession,
+    fetchCtSessionInfo,
 } from './chartavern-api.js';
 
 let api = null;
@@ -118,7 +119,9 @@ class ChartavernProvider extends ProviderBase {
     get name() { return 'CharacterTavern'; }
     get icon() { return 'fa-solid fa-beer-mug-empty'; }
     get iconUrl() { return `${CT_SITE_BASE}/favicon.ico`; }
-    get minClHelperVersion() { return '1.0.0'; }
+    // Base SFW browse works without cl-helper (ctFetch falls to ST /proxy/ when no session), so
+    // NO global minClHelperVersion. Only NSFW (cookie session via /ct-proxy) is cl-helper-gated.
+    get clHelperFeatures() { return { nsfw: { minVersion: '1.0.0', label: 'NSFW browsing' } }; }
     get browseView() { return chartavernBrowseView; }
 
     get linkStatFields() {
@@ -134,6 +137,20 @@ class ChartavernProvider extends ProviderBase {
     async init(coreAPI) {
         super.init(coreAPI);
         api = coreAPI;
+
+        // Boot keep-alive: slide CT's sliding 10-day session so it doesnt lapse for users who
+        // rarely open the CT view. Fire-and-forget: init is boot-critical and cl-helper may be absent.
+        if (coreAPI.getSetting('ctAutoKeepAlive') !== false) {
+            const saved = coreAPI.getSetting('ctCookie');
+            if (saved) {
+                (async () => {
+                    try {
+                        const set = await ctSetCookie(coreAPI.apiRequest, saved);
+                        if (set.ok) await ctValidateSession(coreAPI.apiRequest);
+                    } catch { /* keep-alive is best-effort */ }
+                })();
+            }
+        }
     }
 
     async activate(container, options = {}) {
@@ -653,5 +670,9 @@ window.ctValidateSession = async (cookieString) => {
     }
     return ctValidateSession(CoreAPI.apiRequest);
 };
+
+// Passive session read for the settings-panel expiry timer: reports cl-helper's last-snapshotted
+// rolling expiry without making a CT request (so opening settings never slides the window).
+window.ctSessionInfo = async () => fetchCtSessionInfo(CoreAPI.apiRequest);
 
 export default chartavernProvider;

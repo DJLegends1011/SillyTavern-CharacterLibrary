@@ -861,7 +861,7 @@ The full app is optimized for mobile with:
 
 ### cl-helper plugin not detected
 
-The **cl-helper** plugin is required for Pygmalion login, Botbooru login, CharacterTavern NSFW access, DataCat session proxying, the Pixiv and Dropbox gallery extractors, Imgchest password-protected posts, Civitai API-key requests, and the disk-cached avatar/gallery thumbnails. It ships with Character Library in the `extras/cl-helper/` folder but needs to be placed in SillyTavern's plugins directory.
+**cl-helper** is Character Library's companion plugin. It runs inside the SillyTavern server and handles the few things a browser tab cannot do on its own (login handshakes, cookie sessions, cached thumbnails). If the app sent you here, the feature you just tried needs it. The plugin ships with Character Library in the `extras/cl-helper/` folder; installing it is one copy plus one config line.
 
 **One-command install (Linux, macOS, Termux):** open a terminal (in Termux, the same one you start SillyTavern from), then run:
 
@@ -882,9 +882,9 @@ Or, if you know where the extension folder is, just run `bash <extension folder>
    enableServerPlugins: true
    ```
 3. **Restart SillyTavern** (plugins only load at startup)
-4. Verify in the login/auth modal (appears when enabling NSFW). You should see "cl-helper plugin detected"
+4. Reload the Character Library tab and open **Settings → Info**: the cl-helper section should show the running version with a green check
 
-> The plugin runs server-side to handle auth flows that browsers can't do directly (e.g. Origin headers for Pygmalion, cookie proxying for CharacterTavern, session token management for DataCat). It only communicates with the specific provider APIs through hostname-pinned, path-allowlisted proxies; most are read-only GET proxies, plus a handful of dedicated POST routes for login handshakes and extraction. See the [plugin source](extras/cl-helper/index.js) for details.
+> The plugin only talks to the specific provider APIs through hostname-pinned, path-allowlisted proxies; most are read-only GET proxies, plus a handful of dedicated POST routes for login handshakes and extraction. See the [plugin source](extras/cl-helper/index.js) for details.
 
 ### Media downloads fail with CORS errors
 

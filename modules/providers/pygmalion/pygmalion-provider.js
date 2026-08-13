@@ -135,6 +135,9 @@ class PygmalionProvider extends ProviderBase {
     get name() { return 'Pygmalion'; }
     get icon() { return 'fa-solid fa-fire'; }
     get iconUrl() { return `${PYGMALION_SITE_BASE}/icons/favicon-32x32.png`; }
+    // Base browse works without cl-helper; only the password login handshake needs it
+    // (/pyg-login since 1.0.0). Pasting a token is the no-cl-helper fallback.
+    get clHelperFeatures() { return { login: { minVersion: '1.0.0', label: 'Password login' } }; }
     get browseView() { return pygmalionBrowseView; }
 
     get linkStatFields() {

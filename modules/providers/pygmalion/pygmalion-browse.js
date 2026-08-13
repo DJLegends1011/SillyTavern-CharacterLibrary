@@ -1583,6 +1583,10 @@ function updateLoginUI() {
 
 async function loginWithCredentials(email, password) {
     if (pygLoginInProgress) return;
+    // Password login rides cl-helper (/pyg-login); pasting a token is the no-cl-helper path. The
+    // login modal already disables this path when its own probe says missing, so this mostly guards
+    // the two probes disagreeing.
+    if (!(await CoreAPI.ensureFeatureClHelper('pygmalion', 'login'))) return;
     pygLoginInProgress = true;
     updateLoginUI();
 
