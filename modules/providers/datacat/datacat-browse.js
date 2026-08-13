@@ -48,6 +48,7 @@ import {
     hasDatacatFolderMembership,
     normalizeDatacatYoursFolderSelection,
     buildDatacatYoursFolderFetchOptions,
+    preloadDatacatFolderCache,
 } from './datacat-folder-picker.js';
 // Saucepan lives in its own provider now; DataCat only needs these two for its
 // saucepan-SOURCED rows (creator listing + open_definition lock state).
@@ -4518,6 +4519,7 @@ const datacatBrowseView = new (class DatacatBrowseView extends BrowseView {
                 const token = await initDcSession(savedToken);
                 if (token) {
                     if (token !== savedToken) setSetting('datacatToken', token);
+                    if (isDatacatYoursSyncEnabled()) preloadDatacatFolderCache();
                     loadCharacters(false);
                 } else {
                     renderBrowseError(document.getElementById('datacatGrid'), {

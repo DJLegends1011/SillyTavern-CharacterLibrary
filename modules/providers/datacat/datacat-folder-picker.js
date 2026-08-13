@@ -131,6 +131,13 @@ export function invalidateDatacatFolderCache() {
     _folderCache = null;
 }
 
+export function preloadDatacatFolderCache() {
+    if (_folderCache) return;
+    fetchDatacatFolders().then(res => {
+        if (res?.ok) _folderCache = filterPickerFolders(res.folders);
+    }).catch(() => {});
+}
+
 export function closeDatacatFolderPicker() {
     if (_outsideHandler) {
         document.removeEventListener('pointerdown', _outsideHandler, true);
