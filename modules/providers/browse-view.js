@@ -5,7 +5,7 @@ import { normalizeBrowseName, isMobileMode, scrollBrowseListTop, fetchWithProxy,
 import { CHUB_API_BASE, getChubHeaders, extractNodes } from './chub/chub-api.js';
 import { BOTBOORU_BASE, fetchBotbooruUser } from './botbooru/botbooru-api.js';
 import { fetchCharactersByOwner, getCharacterPageUrl } from './pygmalion/pygmalion-api.js';
-import { WYVERN_API_BASE, WYVERN_SITE_BASE, getWyvernHeaders } from './wyvern/wyvern-api.js';
+import { WYVERN_API_BASE, WYVERN_SITE_BASE, getWyvernHeaders, getWyvernCharName } from './wyvern/wyvern-api.js';
 import { fetchDatacatCreatorCharacters, fetchDatacatCharacter, submitExtraction, fetchExtractionStatus } from './datacat/datacat-api.js';
 import { fetchSaucepanCompanionsOfUser } from './saucepan/saucepan-api.js';
 import { fetchJanitoraiCharacters } from './janitorai/janitorai-api.js';
@@ -331,7 +331,7 @@ const CD_ADAPTERS = {
             for (const node of nodes) {
                 if (!node.id || seen.has(node.id)) continue;
                 seen.add(node.id);
-                results.push({ key: node.id, name: node.name || '', creator: node.creator?.displayName || node.creator?.username || '', raw: node });
+                results.push({ key: node.id, name: getWyvernCharName(node), creator: node.creator?.displayName || node.creator?.username || '', raw: node });
             }
             return results;
         },

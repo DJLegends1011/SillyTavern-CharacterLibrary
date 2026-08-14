@@ -1470,11 +1470,47 @@ function extractSanitizedUrlNameForChat(url) {
     }
 }
 
+// Duplicated from library.js (mediaUrlHash8 / qualifiedMediaName). keep in sync
+function mediaUrlHash8ForChat(url) {
+    let h = 0x811c9dc5;
+    for (let i = 0; i < url.length; i++) {
+        h ^= url.charCodeAt(i);
+        h = Math.imul(h, 0x01000193) >>> 0;
+    }
+    return h.toString(16).padStart(8, '0');
+}
+
+// Collision-qualified name `{urlhash8}_{parent_}{bare}`; files carry it only when distinct URLs
+// shared a filename. The hash prefix is the identity, the parent is a readability infix.
+function qualifiedMediaNameForChat(url) {
+    const bare = extractSanitizedUrlNameForChat(url);
+    if (!bare) return '';
+    let parent = '';
+    try {
+        const pathParts = new URL(url).pathname.split('/').filter(Boolean);
+        const lastRaw = pathParts[pathParts.length - 1] || '';
+        const lastNoExt = lastRaw.includes('.') ? lastRaw.substring(0, lastRaw.lastIndexOf('.')) : lastRaw;
+        const variantForm = CDN_VARIANT_NAMES.has(lastNoExt.replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase());
+        if (!variantForm && pathParts.length >= 2) {
+            const p = pathParts[pathParts.length - 2].replace(/[^a-zA-Z0-9_-]/g, '_').substring(0, 20);
+            if (p.length >= 4) parent = `${p}_`;
+        }
+    } catch { /* hash + bare only */ }
+    return `${mediaUrlHash8ForChat(url)}_${parent}${bare}`.substring(0, 40);
+}
+
 /**
  * Look up a remote URL and return local path if found
  */
 function lookupLocalizedMediaForChat(urlMap, remoteUrl) {
     if (!urlMap || !remoteUrl) return null;
+
+    // Collision-qualified name first (URL-exact via the hash prefix; misses fall through)
+    const qualifiedCand = qualifiedMediaNameForChat(remoteUrl);
+    if (qualifiedCand) {
+        const qualified = urlMap[`__sanitized__${qualifiedCand}`];
+        if (qualified) return qualified;
+    }
     
     const filename = extractFilenameFromUrl(remoteUrl);
     if (!filename) return null;

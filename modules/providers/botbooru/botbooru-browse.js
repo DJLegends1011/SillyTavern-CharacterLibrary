@@ -1363,6 +1363,9 @@ function setBotbooruLoginStatus(msg, isError) {
 }
 
 async function loginToBotbooru() {
+    // The password login handshake rides cl-helper; without it the request 404s. Name that up
+    // front (the manual-token field below stays usable as the no-cl-helper path).
+    if (!(await CoreAPI.ensureFeatureClHelper('botbooru', 'login'))) return;
     const username = document.getElementById('botbooruUsernameInput')?.value?.trim();
     const password = document.getElementById('botbooruPasswordInput')?.value || '';
     if (!username || !password) {

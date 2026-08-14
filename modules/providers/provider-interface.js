@@ -74,8 +74,14 @@ export class ProviderBase {
     /** Warning message shown when enabling this provider. Null = no warning. @returns {string|null} */
     get enableWarning() { return null; }
 
-    /** Lowest cl-helper version whose routes this provider needs. Null = works without it. @returns {string|null} */
+    /** Lowest cl-helper version whose routes this provider needs for BASE functionality (browse at
+     *  all). Null = base works without it. Fires the global enable-time gate. @returns {string|null} */
     get minClHelperVersion() { return null; }
+
+    /** Per-FEATURE cl-helper requirements for a provider whose base works without cl-helper but a
+     *  specific feature does not (eg NSFW browse, password login). Dict keyed by a feature slug ->
+     *  { minVersion, label }. Gated at feature-invocation time, not at enable. @returns {Object} */
+    get clHelperFeatures() { return {}; }
 
     /** Reference to this provider's BrowseView subclass instance, if any. @returns {import('./browse-view.js').BrowseView|null} */
     get browseView() { return null; }

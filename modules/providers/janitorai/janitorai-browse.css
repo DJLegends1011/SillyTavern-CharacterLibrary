@@ -11,49 +11,8 @@
     font-size: var(--font-sm);
 }
 
-.janitorai-hidden-notice {
-    display: flex;
-    /* The button is usually the tallest element, so center everything against it: top-aligned
-       text next to a taller button reads as misplaced. */
-    align-items: center;
-    gap: var(--space-sm);
-    margin: var(--space-sm) 0;
-    padding: var(--space-sm) var(--space-md);
-    border-radius: var(--radius-lg);
-    background: rgba(var(--cl-warning-rgb), 0.12);
-    border: 1px solid rgba(var(--cl-warning-rgb), 0.3);
-    color: var(--cl-warning-pale);
-    font-size: var(--font-sm);
-    line-height: 1.5;
-}
-
-.janitorai-hidden-notice > span {
-    flex: 1;
-}
-
-.janitorai-hidden-notice i {
-    color: var(--cl-warning);
-    flex-shrink: 0;
-    font-size: var(--font-md);
-}
-
-/* Locked definition AND no proxy: unrecoverable by the normal path, so it reads as an error
-   rather than the amber "this will just take longer" case. */
-.janitorai-hidden-notice.janitorai-noproxy-notice {
-    background: rgba(var(--cl-error-rgb), 0.12);
-    border-color: rgba(var(--cl-error-rgb), 0.3);
-    color: var(--cl-error-pale);
-}
-
-.janitorai-hidden-notice.janitorai-noproxy-notice i {
-    color: var(--cl-error);
-}
-
-.janitorai-hidden-notice .glass-btn {
-    margin-left: auto;
-    flex-shrink: 0;
-    white-space: nowrap;
-}
+/* The preview's definition-withheld notice now uses the shared .browse-notice component
+   (provider-utils buildProviderNotice); no janitorai-specific styling needed. */
 
 /* Endpoint capability report in Settings > Online > JanitorAI. One row per named check, so a
    failure says which thing to fix rather than just "it did not work". */
@@ -110,9 +69,4 @@ html.cl-mobile .janitorai-check-label {
 }
 html.cl-mobile .janitorai-check-list {
     padding: var(--space-xs);
-}
-
-html.cl-mobile .janitorai-hidden-notice {
-    font-size: var(--font-xs);
-    padding: var(--space-xs) var(--space-sm);
 }

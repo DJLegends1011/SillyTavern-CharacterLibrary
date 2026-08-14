@@ -53,6 +53,7 @@ let ctHasMore = true;
 let ctIsLoading = false;
 let ctCurrentSearch = '';
 let ctNsfwEnabled = false;
+let ctNsfwWarnedThisSession = false;
 let ctSortMode = 'most_popular';
 let ctSelectedChar = null;
 let ctGridRenderedCount = 0;
@@ -901,7 +902,7 @@ function markCardAsImported(path) {
 async function loadTopTags() {
     if (ctTopTagsFetched) return;
     try {
-        ctTopTags = await fetchTopTags();
+        ctTopTags = await fetchTopTags(apiRequest);
         ctTopTagsFetched = true;
     } catch (e) {
         console.warn('[CTBrowse] Failed to fetch top tags:', e.message);
@@ -1088,8 +1089,11 @@ function initCtView() {
     });
 
     // NSFW toggle - requires active session for NSFW
-    on('ctNsfwToggle', 'click', () => {
+    on('ctNsfwToggle', 'click', async () => {
         if (!isCtSessionActive()) {
+            // NSFW needs a cookie session, which needs cl-helper. If cl-helper is the blocker the
+            // login modal cant work anyway, so name that instead of sending them into a dead form.
+            if (!(await CoreAPI.ensureFeatureClHelper('chartavern', 'nsfw'))) return;
             showToast('Login required for NSFW content. Use the login option in Settings or click here to log in.', 'warning');
             openCtLoginModal();
             return;
@@ -1495,14 +1499,34 @@ async function tryCheckSession() {
     if (sessionActive) {
         // Validate the cookies still work
         const validation = await ctValidateSession(apiRequest);
-        if (!validation.valid || !validation.hasNsfw) {
-            debugLog('[CTAuth] Session cookies expired or NSFW unavailable:', validation.reason);
+        if (!validation.valid) {
+            // Transient = the cookie was never judged (CT unreachable from the server, eg a VPN
+            // kill-switch blocking non-browser traffic, cl-helper mid-restart, CT 5xx). Keep the
+            // session AND the saved cookie; browsing surfaces its own errors if CT stays down.
+            if (validation.transient) {
+                debugLog('[CTAuth] Session validation transient failure, keeping cookie:', validation.reason);
+                return;
+            }
+            debugLog('[CTAuth] Session cookies expired:', validation.reason);
             await ctLogout(apiRequest);
             ctNsfwEnabled = false;
-            setSetting('ctCookie', null);
+            // Only a DEFINITIVE rejection (CT answered and refused) may destroy the persisted
+            // cookie; an unmarked invalid (older cl-helper) keeps it, fail-open.
+            if (validation.definitive) setSetting('ctCookie', null);
             updateNsfwToggle();
-            showToast('CharacterTavern session expired — please re-authenticate.', 'warning', 5000);
+            showToast('CharacterTavern session expired - please re-authenticate.', 'warning', 5000);
             openCtLoginModal();
+            return;
+        }
+        if (!validation.hasNsfw) {
+            // Valid session without NSFW capability: the auth still works, so keep it; just
+            // reflect the state and say so once per app session instead of nuking the cookie.
+            ctNsfwEnabled = false;
+            updateNsfwToggle();
+            if (!ctNsfwWarnedThisSession) {
+                ctNsfwWarnedThisSession = true;
+                showToast('CharacterTavern session is active but NSFW content is not available. Check your content preferences on character-tavern.com.', 'warning', 6000);
+            }
             return;
         }
 
@@ -1521,10 +1545,20 @@ async function tryCheckSession() {
                     updateNsfwToggle();
                     return;
                 }
-                // Cookies expired
+                if (validation.transient) {
+                    debugLog('[CTAuth] Saved-cookie validation transient failure, keeping cookie:', validation.reason);
+                    return;
+                }
                 await ctLogout(apiRequest);
-                setSetting('ctCookie', null);
-                debugLog('[CTAuth] Saved cookies expired, cleared');
+                if (validation.definitive) {
+                    // This clear used to be silent, which read as the cookie vanishing for no
+                    // reason; say what happened.
+                    setSetting('ctCookie', null);
+                    showToast('Saved CharacterTavern session has expired. Log in again to restore it.', 'warning', 5000);
+                    debugLog('[CTAuth] Saved cookies expired, cleared');
+                } else {
+                    debugLog('[CTAuth] Saved-cookie validation failed without a definitive marker (older cl-helper?), keeping cookie:', validation.reason);
+                }
             }
         }
     }

@@ -162,26 +162,14 @@ function updateDropdownContent(dropdown, audit) {
 }
 
 function navigateToGallerySyncSettings(triggerFix = false) {
-    const settingsBtn = document.getElementById('gallerySettingsBtn');
-    if (settingsBtn) {
-        settingsBtn.click();
-        setTimeout(() => {
-            const navItem = document.querySelector('.settings-nav-item[data-section="gallery-folders"]');
-            if (navItem) {
-                navItem.click();
-                setTimeout(() => {
-                    const auditBtn = document.getElementById('gallerySyncAuditBtn');
-                    if (auditBtn) auditBtn.click();
-                    if (triggerFix) {
-                        setTimeout(() => {
-                            const migrateBtn = document.getElementById('migrateGalleryFoldersBtn');
-                            if (migrateBtn) migrateBtn.click();
-                        }, 300);
-                    }
-                }, 100);
-            }
-        }, 50);
-    }
+    CoreAPI.openSettingsToSection('gallery-folders', () => {
+        document.getElementById('gallerySyncAuditBtn')?.click();
+        if (triggerFix) {
+            setTimeout(() => {
+                document.getElementById('migrateGalleryFoldersBtn')?.click();
+            }, 300);
+        }
+    });
 }
 
 export async function init() {
