@@ -563,6 +563,7 @@ const DEFAULT_SETTINGS = {
     botbooruNsfwAccountSynced: false,
     botbooruUseTagWeights: false,
     ctCookie: null,
+    ctAutoKeepAlive: true,
     civitaiApiKey: null,
     pixivCookie: null,
 
@@ -606,8 +607,8 @@ const DEFAULT_SETTINGS = {
     mediaLocalizationPerChar: {},
     importMediaAction: 'ask',
     importDirectDownloads: false,
-    fastFilenameSkip: false,
-    fastSkipValidateHeaders: false,
+    fastFilenameSkip: true,
+    fastSkipValidateHeaders: true,
     includeExternalGalleries: true,
     galleryThumbnails: true,
     galleryThumbPrewarm: true,
@@ -653,7 +654,7 @@ const DEFAULT_SETTINGS = {
     providerOrder: null,
     providerDefaults: {},
     infiniteScroll: {},
-    disabledProviders: ['datacat', 'saucepan', 'botbooru', 'janitorai'],
+    disabledProviders: ['datacat', 'saucepan', 'janitorai'],
     datacatFollowedCreators: [],
     providerExcludeTags: {},
 
@@ -1486,6 +1487,66 @@ function compareVersions(a, b) {
 }
 
 /**
+ * Shared cl-helper version evaluation for both gates (the global enable gate `confirmClHelperVersion`
+ * and the feature gate `checkFeatureClHelper`). Fails OPEN while the probe is unresolved or when there
+ * is no requirement, so an unknown state never gates a user out.
+ * @param {string|null} need - required cl-helper version, or null for "no requirement"
+ * @returns {{ ok: boolean, missing?: boolean, tooOld?: boolean, have?: string|null }}
+ */
+function clHelperVersionState(need) {
+    if (!need || !_clHelperProbed) return { ok: true, have: _clHelperRunningVersion };
+    if (!_clHelperAvailable) return { ok: false, missing: true, have: null };
+    if (_clHelperRunningVersion && compareVersions(_clHelperRunningVersion, need) < 0) {
+        return { ok: false, tooOld: true, have: _clHelperRunningVersion };
+    }
+    return { ok: true, have: _clHelperRunningVersion };
+}
+
+/**
+ * Feature-level cl-helper check (channel 3). Sibling of confirmClHelperVersion (channel 2 global gate)
+ * but keyed to a slug in provider.clHelperFeatures, for a provider whose BASE works without cl-helper.
+ * @returns {{ ok: boolean, missing?: boolean, tooOld?: boolean, need?: string, have?: string|null, label?: string }}
+ */
+function checkFeatureClHelper(providerId, featureKey) {
+    const provider = window.ProviderRegistry?.getProvider?.(providerId);
+    const req = provider?.clHelperFeatures?.[featureKey];
+    if (!req) return { ok: true };
+    const st = clHelperVersionState(req.minVersion);
+    return st.ok
+        ? { ok: true }
+        : { ok: false, missing: st.missing, tooOld: st.tooOld, need: req.minVersion, have: st.have, label: req.label };
+}
+
+/**
+ * Feature-invocation gate for a cl-helper-dependent provider feature (channel 3). Resolves true when
+ * the feature can proceed. The cached /health state is a boot-time snapshot, so a failing check
+ * re-probes once before blocking; a cl-helper that came up after boot never false-blocks a feature.
+ * On a confirmed miss, shows an informational popup with a jump to Settings > Info and resolves false.
+ * @returns {Promise<boolean>}
+ */
+async function ensureFeatureClHelper(providerId, featureKey) {
+    let check = checkFeatureClHelper(providerId, featureKey);
+    if (check.ok) return true;
+    await checkClHelperPlugin();
+    check = checkFeatureClHelper(providerId, featureKey);
+    if (check.ok) return true;
+    const provider = window.ProviderRegistry?.getProvider?.(providerId);
+    const feature = check.label || 'This feature';
+    const who = provider?.name || providerId;
+    const goToSettings = await showConfirm({
+        title: `${feature} needs the cl-helper plugin`,
+        message: check.tooOld
+            ? `${feature} on ${who} needs cl-helper ${check.need} or newer and this server is running ${check.have}. Update it under Settings > Info. The rest of ${who} keeps working without it.`
+            : `${feature} on ${who} needs the cl-helper plugin, which is not installed on this server. Settings > Info has the install steps. The rest of ${who} keeps working without it.`,
+        icon: 'fa-solid fa-plug-circle-exclamation',
+        confirmLabel: 'Open Settings',
+        cancelLabel: 'Not now',
+    });
+    if (goToSettings === true) openSettingsToSection('info');
+    return false;
+}
+
+/**
  * Check cl-helper plugin availability and update settings UI accordingly.
  */
 async function checkClHelperPlugin(...pairs) {
@@ -1678,6 +1739,25 @@ async function performClHelperSelfUpdate(btn) {
 }
 
 /**
+ * Open the Settings modal to a specific nav section. Always routes through the settings BUTTON:
+ * its click handler repopulates every credential input from saved settings, and doSaveSettings
+ * persists raw input values, so a modal shown any other way risks Save wiping stored tokens.
+ * @param {string} section - data-section of the target nav item (eg 'info', 'online')
+ * @param {Function} [afterNav] - runs 100ms after the section click (deep-link extras)
+ * @returns {boolean} false when the settings button is missing (embedded contexts)
+ */
+function openSettingsToSection(section, afterNav) {
+    const btn = document.getElementById('gallerySettingsBtn');
+    if (!btn) return false;
+    btn.click();
+    setTimeout(() => {
+        document.querySelector(`.settings-nav-item[data-section="${section}"]`)?.click();
+        if (afterNav) setTimeout(afterNav, 100);
+    }, 100);
+    return true;
+}
+
+/**
  * Setup the Gallery Settings Modal
  */
 function setupSettingsModal() {
@@ -1704,6 +1784,7 @@ function setupSettingsModal() {
     const ctCookieInput = document.getElementById('settingsCtCookie');
     const ctPluginBanner = document.getElementById('ctPluginBanner');
     const ctSettingsFields = document.getElementById('ctSettingsFields');
+    const ctAutoKeepAliveCheckbox = document.getElementById('settingsCtAutoKeepAlive');
     const wyvernEmailInput = document.getElementById('settingsWyvernEmail');
     const wyvernPasswordInput = document.getElementById('settingsWyvernPassword');
     const wyvernRememberCredsCheckbox = document.getElementById('settingsWyvernRememberCredentials');
@@ -1833,15 +1914,13 @@ function setupSettingsModal() {
      */
     async function confirmClHelperVersion(prov) {
         const need = prov?.minClHelperVersion;
-        if (!need || !_clHelperProbed) return true;
-        const running = _clHelperRunningVersion;
-        const tooOld = _clHelperAvailable && running && compareVersions(running, need) < 0;
-        if (_clHelperAvailable && !tooOld) return true;
+        const st = clHelperVersionState(need);
+        if (st.ok) return true;
 
         return showConfirm({
             title: `${prov.name} needs the cl-helper plugin`,
-            message: tooOld
-                ? `${prov.name} needs cl-helper ${need} or newer, and this server is running ${running}. Until it is updated, its features will fail. You can update it under Settings > Info, which also explains how.`
+            message: st.tooOld
+                ? `${prov.name} needs cl-helper ${need} or newer, and this server is running ${st.have}. Until it is updated, its features will fail. You can update it under Settings > Info, which also explains how.`
                 : `${prov.name} needs the cl-helper plugin, which is not installed on this server. Without it, its features will fail. Settings > Info has the install steps.`,
             icon: 'fa-solid fa-plug-circle-exclamation',
             confirmLabel: 'Enable anyway',
@@ -2295,6 +2374,8 @@ function setupSettingsModal() {
         if (pygmalionPasswordInput) pygmalionPasswordInput.value = getSetting('pygmalionPassword') || '';
         if (pygmalionRememberCredsCheckbox) pygmalionRememberCredsCheckbox.checked = getSetting('pygmalionRememberCredentials') || false;
         if (ctCookieInput) ctCookieInput.value = getSetting('ctCookie') || '';
+        if (ctAutoKeepAliveCheckbox) ctAutoKeepAliveCheckbox.checked = getSetting('ctAutoKeepAlive') !== false;
+        renderCtSessionTimer();
         if (wyvernEmailInput) wyvernEmailInput.value = getSetting('wyvernEmail') || '';
         if (wyvernPasswordInput) wyvernPasswordInput.value = getSetting('wyvernPassword') || '';
         if (wyvernRememberCredsCheckbox) wyvernRememberCredsCheckbox.checked = getSetting('wyvernRememberCredentials') || false;
@@ -3313,6 +3394,7 @@ function setupSettingsModal() {
             botbooruUsername: botbooruUsernameInput ? (botbooruUsernameInput.value || null) : null,
             botbooruPassword: botbooruPasswordInput ? (botbooruPasswordInput.value || null) : null,
             ctCookie: ctCookieInput ? (ctCookieInput.value?.trim() || null) : null,
+            ctAutoKeepAlive: ctAutoKeepAliveCheckbox ? ctAutoKeepAliveCheckbox.checked : true,
             wyvernEmail: wyvernEmailInput ? (wyvernEmailInput.value || null) : null,
             wyvernPassword: wyvernPasswordInput ? (wyvernPasswordInput.value || null) : null,
             wyvernRememberCredentials: wyvernRememberCredsCheckbox ? wyvernRememberCredsCheckbox.checked : false,
@@ -3656,6 +3738,33 @@ function setupSettingsModal() {
         };
     }
 
+    // Passive expiry timer for CT's sliding 10-day session. Reads cl-helper's last-snapshotted
+    // Expires (from whatever authed request happened last: keep-alive, browsing, or validate) via
+    // window.ctSessionInfo, which makes NO CT request, so showing the timer never slides the window.
+    async function renderCtSessionTimer() {
+        const el = document.getElementById('ctSessionTimer');
+        if (!el) return;
+        if (!getSetting('ctCookie') || !window.ctSessionInfo) { el.style.display = 'none'; return; }
+        let info = null;
+        try { info = await window.ctSessionInfo(); } catch { /* leave hidden */ }
+        if (!info?.active) { el.style.display = 'none'; return; }
+        el.style.display = '';
+        if (!info.expires) {
+            el.innerHTML = '<i class="fa-solid fa-circle-check" style="color:var(--cl-success-bright);"></i> Session active - expiry known after the first request';
+            return;
+        }
+        const msLeft = info.expires - Date.now();
+        if (msLeft <= 0) {
+            el.innerHTML = '<i class="fa-solid fa-triangle-exclamation" style="color:var(--cl-error-bright);"></i> Session expired - open CharacterTavern or re-paste your cookie';
+            return;
+        }
+        const days = Math.floor(msLeft / 86400000);
+        const hours = Math.floor((msLeft % 86400000) / 3600000);
+        const left = days >= 1 ? `${days}d ${hours}h` : `${hours}h`;
+        const date = new Date(info.expires).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+        el.innerHTML = `<i class="fa-solid fa-circle-check" style="color:var(--cl-success-bright);"></i> Session active - expires ${date} (${left} left)`;
+    }
+
     const validateCtCookieBtn = document.getElementById('validateCtCookieBtn');
     if (validateCtCookieBtn && ctCookieInput) {
         validateCtCookieBtn.onclick = async (e) => {
@@ -3672,6 +3781,8 @@ function setupSettingsModal() {
                 }
                 const result = await window.ctValidateSession(ctCookieInput.value || null);
                 validateCtCookieBtn.classList.remove('success', 'error');
+
+                renderCtSessionTimer(); // validate slid the window and refreshed the stored expiry
 
                 if (result.valid) {
                     if (result.hasNsfw) {
@@ -16886,11 +16997,7 @@ function setupEventListeners() {
             menuGallerySyncBtn.addEventListener('click', () => {
                 // Navigate to gallery sync settings instead of toggling the
                 // dropdown (which is inside a hidden container at narrow widths)
-                document.getElementById('gallerySettingsBtn')?.click();
-                setTimeout(() => {
-                    const navItem = document.querySelector('.settings-nav-item[data-section="gallery-folders"]');
-                    if (navItem) navItem.click();
-                }, 100);
+                openSettingsToSection('gallery-folders');
             });
         }
         const menuMultiSelectBtn = document.getElementById('menuMultiSelectBtn');
@@ -21967,6 +22074,70 @@ function extractSanitizedUrlName(url) {
     }
 }
 
+// 8-hex FNV-1a of the full URL string; sync so display lookups can derive it per URL
+function mediaUrlHash8(url) {
+    let h = 0x811c9dc5;
+    for (let i = 0; i < url.length; i++) {
+        h ^= url.charCodeAt(i);
+        h = Math.imul(h, 0x01000193) >>> 0;
+    }
+    return h.toString(16).padStart(8, '0');
+}
+
+/**
+ * The collision-qualified name for a URL: `{urlhash8}_{parent_}{bare}`, capped 40. The hash8
+ * prefix is the IDENTITY (URL-exact, so a lookup can never hit a file written for a different
+ * URL, which a bare parent form could when hosts differ but parent dir + filename agree); the
+ * parent segment is a readability infix only, included when usable. Files carry this name only
+ * when the writer detected a filename collision.
+ * @param {string} url
+ * @returns {string}
+ */
+function qualifiedMediaName(url) {
+    const bare = extractSanitizedUrlName(url);
+    if (!bare) return '';
+    let parent = '';
+    try {
+        const pathParts = new URL(url).pathname.split('/').filter(Boolean);
+        const lastRaw = pathParts[pathParts.length - 1] || '';
+        const lastNoExt = lastRaw.includes('.') ? lastRaw.substring(0, lastRaw.lastIndexOf('.')) : lastRaw;
+        // A variant-named URL (/public etc) already carries its parent in the bare name.
+        const variantForm = CDN_VARIANT_NAMES.has(lastNoExt.replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase());
+        if (!variantForm && pathParts.length >= 2) {
+            const p = pathParts[pathParts.length - 2].replace(/[^a-zA-Z0-9_-]/g, '_').substring(0, 20);
+            if (p.length >= 4) parent = `${p}_`;
+        }
+    } catch { /* hash + bare only */ }
+    return `${mediaUrlHash8(url)}_${parent}${bare}`.substring(0, 40);
+}
+
+/**
+ * Effective localization name per URL for one run's URL set. Every URL whose bare name is unique
+ * in the set keeps it, byte-identical to the historical convention, so existing libraries derive
+ * the exact same names. Only DISTINCT urls sharing a filename (creators reusing a name for
+ * different images) get the qualified form, whose hash prefix makes group members distinct and
+ * assignment order-independent.
+ * @param {string[]} urls
+ * @returns {Map<string, string>} url -> effective name
+ */
+function computeEffectiveMediaNames(urls) {
+    const map = new Map();
+    const byBare = new Map();
+    for (const url of new Set(urls || [])) {
+        const bare = extractSanitizedUrlName(url);
+        map.set(url, bare);
+        if (!bare) continue;
+        const k = bare.toLowerCase();
+        if (!byBare.has(k)) byBare.set(k, []);
+        byBare.get(k).push(url);
+    }
+    for (const group of byBare.values()) {
+        if (group.length < 2) continue;
+        for (const url of group) map.set(url, qualifiedMediaName(url));
+    }
+    return map;
+}
+
 async function getExistingFileIndex(folderName) {
     const index = new Map();
     try {
@@ -22042,7 +22213,18 @@ async function buildDedupState(folderName) {
         return hashMap;
     }
 
-    return { fileNameIndex, hashMap, ensureHashMap, useFastSkip, validateHeaders };
+    // The alias-save guard needs a name index even when fast skip is off: the hash map holds
+    // ONE file per content hash, so a bare original and its qualified alias (same bytes) cant
+    // both be seen there, and without this check every re-run could save another alias copy.
+    async function ensureNameIndex() {
+        if (!fileNameIndex) {
+            fileNameIndex = await getExistingFileIndex(folderName);
+            debugLog(`[DedupState] Lazy name index built: ${fileNameIndex.size} entries for ${folderName}`);
+        }
+        return fileNameIndex;
+    }
+
+    return { fileNameIndex, hashMap, ensureHashMap, ensureNameIndex, useFastSkip, validateHeaders };
 }
 
 /**
@@ -22054,7 +22236,11 @@ async function buildDedupState(folderName) {
  */
 async function downloadEmbeddedMediaForCharacter(folderName, mediaUrls, options = {}) {
     const { onProgress, onLog, onLogUpdate, shouldAbort, abortSignal, prefix = 'localized_media', dedupState: externalDedup, downloadFnMap } = options;
-    
+
+    // Callers running multiple phases pass a union-scoped map so cross-phase collisions qualify too
+    const effectiveNames = options.effectiveNames || computeEffectiveMediaNames(mediaUrls);
+    const effName = (u) => effectiveNames.get(u) ?? extractSanitizedUrlName(u);
+
     let successCount = 0;
     let errorCount = 0;
     let skippedCount = 0;
@@ -22066,7 +22252,7 @@ async function downloadEmbeddedMediaForCharacter(folderName, mediaUrls, options 
     
     // Use shared dedup state if provided, otherwise build our own
     const dedup = externalDedup || await buildDedupState(folderName);
-    const { useFastSkip, validateHeaders, ensureHashMap } = dedup;
+    const { useFastSkip, validateHeaders, ensureHashMap, ensureNameIndex } = dedup;
     let { fileNameIndex } = dedup;
     
     let startIndex = Date.now(); // Use timestamp as start index for unique filenames
@@ -22085,9 +22271,11 @@ async function downloadEmbeddedMediaForCharacter(folderName, mediaUrls, options 
         const displayUrl = url.length > 60 ? url.substring(0, 60) + '...' : url;
         const logEntry = onLog ? onLog(`Checking ${displayUrl}`, 'pending') : null;
         
-        // Fast filename skip — check before downloading
+        // Fast filename skip: check before downloading. Colliders carry a qualified effective
+        // name, so they can never false-match a legacy bare-named file here; they fall through
+        // to the hash path, which is what heals pre-existing collisions.
         if (useFastSkip && fileNameIndex) {
-            const sanitizedName = extractSanitizedUrlName(url);
+            const sanitizedName = effName(url);
             if (sanitizedName.length >= FAST_SKIP_MIN_NAME_LENGTH) {
                 const match = fileNameIndex.get(sanitizedName.toLowerCase());
                 if (match) {
@@ -22192,13 +22380,28 @@ async function downloadEmbeddedMediaForCharacter(folderName, mediaUrls, options 
             const existingPriority = Object.entries(PREFIX_PRIORITY).find(([p]) => existingFile.fileName.startsWith(p + '_'))?.[1] || (isProviderGalleryFile ? 1 : 0);
             const currentPriority = PREFIX_PRIORITY[prefix] || (isProviderGalleryFile ? 1 : 0);
             const wouldDowngrade = hasCorrectPrefix ? false : existingPriority >= currentPriority;
-            const needsRename = hasWrongExtension || (isProviderGalleryFile && currentPriority > 1) || (!isAlreadyLocalized && !isProviderGalleryFile) || (fixFilenames && !hasCorrectPrefix && !wouldDowngrade);
-            
+            const hardRename = hasWrongExtension || (isProviderGalleryFile && currentPriority > 1) || (!isAlreadyLocalized && !isProviderGalleryFile);
+            let needsRename = hardRename || (fixFilenames && !hasCorrectPrefix && !wouldDowngrade);
+            if (needsRename && !hardRename) {
+                // Prefix-upgrade-only rename: a correct-prefix file may already exist under this
+                // URL's effective name (a cross-phase same-content pair, eg one image referenced
+                // from both a card field and a lorebook, is a legitimate two-file steady state).
+                // Renaming would delete the other phase's copy and oscillate on every other run,
+                // because the rebuilt hash map points at whichever copy is newest.
+                if (!fileNameIndex) fileNameIndex = await ensureNameIndex();
+                const underMyName = fileNameIndex.get(effName(url).toLowerCase());
+                if (underMyName && underMyName.fileName.startsWith(prefix + '_')) needsRename = false;
+            }
+
             if (needsRename) {
-                const renameResult = await renameToLocalizedFormat(existingFile, url, folderName, fileIndex, downloadResult, prefix);
+                const renameResult = await renameToLocalizedFormat(existingFile, url, folderName, fileIndex, downloadResult, prefix, effName(url));
                 downloadResult = null;
                 if (renameResult.success) {
                     renamedCount++;
+                    // Keep the shared dedup state current for the next URL/phase: the stale entry
+                    // would otherwise still point at the deleted pre-rename file.
+                    hashMap.set(contentHash, { fileName: renameResult.newName, localPath: renameResult.localPath });
+                    fileNameIndex?.set(effName(url).toLowerCase(), { fileName: renameResult.newName, localPath: renameResult.localPath });
                     const action = isProviderGalleryFile ? 'Converted' : (!hasCorrectPrefix && isAlreadyLocalized) ? 'Reclassified' : (hasWrongExtension ? 'Fixed extension' : 'Renamed');
                     if (onLogUpdate && logEntry) onLogUpdate(logEntry, `${action}: ${existingFile.fileName} → ${renameResult.newName}`, 'success');
                 } else {
@@ -22212,13 +22415,21 @@ async function downloadEmbeddedMediaForCharacter(folderName, mediaUrls, options 
                 const existingSanitized = isAlreadyLocalized
                     ? existingFile.fileName.match(/^(?:localized_media|lorebook_media)_\d+_(.+)\.[^.]+$/)
                     : null;
-                const currentSanitized = existingSanitized ? extractSanitizedUrlName(url) : null;
-                if (existingSanitized && currentSanitized && existingSanitized[1] !== currentSanitized) {
-                    const aliasResult = await saveMediaFromMemory({ arrayBuffer: downloadResult.arrayBuffer, contentType: downloadResult.contentType }, url, folderName, fileIndex, prefix);
+                const currentSanitized = existingSanitized ? effName(url) : null;
+                let aliasWanted = !!(existingSanitized && currentSanitized && existingSanitized[1] !== currentSanitized);
+                if (aliasWanted) {
+                    // Alias guard: a prior run may already have saved this alias, and the hash map
+                    // cant show it (one file per content hash), so consult the name index first.
+                    if (!fileNameIndex) fileNameIndex = await ensureNameIndex();
+                    aliasWanted = !fileNameIndex.get(currentSanitized.toLowerCase());
+                }
+                if (aliasWanted) {
+                    const aliasResult = await saveMediaFromMemory({ arrayBuffer: downloadResult.arrayBuffer, contentType: downloadResult.contentType }, url, folderName, fileIndex, prefix, currentSanitized);
                     downloadResult = null;
                     if (aliasResult.success) {
                         successCount++;
                         hashMap.set(contentHash + '_alias_' + currentSanitized, { fileName: aliasResult.filename, localPath: aliasResult.localPath });
+                        fileNameIndex?.set(currentSanitized.toLowerCase(), { fileName: aliasResult.filename, localPath: aliasResult.localPath });
                         if (onLogUpdate && logEntry) onLogUpdate(logEntry, `Saved alias: ${aliasResult.filename} (same content as ${existingFile.fileName})`, 'success');
                     } else {
                         skippedCount++;
@@ -22237,7 +22448,7 @@ async function downloadEmbeddedMediaForCharacter(folderName, mediaUrls, options 
         
         // Not a duplicate, save the file
         if (onLogUpdate && logEntry) onLogUpdate(logEntry, `Saving ${displayUrl}...`, 'pending');
-        const result = await saveMediaFromMemory(downloadResult, url, folderName, fileIndex, prefix);
+        const result = await saveMediaFromMemory(downloadResult, url, folderName, fileIndex, prefix, effName(url));
         downloadResult = null; // Release after save
         
         if (result.success) {
@@ -22246,7 +22457,7 @@ async function downloadEmbeddedMediaForCharacter(folderName, mediaUrls, options 
             hashMap.set(contentHash, { fileName: result.filename, localPath: result.localPath });
             // Update filename index for cross-phase fast-skip
             if (fileNameIndex) {
-                const savedSanitized = extractSanitizedUrlName(url);
+                const savedSanitized = effName(url);
                 if (savedSanitized) fileNameIndex.set(savedSanitized.toLowerCase(), { fileName: result.filename, localPath: result.localPath });
             }
             if (onLogUpdate && logEntry) onLogUpdate(logEntry, `Saved: ${result.filename}`, 'success');
@@ -22274,11 +22485,11 @@ async function downloadEmbeddedMediaForCharacter(folderName, mediaUrls, options 
  * @param {Object} downloadResult - Result from downloadMediaToMemory
  * @param {string} [prefix='localized_media'] - Filename prefix
  */
-async function renameToLocalizedFormat(existingFile, originalUrl, folderName, index, downloadResult, prefix = 'localized_media') {
+async function renameToLocalizedFormat(existingFile, originalUrl, folderName, index, downloadResult, prefix = 'localized_media', effectiveName = null) {
     try {
         // Save with new name using saveMediaFromMemory which determines correct extension
         // from the detected content type (via magic bytes), not the old filename
-        const saveResult = await saveMediaFromMemory(downloadResult, originalUrl, folderName, index, prefix);
+        const saveResult = await saveMediaFromMemory(downloadResult, originalUrl, folderName, index, prefix, effectiveName);
         
         if (!saveResult.success) {
             return { success: false, error: saveResult.error };
@@ -22298,7 +22509,7 @@ async function renameToLocalizedFormat(existingFile, originalUrl, folderName, in
             debugLog(`[EmbeddedMedia] Deleted old file: ${deletePath}`);
         }
         
-        return { success: true, newName: saveResult.filename };
+        return { success: true, newName: saveResult.filename, localPath: saveResult.localPath };
     } catch (error) {
         console.error('[EmbeddedMedia] Rename error:', error);
         return { success: false, error: error.message };
@@ -22934,7 +23145,7 @@ async function downloadMediaToMemory(url, timeoutMs = 30000, abortSignal = null)
  * @param {number} index - File index for naming
  * @param {string} [prefix='localized_media'] - Filename prefix
  */
-async function saveMediaFromMemory(downloadResult, url, folderName, index, prefix = 'localized_media') {
+async function saveMediaFromMemory(downloadResult, url, folderName, index, prefix = 'localized_media', effectiveName = null) {
     try {
         const { arrayBuffer, contentType } = downloadResult;
         
@@ -22990,7 +23201,7 @@ async function saveMediaFromMemory(downloadResult, url, folderName, index, prefi
         }
         
         // Extract sanitized filename from URL (handles CDN variant segments)
-        const sanitizedName = extractSanitizedUrlName(url) || 'media';
+        const sanitizedName = effectiveName || extractSanitizedUrlName(url) || 'media';
         
         // Generate local filename
         const filenameBase = `${prefix}_${index}_${sanitizedName}`;
@@ -23250,7 +23461,10 @@ async function downloadCharacterMedia(character, folderName, options = {}) {
     // Build shared dedup state once
     const dedupState = await buildDedupState(folderName);
 
-    const sharedOpts = { shouldAbort, abortSignal: signal, dedupState };
+    // Collision scope spans both phases: a filename reused between a card field and the lorebook
+    // must qualify the same way a within-field reuse does.
+    const effectiveNames = computeEffectiveMediaNames([...(embeddedUrls || []), ...(lorebookUrls || [])]);
+    const sharedOpts = { shouldAbort, abortSignal: signal, dedupState, effectiveNames };
 
     // Phase 1: Embedded media
     if (hasEmbedded && !isAborted()) {
@@ -24503,15 +24717,25 @@ async function buildMediaLocalizationMap(characterName, avatar, forceRefresh = f
 function lookupLocalizedMedia(urlMap, remoteUrl) {
     if (!urlMap || !remoteUrl) return null;
     
+    // Method 0: the collision-qualified name. Exists on disk only when the writer saw distinct
+    // URLs sharing this filename; the hash prefix makes it URL-exact, so it can never mishit.
+    // Runs BEFORE the filename guard (extensionless/trailing-slash URLs have no filename but can
+    // still carry a qualified file), matching the index.js twin's order.
+    const qualifiedCand = qualifiedMediaName(remoteUrl);
+    if (qualifiedCand) {
+        const qualified = urlMap[`__sanitized__${qualifiedCand}`];
+        if (qualified) return qualified;
+    }
+
     // Extract filename from URL
     const filename = extractFilenameFromUrl(remoteUrl);
     if (!filename) return null;
-    
+
     // Get filename without extension for direct matching
-    const nameWithoutExt = filename.includes('.') 
+    const nameWithoutExt = filename.includes('.')
         ? filename.substring(0, filename.lastIndexOf('.'))
         : filename;
-    
+
     // Method 1: Try direct filename match first (most reliable)
     let localPath = urlMap[`__filename__${nameWithoutExt}`];
     if (localPath) return localPath;
@@ -24618,7 +24842,9 @@ function replaceMediaUrlsInText(text, urlMap) {
             `(https?://[^\\s"'<>]+[/=])${sanitizedName}(\\.[a-z0-9]+)`,
             'gi'
         );
-        result = result.replace(filenamePattern, () => localPath);
+        // The full match IS the remote URL, so resolve it properly: colliders get their own
+        // qualified file instead of a blind substitution onto this key's file.
+        result = result.replace(filenamePattern, (match) => lookupLocalizedMedia(urlMap, match) || localPath);
     }
     
     return result;
@@ -28867,6 +29093,8 @@ document.addEventListener('keydown', (e) => {
 window.apiRequest = apiRequest;
 window.showToast = showToast;
 window.showConfirm = showConfirm;
+window.ensureFeatureClHelper = ensureFeatureClHelper;
+window.openSettingsToSection = openSettingsToSection;
 window.savePresetPicker = savePresetPicker;
 window.escapeHtml = escapeHtml;
 window.utf8ToBase64 = utf8ToBase64;

@@ -217,6 +217,16 @@ export function showConfirm(opts) {
     return window.showConfirm?.(opts) ?? Promise.resolve(false);
 }
 
+/** Feature-invocation gate for a cl-helper-dependent provider feature; resolves false when blocked (popup shown). @returns {Promise<boolean>} */
+export function ensureFeatureClHelper(...args) {
+    return window.ensureFeatureClHelper?.(...args) ?? Promise.resolve(true);
+}
+
+/** Open the Settings modal via its button (repopulates fields) and jump to a nav section. @returns {boolean} */
+export function openSettingsToSection(...args) {
+    return window.openSettingsToSection?.(...args) ?? false;
+}
+
 /**
  * Shared "save preset" picker: type a name to create, or pick an existing preset to overwrite (confirmed).
  * @param {string} title - Dialog title
@@ -1433,6 +1443,8 @@ export default {
     showToast,
     hapticFeedback,
     showConfirm,
+    ensureFeatureClHelper,
+    openSettingsToSection,
     savePresetPicker,
     refreshCharacters,
     

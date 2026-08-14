@@ -2,7 +2,7 @@
 import { BrowseView } from '../browse-view.js';
 import CoreAPI from '../../core-api.js';
 import { janitoraiSessionStatus } from '../janitor-session.js';
-import { IMG_PLACEHOLDER, formatNumber, BROWSE_PURIFY_CONFIG, skeletonLines, deferRender, deferCall, isMobileMode, finishBrowseImport, renderBrowseError } from '../provider-utils.js';
+import { IMG_PLACEHOLDER, formatNumber, BROWSE_PURIFY_CONFIG, skeletonLines, deferRender, deferCall, isMobileMode, finishBrowseImport, renderBrowseError, buildProviderNotice } from '../provider-utils.js';
 import {
     HAMPTER_PAGE_SIZE,
     HAMPTER_SORTS,
@@ -1095,44 +1095,41 @@ function setHiddenNotice(tokens, noProxy = false) {
     if (tokens === null || tokens === undefined) {
         el.style.display = 'none';
         el.innerHTML = '';
-        el.classList.remove('janitorai-noproxy-notice');
         return;
     }
     const size = tokens ? ` (~${formatNumber(tokens)} tokens)` : '';
     const configured = hasBrowserEndpoint();
-    el.style.display = 'flex';
-    el.classList.toggle('janitorai-noproxy-notice', !!noProxy);
-    // No proxy means the prompt capture has nothing to read: asking the site's own model to
-    // repeat its context is all that is left, and what it returns is model output.
+    el.style.display = '';
+    // No proxy means the prompt capture has nothing to read: asking the site's own model to repeat
+    // its context is all that is left (model output), so it reads as an error rather than the amber
+    // "this will just take longer" case.
     if (noProxy) {
-        el.innerHTML = `
-            <i class="fa-solid fa-lock"></i>
-            <span><strong>Locked definition, no proxy${size}.</strong> ${
-                configured
-                    ? 'The creator turned off proxy access, so it cannot be extracted normally. Character Library can ask the JanitorAI model to repeat it, which usually works but is not guaranteed to be exact.'
-                    : 'The creator turned off proxy access. Set up a browser in Settings to try recovering it anyway.'
-            }</span>
-            ${configured ? '<button id="janitoraiTryAnywayBtn" class="glass-btn" type="button"><i class="fa-solid fa-wand-magic-sparkles"></i> Try anyway</button>' : ''}
-        `;
+        el.innerHTML = buildProviderNotice({
+            kind: 'error',
+            title: `Locked definition, no proxy${size}.`,
+            message: configured
+                ? 'The creator turned off proxy access, so it cannot be extracted normally. Character Library can ask the JanitorAI model to repeat it, which usually works but is not guaranteed to be exact.'
+                : 'The creator turned off proxy access. Set up a browser in Settings to try recovering it anyway.',
+            actions: configured ? [{ key: 'tryanyway', label: 'Try anyway', icon: 'fa-solid fa-wand-magic-sparkles' }] : [],
+        });
         return;
     }
     // No browser means no definition and no greetings, so say so plainly.
-    el.innerHTML = `
-        <i class="fa-solid fa-eye-slash"></i>
-        <span><strong>Hidden definition${size}.</strong> ${
-            configured
-                ? 'Importing extracts it first, so it takes longer than usual. Or use the button to preview it now.'
-                : 'Set up a browser in Settings to extract it. Importing now gets you no definition and no greetings.'
-        }</span>
-        ${configured ? '<button id="janitoraiRecoverBtn" class="glass-btn" type="button"><i class="fa-solid fa-unlock"></i> Extract now</button>' : ''}
-    `;
+    el.innerHTML = buildProviderNotice({
+        kind: 'hidden',
+        title: `Hidden definition${size}.`,
+        message: configured
+            ? 'Importing extracts it first, so it takes longer than usual. Or use the button to preview it now.'
+            : 'Set up a browser in Settings to extract it. Importing now gets you no definition and no greetings.',
+        actions: configured ? [{ key: 'recover', label: 'Extract now', icon: 'fa-solid fa-unlock' }] : [],
+    });
 }
 
 async function recoverDefinitionIntoPreview() {
     const hit = jaSelectedChar;
     const charId = hit?.character_id || hit?.id;
     if (!charId) return;
-    const btn = document.getElementById('janitoraiRecoverBtn');
+    const btn = document.querySelector('#janitoraiHiddenNotice [data-notice-action="recover"]');
     if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Extracting...'; }
 
     const token = jaDetailToken;
@@ -1177,7 +1174,7 @@ async function recoverLockedIntoPreview() {
     const hit = jaSelectedChar;
     const charId = hit?.character_id || hit?.id;
     if (!charId) return;
-    const btn = document.getElementById('janitoraiTryAnywayBtn');
+    const btn = document.querySelector('#janitoraiHiddenNotice [data-notice-action="tryanyway"]');
     const setBtn = (label) => { if (btn) btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> ${label}`; };
     if (btn) btn.disabled = true;
     setBtn(recoverPhaseLabel('setup'));
@@ -2315,10 +2312,10 @@ function initView() {
         });
         on('janitoraiCharFavoriteBtn', 'click', toggleJanitoraiFavorite);
 
-        // The recover button is rebuilt each preview open, so delegate off the container.
+        // The notice buttons are rebuilt each preview open, so delegate off the container.
         document.getElementById('janitoraiHiddenNotice')?.addEventListener('click', (e) => {
-            if (e.target.closest('#janitoraiRecoverBtn')) recoverDefinitionIntoPreview();
-            if (e.target.closest('#janitoraiTryAnywayBtn')) recoverLockedIntoPreview();
+            if (e.target.closest('[data-notice-action="recover"]')) recoverDefinitionIntoPreview();
+            if (e.target.closest('[data-notice-action="tryanyway"]')) recoverLockedIntoPreview();
         });
 
         if (overlay) {
@@ -2657,7 +2654,7 @@ class JanitoraiBrowseView extends BrowseView {
                     <div class="browse-char-tags" id="janitoraiCharTags"></div>
                 </div>
 
-                <div id="janitoraiHiddenNotice" class="janitorai-hidden-notice" style="display: none;"></div>
+                <div id="janitoraiHiddenNotice" style="display: none;"></div>
 
                 <div class="browse-char-section" id="janitoraiCharCreatorNotesSection" style="display: none;">
                     <h3 class="browse-section-title" data-section="janitoraiCharCreatorNotes" data-label="Creator's Notes" data-icon="fa-solid fa-feather-pointed" title="Click to expand">
