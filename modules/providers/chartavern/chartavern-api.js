@@ -105,7 +105,8 @@ export async function ctSetCookie(apiRequest, cookieString) {
 export async function ctValidateSession(apiRequest) {
     try {
         const resp = await apiRequest(`${CL_HELPER_CT_BASE}/ct-validate`);
-        if (!resp.ok) return { valid: false, reason: 'validation request failed' };
+        // Client-side failures never judged the cookie, so they are transient by construction
+        if (!resp.ok) return { valid: false, transient: true, reason: 'validation request failed' };
         const data = await resp.json();
         if (!data?.valid) {
             ctSessionActive = false;
@@ -113,7 +114,7 @@ export async function ctValidateSession(apiRequest) {
         return data;
     } catch {
         ctSessionActive = false;
-        return { valid: false, reason: 'network error' };
+        return { valid: false, transient: true, reason: 'network error' };
     }
 }
 
@@ -134,17 +135,47 @@ export function isCtSessionActive() {
 }
 
 /**
- * Fetch a CT API URL, routing through cl-helper proxy when authenticated.
+ * Richer session read: the last-known rolling expiry cl-helper snapshotted from CT's
+ * Set-Cookie. Purely a stored-state read (no CT request), so it never slides the window.
+ * @param {Function} apiRequest
+ * @returns {Promise<{active: boolean, expires: number|null}>} expires in ms epoch
+ */
+export async function fetchCtSessionInfo(apiRequest) {
+    try {
+        const resp = await apiRequest(`${CL_HELPER_CT_BASE}/ct-session`);
+        if (!resp.ok) return { active: false, expires: null };
+        const data = await resp.json();
+        ctSessionActive = data?.active === true;
+        return { active: ctSessionActive, expires: data?.expires ?? null };
+    } catch {
+        return { active: false, expires: null };
+    }
+}
+
+// One /health probe per session backing ctFetch's transport choice; concurrent callers share it.
+let _ctHelperProbe = null;
+
+function ctHelperAvailable(apiRequest) {
+    if (!apiRequest) return Promise.resolve(false);
+    if (!_ctHelperProbe) _ctHelperProbe = checkCtPluginAvailable(apiRequest);
+    return _ctHelperProbe;
+}
+
+/**
+ * Fetch a CT API URL, routing through cl-helper's /ct-proxy whenever cl-helper is available.
  * @param {string} url - Full CT API URL (e.g. https://character-tavern.com/api/search/cards?...)
  * @param {Function} [apiRequest] - CoreAPI.apiRequest (required for proxied requests)
  * @returns {Promise<Response>}
  */
 async function ctFetch(url, apiRequest) {
-    if (ctSessionActive && apiRequest) {
-        // Route through cl-helper proxy: strip the CT origin, prepend proxy path
+    // /ct-proxy is preferred even with NO session, not just for the cookie: ST's /proxy/ forwards
+    // the browser's Accept-Encoding (modern Chrome/Firefox advertise zstd), CT's edge then answers
+    // zstd, and STs node-fetch pipe can neither decompress it nor forward the Content-Encoding
+    // header, so the browser receives undecodable bytes. /ct-proxy negotiates only encodings its
+    // runtime can decode, so its responses always arrive readable.
+    if (apiRequest && (ctSessionActive || await ctHelperAvailable(apiRequest))) {
         const path = url.replace(CT_SITE_BASE, '');
-        const resp = await apiRequest(`${CL_HELPER_CT_BASE}/ct-proxy${path}`);
-        return resp;
+        return apiRequest(`${CL_HELPER_CT_BASE}/ct-proxy${path}`);
     }
     return fetchWithProxy(url);
 }
@@ -216,11 +247,12 @@ export async function fetchCharacterDetail(author, slug, apiRequest) {
 
 /**
  * Fetch top tags from /api/catalog/top-tags
+ * @param {Function} [apiRequest] - CoreAPI.apiRequest for the cl-helper transport
  * @returns {Promise<Array<{tag: string, count: number}>>}
  */
-export async function fetchTopTags() {
+export async function fetchTopTags(apiRequest) {
     const url = `${CT_API_BASE}/catalog/top-tags`;
-    const resp = await fetchWithProxy(url);
+    const resp = await ctFetch(url, apiRequest);
     if (!resp.ok) throw new Error(`Top tags fetch failed (${resp.status})`);
     return resp.json();
 }

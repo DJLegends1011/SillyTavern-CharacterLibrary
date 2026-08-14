@@ -168,6 +168,14 @@ export function classifyErrorPage(text, status) {
     if (head.startsWith('CORS proxy is disabled')) {
         return 'CORS proxy is disabled. Set enableCorsProxy: true in SillyTavern\'s config.yaml and restart the server';
     }
+    // The zstd frame magic 28 B5 2F FD decodes to '(' U+FFFD '/' U+FFFD via UTF-8 replacement.
+    // ST's /proxy/ forwards the browser's Accept-Encoding but its node-fetch cannot decompress
+    // zstd and the Content-Encoding header is dropped, so a zstd-picking site reaches the browser
+    // undecodable. Code-point compare so this file's own encoding cant affect the match.
+    if (head.charCodeAt(0) === 0x28 && head.charCodeAt(1) === 0xFFFD
+        && head.charCodeAt(2) === 0x2F && head.charCodeAt(3) === 0xFFFD) {
+        return `The response arrived zstd-compressed, which SillyTavern's proxy cannot decompress (HTTP ${status}). Installing the cl-helper plugin avoids this for providers that support it`;
+    }
     // Served as HTTP 200 HTML during upstream maintenance / load shedding.
     if (/JanitorAI\s*-\s*Waiting Room/i.test(head)) {
         return 'JanitorAI is in its waiting room (high load or maintenance). This clears on their side; retry in a minute';
@@ -360,6 +368,53 @@ export function renderBrowseError(grid, { provider, error, message, title, view 
     `;
     const banner = grid.querySelector('.browse-error-banner');
     if (banner) banner._browseErrorCtx = { provider, error, view, flags, retry, time: new Date().toISOString() };
+}
+
+/**
+ * Canonical in-modal provider notice (channel 5): the "definition area" states a browse preview
+ * shows instead of a body, eg. locked/hidden definition, auth-required, extraction-unavailable.
+ * Returns an HTML STRING (not a render-into-el like renderBrowseError) so callers can COMPOSE it
+ * with other content (a banner above an iframe body, or above an extract CTA).
+ *
+ * Providers own WHEN and WHAT (text, which action does what); the shell, colour and layout are
+ * shared here so nobody hand-rolls the markup + CSS again. Action buttons carry a
+ * `data-notice-action="<key>"` attribute; the caller wires the click for each key after insertion.
+ *
+ * @param {Object} opts
+ * @param {'locked'|'hidden'|'info'|'warning'|'error'} [opts.kind='info'] - colour + default icon
+ * @param {'banner'|'cta'} [opts.layout='banner'] - inline strip vs centered empty-state call-to-action
+ * @param {string} [opts.icon] - FA class override
+ * @param {string} [opts.title] - bold headline
+ * @param {string} [opts.message] - body line
+ * @param {string} [opts.hint] - muted secondary line (cta layout)
+ * @param {Array<{key:string,label:string,icon?:string,variant?:string}>} [opts.actions] - buttons
+ * @returns {string}
+ */
+export function buildProviderNotice({ kind = 'info', layout = 'banner', icon, title, message, hint, actions = [] } = {}) {
+    const esc = CoreAPI.escapeHtml;
+    const DEFAULT_ICON = { locked: 'fa-lock', hidden: 'fa-eye-slash', warning: 'fa-triangle-exclamation', error: 'fa-triangle-exclamation', info: 'fa-circle-info' };
+    const iconClass = icon || `fa-solid ${DEFAULT_ICON[kind] || DEFAULT_ICON.info}`;
+    const btnBase = layout === 'cta' ? 'action-btn' : 'glass-btn';
+    const btns = actions.map(a => {
+        const variant = a.variant || (layout === 'cta' ? 'primary' : '');
+        const ico = a.icon ? `<i class="${a.icon}"></i> ` : '';
+        return `<button type="button" class="${btnBase}${variant ? ' ' + variant : ''} browse-notice-action" data-notice-action="${esc(a.key)}">${ico}${esc(a.label)}</button>`;
+    }).join('');
+    const actionsHtml = btns ? `<div class="browse-notice-actions">${btns}</div>` : '';
+    // Banner actions are a flex SIBLING of the body so margin-left:auto trails them on the text
+    // row; the cta's column layout keeps them inside the body under the hint.
+    return `
+        <div class="browse-notice browse-notice-${esc(kind)}${layout === 'cta' ? ' browse-notice-cta' : ''}">
+            <div class="browse-notice-icon"><i class="${iconClass}"></i></div>
+            <div class="browse-notice-body">
+                ${title ? `<strong class="browse-notice-title">${esc(title)}</strong>` : ''}
+                ${message ? `<p class="browse-notice-message">${esc(message)}</p>` : ''}
+                ${hint ? `<p class="browse-notice-hint">${esc(hint)}</p>` : ''}
+                ${layout === 'cta' ? actionsHtml : ''}
+            </div>
+            ${layout === 'cta' ? '' : actionsHtml}
+        </div>
+    `;
 }
 
 /**

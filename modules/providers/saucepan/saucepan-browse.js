@@ -20,6 +20,7 @@ import {
     isMobileMode,
     finishBrowseImport,
     renderBrowseError,
+    buildProviderNotice,
 } from '../provider-utils.js';
 import { createBookmarkModule } from '../bookmark-module.js';
 import {
@@ -1011,15 +1012,11 @@ function updateFiltersButtonState() {
 // ========================================
 
 function renderLockedDefBanner() {
-    return `
-        <div class="saucepan-modal-locked-banner">
-            <i class="fa-solid fa-lock"></i>
-            <div>
-                <strong>Locked Definition</strong>
-                <p>This Saucepan companion's definition is not publicly available. Native extraction cannot retrieve the character body, so importing would produce an incomplete card.</p>
-            </div>
-        </div>
-    `;
+    return buildProviderNotice({
+        kind: 'locked',
+        title: 'Locked Definition',
+        message: "This Saucepan companion's definition is not publicly available. Native extraction cannot retrieve the character body, so importing would produce an incomplete card.",
+    });
 }
 
 function setImportButtonState(state, hit) {
@@ -1227,20 +1224,15 @@ function renderTokenCTA({ locked = false } = {}) {
     const el = document.getElementById('saucepanCharDescription');
     if (section) section.style.display = 'block';
     if (el) {
-        el.innerHTML = `
-            ${locked ? renderLockedDefBanner() : ''}
-            <div class="saucepan-modal-extract-cta">
-                <div class="saucepan-modal-extract-icon-wrap">
-                    <i class="fa-solid fa-key saucepan-modal-extract-icon"></i>
-                </div>
-                <p class="saucepan-modal-extract-message">A Saucepan token is required to load this character's full definition.</p>
-                <p class="saucepan-modal-extract-hint">Log in or paste a Bearer token in the Saucepan account settings to enable native extraction.</p>
-                <button class="action-btn primary saucepan-modal-extract-btn" id="saucepanModalAuthBtn">
-                    <i class="fa-solid fa-right-to-bracket"></i> Configure Token
-                </button>
-            </div>
-        `;
-        el.querySelector('#saucepanModalAuthBtn')?.addEventListener('click', () => openSaucepanAuthUI());
+        el.innerHTML = (locked ? renderLockedDefBanner() : '') + buildProviderNotice({
+            kind: 'info',
+            layout: 'cta',
+            icon: 'fa-solid fa-key',
+            message: "A Saucepan token is required to load this character's full definition.",
+            hint: 'Log in or paste a Bearer token in the Saucepan account settings to enable native extraction.',
+            actions: [{ key: 'auth', label: 'Configure Token', icon: 'fa-solid fa-right-to-bracket' }],
+        });
+        el.querySelector('[data-notice-action="auth"]')?.addEventListener('click', () => openSaucepanAuthUI());
     }
     setImportButtonState('auth');
 }
@@ -1259,33 +1251,27 @@ function renderExtractionUnavailable({ locked = false } = {}) {
     const el = document.getElementById('saucepanCharDescription');
     if (section) section.style.display = 'block';
     if (el) {
-        el.innerHTML = locked ? `
-            <div class="saucepan-modal-extract-cta">
-                <div class="saucepan-modal-extract-icon-wrap locked">
-                    <i class="fa-solid fa-lock saucepan-modal-extract-icon"></i>
-                </div>
-                <p class="saucepan-modal-extract-message">This companion's definition is locked by its creator.</p>
-                <p class="saucepan-modal-extract-hint">Native extraction cannot retrieve the character body. You can still import an incomplete card: portrait, greetings, tags, and the public blurb, with no definition.</p>
-                <button class="action-btn secondary saucepan-modal-extract-btn" id="saucepanPartialImportBtn">
-                    <i class="fa-solid fa-download"></i> Import anyway
-                </button>
-            </div>
-        ` : `
-            <div class="saucepan-modal-extract-cta">
-                <div class="saucepan-modal-extract-icon-wrap">
-                    <i class="fa-solid fa-triangle-exclamation saucepan-modal-extract-icon"></i>
-                </div>
-                <p class="saucepan-modal-extract-message">Could not load this character's definition.</p>
-            </div>
-        `;
-        el.querySelector('#saucepanPartialImportBtn')?.addEventListener('click', async () => {
+        el.innerHTML = locked
+            ? buildProviderNotice({
+                kind: 'locked',
+                layout: 'cta',
+                message: "This companion's definition is locked by its creator.",
+                hint: 'Native extraction cannot retrieve the character body. You can still import an incomplete card: portrait, greetings, tags, and the public blurb, with no definition.',
+                actions: [{ key: 'partial', label: 'Import anyway', icon: 'fa-solid fa-download', variant: 'secondary' }],
+            })
+            : buildProviderNotice({
+                kind: 'warning',
+                layout: 'cta',
+                message: "Could not load this character's definition.",
+            });
+        el.querySelector('[data-notice-action="partial"]')?.addEventListener('click', async () => {
             if (!saucepanSelectedChar) return;
-            const btn = document.getElementById('saucepanPartialImportBtn');
+            const btn = el.querySelector('[data-notice-action="partial"]');
             if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Importing...'; }
             try {
                 await importSaucepanCharacter(saucepanSelectedChar, { allowPartial: true });
             } finally {
-                const again = document.getElementById('saucepanPartialImportBtn');
+                const again = el.querySelector('[data-notice-action="partial"]');
                 if (again) { again.disabled = false; again.innerHTML = '<i class="fa-solid fa-download"></i> Import anyway'; }
             }
         });
@@ -1657,25 +1643,15 @@ function markCardAsImported(charId) {
  * duplicating a login modal.
  */
 function openSaucepanAuthUI() {
-    // Open through the settings button (populates fields, resets nav), then
-    // navigate to the Online Providers panel, same pattern as gallery-sync.js.
-    const settingsBtn = document.getElementById('gallerySettingsBtn');
-    if (!settingsBtn) {
-        showToast('Open Settings to configure your Saucepan account.', 'info');
-        return;
-    }
-    settingsBtn.click();
-    setTimeout(() => {
-        document.querySelector('.settings-nav-item[data-section="online"]')?.click();
-        setTimeout(() => {
-            const section = document.getElementById('settingsSaucepanSection');
-            if (section) section.open = true;
-            const tokenInput = document.getElementById('settingsSaucepanToken');
-            const group = tokenInput?.closest('.settings-group') || tokenInput;
-            group?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            document.getElementById('settingsSaucepanHandle')?.focus?.();
-        }, 100);
-    }, 50);
+    const opened = CoreAPI.openSettingsToSection('online', () => {
+        const section = document.getElementById('settingsSaucepanSection');
+        if (section) section.open = true;
+        const tokenInput = document.getElementById('settingsSaucepanToken');
+        const group = tokenInput?.closest('.settings-group') || tokenInput;
+        group?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        document.getElementById('settingsSaucepanHandle')?.focus?.();
+    });
+    if (!opened) showToast('Open Settings to configure your Saucepan account.', 'info');
 }
 
 // ========================================

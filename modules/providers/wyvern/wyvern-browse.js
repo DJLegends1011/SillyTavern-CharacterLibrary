@@ -8,6 +8,7 @@ import {
     WYVERN_API_BASE,
     WYVERN_SITE_BASE,
     getWyvernHeaders,
+    getWyvernCharName,
     getAvatarUrl,
     getCharacterPageUrl,
     firebaseSignIn,
@@ -186,15 +187,17 @@ function getCharStats(char) {
 
 function isCharInLocalLibrary(wyvernChar) {
     const charId = wyvernChar.id || '';
-    const name = (wyvernChar.name || '').toLowerCase().trim();
     const creator = (wyvernChar.creator?.displayName || wyvernChar.creator?.username || '').toLowerCase().trim();
 
     if (charId && view._lookup.byProviderId.has(charId)) {
         return true;
     }
 
-    if (name && creator && view._lookup.byNameAndCreator.has(`${name}|${creator}`)) {
-        return true;
+    // Both name forms count: cards imported before the chat_name remap carry the listing title
+    // as their card name.
+    const names = [getWyvernCharName(wyvernChar).toLowerCase(), (wyvernChar.name || '').toLowerCase().trim()];
+    for (const name of names) {
+        if (name && creator && view._lookup.byNameAndCreator.has(`${name}|${creator}`)) return true;
     }
 
     return false;
@@ -203,7 +206,7 @@ function isCharInLocalLibrary(wyvernChar) {
 function isCharPossibleMatchObj(c) {
     if (isCharInLocalLibrary(c)) return false;
     const creator = c.creator?.displayName || c.creator?.username || '';
-    return view.isCharPossibleMatch(c.name || '', creator);
+    return view.isCharPossibleMatch(getWyvernCharName(c), creator);
 }
 function markWyvernCardAsImported(charId) {
     const grid = document.getElementById('wyvernGrid');
@@ -2439,7 +2442,7 @@ function createWyvernCard(char) {
     const avatarUrl = getAvatarUrl(char);
 
     const inLibrary = isCharInLocalLibrary(char);
-    const possibleTier = inLibrary ? null : view.getPossibleMatchTier(char.name || '', creatorName);
+    const possibleTier = inLibrary ? null : view.getPossibleMatchTier(getWyvernCharName(char), creatorName);
     const possibleMatch = !!possibleTier?.show;
 
     const tags = (char.tags || []).slice(0, 3);
@@ -2562,7 +2565,7 @@ async function openWyvernCharPreview(char) {
     const avatarUrl = getAvatarUrl(char);
     const creatorName = char.creator?.displayName || char.creator?.username || 'Unknown';
     const inLibrary = isCharInLocalLibrary(char);
-    const possibleTier = inLibrary ? null : view.getPossibleMatchTier(char.name || '', creatorName);
+    const possibleTier = inLibrary ? null : view.getPossibleMatchTier(getWyvernCharName(char), creatorName);
     const possibleMatch = !!possibleTier?.show;
 
     avatarImg.src = avatarUrl;

@@ -225,6 +225,17 @@ export function parseCharacterUrl(url) {
 // ========================================
 
 /**
+ * The clean character name. Wyvern's `name` is the marketing listing title ("Reina Reyes | The
+ * Twilight Serenade") while `chat_name` carries the plain name ("Reina"), the same split
+ * JanitorAI has. Real chat_name data carries trailing spaces, so trim.
+ * @param {Object} apiData - Wyvern character object (detail or search hit; both carry both fields)
+ * @returns {string}
+ */
+export function getWyvernCharName(apiData) {
+    return (apiData?.chat_name || '').trim() || apiData?.name || 'Unknown';
+}
+
+/**
  * Build a V2 character card from Wyvern API metadata.
  *
  * @param {Object} apiData - Character object from the Wyvern API
@@ -264,7 +275,7 @@ export function buildCharacterCardFromWyvern(apiData) {
         spec: 'chara_card_v2',
         spec_version: '2.0',
         data: {
-            name: apiData.name || 'Unknown',
+            name: getWyvernCharName(apiData),
             description,
             personality: apiData.personality || '',
             scenario: apiData.scenario || '',
