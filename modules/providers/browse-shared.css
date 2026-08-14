@@ -725,6 +725,138 @@
     flex-wrap: wrap;
 }
 
+/* @canonical browse-notice */
+/* Shared in-modal provider notice (channel 5, built by provider-utils buildProviderNotice).
+   Banner = compact full-width horizontal strip, height driven by the trailing button, text and
+   button vertically centered against each other; title and message flow as one line of text.
+   .browse-notice-cta = boxless centered empty-state. Colour follows the status tier. */
+.browse-notice {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm-md);
+    margin: var(--space-sm) 0;
+    padding: var(--space-sm) var(--space-md);
+    border-radius: var(--radius-lg);
+    background: rgba(var(--cl-info-rgb), 0.1);
+    border: 1px solid rgba(var(--cl-info-rgb), 0.28);
+    color: var(--text-primary);
+    text-align: left;
+    line-height: 1.5;
+}
+
+.browse-notice-warning, .browse-notice-hidden, .browse-notice-locked {
+    background: rgba(var(--cl-warning-rgb), 0.1);
+    border-color: rgba(var(--cl-warning-rgb), 0.28);
+}
+
+.browse-notice-error {
+    background: rgba(var(--cl-error-rgb), 0.1);
+    border-color: rgba(var(--cl-error-rgb), 0.28);
+}
+
+.browse-notice-icon {
+    flex-shrink: 0;
+    font-size: var(--font-md);
+    color: var(--cl-info);
+}
+
+.browse-notice-warning .browse-notice-icon,
+.browse-notice-hidden .browse-notice-icon,
+.browse-notice-locked .browse-notice-icon { color: var(--cl-warning); }
+
+.browse-notice-error .browse-notice-icon { color: var(--cl-error); }
+
+.browse-notice-body { flex: 1; min-width: 0; font-size: var(--font-sm); }
+
+/* Title runs inline ahead of the message, tinted to the tier so the text has hierarchy
+   without growing the strip beyond button height. */
+.browse-notice-title {
+    display: inline;
+    margin-right: var(--space-2xs);
+    color: var(--cl-info-pale);
+}
+
+.browse-notice-warning .browse-notice-title,
+.browse-notice-hidden .browse-notice-title,
+.browse-notice-locked .browse-notice-title { color: var(--cl-warning-pale); }
+
+.browse-notice-error .browse-notice-title { color: var(--cl-error-pale); }
+
+.browse-notice-message {
+    display: inline;
+    margin: 0;
+    color: var(--text-secondary);
+}
+
+.browse-notice-hint {
+    margin: var(--space-2xs) 0 0;
+    font-size: var(--font-sm);
+    color: var(--text-muted);
+    line-height: 1.5;
+}
+
+.browse-notice-actions {
+    display: flex;
+    gap: var(--space-sm);
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+
+/* CTA layout: boxless centered empty-state, big circular icon, prominent button. */
+.browse-notice-cta {
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    gap: 0;
+    padding: var(--space-2xl) var(--space-md) var(--space-md);
+    margin: 0 auto;
+    max-width: 360px;
+    background: none;
+    border: none;
+}
+
+.browse-notice-cta .browse-notice-icon {
+    width: 56px;
+    height: 56px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-circle);
+    background: rgba(255, 255, 255, 0.04);
+    font-size: var(--font-xl);
+    margin-bottom: var(--space-lg);
+}
+
+.browse-notice-cta.browse-notice-warning .browse-notice-icon,
+.browse-notice-cta.browse-notice-hidden .browse-notice-icon,
+.browse-notice-cta.browse-notice-locked .browse-notice-icon { background: rgba(var(--cl-warning-rgb), 0.1); }
+
+.browse-notice-cta.browse-notice-error .browse-notice-icon { background: rgba(var(--cl-error-rgb), 0.1); }
+
+.browse-notice-cta .browse-notice-body { flex: none; }
+.browse-notice-cta .browse-notice-title { display: block; font-size: var(--font-md); margin: 0 0 var(--space-xs); color: var(--text-primary); }
+.browse-notice-cta .browse-notice-message { display: block; color: var(--text-primary); font-weight: 500; }
+.browse-notice-cta .browse-notice-hint { margin-top: var(--space-xs); }
+.browse-notice-cta .browse-notice-actions { margin-top: var(--space-lg); justify-content: center; white-space: normal; }
+.browse-notice-cta .browse-notice-action { min-width: 180px; }
+
+html.cl-mobile .browse-notice {
+    font-size: var(--font-xs);
+    padding: var(--space-xs) var(--space-sm);
+}
+html.cl-mobile .browse-notice-body { font-size: var(--font-xs); }
+html.cl-mobile .browse-notice-cta {
+    max-width: 100%;
+    padding: var(--space-xl) var(--space-sm) var(--space-sm);
+}
+html.cl-mobile .browse-notice-cta .browse-notice-icon {
+    width: 48px;
+    height: 48px;
+    font-size: var(--font-lg);
+    margin-bottom: var(--space-md);
+}
+html.cl-mobile .browse-notice-cta .browse-notice-action { width: 100%; min-width: 0; justify-content: center; }
+
 /* Online Filter Area */
 .online-filters {
     gap: var(--space-sm-md);

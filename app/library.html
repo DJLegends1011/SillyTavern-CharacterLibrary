@@ -7,7 +7,7 @@
     <meta name="referrer" content="no-referrer">
     <meta name="character-library" content="1"><!-- marker for the optional JanitorAI bridge userscript -->
     <title>SillyTavern Character Library</title>
-    <link rel="stylesheet" href="library.css?v=108">
+    <link rel="stylesheet" href="library.css?v=109">
     <link rel="stylesheet" href="library-mobile.css?v=37">
     <!-- Noto Sans from SillyTavern's bundled webfonts -->
     <link rel="stylesheet" href="/webfonts/NotoSans/stylesheet.css">
@@ -2638,6 +2638,7 @@ https://jannyai.com/characters/uuid_slug
                         <details class="settings-provider-section" id="settingsJanitoraiSection">
                             <summary>
                                 <i class="fa-solid fa-broom provider-icon"></i> JanitorAI
+                                <span class="settings-provider-badge">Beta</span>
                                 <i class="fa-solid fa-chevron-right provider-chevron"></i>
                             </summary>
                             <div class="settings-provider-body">
@@ -2793,7 +2794,7 @@ https://jannyai.com/characters/uuid_slug
                                     <div class="settings-row">
                                         <label for="settingsCtCookie">Cookie String:</label>
                                         <div class="settings-input-group">
-                                            <textarea id="settingsCtCookie" class="glass-input cl-masked-field" rows="2" placeholder="session=YOUR_VALUE_HERE" style="font-family: monospace; font-size: 12px; resize: vertical;" autocomplete="one-time-code"></textarea>
+                                            <textarea id="settingsCtCookie" class="glass-input cl-masked-field" rows="1" placeholder="session=YOUR_VALUE_HERE" style="font-family: monospace; font-size: 12px; resize: vertical;" autocomplete="one-time-code"></textarea>
                                             <button id="toggleCtCookieVisibility" class="glass-btn icon-only" title="Show/Hide">
                                                 <i class="fa-solid fa-eye"></i>
                                             </button>
@@ -2802,6 +2803,18 @@ https://jannyai.com/characters/uuid_slug
                                             </button>
                                         </div>
                                         <span class="settings-hint">Paste your session cookie from DevTools → Application → Cookies. Expires after ~10 days. Required for NSFW content visibility.</span>
+                                    </div>
+                                    <div class="settings-row">
+                                        <span class="settings-hint" id="ctSessionTimer" style="display:none;"></span>
+                                    </div>
+                                    <div class="settings-row">
+                                        <label class="settings-checkbox-label">
+                                            <input type="checkbox" id="settingsCtAutoKeepAlive">
+                                            <span>Auto keep-alive</span>
+                                        </label>
+                                    </div>
+                                    <div class="settings-row">
+                                        <span class="settings-hint">Refreshes your CharacterTavern session on startup so it doesn't lapse between visits. Each use already slides the session 10 days forward; with this off, it only refreshes when you open the CharacterTavern browse view.</span>
                                     </div>
                                 </div>
                                 <div class="settings-group">
@@ -3132,7 +3145,6 @@ https://jannyai.com/characters/uuid_slug
                         <details class="settings-provider-section" id="settingsBotbooruSection">
                             <summary>
                                 <i class="fa-solid fa-robot provider-icon"></i> Botbooru
-                                <span class="settings-provider-badge">Beta</span>
                                 <i class="fa-solid fa-chevron-right provider-chevron"></i>
                             </summary>
                             <div class="settings-provider-body">
@@ -3316,7 +3328,7 @@ https://jannyai.com/characters/uuid_slug
                                 <label>
                                     <input type="checkbox" id="settingsFastFilenameSkip"> Fast skip (filename match)
                                 </label>
-                                <span class="settings-hint">Skip already-localized files by matching filenames instead of downloading and hashing. Much faster for re-runs, but won't detect corrupted or truncated files.</span>
+                                <span class="settings-hint">Skip already-localized files by matching filenames instead of downloading and hashing. Much faster for re-runs, and your local copies stay as saved even if the remote images change. Enable the size check below to catch corrupted or truncated files.</span>
                             </div>
                             <div class="settings-row" id="fastSkipValidateRow" style="padding-left: 24px; display: none;">
                                 <label>
@@ -3690,8 +3702,8 @@ https://jannyai.com/characters/uuid_slug
     <div id="toastContainer" class="toast-container"></div>
 
     <!-- Scripts -->
-    <script src="library.js?v=197"></script>
-    <script type="module" src="../modules/module-loader.js?v=48"></script>
+    <script src="library.js?v=198"></script>
+    <script type="module" src="../modules/module-loader.js?v=49"></script>
     <script src="library-mobile.js?v=25"></script>
 </body>
 </html>

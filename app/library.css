@@ -277,6 +277,7 @@ body.modal-size-large .cl-modal-content.creator-saveas-diff-content { max-width:
  *   .browse-recovery-banner - browse-shared.css - extensions-recovery notice in browse views
  *   .browse-author-banner   - browse-shared.css - author/uploader filter banner
  *   .browse-error-banner    - browse-shared.css - grid-load error state (retry + copy-report actions)
+ *   .browse-notice          - browse-shared.css - in-modal provider notice (locked/hidden/auth states; banner + cta layouts)
  *   .browse-avatar-viewer   - browse-shared.css - full-screen avatar/image viewer overlay
  *
  * CSS VARIABLES
@@ -9171,6 +9172,25 @@ html:not(.cl-mobile) .settings-row[data-platform="mobile"] { display: none !impo
 .settings-input-group {
     display: flex;
     gap: var(--space-sm);
+}
+
+/* Fixed width so the fa-eye/fa-eye-slash swap cant reflow the row (scoped to the toggle). */
+.settings-input-group .glass-btn.icon-only[title="Show/Hide"] {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 38px;
+    padding: 0;
+    flex-shrink: 0;
+}
+
+/* CT's cookie is a single-line value, but textarea.glass-input's min-height:80px makes it
+   needlessly tall (which also stretched the toggle). Pin it to one line matching the buttons;
+   still resize:vertical for a long value. CT-scoped so other providers are untouched. */
+#settingsCtCookie {
+    min-height: 0;
+    height: 38px;
+    padding: 8px 12px;
 }
 
 .settings-input-group input[type="password"],

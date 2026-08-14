@@ -58,13 +58,11 @@ class BotbooruProvider extends ProviderBase {
 
     get id() { return 'botbooru'; }
     get name() { return 'Botbooru'; }
-    // Matches DEFAULT_SETTINGS.disabledProviders; without this Restore Defaults paints the row
-    // enabled while persisting it disabled.
-    get disabledByDefault() { return true; }
     get icon() { return 'fa-solid fa-robot'; }
     get iconUrl() { return `${BOTBOORU_BASE}/favicon.ico`; }
-    get beta() { return true; }
-    get enableWarning() { return 'Botbooru is a new, experimental source and its API has rough edges. SFW browsing and importing work anonymously; NSFW requires logging in with a Botbooru account.'; }
+    // Base SFW browse/import needs no cl-helper; only the account login handshake does
+    // (/botbooru-login shipped 1.6.0; the basic-auth reroute in 1.7.0 is an edge, not gated here).
+    get clHelperFeatures() { return { login: { minVersion: '1.6.0', label: 'Logging in' } }; }
     get browseView() { return botbooruBrowseView; }
 
     // ── Lifecycle ───────────────────────────────────────────

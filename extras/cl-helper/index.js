@@ -747,6 +747,20 @@ function registerBotbooruRoutes(router) {
 
 // In-memory session store (cookies persist until logout or server restart).
 let ctSessionCookies = null; // raw cookie header value, e.g. "session=VALUE"
+// Snapshot (ms epoch) of the rolling Expires CT sends on every authed response, so the client can
+// show a session timer without its own request. Null until the first authed response after a set.
+let ctSessionExpires = null;
+
+// Snapshot the rolling Expires from a CT authed response's Set-Cookie. Ignores deletion
+// cookies (server rejecting the session) so a rejection doesnt read as a future expiry.
+function captureCtExpiry(setCookieHeader) {
+    if (!setCookieHeader || !/session=/.test(setCookieHeader)) return;
+    if (setCookieHeader.includes('session=;') || /max-age=0/i.test(setCookieHeader)) return;
+    const m = setCookieHeader.match(/expires=([^;]+)/i);
+    if (!m) return;
+    const t = Date.parse(m[1]);
+    if (!Number.isNaN(t)) ctSessionExpires = t;
+}
 
 // CT API paths the proxy is allowed to forward (read-only endpoints only).
 const CT_ALLOWED_PATHS = [
@@ -788,6 +802,7 @@ function registerCharacterTavernRoutes(router) {
         }
 
         ctSessionCookies = `session=${value}`;
+        ctSessionExpires = null; // opaque value carries no expiry; learned on the next authed response
         console.log('[cl-helper] CT session cookie stored');
         res.json({ ok: true });
     });
@@ -798,8 +813,11 @@ function registerCharacterTavernRoutes(router) {
      * Returns { valid: true/false }.
      */
     router.get('/ct-validate', async (_req, res) => {
+        // transient = the cookie was NOT judged (no session pushed / CT unreachable / CT unhealthy);
+        // definitive = CT answered and rejected it. The client only discards its persisted cookie on
+        // definitive, so a VPN being off or an outage can never destroy a saved credential.
         if (!ctSessionCookies) {
-            return res.json({ valid: false, reason: 'no cookies stored' });
+            return res.json({ valid: false, transient: true, reason: 'no cookies stored' });
         }
 
         try {
@@ -825,21 +843,24 @@ function registerCharacterTavernRoutes(router) {
                 if (isRejected) {
                     console.warn('[cl-helper] CT session rejected (Set-Cookie deletion detected)');
                     ctSessionCookies = null; // Clear our invalid cookie
-                    res.json({ valid: false, reason: 'Session rejected/expired by server' });
+                    ctSessionExpires = null;
+                    res.json({ valid: false, definitive: true, reason: 'Session rejected/expired by server' });
                     return;
                 }
 
+                captureCtExpiry(setCookie); // this authed request slid the window; snapshot the new expiry
                 console.log(`[cl-helper] CT validate: ${hits.length} hits, totalHits=${data?.totalHits}, hasNSFW=${hasNsfw}`);
-                res.json({ valid: true, hasNsfw });
+                res.json({ valid: true, hasNsfw, expires: ctSessionExpires });
             } else if (response.status === 403) {
                 ctSessionCookies = null;
-                res.json({ valid: false, reason: 'rejected (cookies expired or invalid)' });
+                ctSessionExpires = null;
+                res.json({ valid: false, definitive: true, reason: 'rejected (cookies expired or invalid)' });
             } else {
-                res.json({ valid: false, reason: `HTTP ${response.status}` });
+                res.json({ valid: false, transient: true, reason: `HTTP ${response.status}` });
             }
         } catch (err) {
             console.error('[cl-helper] CT validate error:', err.message);
-            res.json({ valid: false, reason: err.message });
+            res.json({ valid: false, transient: true, reason: err.message });
         }
     });
 
@@ -849,6 +870,7 @@ function registerCharacterTavernRoutes(router) {
      */
     router.post('/ct-logout', (_req, res) => {
         ctSessionCookies = null;
+        ctSessionExpires = null;
         console.log('[cl-helper] CT session cleared');
         res.json({ ok: true });
     });
@@ -858,7 +880,7 @@ function registerCharacterTavernRoutes(router) {
      * Returns whether a CT session is active.
      */
     router.get('/ct-session', (_req, res) => {
-        res.json({ active: !!ctSessionCookies });
+        res.json({ active: !!ctSessionCookies, expires: ctSessionExpires });
     });
 
 
@@ -900,6 +922,8 @@ function registerCharacterTavernRoutes(router) {
                 headers,
                 redirect: 'follow',
             });
+
+            captureCtExpiry(response.headers.get('set-cookie')); // browse calls slide the window too
 
             const contentType = response.headers.get('content-type') || '';
             res.status(response.status);
