@@ -470,6 +470,29 @@ export function buildDatacatFolderCharactersPath({
     return `/dc-folder-characters?${params.toString()}`;
 }
 
+/**
+ * Validate an explicit folder-order list for the reorder endpoint.
+ * DataCat rejects partial or malformed lists, so this is all-or-nothing: any
+ * non-folder id, duplicate, or empty list yields null rather than a filtered list.
+ * @param {Array<string|number>} values
+ * @returns {number[]|null}
+ */
+export function normalizeDatacatFolderIdList(values) {
+    if (!Array.isArray(values) || values.length === 0) return null;
+    const ids = [];
+    for (const value of values) {
+        const id = normalizePositiveInteger(value);
+        if (!Number.isInteger(id) || id <= 0) return null;
+        if (ids.includes(id)) return null;
+        ids.push(id);
+    }
+    return ids;
+}
+
+export function buildDatacatFolderReorderPath() {
+    return '/dc-folders/reorder';
+}
+
 export function buildDatacatFolderItemPath(folderId, characterId) {
     const folder = normalizeDatacatFolderId(folderId);
     const character = normalizeDatacatCharacterId(characterId);
@@ -499,6 +522,25 @@ export async function deleteDatacatFolder(folderId) {
     const folder = normalizeDatacatFolderId(folderId);
     if (!Number.isInteger(folder) || folder <= 0) return { ok: false, error: 'Invalid DataCat folder id' };
     return dcAccountJson(`${CL_HELPER_PLUGIN_BASE}/dc-folders/${encodeURIComponent(String(folder))}`, 'DELETE');
+}
+
+/**
+ * Persist a new collection order on the DataCat account.
+ * Mirrors DataCat's own client: it echoes the saved order back, and a mismatch
+ * means the server did not apply what we asked for, so treat that as a failure.
+ * @param {Array<string|number>} folderIds - every custom folder id, in display order
+ * @returns {Promise<{ok: boolean, folderIds?: number[], error?: string}>}
+ */
+export async function reorderDatacatFolders(folderIds) {
+    const ids = normalizeDatacatFolderIdList(folderIds);
+    if (!ids) return { ok: false, error: 'Invalid DataCat folder order' };
+    const res = await dcAccountJson(`${CL_HELPER_PLUGIN_BASE}${buildDatacatFolderReorderPath()}`, 'PUT', { folderIds: ids });
+    if (!res?.ok) return { ok: false, error: res?.error || res?.reason || 'Could not save folder order' };
+    const saved = Array.isArray(res.folderIds) ? res.folderIds.map(Number).filter(Number.isFinite) : ids;
+    if (saved.length !== ids.length || !saved.every((id, i) => id === ids[i])) {
+        return { ok: false, error: 'DataCat saved a different folder order' };
+    }
+    return { ok: true, folderIds: saved };
 }
 
 export async function setDatacatFolderMembership(folderId, characterId, member) {

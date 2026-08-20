@@ -33,6 +33,23 @@ export function isDataCatFolderId(value) {
     const id = Number(normalized);
     return Number.isSafeInteger(id) && id > 0;
 }
+/**
+ * Validate a full collection-order list coming from the extension.
+ * All-or-nothing: DataCat rejects partial lists, so any bad or repeated id
+ * invalidates the whole request rather than silently reordering a subset.
+ */
+export function normalizeDcFolderIdList(values) {
+    if (!Array.isArray(values) || values.length === 0) return null;
+    const ids = [];
+    for (const value of values) {
+        if (!isDataCatFolderId(value)) return null;
+        const id = Number(value);
+        if (ids.includes(id)) return null;
+        ids.push(id);
+    }
+    return ids;
+}
+
 export function chooseDataCatToken({
     accountToken = null,
     anonymousToken = null,

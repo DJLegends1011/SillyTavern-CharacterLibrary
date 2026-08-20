@@ -23,6 +23,7 @@ import {
     resolveTagNames,
     fetchDatacatCharacter,
     fetchDatacatDownload,
+    reorderDatacatFolders,
     fetchDatacatFolders,
     validateDcSession,
     clearDcSession,
@@ -46,7 +47,7 @@ import {
 } from './datacat-api.js';
 import {
     filterPickerFolders,
-    applyDatacatFolderOrder,
+    sortDatacatFoldersByDisplayOrder,
     invalidateDatacatFolderCache,
 } from './datacat-folder-picker.js';
 
@@ -620,8 +621,11 @@ window.datacatGetSettingsFolders = async () => {
     const res = await fetchDatacatFolders();
     if (!res?.ok) return { ok: false, error: res?.error || res?.reason || 'Could not load folders' };
     const folders = filterPickerFolders(res.folders);
-    return { ok: true, folders: applyDatacatFolderOrder(folders, CoreAPI.getSetting('datacatFolderOrder') || []) };
+    return { ok: true, folders: sortDatacatFoldersByDisplayOrder(folders) };
 };
+
+// Persist a new custom-folder order on the DataCat account (settings Folder Order UI).
+window.datacatReorderFolders = async (folderIds) => reorderDatacatFolders(folderIds);
 
 // ── JanitorAI account session (Supabase; unlocks Hampter pagination) ──────────
 // Stateful layer over the pure grant helpers: persists the access token + rotating

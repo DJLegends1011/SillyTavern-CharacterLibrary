@@ -1819,7 +1819,6 @@ function setupSettingsModal() {
     const datacatUseAccountExtractionCheckbox = document.getElementById('datacatUseAccountExtractionCheckbox');
     const datacatSyncYoursCheckbox = document.getElementById('datacatSyncYoursCheckbox');
     const datacatFolderOrderLoadBtn = document.getElementById('datacatFolderOrderLoadBtn');
-    const datacatFolderOrderResetBtn = document.getElementById('datacatFolderOrderResetBtn');
     const datacatFolderOrderStatus = document.getElementById('datacatFolderOrderStatus');
     const datacatFolderOrderList = document.getElementById('datacatFolderOrderList');
     const minScoreSlider = document.getElementById('settingsMinScore');
@@ -4118,8 +4117,9 @@ function setupSettingsModal() {
         });
     }
 
-    // ── Folder Order settings (client-side reorder of DataCat custom folders) ──
+    // ── Folder Order settings (reorders DataCat custom folders on the account) ──
     let _datacatFolderOrderFolders = [];
+    let _datacatFolderOrderSaving = false;
 
     function showDatacatFolderOrderStatus(message) {
         if (!datacatFolderOrderStatus) return;
@@ -4153,17 +4153,31 @@ function setupSettingsModal() {
         });
     }
 
-    function persistDatacatFolderOrder() {
-        setSetting('datacatFolderOrder', _datacatFolderOrderFolders.map(f => f.id));
-    }
-
-    function moveDatacatFolderOrderRow(index, delta) {
+    // DataCat owns collection order (displayOrder), so a move writes straight through.
+    // The swap is applied optimistically and rolled back if the account rejects it.
+    async function moveDatacatFolderOrderRow(index, delta) {
         const target = index + delta;
         if (target < 0 || target >= _datacatFolderOrderFolders.length) return;
+        if (_datacatFolderOrderSaving) return;
+
+        const previous = [..._datacatFolderOrderFolders];
         const arr = _datacatFolderOrderFolders;
         [arr[index], arr[target]] = [arr[target], arr[index]];
-        persistDatacatFolderOrder();
         renderDatacatFolderOrderList();
+
+        _datacatFolderOrderSaving = true;
+        showDatacatFolderOrderStatus('Saving order to DataCat...');
+        try {
+            const res = await window.datacatReorderFolders?.(arr.map(f => f.id));
+            if (!res?.ok) throw new Error(res?.error || 'Could not save folder order');
+            showDatacatFolderOrderStatus(null);
+        } catch (err) {
+            _datacatFolderOrderFolders = previous;
+            renderDatacatFolderOrderList();
+            showDatacatFolderOrderStatus(err.message || 'Could not save folder order');
+        } finally {
+            _datacatFolderOrderSaving = false;
+        }
     }
 
     async function loadDatacatFolderOrderFolders() {
@@ -4178,16 +4192,13 @@ function setupSettingsModal() {
                 showDatacatFolderOrderStatus(msg);
                 _datacatFolderOrderFolders = [];
                 renderDatacatFolderOrderList();
-                if (datacatFolderOrderResetBtn) datacatFolderOrderResetBtn.style.display = 'none';
                 return;
             }
             _datacatFolderOrderFolders = Array.isArray(res.folders) ? res.folders : [];
             if (_datacatFolderOrderFolders.length === 0) {
                 showDatacatFolderOrderStatus('No custom folders on this account.');
-                if (datacatFolderOrderResetBtn) datacatFolderOrderResetBtn.style.display = 'none';
             } else {
                 showDatacatFolderOrderStatus(null);
-                if (datacatFolderOrderResetBtn) datacatFolderOrderResetBtn.style.display = '';
             }
             renderDatacatFolderOrderList();
         } catch (err) {
@@ -4201,12 +4212,6 @@ function setupSettingsModal() {
         datacatFolderOrderLoadBtn.addEventListener('click', loadDatacatFolderOrderFolders);
     }
 
-    if (datacatFolderOrderResetBtn) {
-        datacatFolderOrderResetBtn.addEventListener('click', async () => {
-            setSetting('datacatFolderOrder', []);
-            await loadDatacatFolderOrderFolders();
-        });
-    }
 
     function storeDatacatAccountResult(result) {
         setSetting('datacatAccountToken', result.accountToken);

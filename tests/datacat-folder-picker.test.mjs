@@ -6,7 +6,7 @@ import {
     createDatacatFolderLoader,
     buildPickerModel,
     hasDatacatFolderMembership,
-    applyDatacatFolderOrder,
+    sortDatacatFoldersByDisplayOrder,
     normalizeDatacatYoursFolderSelection,
     buildDatacatYoursFolderFetchOptions,
     formatDatacatFolderSuccess,
@@ -17,19 +17,19 @@ import { buildDatacatFolderCharactersPath } from '../modules/providers/datacat/d
 describe('filterPickerFolders', () => {
     it('drops reserved/system folders and keeps customs in API order', () => {
         const folders = [
-            { id: '1644', title: 'Private Vault', isReserved: true, isPrivateVault: true, systemKey: 'private_vault' },
-            { id: '2359', title: 'marvel smut', isReserved: false, isPrivateVault: false, systemKey: null },
-            { id: '2360', title: 'DC Smut', isReserved: false, isPrivateVault: false, systemKey: null },
+            { id: '1644', title: 'Private Vault', isReserved: true, isPrivateVault: true, systemKey: 'private_vault', displayOrder: -1000 },
+            { id: '2359', title: 'marvel smut', isReserved: false, isPrivateVault: false, systemKey: null, displayOrder: 0 },
+            { id: '2360', title: 'DC Smut', isReserved: false, isPrivateVault: false, systemKey: null, displayOrder: 1 },
         ];
         assert.deepEqual(filterPickerFolders(folders), [
-            { id: '2359', title: 'marvel smut' },
-            { id: '2360', title: 'DC Smut' },
+            { id: '2359', title: 'marvel smut', displayOrder: 0 },
+            { id: '2360', title: 'DC Smut', displayOrder: 1 },
         ]);
     });
 
     it('tolerates junk input', () => {
         assert.deepEqual(filterPickerFolders(null), []);
-        assert.deepEqual(filterPickerFolders([{ id: '', title: 'x' }, null, { id: '5' }]), [{ id: '5', title: '' }]);
+        assert.deepEqual(filterPickerFolders([{ id: '', title: 'x' }, null, { id: '5' }]), [{ id: '5', title: '', displayOrder: null }]);
     });
 });
 
@@ -51,8 +51,8 @@ describe('createDatacatFolderLoader', () => {
             folders: [{ id: 12, title: 'Favorites' }],
         });
 
-        assert.deepEqual(await first, [{ id: '12', title: 'Favorites' }]);
-        assert.deepEqual(await second, [{ id: '12', title: 'Favorites' }]);
+        assert.deepEqual(await first, [{ id: '12', title: 'Favorites', displayOrder: null }]);
+        assert.deepEqual(await second, [{ id: '12', title: 'Favorites', displayOrder: null }]);
         assert.equal(requestCount, 1);
     });
 
@@ -66,7 +66,7 @@ describe('createDatacatFolderLoader', () => {
         });
 
         assert.deepEqual(await loader.load(), []);
-        assert.deepEqual(await loader.load(), [{ id: '12', title: 'Favorites' }]);
+        assert.deepEqual(await loader.load(), [{ id: '12', title: 'Favorites', displayOrder: null }]);
         assert.equal(requestCount, 2);
     });
 
@@ -80,10 +80,10 @@ describe('createDatacatFolderLoader', () => {
             };
         });
 
-        assert.deepEqual(await loader.load(), [{ id: '1', title: 'Account 1' }]);
-        assert.deepEqual(await loader.load(), [{ id: '1', title: 'Account 1' }]);
+        assert.deepEqual(await loader.load(), [{ id: '1', title: 'Account 1', displayOrder: null }]);
+        assert.deepEqual(await loader.load(), [{ id: '1', title: 'Account 1', displayOrder: null }]);
         loader.invalidate();
-        assert.deepEqual(await loader.load(), [{ id: '2', title: 'Account 2' }]);
+        assert.deepEqual(await loader.load(), [{ id: '2', title: 'Account 2', displayOrder: null }]);
         assert.equal(requestCount, 2);
     });
 
@@ -99,11 +99,11 @@ describe('createDatacatFolderLoader', () => {
         assert.equal(requests.length, 2);
 
         requests[1]({ ok: true, folders: [{ id: 2, title: 'New account' }] });
-        assert.deepEqual(await newAccountLoad, [{ id: '2', title: 'New account' }]);
+        assert.deepEqual(await newAccountLoad, [{ id: '2', title: 'New account', displayOrder: null }]);
 
         requests[0]({ ok: true, folders: [{ id: 1, title: 'Old account' }] });
-        assert.deepEqual(await oldAccountLoad, [{ id: '1', title: 'Old account' }]);
-        assert.deepEqual(await loader.load(), [{ id: '2', title: 'New account' }]);
+        assert.deepEqual(await oldAccountLoad, [{ id: '1', title: 'Old account', displayOrder: null }]);
+        assert.deepEqual(await loader.load(), [{ id: '2', title: 'New account', displayOrder: null }]);
         assert.equal(requests.length, 2);
     });
 
@@ -116,7 +116,7 @@ describe('createDatacatFolderLoader', () => {
         });
 
         await assert.rejects(loader.load(), /temporary failure/);
-        assert.deepEqual(await loader.load(), [{ id: '12', title: 'Favorites' }]);
+        assert.deepEqual(await loader.load(), [{ id: '12', title: 'Favorites', displayOrder: null }]);
         assert.equal(requestCount, 2);
     });
 });
@@ -161,40 +161,50 @@ describe('hasDatacatFolderMembership', () => {
         assert.equal(hasDatacatFolderMembership(), false);
     });
 });
-describe('applyDatacatFolderOrder', () => {
-    const folders = [
-        { id: '2359', title: 'marvel smut' },
-        { id: '2360', title: 'DC Smut' },
-        { id: '3883', title: 'misc' },
-    ];
-
-    it('reorders saved ids first, tolerating string/number mismatch', () => {
-        const result = applyDatacatFolderOrder(folders, ['2360', 2359]);
-        assert.deepEqual(result, [
-            { id: '2360', title: 'DC Smut' },
-            { id: '2359', title: 'marvel smut' },
-            { id: '3883', title: 'misc' },
-        ]);
+describe('sortDatacatFoldersByDisplayOrder', () => {
+    // DataCat v0.97 persists collection order server-side as displayOrder, so CL
+    // mirrors it instead of keeping a local override.
+    it('sorts ascending by displayOrder regardless of API order', () => {
+        const folders = [
+            { id: '3883', title: 'misc', displayOrder: 2 },
+            { id: '2360', title: 'DC Smut', displayOrder: 1 },
+            { id: '2359', title: 'marvel smut', displayOrder: 0 },
+        ];
+        assert.deepEqual(sortDatacatFoldersByDisplayOrder(folders).map(f => f.id), ['2359', '2360', '3883']);
     });
 
-    it('skips ids that no longer exist and does not duplicate on repeated ids', () => {
-        const result = applyDatacatFolderOrder(folders, ['9999', '2360', '2360', '2359']);
-        assert.deepEqual(result, [
-            { id: '2360', title: 'DC Smut' },
-            { id: '2359', title: 'marvel smut' },
-            { id: '3883', title: 'misc' },
-        ]);
+    it('handles negative order values (system rows sort first)', () => {
+        const folders = [
+            { id: '2359', title: 'marvel smut', displayOrder: 0 },
+            { id: '1644', title: 'Private Vault', displayOrder: -1000 },
+        ];
+        assert.deepEqual(sortDatacatFoldersByDisplayOrder(folders).map(f => f.id), ['1644', '2359']);
     });
 
-    it('keeps server order unchanged on empty/missing orderIds and does not mutate input', () => {
-        const original = [...folders];
-        assert.deepEqual(applyDatacatFolderOrder(folders, []), folders);
-        assert.deepEqual(applyDatacatFolderOrder(folders, undefined), folders);
-        assert.deepEqual(applyDatacatFolderOrder(folders, null), folders);
-        assert.deepEqual(folders, original); // input array not mutated
+    it('puts folders with no usable displayOrder last, keeping their API order', () => {
+        const folders = [
+            { id: 'a', title: 'a', displayOrder: null },
+            { id: 'b', title: 'b', displayOrder: 5 },
+            { id: 'c', title: 'c' },
+            { id: 'd', title: 'd', displayOrder: 1 },
+        ];
+        assert.deepEqual(sortDatacatFoldersByDisplayOrder(folders).map(f => f.id), ['d', 'b', 'a', 'c']);
+    });
 
-        assert.deepEqual(applyDatacatFolderOrder([], ['1']), []);
-        assert.deepEqual(applyDatacatFolderOrder(null, ['1']), []);
+    it('is stable for equal displayOrder and does not mutate its input', () => {
+        const folders = [
+            { id: 'x', title: 'x', displayOrder: 1 },
+            { id: 'y', title: 'y', displayOrder: 1 },
+        ];
+        const snapshot = folders.map(f => f.id);
+        assert.deepEqual(sortDatacatFoldersByDisplayOrder(folders).map(f => f.id), ['x', 'y']);
+        assert.deepEqual(folders.map(f => f.id), snapshot);
+    });
+
+    it('tolerates junk input', () => {
+        assert.deepEqual(sortDatacatFoldersByDisplayOrder([]), []);
+        assert.deepEqual(sortDatacatFoldersByDisplayOrder(null), []);
+        assert.deepEqual(sortDatacatFoldersByDisplayOrder(undefined), []);
     });
 });
 

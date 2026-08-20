@@ -8,6 +8,7 @@ import {
     isDataCatCharacterId,
     isDataCatFolderId,
     normalizeDcCredential,
+    normalizeDcFolderIdList,
     normalizeOptionalDcCredential,
     sanitizeDataCatUser,
 } from '../extras/cl-helper/datacat-utils.js';
@@ -22,6 +23,8 @@ import {
     mapDatacatFollowRow,
     normalizeDatacatFolderId,
     normalizeDatacatFolderPayload,
+    buildDatacatFolderReorderPath,
+    normalizeDatacatFolderIdList,
 } from '../modules/providers/datacat/datacat-api.js';
 
 describe('normalizeDcCredential', () => {
@@ -307,5 +310,47 @@ describe('DataCat folder helpers', () => {
         );
         assert.equal(normalizeDatacatFolderPayload({ title: '   ' }), null);
         assert.equal(normalizeDatacatFolderPayload({ title: 'x'.repeat(121) }), null);
+    });
+});
+
+describe('DataCat folder reorder', () => {
+    it('normalizes a folder id list to positive integers', () => {
+        assert.deepEqual(normalizeDatacatFolderIdList(['2359', 2360, '3883']), [2359, 2360, 3883]);
+    });
+
+    it('rejects lists containing anything that is not a real folder id', () => {
+        assert.equal(normalizeDatacatFolderIdList(['2359', 'abc']), null);
+        assert.equal(normalizeDatacatFolderIdList(['2359', '-1']), null);
+        assert.equal(normalizeDatacatFolderIdList(['2359', '0']), null);
+        assert.equal(normalizeDatacatFolderIdList(['2359', 'main']), null);
+    });
+
+    it('rejects empty, duplicate and non-array input', () => {
+        assert.equal(normalizeDatacatFolderIdList([]), null);
+        assert.equal(normalizeDatacatFolderIdList(null), null);
+        assert.equal(normalizeDatacatFolderIdList('2359,2360'), null);
+        assert.equal(normalizeDatacatFolderIdList(['2359', '2359']), null);
+    });
+
+    it('builds the reorder route', () => {
+        assert.equal(buildDatacatFolderReorderPath(), '/dc-folders/reorder');
+    });
+});
+
+describe('normalizeDcFolderIdList', () => {
+    it('accepts a clean list and coerces to numbers', () => {
+        assert.deepEqual(normalizeDcFolderIdList(['2359', 2360]), [2359, 2360]);
+    });
+
+    it('rejects the whole list when any id is invalid or repeated', () => {
+        assert.equal(normalizeDcFolderIdList(['2359', 'nope']), null);
+        assert.equal(normalizeDcFolderIdList(['2359', '0']), null);
+        assert.equal(normalizeDcFolderIdList(['2359', '2359']), null);
+    });
+
+    it('rejects empty and non-array input', () => {
+        assert.equal(normalizeDcFolderIdList([]), null);
+        assert.equal(normalizeDcFolderIdList(null), null);
+        assert.equal(normalizeDcFolderIdList('2359,2360'), null);
     });
 });

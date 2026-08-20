@@ -22,6 +22,7 @@ import {
     isDataCatCharacterId,
     isDataCatFolderId,
     normalizeDcCredential,
+    normalizeDcFolderIdList,
     normalizeOptionalDcCredential,
     sanitizeDataCatUser,
 } from './datacat-utils.js';
@@ -1601,6 +1602,25 @@ function registerDataCatRoutes(router) {
             });
         } catch (err) {
             console.error('[cl-helper] DC folder create error:', err.message);
+            return res.status(502).json({ error: 'Failed to reach DataCat' });
+        }
+    });
+
+    // Registered ahead of the /:folderId routes so 'reorder' is never read as an id.
+    router.put('/dc-folders/reorder', async (req, res) => {
+        const account = requireDcAccount(req, res);
+        if (!account) return;
+        const folderIds = normalizeDcFolderIdList(req.body?.folderIds);
+        if (!folderIds) return res.status(400).json({ error: 'A valid folderIds list is required' });
+
+        try {
+            const { response, data } = await fetchDcAccountEndpoint(account, '/api/user-folders/reorder', { method: 'PUT', body: { folderIds }, json: true });
+            if (response.ok && data?.success) return res.json({ ...data, ok: true });
+            return res.status(response.status || 502).json({
+                error: data?.reason || data?.error || `DataCat folder reorder failed with HTTP ${response.status}`,
+            });
+        } catch (err) {
+            console.error('[cl-helper] DC folder reorder error:', err.message);
             return res.status(502).json({ error: 'Failed to reach DataCat' });
         }
     });

@@ -20,11 +20,19 @@ export function formatDatacatFolderRemoval(folderName) {
     return `Removed from "${normalizedFolderName(folderName)}"`;
 }
 
+/** DataCat's per-collection sort key. Absent/blank means "unordered", which must not
+ *  collapse to 0 the way Number(null) would. */
+function normalizeDisplayOrder(value) {
+    if (value === null || value === undefined || value === '') return null;
+    const order = Number(value);
+    return Number.isFinite(order) ? order : null;
+}
+
 export function filterPickerFolders(folders) {
     if (!Array.isArray(folders)) return [];
     return folders
         .filter(f => f && !f.isReserved && !f.isPrivateVault && !f.systemKey)
-        .map(f => ({ id: String(f.id ?? '').trim(), title: String(f.title ?? '') }))
+        .map(f => ({ id: String(f.id ?? '').trim(), title: String(f.title ?? ''), displayOrder: normalizeDisplayOrder(f.displayOrder) }))
         .filter(f => f.id);
 }
 
@@ -90,27 +98,24 @@ export function buildPickerModel({ folders = [], collected = false, folderIds = 
 }
 
 /**
- * Apply the user's client-side folder ordering. Folders whose ids appear in
- * orderIds render first, in that order; the rest keep server order after them.
- * @param {{id: string, title: string}[]} folders
- * @param {Array} orderIds saved id list (values may be numbers or strings)
- * @returns {{id: string, title: string}[]} new array; input not mutated
+ * Order folders the way DataCat does, using the server-side displayOrder it
+ * persists per collection. Rows without a usable displayOrder sort last in the
+ * order the API returned them.
+ * @param {{id: string, title: string, displayOrder: number|null}[]} folders
+ * @returns {{id: string, title: string, displayOrder: number|null}[]} new array; input not mutated
  */
-export function applyDatacatFolderOrder(folders, orderIds) {
+export function sortDatacatFoldersByDisplayOrder(folders) {
     if (!Array.isArray(folders) || folders.length === 0) return [];
-    const order = (Array.isArray(orderIds) ? orderIds : []).map(v => String(v));
-    if (order.length === 0) return [...folders];
-    const byId = new Map(folders.map(f => [String(f.id), f]));
-    const ordered = [];
-    const used = new Set();
-    for (const id of order) {
-        const f = byId.get(id);
-        if (f && !used.has(id)) { ordered.push(f); used.add(id); }
-    }
-    for (const f of folders) {
-        if (!used.has(String(f.id))) ordered.push(f);
-    }
-    return ordered;
+    return folders
+        .map((folder, index) => ({ folder, index, order: normalizeDisplayOrder(folder?.displayOrder) }))
+        .sort((a, b) => {
+            const aHas = a.order !== null;
+            const bHas = b.order !== null;
+            if (aHas !== bHas) return aHas ? -1 : 1;
+            if (aHas && a.order !== b.order) return a.order - b.order;
+            return a.index - b.index;
+        })
+        .map(entry => entry.folder);
 }
 
 /**
@@ -228,7 +233,7 @@ async function loadAndRender(el, characterId, characterName) {
         const folders = await _folderLoader.load();
         const status = await fetchDatacatYoursStatus(characterId);
         const model = buildPickerModel({
-            folders: applyDatacatFolderOrder(folders, getSetting('datacatFolderOrder') || []),
+            folders: sortDatacatFoldersByDisplayOrder(folders),
             collected: status?.ok ? status.collected === true : _hooks.getMainSaved(characterId),
             folderIds: status?.ok ? status.folderIds : [],
         });
