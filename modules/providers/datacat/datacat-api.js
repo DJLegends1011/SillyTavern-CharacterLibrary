@@ -1165,6 +1165,13 @@ export function buildV2FromDatacat(character) {
     const isSaucepan = character?.primary_content_source_kind === 'saucepan';
     const v2Data = character?.chara_card_v2_json?.data || null;
 
+    // /download used to be the only source for these three; it now 403s behind
+    // Cloudflare Turnstile (DataCat v0.97), so every import lands here instead. The
+    // detail payload's embedded V2 json still carries them. Saucepan repair variants
+    // ship their own card, so prefer that one when a recovery variant is present.
+    const recoveredV2 = recovered?.chara_card_v2_json?.data || null;
+    const bodyV2 = (isSaucepan && recoveredV2) ? recoveredV2 : (v2Data || recoveredV2);
+
     // Only Saucepan repair variants overload description with the body; janitor variants mirror the row blurb, never the body.
     const description = isSaucepan
         ? (recovered?.description || recovered?.personality || v2Data?.description || character.description || '')
@@ -1193,9 +1200,9 @@ export function buildV2FromDatacat(character) {
             personality: '',
             scenario,
             first_mes: firstMessage,
-            mes_example: '',
-            system_prompt: '',
-            post_history_instructions: '',
+            mes_example: bodyV2?.mes_example || '',
+            system_prompt: bodyV2?.system_prompt || '',
+            post_history_instructions: bodyV2?.post_history_instructions || '',
             creator_notes: creatorNotes,
             creator: character.creator_name || character.creatorName || '',
             character_version: '1.0',
