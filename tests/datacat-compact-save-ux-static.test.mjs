@@ -59,7 +59,7 @@ test('DataCat folder mutations own one destination notification', () => {
 test('DataCat Features follows maintainer Personal and Library grouping', () => {
     assert.match(
         browse,
-        /Personal <span[^>]*>\(requires login\)<\/span>:[\s\S]{0,500}id="datacatFilterOnlyYours"[\s\S]{0,180}fa-solid fa-heart[\s\S]{0,120}Yours collected[\s\S]{0,500}<div class="dropdown-section-title">Library:<\/div>/,
+        /Personal <span[^>]*>\(requires login\)<\/span>:[\s\S]{0,500}id="datacatFilterOnlyYours"[\s\S]{0,180}fa-solid fa-heart[\s\S]{0,120}Collected[\s\S]{0,500}<div class="dropdown-section-title">Library:<\/div>/,
     );
     assert.doesNotMatch(browse, /id="datacatFilterOnlyYours"[^>]*>[\s\S]{0,220}Only DataCat Yours<\/label>/);
 });

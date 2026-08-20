@@ -3453,7 +3453,7 @@ function renderDatacatYoursFolderOptions() {
     const select = document.getElementById('datacatYoursFolderSelect');
     if (!select) return;
     datacatYoursFolderSel = normalizeDatacatYoursFolderSelection(datacatYoursFolderSel, datacatYoursFoldersCache);
-    select.innerHTML = '<option value="all">All characters</option><option value="main">Main only</option>'
+    select.innerHTML = '<option value="all">All characters</option><option value="main">Main</option>'
         + datacatYoursFoldersCache.map(folder => '<option value="' + escapeHtml(String(folder.id)) + '">' + escapeHtml(folder.title || 'Untitled folder') + '</option>').join('');
     select.value = datacatYoursFolderSel;
     select._customSelect?.refresh?.();
@@ -4191,7 +4191,7 @@ const datacatBrowseView = new (class DatacatBrowseView extends BrowseView {
                 </button>
                 <div id="datacatFiltersDropdown" class="dropdown-menu browse-features-dropdown hidden" style="width: 240px;">
                     <div class="dropdown-section-title">Personal <span style="font-size: 0.8em; opacity: 0.6;">(requires login)</span>:</div>
-                    <label class="filter-checkbox"><input type="checkbox" id="datacatFilterOnlyYours"> <i class="fa-solid fa-heart" style="color: #e74c3c;"></i> Yours collected</label>
+                    <label class="filter-checkbox"><input type="checkbox" id="datacatFilterOnlyYours"> <i class="fa-solid fa-heart" style="color: #e74c3c;"></i> Collected</label>
                     <hr style="margin: 8px 0; border-color: var(--glass-border);">
                     <div class="dropdown-section-title">Library:</div>
                     <label class="filter-checkbox"><input type="checkbox" id="datacatFilterHideOwned"> <i class="fa-solid fa-check"></i> Hide Owned Characters</label>
@@ -4263,10 +4263,10 @@ const datacatBrowseView = new (class DatacatBrowseView extends BrowseView {
                 </div>
 
                 <div id="datacatYoursFolderBar" class="datacat-yours-folder-bar hidden">
-                    <span class="datacat-yours-folder-label"><i class="fa-solid fa-folder-open"></i> Yours folder</span>
-                    <select id="datacatYoursFolderSelect" class="glass-select cl-select-fluid" title="Filter DataCat Yours by folder">
-                        <option value="all">All Yours</option>
-                        <option value="main">Main only</option>
+                    <span class="datacat-yours-folder-label"><i class="fa-solid fa-folder-open"></i> Your collections</span>
+                    <select id="datacatYoursFolderSelect" class="glass-select cl-select-fluid" title="Filter your collections by folder">
+                        <option value="all">All characters</option>
+                        <option value="main">Main</option>
                     </select>
                 </div>
 
