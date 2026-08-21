@@ -594,6 +594,8 @@ A mirror of JanitorAI content. It needs no browser endpoint, which makes it ligh
 - Filter by tags, token count, NSFW toggle
 - In-app character preview with card details
 - Character linking and card updates
+- Optional account sync: save/remove online JannyAI bookmarks from the preview modal
+- Optional collections panel: browse your JannyAI collections, preview/download cards in a collection, create a collection, and add bookmarked cards to a collection
 
 No gallery downloads, version history, or alternate greetings.
 
@@ -607,6 +609,15 @@ JannyAI Cloudflare-gates its card pages, and the card page is where the characte
 
 The userscript makes the gated request from your own browser and hands back only the result. The DataCat provider uses the same userscript for its Hampter sorts, so one install covers both. It has nothing to do with the JanitorAI provider, which uses a real browser instead. If definitions stop loading even with it installed, your Cloudflare pass has probably expired: open jannyai.com in the same browser, let it load, then reopen the preview.
 
+#### JannyAI Account Sync
+
+JannyAI's bookmark and collection endpoints sit behind Cloudflare. Account sync deliberately mirrors the maintainer's JanitorAI Hampter flow: Character Library stores a pasted Supabase access token and a companion **userscript** carries the request through Cloudflare:
+
+1. Install a userscript manager (Tampermonkey or Violentmonkey)
+2. Add `extras/cl-janny-bridge.user.js` from this repository and reload Character Library
+3. Open Settings > Online > JannyAI, paste the JannyAI auth cookie value or access-token JWT, and select **Save Login**
+
+The JannyAI tab does not need to remain open after the token is saved, and remote/Colab-hosted SillyTavern works on Firefox for Android. Character Library accepts the full split `sb-eenzcbluoctduymzksoq-auth-token.0`/`.1` cookie header, its combined value, raw Supabase session JSON, the old `sb-access-token` value, or a bare JWT. JannyAI access tokens currently last about seven days; paste a fresh one when Account reports that it expired or was rejected. cl-helper is not involved. Bookmark adds remain guarded at JannyAI's current 220-bookmark UI limit.
 </details>
 
 <details>
@@ -863,7 +874,7 @@ The full app is optimized for mobile with:
 
 ### cl-helper plugin not detected
 
-**cl-helper** is Character Library's companion plugin. It runs inside the SillyTavern server and handles the few things a browser tab cannot do on its own (login handshakes, cookie sessions, cached thumbnails). If the app sent you here, the feature you just tried needs it. The plugin ships with Character Library in the `extras/cl-helper/` folder; installing it is one copy plus one config line.
+**cl-helper** is Character Library's companion plugin. It runs inside the SillyTavern server and handles the few things a browser tab cannot do on its own (login handshakes, cookie sessions, cached thumbnails). If the app sent you here, the feature you just tried needs it. JannyAI account sync does not need it — it uses a companion userscript bridge instead (see the JannyAI provider section above). The plugin ships with Character Library in the `extras/cl-helper/` folder; installing it is one copy plus one config line.
 
 **One-command install (Linux, macOS, Termux):** open a terminal (in Termux, the same one you start SillyTavern from), then run:
 
