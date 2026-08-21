@@ -22,7 +22,7 @@ const mobile = await readFile(
 test('DataCat exposes one detail-only folder heart inline with creator', () => {
     assert.match(
         browse,
-        /<p class="browse-char-meta">[\s\S]{0,700}id="datacatFolderBtn"[\s\S]{0,250}browse-meta-action[\s\S]{0,250}title="Save to folder"[\s\S]{0,250}fa-regular fa-heart/,
+        /<p class="browse-char-meta">[\s\S]{0,700}id="datacatFolderBtn"[\s\S]{0,250}browse-meta-action[\s\S]{0,250}title="Add to collection"[\s\S]{0,250}fa-regular fa-heart/,
     );
     assert.doesNotMatch(browse, /id="datacatYoursBtn"/);
     assert.doesNotMatch(browse, /class="datacat-yours-btn/);

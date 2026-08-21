@@ -4327,8 +4327,9 @@ const datacatBrowseView = new (class DatacatBrowseView extends BrowseView {
                                 type="button"
                                 id="datacatFolderBtn"
                                 class="browse-meta-action"
-                                title="Save to folder"
-                                aria-label="Save to folder"
+                                title="Add to collection"
+                                aria-label="Add to collection"
+                                aria-haspopup="dialog"
                                 style="display: none;"
                             ><i class="fa-regular fa-heart"></i></button>
                         </p>
