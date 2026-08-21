@@ -2602,6 +2602,43 @@ html.cl-mobile .browse-char-body { padding: 8px; gap: var(--space-sm); }
 
 }
 
+/* ============================================
+   Shared Bookmark Button — cl-bookmark-btn
+   Used by Janny / DataCat / CharacterTavern via bookmark-module.js.
+   Card-footer variant lives as a .browse-card-stat; modal variant
+   lives as an .action-btn next to Open/Import.
+   ============================================ */
+
+.browse-card-footer .cl-bookmark-btn {
+    cursor: pointer;
+    padding: 2px 8px;
+    border-radius: 4px;
+    transition: all 0.2s ease;
+    background: transparent;
+    margin-left: auto;
+}
+
+.browse-card-footer .cl-bookmark-btn:hover {
+    background: rgba(255, 107, 107, 0.15);
+}
+
+.browse-card-footer .cl-bookmark-btn i {
+    color: #ff6b6b;
+    transition: transform 0.2s ease;
+}
+
+.browse-card-footer .cl-bookmark-btn:hover i {
+    transform: scale(1.15);
+}
+
+.browse-card-footer .cl-bookmark-btn.favorited {
+    background: rgba(255, 107, 107, 0.12);
+}
+
+.browse-card-footer .cl-bookmark-btn.favorited i {
+    font-weight: 900;
+}
+
 /* Compact actions displayed beside creator/provider metadata in detail modals. */
 .browse-meta-action {
     appearance: none;
@@ -2643,4 +2680,8 @@ html.cl-mobile .browse-char-body { padding: 8px; gap: var(--space-sm); }
 .browse-meta-action.loading {
     pointer-events: none;
     opacity: 0.6;
+}
+
+.browse-meta-action.cl-bookmark-btn i {
+    color: #ff6b6b;
 }
