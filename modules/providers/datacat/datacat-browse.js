@@ -317,9 +317,11 @@ function setDatacatFolderActionState(characterId, saved) {
     btn.classList.toggle('favorited', saved === true);
     const icon = btn.querySelector('i');
     if (icon) icon.className = saved ? 'fa-solid fa-heart' : 'fa-regular fa-heart';
-    // DataCat keeps this trigger's tooltip constant in both states; the filled heart
-    // carries the saved state, and add/remove happens inside the picker itself.
-    const label = 'Add to collection';
+    // Two states, like DataCat's own hero button, minus its stale 'Yours' wording:
+    // the picker is multi-select, so the saved state names collections in the plural.
+    const label = saved ? 'Saved — choose collections' : 'Add to collection';
+    // The heart looks like a toggle but opens the collection picker, so say so.
+    btn.setAttribute('aria-haspopup', 'dialog');
     btn.title = label;
     btn.setAttribute('aria-label', label);
 }
