@@ -536,8 +536,16 @@ const DEFAULT_SETTINGS = {
     wyvernUid: null,
     wyvernRememberCredentials: true,
     datacatToken: null,
+    datacatAccountToken: null,
+    datacatDeviceToken: null,
+    datacatAccountUser: null,
+    datacatClientSessionId: null,
     datacatPublicFeed: false,
     datacatReextractOnUpdate: false,
+    datacatUseAccountForExtraction: true,
+    datacatEmail: null,
+    datacatPassword: null,
+    datacatSyncYours: true,
     // Separate from the janitorai* pair below: the refresh token is single-use and rotates, so a
     // shared pair breaks whichever provider refreshes second.
     datacatJanitoraiToken: null,
@@ -1800,6 +1808,19 @@ function setupSettingsModal() {
     const datacatPluginBanner = document.getElementById('datacatPluginBanner');
     const datacatSettingsFields = document.getElementById('datacatSettingsFields');
     const datacatSessionStatus = document.getElementById('datacatSessionStatus');
+    const datacatAccountStatus = document.getElementById('datacatAccountStatus');
+    const datacatAccountEmailInput = document.getElementById('settingsDatacatAccountEmail');
+    const datacatAccountPasswordInput = document.getElementById('settingsDatacatAccountPassword');
+    const datacatAccountTokenInput = document.getElementById('settingsDatacatAccountToken');
+    const datacatAccountLoginBtn = document.getElementById('datacatAccountLoginBtn');
+    const datacatAccountTokenConnectBtn = document.getElementById('datacatAccountTokenConnectBtn');
+    const datacatAccountOpenLoginBtn = document.getElementById('datacatAccountOpenLoginBtn');
+    const datacatAccountLogoutBtn = document.getElementById('datacatAccountLogoutBtn');
+    const datacatUseAccountExtractionCheckbox = document.getElementById('datacatUseAccountExtractionCheckbox');
+    const datacatSyncYoursCheckbox = document.getElementById('datacatSyncYoursCheckbox');
+    const datacatFolderOrderLoadBtn = document.getElementById('datacatFolderOrderLoadBtn');
+    const datacatFolderOrderStatus = document.getElementById('datacatFolderOrderStatus');
+    const datacatFolderOrderList = document.getElementById('datacatFolderOrderList');
     const minScoreSlider = document.getElementById('settingsMinScore');
     const minScoreValue = document.getElementById('minScoreValue');
     const possibleMatchScoreSlider = document.getElementById('settingsPossibleMatchScore');
@@ -2818,6 +2839,13 @@ function setupSettingsModal() {
                     updateDatacatSessionStatus();
                 }
             }
+            if (datacatAccountStatus) {
+                if (!available) {
+                    renderDatacatAccountStatus({ valid: false });
+                } else {
+                    updateDatacatAccountStatus({ restore: true });
+                }
+            }
         });
         
         const minScore = getSetting('duplicateMinScore') || 35;
@@ -3575,6 +3603,11 @@ function setupSettingsModal() {
         if (wyvernEmailInput) wyvernEmailInput.value = '';
         if (wyvernPasswordInput) wyvernPasswordInput.value = '';
         if (wyvernRememberCredsCheckbox) wyvernRememberCredsCheckbox.checked = false;
+        if (datacatAccountEmailInput) datacatAccountEmailInput.value = '';
+        if (datacatAccountPasswordInput) datacatAccountPasswordInput.value = '';
+        if (datacatUseAccountExtractionCheckbox) datacatUseAccountExtractionCheckbox.checked = DEFAULT_SETTINGS.datacatUseAccountForExtraction;
+        if (datacatSyncYoursCheckbox) datacatSyncYoursCheckbox.checked = DEFAULT_SETTINGS.datacatSyncYours;
+        renderDatacatAccountStatus({ valid: false });
         minScoreSlider.value = DEFAULT_SETTINGS.duplicateMinScore;
         minScoreValue.textContent = String(DEFAULT_SETTINGS.duplicateMinScore);
         if (possibleMatchScoreSlider) {
@@ -3695,6 +3728,8 @@ function setupSettingsModal() {
             wyvernRefreshToken: preserveWyv ? getSetting('wyvernRefreshToken') : null,
             wyvernUid: preserveWyv ? getSetting('wyvernUid') : null,
             datacatToken: getSetting('datacatToken') || null,
+            datacatEmail: getSetting('datacatEmail') || null,
+            datacatPassword: getSetting('datacatPassword') || null,
             datacatJanitoraiToken: getSetting('datacatJanitoraiToken') || null,
             datacatJanitoraiRefreshToken: getSetting('datacatJanitoraiRefreshToken') || null,
             saucepanToken: getSetting('saucepanToken') || null,
@@ -3923,6 +3958,69 @@ function setupSettingsModal() {
     }
 
     // DataCat session management
+    function renderDatacatAccountStatus(result = null) {
+        if (!datacatAccountStatus) return;
+        const explicitInvalid = result && (result.valid === false || result.ok === false);
+        const user = explicitInvalid ? null : result?.user || getSetting('datacatAccountUser') || null;
+        const valid = !explicitInvalid && (result?.valid === true || result?.ok === true || !!getSetting('datacatAccountToken'));
+        if (valid && user) {
+            const label = user.username || user.email || 'Signed in';
+            datacatAccountStatus.className = 'settings-status-badge active';
+            datacatAccountStatus.innerHTML = `<i class="fa-solid fa-circle"></i> ${escapeHtml(label)}`;
+            if (datacatAccountLoginBtn) datacatAccountLoginBtn.style.display = 'none';
+            if (datacatAccountTokenConnectBtn) datacatAccountTokenConnectBtn.style.display = 'none';
+            if (datacatAccountOpenLoginBtn) datacatAccountOpenLoginBtn.style.display = 'none';
+            if (datacatAccountLogoutBtn) datacatAccountLogoutBtn.style.display = '';
+            return;
+        }
+
+        if (valid) {
+            datacatAccountStatus.className = 'settings-status-badge active';
+            datacatAccountStatus.innerHTML = '<i class="fa-solid fa-circle"></i> Signed in';
+            if (datacatAccountLoginBtn) datacatAccountLoginBtn.style.display = 'none';
+            if (datacatAccountTokenConnectBtn) datacatAccountTokenConnectBtn.style.display = 'none';
+            if (datacatAccountOpenLoginBtn) datacatAccountOpenLoginBtn.style.display = 'none';
+            if (datacatAccountLogoutBtn) datacatAccountLogoutBtn.style.display = '';
+            return;
+        }
+
+        datacatAccountStatus.className = 'settings-status-badge inactive';
+        datacatAccountStatus.innerHTML = `<i class="fa-solid fa-circle"></i> ${result?.error ? 'Error' : 'Signed out'}`;
+        if (datacatAccountLoginBtn) { datacatAccountLoginBtn.style.display = ''; updateDatacatLoginBtnState(); }
+        if (datacatAccountTokenConnectBtn) datacatAccountTokenConnectBtn.style.display = '';
+        if (datacatAccountOpenLoginBtn) datacatAccountOpenLoginBtn.style.display = '';
+        if (datacatAccountLogoutBtn) datacatAccountLogoutBtn.style.display = 'none';
+    }
+
+    async function updateDatacatAccountStatus({ restore = false } = {}) {
+        if (!datacatAccountStatus) return;
+        const token = getSetting('datacatAccountToken');
+        if (!token || !window.datacatRestoreAccount) {
+            renderDatacatAccountStatus({ valid: false });
+            return;
+        }
+
+        datacatAccountStatus.className = 'settings-status-badge inactive';
+        datacatAccountStatus.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Checking...';
+        try {
+            const result = restore ? await window.datacatRestoreAccount() : await window.datacatValidateAccount?.();
+            if (result?.valid || result?.ok) {
+                if (result.user) setSetting('datacatAccountUser', result.user);
+                if (result.deviceToken) setSetting('datacatDeviceToken', result.deviceToken);
+                renderDatacatAccountStatus({ valid: true, user: result.user || getSetting('datacatAccountUser') });
+            } else {
+                if (restore) {
+                    setSetting('datacatAccountToken', null);
+                    setSetting('datacatAccountUser', null);
+                }
+                renderDatacatAccountStatus({ valid: false });
+            }
+        } catch (err) {
+            console.warn('[DataCat] account status check failed:', err);
+            renderDatacatAccountStatus({ valid: false, error: err?.message || 'status check failed' });
+        }
+    }
+
     function updateDatacatSessionStatus() {
         if (!datacatSessionStatus) return;
         if (!window.datacatValidateSession) {
@@ -4004,6 +4102,251 @@ function setupSettingsModal() {
             }
         };
     }
+
+    if (datacatUseAccountExtractionCheckbox) {
+        datacatUseAccountExtractionCheckbox.checked = getSetting('datacatUseAccountForExtraction') !== false;
+        datacatUseAccountExtractionCheckbox.addEventListener('change', () => {
+            setSetting('datacatUseAccountForExtraction', datacatUseAccountExtractionCheckbox.checked);
+        });
+    }
+
+    if (datacatSyncYoursCheckbox) {
+        datacatSyncYoursCheckbox.checked = getSetting('datacatSyncYours') !== false;
+        datacatSyncYoursCheckbox.addEventListener('change', () => {
+            setSetting('datacatSyncYours', datacatSyncYoursCheckbox.checked);
+        });
+    }
+
+    // ── Folder Order settings (reorders DataCat custom folders on the account) ──
+    let _datacatFolderOrderFolders = [];
+    let _datacatFolderOrderSaving = false;
+
+    function showDatacatFolderOrderStatus(message) {
+        if (!datacatFolderOrderStatus) return;
+        if (!message) {
+            datacatFolderOrderStatus.style.display = 'none';
+            datacatFolderOrderStatus.textContent = '';
+            return;
+        }
+        datacatFolderOrderStatus.textContent = message;
+        datacatFolderOrderStatus.style.display = '';
+    }
+
+    function renderDatacatFolderOrderList() {
+        if (!datacatFolderOrderList) return;
+        if (_datacatFolderOrderFolders.length === 0) {
+            datacatFolderOrderList.innerHTML = '';
+            return;
+        }
+        const last = _datacatFolderOrderFolders.length - 1;
+        datacatFolderOrderList.innerHTML = _datacatFolderOrderFolders.map((f, i) => `
+            <div class="datacat-folder-order-row" data-folder-id="${escapeHtml(String(f.id))}">
+                <span class="datacat-folder-order-title">${escapeHtml(f.title)}</span>
+                <button type="button" class="datacat-folder-order-up-btn" ${i === 0 ? 'disabled' : ''} title="Move up"><i class="fa-solid fa-chevron-up"></i></button>
+                <button type="button" class="datacat-folder-order-down-btn" ${i === last ? 'disabled' : ''} title="Move down"><i class="fa-solid fa-chevron-down"></i></button>
+            </div>`).join('');
+        datacatFolderOrderList.querySelectorAll('.datacat-folder-order-up-btn').forEach((btn, i) => {
+            btn.addEventListener('click', () => moveDatacatFolderOrderRow(i, -1));
+        });
+        datacatFolderOrderList.querySelectorAll('.datacat-folder-order-down-btn').forEach((btn, i) => {
+            btn.addEventListener('click', () => moveDatacatFolderOrderRow(i, 1));
+        });
+    }
+
+    // DataCat owns collection order (displayOrder), so a move writes straight through.
+    // The swap is applied optimistically and rolled back if the account rejects it.
+    async function moveDatacatFolderOrderRow(index, delta) {
+        const target = index + delta;
+        if (target < 0 || target >= _datacatFolderOrderFolders.length) return;
+        if (_datacatFolderOrderSaving) return;
+
+        const previous = [..._datacatFolderOrderFolders];
+        const arr = _datacatFolderOrderFolders;
+        [arr[index], arr[target]] = [arr[target], arr[index]];
+        renderDatacatFolderOrderList();
+
+        _datacatFolderOrderSaving = true;
+        showDatacatFolderOrderStatus('Saving order to DataCat...');
+        try {
+            const res = await window.datacatReorderFolders?.(arr.map(f => f.id));
+            if (!res?.ok) throw new Error(res?.error || 'Could not save folder order');
+            showDatacatFolderOrderStatus(null);
+        } catch (err) {
+            _datacatFolderOrderFolders = previous;
+            renderDatacatFolderOrderList();
+            showDatacatFolderOrderStatus(err.message || 'Could not save folder order');
+        } finally {
+            _datacatFolderOrderSaving = false;
+        }
+    }
+
+    async function loadDatacatFolderOrderFolders() {
+        if (!datacatFolderOrderLoadBtn) return;
+        datacatFolderOrderLoadBtn.disabled = true;
+        showDatacatFolderOrderStatus('Loading folders...');
+        try {
+            const res = await window.datacatGetSettingsFolders?.();
+            if (!res?.ok) {
+                const errText = res?.error || 'Could not load folders';
+                const msg = /account|session|auth/i.test(errText) ? 'Sign in to DataCat first' : errText;
+                showDatacatFolderOrderStatus(msg);
+                _datacatFolderOrderFolders = [];
+                renderDatacatFolderOrderList();
+                return;
+            }
+            _datacatFolderOrderFolders = Array.isArray(res.folders) ? res.folders : [];
+            if (_datacatFolderOrderFolders.length === 0) {
+                showDatacatFolderOrderStatus('No custom folders on this account.');
+            } else {
+                showDatacatFolderOrderStatus(null);
+            }
+            renderDatacatFolderOrderList();
+        } catch (err) {
+            showDatacatFolderOrderStatus(err.message || 'Could not load folders');
+        } finally {
+            datacatFolderOrderLoadBtn.disabled = false;
+        }
+    }
+
+    if (datacatFolderOrderLoadBtn) {
+        datacatFolderOrderLoadBtn.addEventListener('click', loadDatacatFolderOrderFolders);
+    }
+
+
+    function storeDatacatAccountResult(result) {
+        setSetting('datacatAccountToken', result.accountToken);
+        setSetting('datacatDeviceToken', result.deviceToken || null);
+        setSetting('datacatAccountUser', result.user || null);
+    }
+
+    function updateDatacatLoginBtnState() {
+        if (!datacatAccountLoginBtn) return;
+        const email = (datacatAccountEmailInput?.value || '').trim();
+        const password = datacatAccountPasswordInput?.value || '';
+        datacatAccountLoginBtn.disabled = !email || !password;
+    }
+    datacatAccountEmailInput?.addEventListener('input', updateDatacatLoginBtnState);
+    datacatAccountPasswordInput?.addEventListener('input', updateDatacatLoginBtnState);
+
+    datacatAccountEmailInput?.addEventListener('change', () => {
+        setSetting('datacatEmail', datacatAccountEmailInput.value.trim() || null);
+    });
+    datacatAccountPasswordInput?.addEventListener('change', () => {
+        setSetting('datacatPassword', datacatAccountPasswordInput.value || null);
+    });
+
+    const toggleDcPwBtn = document.getElementById('toggleDatacatAccountPasswordVisibility');
+    if (toggleDcPwBtn && datacatAccountPasswordInput) {
+        toggleDcPwBtn.onclick = () => {
+            const isPassword = datacatAccountPasswordInput.type === 'password';
+            datacatAccountPasswordInput.type = isPassword ? 'text' : 'password';
+            toggleDcPwBtn.innerHTML = `<i class="fa-solid fa-eye${isPassword ? '-slash' : ''}"></i>`;
+        };
+    }
+
+    const toggleDcTokenBtn = document.getElementById('toggleDatacatAccountTokenVisibility');
+    if (toggleDcTokenBtn && datacatAccountTokenInput) {
+        toggleDcTokenBtn.onclick = () => {
+            const isPassword = datacatAccountTokenInput.type === 'password';
+            datacatAccountTokenInput.type = isPassword ? 'text' : 'password';
+            toggleDcTokenBtn.innerHTML = `<i class="fa-solid fa-eye${isPassword ? '-slash' : ''}"></i>`;
+        };
+    }
+
+    if (datacatAccountLoginBtn) {
+        datacatAccountLoginBtn.onclick = async () => {
+            const email = (datacatAccountEmailInput?.value || '').trim();
+            const password = datacatAccountPasswordInput?.value || '';
+            if (!email || !password) {
+                showToast('Enter your DataCat email and password', 'warning');
+                return;
+            }
+
+            datacatAccountLoginBtn.disabled = true;
+            datacatAccountLoginBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Signing in...';
+            try {
+                const result = await window.datacatLoginAccount?.(email, password);
+                if (!result?.ok || !result?.accountToken) throw new Error(result?.error || result?.reason || 'Login failed');
+                storeDatacatAccountResult(result);
+                setSettings({ datacatEmail: email, datacatPassword: password });
+                showToast('DataCat account connected', 'success');
+                renderDatacatAccountStatus({ valid: true, user: result.user });
+            } catch (err) {
+                showToast(`DataCat login failed: ${err.message}`, 'error');
+                renderDatacatAccountStatus({ valid: false });
+            } finally {
+                datacatAccountLoginBtn.disabled = false;
+                datacatAccountLoginBtn.innerHTML = '<i class="fa-solid fa-right-to-bracket"></i> Sign In';
+                updateDatacatLoginBtnState();
+            }
+        };
+    }
+
+    if (datacatAccountTokenConnectBtn) {
+        datacatAccountTokenConnectBtn.onclick = async () => {
+            const token = (datacatAccountTokenInput?.value || '').trim();
+            if (!token) {
+                showToast('Paste a DataCat account session token first', 'warning');
+                return;
+            }
+
+            datacatAccountTokenConnectBtn.disabled = true;
+            datacatAccountTokenConnectBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Connecting...';
+            try {
+                setSetting('datacatAccountToken', token);
+                const result = await window.datacatRestoreAccount?.();
+                if (!result?.ok && !result?.valid) {
+                    setSetting('datacatAccountToken', null);
+                    throw new Error(result?.error || result?.reason || 'Token validation failed');
+                }
+                if (result.user) setSetting('datacatAccountUser', result.user);
+                if (result.deviceToken) setSetting('datacatDeviceToken', result.deviceToken);
+                if (datacatAccountTokenInput) datacatAccountTokenInput.value = '';
+                showToast('DataCat account token connected', 'success');
+                renderDatacatAccountStatus({ valid: true, user: result.user || getSetting('datacatAccountUser') });
+            } catch (err) {
+                showToast(`DataCat token connect failed: ${err.message}`, 'error');
+                renderDatacatAccountStatus({ valid: false, error: err.message });
+            } finally {
+                datacatAccountTokenConnectBtn.disabled = false;
+                datacatAccountTokenConnectBtn.innerHTML = '<i class="fa-solid fa-link"></i> Connect Token';
+            }
+        };
+    }
+
+    if (datacatAccountOpenLoginBtn) {
+        datacatAccountOpenLoginBtn.onclick = () => {
+            window.open('https://datacat.run/login', '_blank', 'noopener,noreferrer');
+        };
+    }
+
+    if (datacatAccountLogoutBtn) {
+        datacatAccountLogoutBtn.onclick = async () => {
+            try {
+                await window.datacatLogoutAccount?.();
+            } catch {}
+            setSettings({ datacatAccountToken: null, datacatAccountUser: null, datacatEmail: null, datacatPassword: null });
+            if (datacatAccountEmailInput) datacatAccountEmailInput.value = '';
+            if (datacatAccountPasswordInput) datacatAccountPasswordInput.value = '';
+            if (datacatAccountTokenInput) datacatAccountTokenInput.value = '';
+            showToast('DataCat account disconnected', 'info');
+            renderDatacatAccountStatus({ valid: false });
+            updateDatacatLoginBtnState();
+        };
+    }
+
+    function refreshDatacatAccountSettingsUi() {
+        if (datacatAccountEmailInput) datacatAccountEmailInput.value = getSetting('datacatEmail') || '';
+        if (datacatAccountPasswordInput) datacatAccountPasswordInput.value = getSetting('datacatPassword') || '';
+        updateDatacatLoginBtnState();
+    }
+    refreshDatacatAccountSettingsUi();
+
+    document.getElementById('settingsDatacatSection')?.addEventListener('toggle', (e) => {
+        if (e.target.open) refreshDatacatAccountSettingsUi();
+    });
+
+    updateDatacatAccountStatus({ restore: true });
 
     const datacatRefreshTokenBtn = document.getElementById('datacatRefreshTokenBtn');
     if (datacatRefreshTokenBtn) {

@@ -15,11 +15,16 @@ import {
     resolveDatacatAvatarUrl,
     setApiRequest,
     setSavedTokenGetter,
+    setSavedAccountTokenGetter,
+    setSavedDeviceTokenGetter,
+    setDatacatClientIdGetter,
     slugify,
     stripHtml,
     resolveTagNames,
     fetchDatacatCharacter,
     fetchDatacatDownload,
+    reorderDatacatFolders,
+    fetchDatacatFolders,
     validateDcSession,
     clearDcSession,
     initDcSession,
@@ -31,11 +36,20 @@ import {
     hasUnfetchedLorebook,
     submitExtraction,
     fetchExtractionStatus,
+    restoreDatacatAccount,
+    loginDatacatAccount,
+    validateDatacatAccount,
+    logoutDatacatAccount,
     parseJanitoraiSession,
     janitoraiRefreshGrant,
     janitoraiVerifyToken,
     decodeJanitoraiClaims,
 } from './datacat-api.js';
+import {
+    filterPickerFolders,
+    sortDatacatFoldersByDisplayOrder,
+    invalidateDatacatFolderCache,
+} from './datacat-folder-picker.js';
 
 let api = null;
 
@@ -71,6 +85,15 @@ class DatacatProvider extends ProviderBase {
         api = coreAPI;
         setApiRequest(coreAPI.apiRequest);
         setSavedTokenGetter(() => coreAPI.getSetting('datacatToken') || null);
+        let datacatClientSessionId = coreAPI.getSetting('datacatClientSessionId') || null;
+        if (!datacatClientSessionId) {
+            datacatClientSessionId = globalThis.crypto?.randomUUID?.()
+                || `dc_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+            coreAPI.setSetting('datacatClientSessionId', datacatClientSessionId);
+        }
+        setDatacatClientIdGetter(() => coreAPI.getSetting('datacatClientSessionId') || null);
+        setSavedAccountTokenGetter(() => coreAPI.getSetting('datacatAccountToken') || null);
+        setSavedDeviceTokenGetter(() => coreAPI.getSetting('datacatDeviceToken') || null);
         // Listen for the optional JanitorAI userscript bridge (passive, free when absent)
         initJanitorBridge();
     }
@@ -250,7 +273,11 @@ class DatacatProvider extends ProviderBase {
             const publicFeed = CoreAPI.getSetting('datacatPublicFeed') === true;
 
             report?.('Submitting re-extraction request...');
-            const result = await submitExtraction(upstreamUrl, { publicFeed, alwaysReextract: true });
+            const result = await submitExtraction(upstreamUrl, {
+                publicFeed,
+                alwaysReextract: true,
+                useAccount: CoreAPI.getSetting('datacatUseAccountForExtraction') !== false,
+            });
             if (!result?.success && !result?.queued && !result?.started) {
                 api?.debugLog?.('[DatacatProvider] refreshRemoteData: extraction submit failed:', result?.error);
                 return;
@@ -549,6 +576,36 @@ window.datacatValidateSession = async () => {
     return validateDcSession();
 };
 
+window.datacatRestoreAccount = async () => {
+    const pluginOk = await checkDcPluginAvailable();
+    if (!pluginOk) return { valid: false, reason: 'cl-helper plugin not available' };
+    const result = await restoreDatacatAccount();
+    if (result?.ok || result?.valid) invalidateDatacatFolderCache();
+    return result;
+};
+
+window.datacatLoginAccount = async (email, password) => {
+    const pluginOk = await checkDcPluginAvailable();
+    if (!pluginOk) return { ok: false, error: 'cl-helper plugin not available' };
+    const result = await loginDatacatAccount(email, password);
+    if (result?.ok) invalidateDatacatFolderCache();
+    return result;
+};
+
+window.datacatValidateAccount = async () => {
+    const pluginOk = await checkDcPluginAvailable();
+    if (!pluginOk) return { valid: false, reason: 'cl-helper plugin not available' };
+    return validateDatacatAccount();
+};
+
+window.datacatLogoutAccount = async () => {
+    const pluginOk = await checkDcPluginAvailable();
+    if (!pluginOk) return { ok: false, error: 'cl-helper plugin not available' };
+    const result = await logoutDatacatAccount();
+    if (result?.ok) invalidateDatacatFolderCache();
+    return result;
+};
+
 window.datacatRefreshToken = async () => {
     const pluginOk = await checkDcPluginAvailable();
     if (!pluginOk) return null;
@@ -558,6 +615,17 @@ window.datacatRefreshToken = async () => {
 window.datacatClearSession = async () => {
     return clearDcSession();
 };
+
+// Ordered custom-folder list for the settings Folder Order UI.
+window.datacatGetSettingsFolders = async () => {
+    const res = await fetchDatacatFolders();
+    if (!res?.ok) return { ok: false, error: res?.error || res?.reason || 'Could not load folders' };
+    const folders = filterPickerFolders(res.folders);
+    return { ok: true, folders: sortDatacatFoldersByDisplayOrder(folders) };
+};
+
+// Persist a new custom-folder order on the DataCat account (settings Folder Order UI).
+window.datacatReorderFolders = async (folderIds) => reorderDatacatFolders(folderIds);
 
 // ── JanitorAI account session (Supabase; unlocks Hampter pagination) ──────────
 // Stateful layer over the pure grant helpers: persists the access token + rotating

@@ -2925,6 +2925,82 @@ https://jannyai.com/characters/uuid_slug
                                     </div>
                                 </div>
                                 <div class="settings-group">
+                                    <div class="settings-group-title"><i class="fa-solid fa-user-lock"></i> Account Login</div>
+                                    <div class="settings-row">
+                                        <span class="settings-hint">Sign in with your DataCat email and password to unlock <strong>collection sync</strong>, <strong>account extraction</strong>, and the <strong>Add to collection</strong> button. Your email and password are saved in SillyTavern's settings on the server running it, not just in this browser.</span>
+                                    </div>
+                                    <div class="settings-row">
+                                        <span id="datacatAccountStatus" class="settings-status-badge inactive"><i class="fa-solid fa-circle"></i> Signed out</span>
+                                    </div>
+                                    <div class="settings-row">
+                                        <label>Email:</label>
+                                        <div class="settings-input-group">
+                                            <input type="email" id="settingsDatacatAccountEmail" class="glass-input" placeholder="DataCat account email" autocomplete="email" spellcheck="false">
+                                        </div>
+                                    </div>
+                                    <div class="settings-row">
+                                        <label>Password:</label>
+                                        <div class="settings-input-group">
+                                            <input type="password" id="settingsDatacatAccountPassword" class="glass-input" placeholder="DataCat account password" autocomplete="current-password" data-sensitive="true">
+                                            <button id="toggleDatacatAccountPasswordVisibility" class="glass-btn icon-only" title="Show/Hide">
+                                                <i class="fa-solid fa-eye"></i>
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div class="settings-row" style="gap: var(--space-sm);">
+                                        <button id="datacatAccountLoginBtn" class="settings-action-btn primary" disabled>
+                                            <i class="fa-solid fa-right-to-bracket"></i> Sign In
+                                        </button>
+                                        <button id="datacatAccountLogoutBtn" class="settings-action-btn danger" style="display: none;">
+                                            <i class="fa-solid fa-right-from-bracket"></i> Log Out
+                                        </button>
+                                    </div>
+                                    <div class="provider-link-divider"><span>or use a session token</span></div>
+                                    <div class="settings-row">
+                                        <span class="settings-hint">Use this if you sign in to DataCat with <strong>Google</strong> (those accounts have no password to give here). Log in at <strong>datacat.run</strong>, open DevTools (F12) &rarr; <strong>Application &rarr; Local Storage &rarr; datacat.run</strong>, and copy the value of the <strong>account_token</strong> key. The session refreshes itself afterwards.</span>
+                                    </div>
+                                    <div class="settings-row">
+                                        <label>Token:</label>
+                                        <div class="settings-input-group">
+                                            <input type="password" id="settingsDatacatAccountToken" class="glass-input" placeholder="Paste DataCat account token" autocomplete="off" data-sensitive="true">
+                                            <button id="toggleDatacatAccountTokenVisibility" class="glass-btn icon-only" title="Show/Hide">
+                                                <i class="fa-solid fa-eye"></i>
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div class="settings-row" style="gap: var(--space-sm);">
+                                        <button id="datacatAccountTokenConnectBtn" class="settings-action-btn primary">
+                                            <i class="fa-solid fa-link"></i> Connect Token
+                                        </button>
+                                        <button id="datacatAccountOpenLoginBtn" class="settings-action-btn">
+                                            <i class="fa-solid fa-up-right-from-square"></i> Open DataCat Login
+                                        </button>
+                                    </div>
+                                    <div class="settings-row">
+                                        <label class="settings-checkbox-label">
+                                            <input type="checkbox" id="datacatUseAccountExtractionCheckbox">
+                                            <span>Use account session for extraction</span>
+                                        </label>
+                                    </div>
+                                    <div class="settings-row">
+                                        <label class="settings-checkbox-label">
+                                            <input type="checkbox" id="datacatSyncYoursCheckbox">
+                                            <span>Sync save buttons to DataCat collections</span>
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="settings-group">
+                                    <div class="settings-group-title"><i class="fa-solid fa-folder-tree"></i> Collection Order</div>
+                                    <div class="settings-row">
+                                        <span class="settings-hint">Reorder how your DataCat collections appear in Character Library (collection picker and Collected filter). Changes are saved to your DataCat account, so the site and other devices follow the same order.</span>
+                                    </div>
+                                    <div class="settings-row">
+                                        <button id="datacatFolderOrderLoadBtn" class="settings-action-btn"><i class="fa-solid fa-rotate"></i> Load Folders</button>
+                                    </div>
+                                    <div id="datacatFolderOrderStatus" class="settings-row" style="display: none;"></div>
+                                    <div id="datacatFolderOrderList" class="settings-row datacat-folder-order-list"></div>
+                                </div>
+                                <div class="settings-group">
                                     <div class="settings-group-title"><i class="fa-solid fa-cloud-arrow-down"></i> Extraction</div>
                                     <div class="settings-row">
                                         <label class="settings-checkbox-label">
