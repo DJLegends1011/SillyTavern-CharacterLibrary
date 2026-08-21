@@ -113,8 +113,8 @@ let datacatFilterHidePossible = false;
 let datacatFilterOnlyYours = false;
 let datacatFilterHideJanitor = false;
 let datacatFilterHideSaucepan = false;
-// "Only DataCat Yours" folder sub-filter: 'all' | 'main' | a custom folder id string.
-// Reset to 'all' whenever the Only Yours filter is turned off (see the
+// "Collected" collection sub-filter: 'all' | 'main' | a custom folder id string.
+// Reset to 'all' whenever the Collected filter is turned off (see the
 // datacatFilterOnlyYours checkbox handler below).
 let datacatYoursFolderSel = 'all';
 // Ordered custom folders returned by the provider layer. Re-fetched each time
