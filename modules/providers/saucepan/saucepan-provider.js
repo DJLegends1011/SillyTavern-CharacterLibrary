@@ -486,6 +486,7 @@ class SaucepanProvider extends ProviderBase {
                     id: c.character_id,
                     fullPath: String(c.character_id),
                     name: c.name,
+                    listingName: c.display_name || c.name || '',
                     creator: c.creator_name || '',
                     avatarUrl: c.avatar || '',
                     rating: 0,

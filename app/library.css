@@ -251,6 +251,7 @@ body.modal-size-large .cl-modal-content.creator-saveas-diff-content { max-width:
  *
  * LOADING / EMPTY STATES
  *   .cl-loading             - Hero loader (renderLoadingState(): icon + label + progress bar)
+ *   .cl-lazy-overlay        - Viewport-covering loader for a lazy module's first open (showLazyOpenOverlay())
  *   .cl-spinner-inline      - Lightweight inline spinner for grid/list slots
  *   .cl-skeleton-card       - Skeleton placeholder card for grids
  *   .cl-empty-state         - Empty-state block (icon + message)
@@ -259,8 +260,9 @@ body.modal-size-large .cl-modal-content.creator-saveas-diff-content { max-width:
  *   .settings-platform-badge      - Faded Desktop/Mobile marker on platform-specific rows
  *   .settings-row[data-platform]  - Platform visibility (settings-platform-visibility marker)
  *   .settings-status-badge        - Inline status pill in settings rows
- *   .settings-provider-badge      - Small uppercase provider chip
+ *   .settings-provider-badge      - Small uppercase provider chip (.deprecated variant)
  *   .provider-beta-badge          - Beta chip on provider rows
+ *   .provider-deprecated-badge    - Deprecated chip on provider rows (supersedes beta)
  *
  * TAGS
  *   .cl-tag                 - Pill-style tag (.cl-tag-success / -warning / -info / -danger variants)
@@ -388,6 +390,16 @@ body.modal-size-large .cl-modal-content.creator-saveas-diff-content { max-width:
 
 .custom-select-item .item-icon-img {
     margin-right: 8px;
+}
+
+/* The menu is width-locked to the trigger, which is measured from option text alone, so a long
+   status word has no room here. Clamp the chip; the settings rows still show it in full. */
+.custom-select-item .provider-beta-badge,
+.custom-select-item .provider-deprecated-badge {
+    max-width: 7ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .custom-select-item.selected {
@@ -1131,6 +1143,21 @@ body {
     border-radius: var(--radius-2xs);
     animation: cl-loader-bar 1.6s ease-in-out infinite;
 }
+
+/* @canonical cl-lazy-overlay */
+/* Viewport-covering loader for a lazy module's first open (showLazyOpenOverlay helper) */
+.cl-lazy-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 10004;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--cl-modal-scrim);
+    animation: fadeIn 0.15s ease;
+}
+
+.cl-lazy-overlay .cl-loading { min-height: 0; }
 
 /* Empty state message */
 .empty-state {
@@ -7993,6 +8020,97 @@ html.cl-mobile .char-duplicates-modal-content {
     font-weight: 600;
 }
 
+/* Structured content blocks (showConfirm `content`): uniform rhythm between blocks */
+.cl-confirm-overlay #clConfirmMessage > * + * { margin-top: var(--space-sm); }
+
+.cl-confirm-stats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-xs);
+}
+
+.cl-confirm-stat {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-xs);
+    padding: var(--space-2xs) var(--space-md);
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-4xl);
+    font-size: var(--font-sm);
+}
+
+.cl-confirm-stat i { color: var(--accent); font-size: var(--font-xs); }
+.cl-confirm-stat-label { color: var(--text-faint); }
+.cl-confirm-stat-value {
+    color: var(--text-primary);
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+}
+
+.cl-confirm-overlay .cl-confirm-list {
+    margin: 0;
+    padding-left: var(--space-lg);
+    color: var(--text-secondary);
+    font-size: var(--font-sm);
+}
+
+.cl-confirm-overlay .cl-confirm-list li { margin-bottom: var(--space-2xs); }
+
+.cl-confirm-kv {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2xs);
+    font-size: var(--font-sm);
+}
+
+.cl-confirm-kv-row {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-sm);
+}
+
+.cl-confirm-kv-key { color: var(--text-faint); white-space: nowrap; }
+.cl-confirm-kv-row > span:not(.cl-confirm-kv-key) { color: var(--text-primary); }
+
+.cl-confirm-overlay #clConfirmMessage code {
+    background: rgba(0, 0, 0, 0.3);
+    border-radius: var(--radius-xs);
+    padding: 0 var(--space-2xs);
+    font-size: var(--font-xs);
+    word-break: break-all;
+}
+
+.cl-confirm-note {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-sm);
+    padding: var(--space-sm) var(--space-md);
+    border-radius: var(--radius-md);
+    font-size: var(--font-sm);
+    line-height: 1.45;
+}
+
+.cl-confirm-note i { margin-top: 2px; }
+
+.cl-confirm-note-info {
+    background: rgba(var(--accent-rgb), 0.08);
+    border: 1px solid rgba(var(--accent-rgb), 0.25);
+}
+.cl-confirm-note-info i { color: var(--accent); }
+
+.cl-confirm-note-warning {
+    background: rgba(var(--cl-warning-rgb), 0.1);
+    border: 1px solid rgba(var(--cl-warning-rgb), 0.35);
+}
+.cl-confirm-note-warning i { color: var(--cl-warning-pale); }
+
+.cl-confirm-note-danger {
+    background: rgba(var(--cl-error-rgb), 0.1);
+    border: 1px solid rgba(var(--cl-error-rgb), 0.35);
+}
+.cl-confirm-note-danger i { color: var(--cl-error-pale); }
+
 @keyframes clConfirmFadeIn {
     from { opacity: 0; }
     to { opacity: 1; }
@@ -8710,37 +8828,6 @@ html:not(.cl-mobile) .settings-row[data-platform="mobile"] { display: none !impo
     margin-left: 6px;
 }
 
-.cl-helper-update-summary {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-sm);
-}
-
-.cl-helper-update-summary .cl-update-label {
-    font-weight: 600;
-    color: var(--text-primary);
-    margin-right: 6px;
-}
-
-.cl-helper-update-summary code {
-    background: rgba(255, 255, 255, 0.08);
-    padding: 1px 5px;
-    border-radius: var(--radius-xs);
-    font-size: var(--font-sm);
-    word-break: break-all;
-}
-
-.cl-helper-update-summary ul {
-    margin: 0;
-    padding-left: 20px;
-}
-
-.cl-helper-update-summary .cl-update-note {
-    color: var(--text-secondary);
-    margin-top: var(--space-sm);
-    margin-bottom: 0;
-}
-
 /* Grey out settings fields when plugin unavailable */
 .cl-helper-fields-disabled {
     opacity: 0.4;
@@ -8898,7 +8985,8 @@ html:not(.cl-mobile) .settings-row[data-platform="mobile"] { display: none !impo
 }
 
 /* @canonical provider-beta-badge */
-.provider-beta-badge {
+.provider-beta-badge,
+.provider-deprecated-badge {
     font-size: var(--font-3xs);
     font-weight: 700;
     text-transform: uppercase;
@@ -8909,6 +8997,12 @@ html:not(.cl-mobile) .settings-row[data-platform="mobile"] { display: none !impo
     color: var(--cl-warning-bright-darker);
     flex-shrink: 0;
     line-height: 1.4;
+}
+
+/* @canonical provider-deprecated-badge */
+.provider-deprecated-badge {
+    background: rgba(var(--cl-error-bright-darker-rgb), 0.2);
+    color: var(--cl-error-bright-darker);
 }
 
 /* @canonical provider-toggle-btn */
@@ -9306,6 +9400,10 @@ html:not(.cl-mobile) .settings-row[data-platform="mobile"] { display: none !impo
     color: var(--accent);
     margin-left: 6px;
     vertical-align: middle;
+}
+.settings-provider-badge.deprecated {
+    background: rgba(var(--cl-error-bright-darker-rgb), 0.18);
+    color: var(--cl-error-bright-darker);
 }
 
 /* Color picker input group */
