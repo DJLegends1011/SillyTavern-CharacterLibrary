@@ -401,6 +401,7 @@ async function initModuleSystem() {
     // ============================
 
     setupLazyBatchTagging();
+    setupLazyTagsManager();
     setupLazyBatchTransfer();
     loadModuleCSS('./chats.css');
     setupLazyChats();
@@ -419,11 +420,28 @@ async function initModuleSystem() {
 function setupLazyBatchTagging() {
     ModuleLoader._registerLazy('batch-tagging', async () => {
         const mod = await import('./batch-tagging.js');
-        loadModuleCSS('./batch-tagging.css');
+        // Awaited: the first open otherwise paints the modal unstyled until the link lands
+        await loadModuleCSS('./batch-tagging.css');
         ModuleLoader.register('batch-tagging', mod.default);
         await mod.default.init({});
         mod.default._mlInitDone = true;
         window.debugLog?.('[ModuleLoader] Lazy-loaded batch-tagging');
+    });
+}
+
+
+// ========================================
+// LAZY: TAGS MANAGER
+// ========================================
+
+function setupLazyTagsManager() {
+    ModuleLoader._registerLazy('tags-manager', async () => {
+        const mod = await import('./tags-manager.js');
+        await loadModuleCSS('./tags-manager.css');
+        ModuleLoader.register('tags-manager', mod.default);
+        await mod.default.init({});
+        mod.default._mlInitDone = true;
+        window.debugLog?.('[ModuleLoader] Lazy-loaded tags-manager');
     });
 }
 
@@ -435,7 +453,7 @@ function setupLazyBatchTagging() {
 function setupLazyBatchTransfer() {
     ModuleLoader._registerLazy('batch-transfer', async () => {
         const mod = await import('./batch-transfer.js');
-        loadModuleCSS('./batch-transfer.css');
+        await loadModuleCSS('./batch-transfer.css');
         ModuleLoader.register('batch-transfer', mod.default);
         await mod.default.init({});
         mod.default._mlInitDone = true;

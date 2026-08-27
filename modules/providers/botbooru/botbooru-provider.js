@@ -732,6 +732,7 @@ class BotbooruProvider extends ProviderBase {
             id: post.id || null,
             fullPath: String(post.id || ''),
             name: post.character_name || '',
+            listingName: post.meta_name || '',
             avatarUrl: post.filename ? getBotbooruPreviewUrl(post.filename, post.card_image_revision) : null,
             rating: 0,
             starCount: post.favorite_count || 0,

@@ -505,6 +505,18 @@ function compareCards(localData, remoteCard, allowedFields = null) {
     return diffs;
 }
 
+// Remote tags ride the user's alias ruleset before compare AND apply, else every aliased
+// import shows a phantom Tags diff and applying any update resurrects the raw tags.
+function aliasRemoteCardTags(remoteCard) {
+    if (!remoteCard) return remoteCard;
+    if (Array.isArray(remoteCard.data?.tags)) {
+        remoteCard.data.tags = CoreAPI.applyTagAliases(remoteCard.data.tags);
+    } else if (Array.isArray(remoteCard.tags)) {
+        remoteCard.tags = CoreAPI.applyTagAliases(remoteCard.tags);
+    }
+    return remoteCard;
+}
+
 const ORDER_INSENSITIVE_FIELDS = new Set(['tags']);
 
 function normalizeValue(value, field = '') {
@@ -592,7 +604,7 @@ async function performSingleCheck(char) {
         });
         
         statusEl.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Fetching remote card...';
-        const remoteCard = await provider.fetchRemoteCard(linkInfo);
+        const remoteCard = aliasRemoteCardTags(await provider.fetchRemoteCard(linkInfo));
         
         if (!remoteCard) {
             statusEl.innerHTML = '<i class="fa-solid fa-exclamation-triangle"></i> Could not fetch remote card data';
@@ -1409,7 +1421,7 @@ async function performBatchCheck(characters, allowedFields, startFrom = 0) {
             });
 
             if (abortController.signal.aborted || batchCheckPaused) break;
-            const remoteCard = await match.provider.fetchRemoteCard(match.linkInfo);
+            const remoteCard = aliasRemoteCardTags(await match.provider.fetchRemoteCard(match.linkInfo));
             
             if (!remoteCard) {
                 if (statusEl) statusEl.innerHTML = '<i class="fa-solid fa-ghost"></i> Removed / Private';

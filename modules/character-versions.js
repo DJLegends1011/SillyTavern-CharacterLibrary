@@ -397,7 +397,7 @@ export function init(deps) {
     // Lazy-load index in background (non-blocking)
     ensureIndexLoaded()
         .catch(e => console.error('[CharVersions] Init error:', e));
-    // confirm/input dialogs share one id (mutually exclusive via _dialogOpen); the registry close
+    // the input dialog owns this id (confirms ride the canonical showConfirm); the registry close
     // routes through _closeFn so Escape / Android back resolve the promise as cancel, not a bare remove.
     window.registerOverlay?.({ id: 'vtDialog', tier: 5, static: false, close: (el) => el?._closeFn ? el._closeFn() : el?.remove() });
     isInitialized = true;
@@ -846,7 +846,9 @@ async function selectVersion(shortId, fullId) {
             }
         }
         if (!card) { preview.innerHTML = '<div class="vt-error"><i class="fa-solid fa-exclamation-triangle"></i> Could not load version data</div>'; return; }
-        renderDiffPreview(preview, currentChar?.data || currentChar, card);
+        // Display copy only: the cached fetch stays raw so restore aliases exactly once.
+        const display = Array.isArray(card.tags) ? { ...card, tags: CoreAPI.applyTagAliases(card.tags) } : card;
+        renderDiffPreview(preview, currentChar?.data || currentChar, display);
         resolveVersionWorldFileStatus(preview, currentChar?.avatar).catch(() => {});
     } catch (e) {
         preview.innerHTML = '<div class="vt-error"><i class="fa-solid fa-xmark"></i> Error loading preview</div>';
@@ -880,7 +882,9 @@ async function selectProviderPageVersion() {
         const card = await currentProvider.fetchRemotePageCard(currentLinkInfo);
         if (gen !== _renderGen) return;
         if (!card) { preview.innerHTML = '<div class="vt-error"><i class="fa-solid fa-xmark"></i> Could not load page data</div>'; return; }
-        renderDiffPreview(preview, currentChar?.data || currentChar, card);
+        // Same display-copy aliasing as the version diff; banner reads stay on the raw card
+        const display = Array.isArray(card.tags) ? { ...card, tags: CoreAPI.applyTagAliases(card.tags) } : card;
+        renderDiffPreview(preview, currentChar?.data || currentChar, display);
 
         // Info banner about what this entry represents
         const pageInfo = currentProvider.getRemotePageInfo();
@@ -1308,9 +1312,19 @@ async function restoreVersion() {
         return;
     }
 
+    // Remote tags ride the ruleset here too; local snapshots stay byte-faithful.
+    if (activeTab === 'remote' && Array.isArray(cardData?.tags)) {
+        cardData.tags = CoreAPI.applyTagAliases(cardData.tags);
+    }
+
     const name = currentChar.data?.name || currentChar.name || 'Unknown';
-    const ok = await confirmDialog('Restore Version',
-        `Overwrite "${name}" with ${label}?\n\nCurrent state will be backed up.`);
+    const ok = await CoreAPI.showConfirm({
+        title: 'Restore Version',
+        message: `Overwrite "${name}" with ${label}?`,
+        confirmLabel: 'Restore',
+        danger: true,
+        content: [{ type: 'note', text: 'The current state is backed up first.' }],
+    });
     if (!ok) return;
 
     const status = el('.vt-status');
@@ -1397,8 +1411,13 @@ async function undoRestore() {
     if (!backup) { CoreAPI.showToast('No backup found', 'warning'); return; }
 
     const name = currentChar.data?.name || currentChar.name || 'Unknown';
-    const ok = await confirmDialog('Undo Restore',
-        `Revert "${name}" to pre-restore state?\n\nBackup from: ${new Date(backup.timestamp).toLocaleString()}`);
+    const ok = await CoreAPI.showConfirm({
+        title: 'Undo Restore',
+        message: `Revert "${name}" to its pre-restore state?`,
+        confirmLabel: 'Revert',
+        danger: true,
+        content: [{ type: 'stats', items: [{ icon: 'fa-solid fa-calendar', label: 'backup from', value: new Date(backup.timestamp).toLocaleString() }] }],
+    });
     if (!ok) return;
 
     const status = el('.vt-status');
@@ -1442,8 +1461,11 @@ async function handleApplyAvatar(avatarUrl) {
     if (!currentChar || !avatarUrl) return;
 
     const name = currentChar.data?.name || currentChar.name || 'Unknown';
-    const ok = await confirmDialog('Apply Avatar',
-        `Replace "${name}"'s avatar with this version's image?`);
+    const ok = await CoreAPI.showConfirm({
+        title: 'Apply Avatar',
+        message: `Replace "${name}"'s avatar with this version's image?`,
+        confirmLabel: 'Replace avatar',
+    });
     if (!ok) return;
 
     const status = el('.vt-status');
@@ -1509,7 +1531,13 @@ async function handleDeleteSnapshot() {
     const s = currentLocalSnapshots.find(s => s.id === selectedSnapshotId);
     if (!s) return;
 
-    const ok = await confirmDialog('Delete Snapshot', `Delete "${s.label}"?\n\nThis cannot be undone.`);
+    const ok = await CoreAPI.showConfirm({
+        title: 'Delete Snapshot',
+        message: `Delete "${s.label}"?`,
+        confirmLabel: 'Delete',
+        danger: true,
+        content: [{ type: 'note', tone: 'danger', text: 'This cannot be undone.' }],
+    });
     if (!ok) return;
 
     try {
@@ -1992,34 +2020,8 @@ function lcs(oldL, newL) {
 // ========================================
 // DIALOGS
 // ========================================
-
-function confirmDialog(title, msg) {
-    return new Promise(resolve => {
-        _dialogOpen = true;
-        const ov = document.createElement('div');
-        ov.className = 'vt-dialog-overlay';
-        ov.id = 'vtDialog';
-        ov.innerHTML = `
-            <div class="vt-dialog">
-                <div class="vt-dialog-title">${esc(title)}</div>
-                <div class="vt-dialog-msg">${esc(msg).replace(/\n/g, '<br>')}</div>
-                <div class="vt-dialog-btns">
-                    <button class="vt-dialog-btn" data-a="cancel">Cancel</button>
-                    <button class="vt-dialog-btn primary" data-a="ok">Confirm</button>
-                </div>
-            </div>`;
-        const close = (val) => {
-            if (!ov.parentNode) return; // already removed
-            ov.remove();
-            requestAnimationFrame(() => { _dialogOpen = false; resolve(val); });
-        };
-        ov._closeFn = () => close(false); // registry (Escape / Android back) resolves as cancel
-        ov.addEventListener('click', e => { e.stopPropagation(); if (e.target === ov) close(false); });
-        ov.querySelector('[data-a="cancel"]').addEventListener('click', (e) => { e.stopPropagation(); close(false); });
-        ov.querySelector('[data-a="ok"]').addEventListener('click', (e) => { e.stopPropagation(); close(true); });
-        document.body.appendChild(ov);
-    });
-}
+// Confirms ride the canonical CoreAPI.showConfirm; only the input dialog keeps the
+// bespoke vt-dialog chrome (the canonical has no text-input support)
 
 function inputDialog(title, msg, defaultVal = '') {
     return new Promise(resolve => {
