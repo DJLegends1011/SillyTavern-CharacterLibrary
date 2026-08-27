@@ -513,7 +513,7 @@ test('Janitor preview mirrors the Chub and Botbooru favorite stat treatment', as
     assert.match(css, /\.janitorai-fav-btn-inline i\s*\{[^}]*color:\s*#ff6b6b;/s);
     assert.match(css, /#janitoraiCharFavoriteCount\s*\{[^}]*color:\s*var\(--text-primary\);/s);
     assert.match(loader, /const MODULE_CSS_VERSION = 82;/);
-    assert.match(libraryHtml, /module-loader\.js\?v=49/);
+    assert.match(libraryHtml, /module-loader\.js\?v=50/);
 });
 
 test('an account change invalidates and re-resolves an open favorite preview', async () => {
