@@ -312,6 +312,17 @@ export function parseCharacterUrl(url) {
 export { slugify, stripHtml, formatNumber } from '../provider-utils.js';
 
 /**
+ * The clean character name. CT's `name` is the listing title ("Shy Cousin") while `inChatName`
+ * carries the plain name ("Elara"), the same split Wyvern and JanitorAI have. Nullable, and real
+ * data carries trailing spaces, so trim. Both search hits and the detail card have both fields.
+ * @param {Object} apiData - CT card object (detail card or search hit)
+ * @returns {string}
+ */
+export function getCtCharName(apiData) {
+    return (apiData?.inChatName || '').trim() || apiData?.name || 'Unknown';
+}
+
+/**
  * Normalize tags into an array of strings.
  * CT API returns tags as an array; handles legacy space-separated strings too.
  */

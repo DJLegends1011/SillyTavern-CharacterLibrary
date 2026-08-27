@@ -205,7 +205,7 @@ export function hapticFeedback(pattern) {
  * @param {Object} opts
  * @param {string} [opts.title]
  * @param {string} [opts.message] - Plain text message (escaped)
- * @param {string} [opts.messageHtml] - HTML message (overrides `message`)
+ * @param {Array<Object>} [opts.content] - Typed content blocks ({type:'text'|'stats'|'list'|'kv'|'note'}), rendered and escaped by the component
  * @param {string} [opts.icon] - FontAwesome class string for the title icon
  * @param {string} [opts.iconColor] - CSS color for the title icon
  * @param {string} [opts.confirmLabel]
@@ -520,6 +520,76 @@ export function getCharacterTags(char) {
  */
 export function getAllTags() {
     return window.getAllAvailableTags?.() || [];
+}
+
+/**
+ * Run a tag array through the user's alias ruleset
+ * @param {Array<string>} tags
+ * @returns {Array<string>} Aliased tags (input returned untouched when no rules active)
+ */
+export function applyTagAliases(...args) {
+    return window.applyTagAliases?.(...args) || args[0] || [];
+}
+
+/**
+ * Strip emoji/decoration from one tag (the Import Rules toggle's normalizer)
+ * @param {string} tag
+ * @returns {string}
+ */
+export function stripTagDecoration(...args) {
+    return window.stripTagDecoration?.(...args) ?? args[0] ?? '';
+}
+
+/**
+ * Trim + drop empties + case-insensitive dedupe (the alias engine's cleanup tail)
+ * @param {Array<string>} tags
+ * @returns {Array<string>}
+ */
+export function normalizeTagArray(...args) {
+    return window.normalizeTagArray?.(...args) || args[0] || [];
+}
+
+/**
+ * Compile the alias ruleset (exact Map + ordered regex rules + per-rule errors)
+ * @param {Array<{match: string, replace: string}>} rules
+ * @returns {Object}
+ */
+export function compileTagAliasRules(...args) {
+    return window.compileTagAliasRules?.(...args) || { list: [], exactIdx: new Map(), regexRules: [], hasUsable: false };
+}
+
+/**
+ * First matching compiled rule for one trimmed tag, in rule order, or null
+ * @param {Object} compiled
+ * @param {string} tag
+ * @returns {Object|null}
+ */
+export function matchTagAliasRule(...args) {
+    return window.matchTagAliasRule?.(...args) ?? null;
+}
+
+/**
+ * Filter the library grid to one included tag
+ * @param {string} tag
+ */
+export function filterLibraryByTag(...args) {
+    return window.filterLibraryByTag?.(...args);
+}
+
+/**
+ * Remap (rename/merge) or drop (delete) an active grid tag filter after a bulk tag rewrite
+ * @param {string} oldTag
+ * @param {string|null} newTag
+ */
+export function renameActiveTagFilter(...args) {
+    return window.renameActiveTagFilter?.(...args);
+}
+
+/**
+ * Re-run every active grid tag filter through the alias ruleset (after Apply to Library)
+ */
+export function reconcileTagFiltersWithAliases(...args) {
+    return window.reconcileTagFiltersWithAliases?.(...args);
 }
 
 // ========================================
@@ -1492,6 +1562,14 @@ export default {
     isMobileMode,
     getCharacterTags,
     getAllTags,
+    applyTagAliases,
+    stripTagDecoration,
+    normalizeTagArray,
+    compileTagAliasRules,
+    matchTagAliasRule,
+    filterLibraryByTag,
+    renameActiveTagFilter,
+    reconcileTagFiltersWithAliases,
     findCardElement,
     
     // DOM helpers

@@ -167,7 +167,14 @@
             if (len === 0) return new OrigDate();
             if (len === 1) {
                 if (typeof a === 'string') {
-                    // Try manual parse first, then fixDateString
+                    // Date-only stays LOCAL midnight; the spec parses it as UTC and shifts every day boundary.
+                    if (/^\s*\d{4}-\d{2}-\d{2}\s*$/.test(a)) {
+                        var dp = manualParse(a);
+                        if (dp) return dp;
+                    }
+                    // Native first: it keeps the time component the manual date-only parser would truncate.
+                    var nd = new OrigDate(a);
+                    if (!isNaN(nd.getTime())) return nd;
                     var mp = manualParse(a);
                     if (mp) return mp;
                     return new OrigDate(fixDateString(a));
@@ -185,6 +192,13 @@
         SmartDate.now = OrigDate.now;
         SmartDate.parse = function (s) {
             if (typeof s === 'string') {
+                // Same order as the constructor: date-only stays local, then native-first
+                if (/^\s*\d{4}-\d{2}-\d{2}\s*$/.test(s)) {
+                    var dp = manualParse(s);
+                    if (dp) return dp.getTime();
+                }
+                var nt = OrigDate.parse(s);
+                if (!isNaN(nt)) return nt;
                 var mp = manualParse(s);
                 if (mp) return mp.getTime();
                 return OrigDate.parse(fixDateString(s));
@@ -2209,6 +2223,10 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
             label.className = 'mobile-sheet-item-label';
             label.textContent = opt.textContent;
             item.appendChild(label);
+            // Provider status rides the option's dataset; share the desktop rows' markup so the
+            // badge is only ever defined in one place.
+            const badge = window.providerStatusBadgeHtml?.(opt.dataset);
+            if (badge) item.insertAdjacentHTML('beforeend', badge);
             if (selected) {
                 const chk = document.createElement('i');
                 chk.className = 'fa-solid fa-check mobile-sheet-check';
@@ -2328,7 +2346,8 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
                 item.className = 'mobile-sheet-item';
                 if (p.id === activeId) item.style.color = 'var(--accent)';
                 const check = p.id === activeId ? ' <i class="fa-solid fa-check" style="margin-left:auto;font-size:0.8rem;"></i>' : '';
-                item.innerHTML = '<i class="' + p.icon + '"></i> ' + p.name + check;
+                const badge = window.providerStatusBadgeHtml?.(p) || '';
+                item.innerHTML = '<i class="' + p.icon + '"></i> ' + p.name + badge + check;
                 item.addEventListener('click', () => {
                     if (p.id !== activeId) {
                         const select = document.getElementById('providerSelect');
@@ -2478,6 +2497,9 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
 
                 const name = document.createTextNode(' ' + p.name);
                 item.appendChild(name);
+
+                const badge = window.providerStatusBadgeHtml?.(p);
+                if (badge) item.insertAdjacentHTML('beforeend', badge);
 
                 if (p.id === activeId) {
                     const check = document.createElement('i');

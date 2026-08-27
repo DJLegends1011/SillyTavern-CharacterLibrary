@@ -19,6 +19,7 @@ import {
     slugify,
     stripHtml,
     parseTags,
+    getCtCharName,
     checkCtSession,
     isCtSessionActive,
     ctSetCookie,
@@ -49,7 +50,7 @@ function buildV2FromDetail(card, authorName, altGreetings) {
         spec: 'chara_card_v2',
         spec_version: '2.0',
         data: {
-            name: card.name || 'Unnamed',
+            name: getCtCharName(card),
             description: card.definition_character_description || '',
             personality: card.definition_personality || '',
             scenario: card.definition_scenario || '',
@@ -83,7 +84,7 @@ function buildV2FromSearchHit(hit) {
         spec: 'chara_card_v2',
         spec_version: '2.0',
         data: {
-            name: hit.name || 'Unnamed',
+            name: getCtCharName(hit),
             description: hit.characterDefinition || '',
             personality: hit.characterPersonality || '',
             scenario: hit.characterScenario || '',
@@ -286,7 +287,9 @@ class ChartavernProvider extends ProviderBase {
             if (results.length === 0) return null;
 
             const normalizedName = name.toLowerCase().trim();
-            const nameMatches = results.filter(r => (r.name || '').toLowerCase().trim() === normalizedName);
+            // Both name forms: local cards imported before the inChatName remap carry the listing title
+            const nameMatches = results.filter(r =>
+                [r.name, r.listingName].some(n => (n || '').toLowerCase().trim() === normalizedName));
             if (nameMatches.length === 0) return null;
 
             // CT fullPath is `creator/slug`. Require exact creator-segment match
@@ -315,12 +318,13 @@ class ChartavernProvider extends ProviderBase {
                 path: match.fullPath,
                 linkedAt: new Date().toISOString(),
                 tagline: detailData?.tagline || match.tagline || '',
-                pageName: this.getListingName(detailData || match),
+                pageName: detailData ? this.getListingName(detailData) : (match.listingName || null),
             };
 
-            // Enrich tags if missing
+            // Enrich tags if missing; these are PROVIDER-sourced, so they ride the Import
+            // Rules ruleset like every provider path (the local file's own tags never do)
             if (!cardData.data.tags?.length && detailData?.tags) {
-                cardData.data.tags = parseTags(detailData.tags);
+                cardData.data.tags = CoreAPI.applyTagAliases(parseTags(detailData.tags));
             }
 
             return {
@@ -404,14 +408,17 @@ class ChartavernProvider extends ProviderBase {
                 const cardData = api?.extractCharacterDataFromPng?.(buffer);
                 if (cardData?.data) {
                     // Enrich with detail-API-only fields (tagline, system_prompt, etc.)
+                    let detail = null;
                     try {
-                        const detail = await fetchCharacterDetail(parts[0], parts[1], api?.apiRequest);
+                        detail = await fetchCharacterDetail(parts[0], parts[1], api?.apiRequest);
                         if (detail?.card) {
                             if (!cardData.data.system_prompt && detail.card.definition_system_prompt)
                                 cardData.data.system_prompt = detail.card.definition_system_prompt;
                             if (!cardData.data.extensions) cardData.data.extensions = {};
                             if (!cardData.data.extensions.chartavern) cardData.data.extensions.chartavern = {};
                             cardData.data.extensions.chartavern.tagline = detail.card.tagline || '';
+                            // The PNG embeds the listing title as its name; only the API knows the real one
+                            cardData.data.name = getCtCharName(detail.card);
                         }
                     } catch (_) { /* detail enrichment is best-effort */ }
                     cardData._listingName = this.getListingName(detail?.card);
@@ -555,7 +562,7 @@ class ChartavernProvider extends ProviderBase {
                 console.warn('[ChartavernProvider] Detail fetch failed, falling back to hit data:', e.message);
             }
 
-            const characterName = cardData?.name || hitData?.name || slug;
+            const characterName = (cardData || hitData) ? getCtCharName(cardData || hitData) : slug;
 
             // Build the V2 card from the best available data
             const altGreetings = Array.isArray(hitData?.alternativeFirstMessage) ? hitData.alternativeFirstMessage : [];
@@ -648,7 +655,10 @@ class ChartavernProvider extends ProviderBase {
         return {
             id: hit.id || null,
             fullPath: hit.path || '',
-            name: hit.name || 'Unnamed',
+            // Clean name, not the listing title: the shared bulk-link scoring compares it
+            // against char.name, which imports now fill from inChatName.
+            name: getCtCharName(hit),
+            listingName: (hit.name || '').trim(),
             avatarUrl: hit.path ? getAvatarUrl(hit.path) : '',
             rating: 0,
             starCount: hit.likes || 0,

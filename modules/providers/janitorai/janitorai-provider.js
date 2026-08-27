@@ -19,6 +19,7 @@ import {
     hasBrowserEndpoint,
     extractViaBrowser,
     recoverViaBrowser,
+    recoverPhaseLabel,
     testBrowserEndpoint,
     browserLogin,
     browserLogout,
@@ -368,8 +369,11 @@ class JanitoraiProvider extends ProviderBase {
                 try {
                     if (isLockedNoProxy(detail)) {
                         // Proxy forbidden, so the capture cant work: ask the model instead (slow,
-                        // and MODEL OUTPUT).
-                        recovered = await recoverViaBrowser(charId, undefined, options?.onProgress);
+                        // and MODEL OUTPUT). Callers get user-ready labels, not raw phases.
+                        const progress = options?.onProgress;
+                        recovered = await recoverViaBrowser(charId, undefined,
+                            // Additive: the batch log reads the label, the preview uses the phase.
+                            progress ? (phase, detail) => progress(recoverPhaseLabel(phase), { phase, detail }) : undefined);
                     } else {
                         const rec = await extractViaBrowser(charId);
                         if (rec?.definition) definition = rec.definition;

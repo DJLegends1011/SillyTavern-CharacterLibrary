@@ -18,12 +18,22 @@
  *   BROWSER=<path>     explicit browser binary
  */
 
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import net from 'node:net';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
+
+// proc.kill() on Windows terminates ONE pid, not the tree; a surviving GPU/renderer child
+// keeps its (hidden) headless window alive as an unkillable Alt+Tab ghost
+function treeKill(proc) {
+    if (!proc || proc.exitCode !== null || proc.signalCode !== null) return;
+    try {
+        if (process.platform === 'win32' && proc.pid) spawnSync('taskkill', ['/pid', String(proc.pid), '/T', '/F'], { stdio: 'ignore' });
+        else proc.kill('SIGKILL');
+    } catch {}
+}
 
 // Otherwise the first symptom is a bare "WebSocket is not defined" from deep in the CDP client.
 if (Number(process.versions.node.split('.')[0]) < 22) {
@@ -124,7 +134,7 @@ async function probeUserAgent() {
             } catch { /* not up yet */ }
         }
     } finally {
-        try { proc.kill(); } catch {}
+        treeKill(proc);
         await new Promise(r => setTimeout(r, 500));
         try { fs.rmSync(probeProfile, { recursive: true, force: true }); } catch {}
     }
@@ -230,9 +240,11 @@ child.on('exit', (code) => { console.error(`\nbrowser exited (${code})`); proces
 child.once('error', (e) => { console.error(`could not launch ${BROWSER}: ${e.message}`); process.exit(1); });
 
 const relay = startRelay();
-const shutdown = () => { try { child.kill(); } catch {} try { relay.close(); } catch {} process.exit(0); };
+const shutdown = () => { treeKill(child); try { relay.close(); } catch {} process.exit(0); };
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
+// Closing the console window delivers SIGHUP on Windows; without it the browser outlives us
+process.on('SIGHUP', shutdown);
 
 // ---------------------------------------------------------------- confirm + report
 await new Promise(r => setTimeout(r, 3000));
@@ -243,7 +255,7 @@ for (let i = 0; i < 15 && !info; i++) {
 }
 if (!info) {
     console.error('browser did not come up on the debugging port');
-    try { child.kill(); } catch {}
+    treeKill(child);
     try { relay.close(); } catch {}
     process.exit(1);
 }

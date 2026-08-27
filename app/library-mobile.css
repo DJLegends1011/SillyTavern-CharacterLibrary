@@ -2834,7 +2834,8 @@ html.cl-mobile .provider-order-item .provider-order-name {
     text-overflow: ellipsis;
     white-space: nowrap;
 }
-html.cl-mobile .provider-order-item .provider-beta-badge {
+html.cl-mobile .provider-order-item .provider-beta-badge,
+html.cl-mobile .provider-order-item .provider-deprecated-badge {
     grid-area: beta;
     justify-self: start;
 }

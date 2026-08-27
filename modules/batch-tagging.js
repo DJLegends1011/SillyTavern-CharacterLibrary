@@ -8,6 +8,10 @@ const debugLog = (...args) => {
 
 let isInitialized = false;
 let currentTagAnalysis = null;
+// Explicit target list from the Tags Manager route; null = multi-select selection
+let explicitChars = null;
+let applyInProgress = false;
+let applyAborted = false;
 
 export function init(deps) {
     if (isInitialized) {
@@ -24,13 +28,14 @@ export function init(deps) {
     debugLog('[BatchTagging] Module initialized');
 }
 
-export function openModal() {
+export function openModal(chars) {
     if (!isInitialized) {
         console.error('[BatchTagging] Module not initialized');
         return;
     }
-    
-    const selected = CoreAPI.getSelectedCharacters();
+
+    explicitChars = (Array.isArray(chars) && chars.length > 0) ? chars : null;
+    const selected = explicitChars || CoreAPI.getSelectedCharacters();
     if (!selected || selected.length === 0) {
         CoreAPI.showToast('No characters selected', 'warning');
         return;
@@ -215,6 +220,9 @@ function getTagsToRemove() {
 }
 
 async function applyBatchTags() {
+    // A close-abort leaves the loop draining its in-flight write; re-entering would reset
+    // applyAborted and un-abort that zombie into a concurrent run
+    if (applyInProgress) return;
     const tagsToAdd = getTagsToAdd();
     const tagsToRemove = getTagsToRemove();
     
@@ -223,7 +231,8 @@ async function applyBatchTags() {
         return;
     }
     
-    const selected = CoreAPI.getSelectedCharacters();
+    const isExplicit = !!explicitChars;
+    const selected = explicitChars || CoreAPI.getSelectedCharacters();
     if (!selected || selected.length === 0) {
         CoreAPI.showToast('No characters selected', 'error');
         return;
@@ -232,18 +241,25 @@ async function applyBatchTags() {
     const applyBtn = document.getElementById('batchTagApplyBtn');
     const originalHtml = applyBtn.innerHTML;
     applyBtn.disabled = true;
-    applyBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Applying...';
-    
+    applyInProgress = true;
+    applyAborted = false;
+
     let successCount = 0;
     let errorCount = 0;
-    
-    for (const char of selected) {
+
+    for (let i = 0; i < selected.length; i++) {
+        // Closing the modal (X, Escape) mid-run stops after the in-flight character; the
+        // Tags Manager picker can feed library-scale lists, so a silent unstoppable loop isnt ok
+        if (applyAborted) break;
+        const char = selected[i];
+        applyBtn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Applying ${i + 1}/${selected.length}...`;
         try {
-            let currentTags = getCharacterTags(char);
-            
+            const before = getCharacterTags(char);
+            let currentTags = before;
+
             const tagsToRemoveLower = tagsToRemove.map(t => t.toLowerCase());
             currentTags = currentTags.filter(t => !tagsToRemoveLower.includes(t.toLowerCase()));
-            
+
             const currentTagsLower = currentTags.map(t => t.toLowerCase());
             for (const tag of tagsToAdd) {
                 if (!currentTagsLower.includes(tag.toLowerCase())) {
@@ -251,11 +267,15 @@ async function applyBatchTags() {
                     currentTagsLower.push(tag.toLowerCase());
                 }
             }
-            
-            // Route through applyCardFieldUpdates: hydrate + preflight + merge + in-memory sync (handles char.tags root mirror + char.data.tags + allCharacters entry).
+
+            // No-op chars skip the round trip entirely
+            if (JSON.stringify(currentTags) === JSON.stringify(before)) continue;
+
+            // Surgical: the payload carries only the tags, no hydrate needed (complete new
+            // array passed), and nothing else on the card can be touched by the write.
             const success = await CoreAPI.applyCardFieldUpdates(char.avatar, {
                 tags: currentTags,
-            });
+            }, { surgical: true });
             if (success) {
                 successCount++;
             } else {
@@ -267,22 +287,29 @@ async function applyBatchTags() {
             errorCount++;
         }
     }
-    
+
+    applyInProgress = false;
     applyBtn.disabled = false;
     applyBtn.innerHTML = originalHtml;
-    
-    if (errorCount === 0) {
+
+    if (applyAborted) {
+        CoreAPI.showToast(`Batch tagging stopped (${successCount} updated before stop)`, 'warning');
+    } else if (errorCount === 0) {
         CoreAPI.showToast(`Updated tags for ${successCount} character(s)`, 'success');
     } else {
         CoreAPI.showToast(`Updated ${successCount}, failed ${errorCount}`, 'warning');
     }
-    
+
     closeModal();
-    await CoreAPI.refreshCharacters();
-    CoreAPI.clearSelection();
+    // Force: unforced reads the host window's array, which never saw these writes
+    await CoreAPI.refreshCharacters(true);
+    // An aborted run keeps the selection so the user can re-run on the same set
+    if (!isExplicit && !applyAborted) CoreAPI.clearSelection();
 }
 
 function closeModal() {
+    if (applyInProgress) applyAborted = true;
+    explicitChars = null;
     document.getElementById('batchTagModal')?.classList.remove('visible');
 }
 
@@ -291,7 +318,8 @@ function setupEventListeners() {
     document.getElementById('batchTagCancelBtn')?.addEventListener('click', closeModal);
     document.getElementById('batchTagApplyBtn')?.addEventListener('click', applyBatchTags);
     document.getElementById('batchTagModal')?.addEventListener('click', (e) => {
-        if (e.target.id === 'batchTagModal') {
+        // Stray backdrop taps dont abort a running batch; X and Escape are the deliberate stops
+        if (e.target.id === 'batchTagModal' && !applyInProgress) {
             closeModal();
         }
     });

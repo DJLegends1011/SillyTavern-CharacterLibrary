@@ -463,6 +463,7 @@ class WyvernProvider extends ProviderBase {
             // Clean name, not the listing title: the shared bulk-link scoring compares it
             // against char.name, which imports now fill from chat_name.
             name: getWyvernCharName(char),
+            listingName: (char.name || '').trim(),
             avatarUrl: getAvatarUrl(char),
             rating: 0,
             starCount: char.likes || 0,

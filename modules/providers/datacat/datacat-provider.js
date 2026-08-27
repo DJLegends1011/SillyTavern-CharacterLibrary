@@ -50,9 +50,10 @@ class DatacatProvider extends ProviderBase {
     get name() { return 'DataCat'; }
     get icon() { return 'fa-solid fa-cat'; }
     get iconUrl() { return 'https://datacat.run/catgif.gif'; }
-    get beta() { return true; }
+    // Deprecated supersedes beta: the row shows one status badge, and the enable gate shows the
+    // deprecation notice instead of the old "experimental, expect rough edges" warning.
+    get deprecated() { return true; }
     get disabledByDefault() { return true; }
-    get enableWarning() { return 'DataCat is an experimental source. Its API is barebones and some features (creator listings, search) may return incomplete or unavailable results. Expect rough edges.'; }
     get minClHelperVersion() { return '1.0.0'; }
     get browseView() { return datacatBrowseView; }
 
