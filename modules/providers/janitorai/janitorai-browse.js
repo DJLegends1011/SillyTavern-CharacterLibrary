@@ -877,43 +877,48 @@ function applyConfirmedJanitoraiFavorite(hit, state) {
     }
 }
 
+export async function refreshJanitoraiFavoritePreview({
+    hit,
+    cachedFavorited,
+    readState,
+    isCurrent,
+    paint,
+    apply,
+}) {
+    const id = hit?.character_id || hit?.id;
+    if (!id || !isCurrent()) return;
+
+    const favorited = typeof hit._isFavorited === 'boolean'
+        ? hit._isFavorited
+        : (typeof cachedFavorited === 'boolean' ? cachedFavorited : null);
+    const count = currentFavoriteCount(hit);
+    if (typeof favorited === 'boolean') {
+        paint({ favorited, count, loading: true });
+    }
+
+    try {
+        const state = await readState(id);
+        if (!state || !isCurrent()) return;
+        apply(hit, state);
+    } catch {
+        if (!isCurrent()) return;
+        paint({ favorited, count, loading: false });
+    }
+}
+
 async function resolveJanitoraiFavoriteState(hit, token, identity) {
     const id = hit?.character_id || hit?.id;
     if (!id) return;
 
-    const paintIfCurrent = state => {
-        if (!isJanitoraiFavoriteSelectionCurrent(id, token, identity)) return false;
-        paintJanitoraiFavoriteButton({
-            favorited: state.favorited,
-            count: janitoraiFavoriteDisplayCount(hit, state.count),
-            loading: false,
-        });
-        return true;
-    };
-    if (typeof hit._isFavorited === 'boolean') {
-        paintIfCurrent({ favorited: hit._isFavorited, count: currentFavoriteCount(hit) });
-        return;
-    }
-
     const cached = jaFavoriteCache.get(id);
-    if (typeof cached === 'boolean') {
-        paintIfCurrent({ favorited: cached, count: currentFavoriteCount(hit) });
-        return;
-    }
-
-    try {
-        const state = await fetchJanitoraiFavoriteState(id);
-        if (!state || !isJanitoraiFavoriteSelectionCurrent(id, token, identity)) return;
-        applyConfirmedJanitoraiFavorite(hit, state);
-    } catch {
-        if (isJanitoraiFavoriteSelectionCurrent(id, token, identity)) {
-            paintJanitoraiFavoriteButton({
-                favorited: null,
-                count: janitoraiFavoriteDisplayCount(hit),
-                loading: false,
-            });
-        }
-    }
+    await refreshJanitoraiFavoritePreview({
+        hit,
+        cachedFavorited: cached,
+        readState: fetchJanitoraiFavoriteState,
+        isCurrent: () => isJanitoraiFavoriteSelectionCurrent(id, token, identity),
+        paint: paintJanitoraiFavoriteButton,
+        apply: applyConfirmedJanitoraiFavorite,
+    });
 }
 
 async function toggleJanitoraiFavorite() {

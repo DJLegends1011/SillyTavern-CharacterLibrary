@@ -497,6 +497,54 @@ test('Janitor preview keeps an unknown favorite count distinct from authoritativ
     assert.equal(currentFavoriteCount({ favorite_count: 0 }), 0);
 });
 
+test('cached Janitor favorite membership still refreshes the authoritative count', async () => {
+    const { refreshJanitoraiFavoritePreview } = await import('../modules/providers/janitorai/janitorai-browse.js');
+    assert.equal(typeof refreshJanitoraiFavoritePreview, 'function');
+
+    const paints = [];
+    const applied = [];
+    const reads = [];
+    const countResponse = deferred();
+    const hit = { character_id: 'character-a', _isFavorited: true };
+    const refresh = refreshJanitoraiFavoritePreview({
+        hit,
+        cachedFavorited: undefined,
+        readState: id => {
+            reads.push(id);
+            return countResponse.promise;
+        },
+        isCurrent: () => true,
+        paint: state => paints.push(state),
+        apply: (candidate, state) => applied.push({ candidate, state }),
+    });
+
+    assert.deepEqual(reads, ['character-a']);
+    assert.deepEqual(paints, [{ favorited: true, count: null, loading: true }]);
+    countResponse.resolve({ favorited: true, count: 660 });
+    await refresh;
+    assert.deepEqual(applied, [{ candidate: hit, state: { favorited: true, count: 660 } }]);
+});
+
+test('failed Janitor count refresh preserves cached favorite membership', async () => {
+    const { refreshJanitoraiFavoritePreview } = await import('../modules/providers/janitorai/janitorai-browse.js');
+    assert.equal(typeof refreshJanitoraiFavoritePreview, 'function');
+
+    const paints = [];
+    await refreshJanitoraiFavoritePreview({
+        hit: { character_id: 'character-a' },
+        cachedFavorited: true,
+        readState: async () => { throw new Error('count unavailable'); },
+        isCurrent: () => true,
+        paint: state => paints.push(state),
+        apply: () => assert.fail('a failed refresh must not apply confirmed state'),
+    });
+
+    assert.deepEqual(paints, [
+        { favorited: true, count: null, loading: true },
+        { favorited: true, count: null, loading: false },
+    ]);
+});
+
 test('Janitor preview mirrors the Chub and Botbooru favorite stat treatment', async () => {
     const { janitoraiFavoriteDisplayCount } = await import('../modules/providers/janitorai/janitorai-browse.js');
     const browse = await readFile(new URL('../modules/providers/janitorai/janitorai-browse.js', import.meta.url), 'utf8');
