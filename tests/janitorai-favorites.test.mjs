@@ -557,11 +557,17 @@ test('Janitor preview mirrors the Chub and Botbooru favorite stat treatment', as
     assert.equal(janitoraiFavoriteDisplayCount({}, null), null);
     assert.equal(janitoraiFavoriteDisplayCount({ favorite_count: 12 }, 0), 0);
     assert.match(browse, /janitoraiCharCreator[^>]*>Creator<\/a>\s*•\s*<span id="janitoraiCharFavoriteBtn"/);
-    assert.match(browse, /id="janitoraiCharFavoriteCount" hidden><\/span>/);
+    assert.match(browse, /janitoraiCharFavoriteBtn[^>]*><i class="fa-regular fa-heart"><\/i> <span id="janitoraiCharFavoriteCount" hidden><\/span><\/span>/);
     assert.match(css, /\.janitorai-fav-btn-inline i\s*\{[^}]*color:\s*#ff6b6b;/s);
     assert.match(css, /#janitoraiCharFavoriteCount\s*\{[^}]*color:\s*var\(--text-primary\);/s);
-    assert.match(loader, /const MODULE_CSS_VERSION = 82;/);
-    assert.match(libraryHtml, /module-loader\.js\?v=50/);
+    const baseRule = css.match(/\.janitorai-fav-btn-inline\s*\{([^}]*)\}/s)?.[1] || '';
+    assert.match(baseRule, /padding:\s*2px 8px;/);
+    assert.match(baseRule, /background:\s*transparent;/);
+    assert.doesNotMatch(baseRule, /display:\s*inline-flex|align-items:|\bgap:|\bflex:/);
+    assert.match(css, /\.janitorai-fav-btn-inline:hover\s*\{[^}]*background:\s*rgba\(255, 100, 100, 0\.15\);/s);
+    assert.match(css, /\.janitorai-fav-btn-inline\.favorited\s*\{[^}]*background:\s*rgba\(255, 100, 100, 0\.1\);/s);
+    assert.match(loader, /const MODULE_CSS_VERSION = 83;/);
+    assert.match(libraryHtml, /module-loader\.js\?v=51/);
 });
 
 test('an account change invalidates and re-resolves an open favorite preview', async () => {

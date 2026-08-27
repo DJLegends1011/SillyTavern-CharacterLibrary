@@ -7,19 +7,15 @@
 /* Keep the header heart compact enough to sit beside long creator names. Mobile hides the
  * header metadata entirely and exposes this same control through its pancake action menu. */
 .janitorai-fav-btn-inline {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    flex: 0 0 auto;
     cursor: pointer;
     padding: 2px 8px;
     border-radius: var(--radius-sm);
     transition: all 0.2s ease;
+    background: transparent;
 }
 
-.janitorai-fav-btn-inline:hover,
-.janitorai-fav-btn-inline.favorited {
-    background: rgba(255, 100, 100, 0.12);
+.janitorai-fav-btn-inline:hover {
+    background: rgba(255, 100, 100, 0.15);
 }
 
 .janitorai-fav-btn-inline i {
@@ -29,6 +25,7 @@
 
 .janitorai-fav-btn-inline:hover i { transform: scale(1.15); }
 .janitorai-fav-btn-inline.favorited i { font-weight: 900; }
+.janitorai-fav-btn-inline.favorited { background: rgba(255, 100, 100, 0.1); }
 .janitorai-fav-btn-inline.loading { pointer-events: none; opacity: 0.6; }
 .janitorai-fav-btn-inline.unresolved:not(.loading) { opacity: 0.75; }
 #janitoraiCharFavoriteCount { color: var(--text-primary); }

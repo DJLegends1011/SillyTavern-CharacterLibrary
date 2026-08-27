@@ -2659,10 +2659,7 @@ class JanitoraiBrowseView extends BrowseView {
                         <h2 id="janitoraiCharName">Character Name</h2>
                         <p class="browse-char-meta">
                             by <a id="janitoraiCharCreator" href="#" class="creator-link browse-meta-identity" title="Click to see all characters by this creator">Creator</a> •
-                            <span id="janitoraiCharFavoriteBtn" class="janitorai-fav-btn-inline browse-fav-toggle" title="Add to favorites on JanitorAI">
-                                <i class="fa-regular fa-heart"></i>
-                                <span id="janitoraiCharFavoriteCount" hidden></span>
-                            </span>
+                            <span id="janitoraiCharFavoriteBtn" class="janitorai-fav-btn-inline browse-fav-toggle" title="Add to favorites on JanitorAI"><i class="fa-regular fa-heart"></i> <span id="janitoraiCharFavoriteCount" hidden></span></span>
                         </p>
                     </div>
                 </div>
