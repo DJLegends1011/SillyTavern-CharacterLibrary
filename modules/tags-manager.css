@@ -1,0 +1,639 @@
+/* Tags Manager - library tag list, batch routing, import alias rules */
+
+#tagsManagerModal .tgm-content {
+    max-width: calc(760px * var(--modal-scale, 1));
+    width: 100%;
+    height: calc(82vh * var(--modal-scale, 1));
+    display: flex;
+    flex-direction: column;
+}
+
+/* --- Tabs (segmented pill control, the browse Browse/Following toggle shape) --- */
+
+.tgm-tabs {
+    display: flex;
+    background: rgba(0, 0, 0, 0.3);
+    border-radius: var(--radius-lg);
+    padding: 4px;
+    gap: var(--space-2xs);
+    border: 1px solid var(--glass-border);
+    margin: var(--space-md) var(--space-lg) 0;
+    align-self: flex-start;
+}
+
+.tgm-tab {
+    padding: 8px 16px;
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    border-radius: var(--radius-md);
+    font-size: var(--font-md);
+    font-weight: 500;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs);
+}
+
+.tgm-tab:hover {
+    color: var(--text-primary);
+    background: rgba(255, 255, 255, 0.05);
+}
+
+/* Weight stays constant across states: the container is content-sized, so a bolder
+   active label would resize the whole bar on every click */
+.tgm-tab.active {
+    background: var(--accent);
+    color: var(--accent-text);
+    box-shadow: 0 2px 8px var(--accent-glow);
+}
+
+.tgm-body {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    flex: 1;
+}
+
+.tgm-pane {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+    min-height: 0;
+    flex: 1;
+    animation: tgmFadeIn 0.15s ease;
+}
+
+@keyframes tgmFadeIn {
+    from { opacity: 0; transform: translateY(2px); }
+    to { opacity: 1; transform: none; }
+}
+
+/* Module CSS outranks the global .hidden by source order, so every togglable element
+   that sets display needs the counter-rule or .hidden silently no-ops */
+.tgm-pane.hidden,
+.tgm-dupe-chip.hidden,
+.tgm-rule-header.hidden,
+.tgm-progress.hidden {
+    display: none !important;
+}
+
+.tgm-hint {
+    font-size: var(--font-sm);
+    color: var(--text-secondary);
+    margin: 0;
+}
+
+/* Accent info banner (the css-assistant context-banner recipe) */
+.tgm-hint-banner {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-sm);
+    padding: var(--space-sm) var(--space-md);
+    background: rgba(var(--accent-rgb), 0.08);
+    border: 1px solid rgba(var(--accent-rgb), 0.25);
+    border-radius: var(--radius-lg);
+    color: var(--text-secondary);
+    font-size: var(--font-sm);
+    line-height: 1.45;
+    flex-shrink: 0;
+}
+
+.tgm-hint-banner > i {
+    color: var(--accent);
+    margin-top: 2px;
+}
+
+.tgm-hint-banner strong { color: var(--text-primary); font-weight: 600; }
+
+/* In-list variant of the canonical: lists are shorter than a full view */
+.tgm-empty-state {
+    min-height: 140px;
+    padding: var(--space-xl) var(--space-lg);
+}
+
+/* Fixed-height layout: chrome bars keep their size, only lists flex */
+.tgm-toolbar,
+.tgm-pick-footer,
+.tgm-rules-actions,
+.tgm-rule-test,
+.tgm-strip-toggle,
+.tgm-hint {
+    flex-shrink: 0;
+}
+
+/* --- Library tab --- */
+
+.tgm-toolbar {
+    display: flex;
+    align-items: stretch;
+    gap: var(--space-sm);
+}
+
+.tgm-toolbar .cl-input { flex: 1; min-width: 0; }
+
+.tgm-total {
+    display: inline-flex;
+    align-items: center;
+    align-self: center;
+    padding: var(--space-2xs) var(--space-sm);
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: var(--radius-4xl);
+    font-size: var(--font-xs);
+    color: var(--text-secondary);
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+
+.tgm-tool-btn {
+    border: 1px solid var(--glass-border);
+    background: rgba(255, 255, 255, 0.04);
+    min-width: 38px;
+    justify-content: center;
+    align-items: center;
+    display: inline-flex;
+    padding: var(--space-xs) var(--space-sm);
+    color: var(--text-secondary);
+}
+
+.tgm-tool-btn:hover:not(:disabled) {
+    border-color: rgba(var(--accent-rgb), 0.5);
+    background: rgba(var(--accent-rgb), 0.12);
+    color: var(--text-primary);
+}
+
+.tgm-dupe-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-xs);
+    padding: var(--space-2xs) var(--space-md);
+    border: 1px solid rgba(var(--cl-warning-rgb), 0.35);
+    background: rgba(var(--cl-warning-rgb), 0.1);
+    border-radius: var(--radius-4xl);
+    color: var(--cl-warning-pale);
+    font-size: var(--font-xs);
+    font-weight: 500;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: all 0.15s ease;
+}
+
+.tgm-dupe-chip:hover { background: rgba(var(--cl-warning-rgb), 0.2); }
+
+.tgm-dupe-chip.active {
+    background: rgba(var(--cl-warning-rgb), 0.25);
+    border-color: var(--cl-warning-pale);
+    color: var(--text-primary);
+}
+
+.tgm-list {
+    overflow-y: auto;
+    flex: 1;
+    min-height: 0;
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-lg);
+    background: rgba(0, 0, 0, 0.2);
+    /* The virtualizer wipes and rebuilds the window on scroll; browser scroll anchoring
+       latches onto the replaced nodes and re-adjusts scrollTop, which re-triggers the
+       rebuild - an endless wheel-scroll feedback loop without this */
+    overflow-anchor: none;
+}
+
+/* Uniform border on EVERY row: the virtualizer measures one row and multiplies, so
+   per-position exceptions (eg. :last-child) would drift the spacer math */
+.tgm-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    padding: var(--space-xs-sm) var(--space-md);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.035);
+    transition: background 0.1s ease;
+}
+
+.tgm-row:hover { background: rgba(var(--accent-rgb), 0.07); }
+
+.tgm-row-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--font-md);
+    color: var(--text-primary);
+}
+
+.tgm-row-count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 2.6rem;
+    padding: 1px var(--space-sm);
+    background: rgba(255, 255, 255, 0.06);
+    border-radius: var(--radius-4xl);
+    font-size: var(--font-2xs);
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
+}
+
+/* Actions are contextual: revealed on row hover/focus (always on for touch, below) */
+.tgm-row-actions {
+    display: flex;
+    gap: var(--space-2xs);
+    opacity: 0;
+    transition: opacity 0.12s ease;
+}
+
+.tgm-row:hover .tgm-row-actions,
+.tgm-row:focus-within .tgm-row-actions {
+    opacity: 1;
+}
+
+.tgm-icon-btn {
+    background: none;
+    border: none;
+    color: var(--text-faint);
+    cursor: pointer;
+    min-width: 30px;
+    min-height: 28px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--space-2xs) var(--space-xs);
+    border-radius: var(--radius-md);
+    font-size: var(--font-xs);
+    transition: all 0.12s ease;
+}
+
+.tgm-icon-btn:hover:not(:disabled) { color: var(--text-primary); background: rgba(var(--accent-rgb), 0.15); }
+.tgm-icon-btn.tgm-danger:hover:not(:disabled) { color: var(--cl-error-pale); background: rgba(var(--cl-error-rgb), 0.15); }
+.tgm-icon-btn:disabled { opacity: 0.4; cursor: default; }
+
+.tgm-rename-input {
+    flex: 1;
+    min-width: 0;
+    font-size: var(--font-md);
+    padding: var(--space-2xs) var(--space-xs);
+}
+
+/* --- Case-dupe review --- */
+
+.tgm-dupes-hint { padding: var(--space-sm) var(--space-md) 0; }
+
+.tgm-dupe-group {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-sm);
+    padding: var(--space-sm) var(--space-md);
+    margin: var(--space-sm) var(--space-md);
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-lg);
+}
+
+.tgm-dupe-pill {
+    cursor: pointer;
+    border: 1px solid transparent;
+    transition: all 0.12s ease;
+}
+
+.tgm-dupe-pill:hover {
+    border-color: var(--accent);
+    color: var(--text-primary);
+    background: rgba(var(--accent-rgb), 0.12);
+}
+
+.tgm-dupe-pill .tgm-row-count {
+    min-width: 0;
+    padding: 0 var(--space-xs);
+    background: rgba(0, 0, 0, 0.25);
+}
+
+/* --- Batch tab (character picker) --- */
+
+.tgm-seed-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-xs);
+    padding: var(--space-2xs) var(--space-md);
+    border: 1px solid var(--glass-border);
+    background: rgba(255, 255, 255, 0.04);
+    border-radius: var(--radius-4xl);
+    color: var(--text-secondary);
+    font-size: var(--font-xs);
+    cursor: pointer;
+    white-space: nowrap;
+    transition: all 0.15s ease;
+}
+
+.tgm-seed-chip:hover:not(:disabled) {
+    color: var(--text-primary);
+    border-color: rgba(var(--accent-rgb), 0.5);
+    background: rgba(var(--accent-rgb), 0.12);
+}
+
+.tgm-seed-chip:disabled { opacity: 0.4; cursor: default; }
+.tgm-seed-chip span { color: var(--text-faint); font-variant-numeric: tabular-nums; }
+
+.tgm-pick-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    padding: var(--space-xs) var(--space-md);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.035);
+    cursor: pointer;
+    transition: background 0.1s ease;
+}
+
+.tgm-pick-row:hover { background: rgba(var(--accent-rgb), 0.07); }
+
+.tgm-pick-row input[type="checkbox"] {
+    accent-color: var(--accent);
+    width: 15px;
+    height: 15px;
+    flex-shrink: 0;
+    cursor: pointer;
+}
+
+/* display block, not inline: an inline img rides the text baseline and its descender
+   gap pushes it past the row box */
+.tgm-pick-avatar {
+    display: block;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    object-fit: cover;
+    flex-shrink: 0;
+    box-shadow: 0 0 0 1px var(--glass-border);
+}
+
+.tgm-pick-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--font-md);
+    color: var(--text-primary);
+    cursor: pointer;
+}
+
+.tgm-pick-name:hover {
+    color: var(--accent);
+    text-decoration: underline;
+}
+
+.tgm-pick-creator {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: right;
+    font-size: var(--font-2xs);
+    color: var(--text-faint);
+}
+
+.tgm-pick-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-md);
+    padding-top: var(--space-sm);
+    border-top: 1px solid var(--glass-border);
+}
+
+/* --- Rules tab --- */
+
+.tgm-alias-toggles {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    flex-shrink: 0;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-lg);
+    padding: var(--space-2xs);
+}
+
+.tgm-strip-toggle {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    font-size: var(--font-sm);
+    color: var(--text-primary);
+    cursor: pointer;
+    padding: var(--space-xs) var(--space-sm);
+    border-radius: var(--radius-md);
+    transition: background 0.1s ease;
+}
+
+.tgm-strip-toggle:hover { background: rgba(255, 255, 255, 0.04); }
+
+.tgm-strip-toggle input[type="checkbox"] {
+    accent-color: var(--accent);
+    width: 15px;
+    height: 15px;
+    flex-shrink: 0;
+    cursor: pointer;
+}
+
+/* Toggle impact badges sit flush right as accent pills */
+.tgm-strip-toggle .tgm-rule-impact {
+    margin-left: auto;
+    min-width: 0;
+}
+
+.tgm-strip-toggle .tgm-rule-impact:not(:empty) {
+    padding: 1px var(--space-sm);
+    background: rgba(var(--accent-rgb), 0.12);
+    border-radius: var(--radius-4xl);
+    color: var(--accent);
+}
+
+.tgm-rule-match.tgm-rule-error {
+    border-color: var(--cl-error-pale);
+    box-shadow: 0 0 0 1px rgba(var(--cl-error-rgb), 0.35);
+}
+
+/* Block scroller, NOT flex: the virtualizer's spacer divs are flex-shrunk to zero in a
+   flex column, which collapses the scrollbar; row spacing lives on the rows instead */
+.tgm-rules-list {
+    overflow-y: auto;
+    flex: 1;
+    min-height: 80px;
+    overflow-anchor: none;
+}
+
+.tgm-rule-header {
+    display: flex;
+    gap: var(--space-sm);
+    font-size: var(--font-2xs);
+    color: var(--text-faint);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.tgm-rule-header span:nth-child(1) { flex: 1; }
+.tgm-rule-header span:nth-child(2) { width: 12px; }
+.tgm-rule-header span:nth-child(3) { flex: 1; }
+.tgm-rule-header span:nth-child(4) { width: 148px; }
+
+.tgm-rule-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    padding: var(--space-2xs) 0;
+}
+
+.tgm-rule-impact {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 2.6rem;
+    font-size: var(--font-2xs);
+    color: var(--text-faint);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.tgm-rule-row .tgm-rule-impact:not(:empty) {
+    padding: 1px var(--space-sm);
+    background: rgba(255, 255, 255, 0.06);
+    border-radius: var(--radius-4xl);
+    color: var(--text-secondary);
+}
+
+.tgm-rule-row .cl-input { flex: 1; min-width: 0; }
+
+.tgm-rule-arrow { color: var(--text-faint); font-size: var(--font-xs); }
+
+.tgm-rule-btns { display: flex; gap: var(--space-2xs); }
+
+.tgm-rules-actions {
+    display: flex;
+    gap: var(--space-sm);
+    flex-wrap: wrap;
+}
+
+.tgm-rule-test {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    padding-top: var(--space-sm);
+    border-top: 1px solid var(--glass-border);
+}
+
+.tgm-rule-test-icon { color: var(--accent); font-size: var(--font-sm); }
+
+.tgm-rule-test .cl-input { max-width: 240px; }
+
+#tgmRuleTestOut {
+    font-size: var(--font-sm);
+    color: var(--text-primary);
+    padding: var(--space-2xs) var(--space-md);
+    background: rgba(255, 255, 255, 0.06);
+    border-radius: var(--radius-4xl);
+}
+
+#tgmRuleTestOut:empty { display: none; }
+
+#tgmRuleTestOut.tgm-dropped {
+    color: var(--cl-error-pale);
+    font-style: italic;
+    background: rgba(var(--cl-error-rgb), 0.1);
+}
+
+/* --- Progress row --- */
+
+.tgm-progress {
+    display: flex;
+    align-items: center;
+    gap: var(--space-md);
+    padding: var(--space-sm) var(--space-lg);
+    border-top: 1px solid var(--glass-border);
+}
+
+.tgm-progress-track {
+    flex: 1;
+    height: 7px;
+    border-radius: var(--radius-sm);
+    background: rgba(var(--accent-rgb), 0.15);
+    overflow: hidden;
+}
+
+.tgm-progress-fill {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, var(--accent), var(--accent-secondary));
+    box-shadow: 0 0 8px var(--accent-glow);
+    transition: width 0.15s ease;
+}
+
+#tgmProgressText {
+    font-size: var(--font-sm);
+    color: var(--text-secondary);
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+
+/* --- Mobile --- */
+/* Full-viewport treatment comes from the global .cl-modal-content baseline in
+   library-mobile.css (its dvh height is deliberate); no local override. */
+
+html.cl-mobile .tgm-row {
+    min-height: var(--touch-target-min);
+    touch-action: manipulation;
+}
+
+/* No hover on touch: actions stay visible */
+html.cl-mobile .tgm-row-actions { opacity: 1; }
+
+html.cl-mobile .tgm-toolbar { flex-wrap: wrap; }
+html.cl-mobile .tgm-toolbar .cl-input { flex-basis: 100%; }
+html.cl-mobile .tgm-dupe-chip { min-height: var(--touch-target-min); touch-action: manipulation; }
+html.cl-mobile .tgm-tool-btn { min-height: var(--touch-target-min); min-width: var(--touch-target-min); }
+
+html.cl-mobile .tgm-icon-btn {
+    min-height: var(--touch-target-min);
+    min-width: var(--touch-target-min);
+    font-size: var(--font-sm);
+}
+
+html.cl-mobile .tgm-tab {
+    min-height: var(--touch-target-min);
+    touch-action: manipulation;
+}
+
+html.cl-mobile .tgm-dupe-pill {
+    min-height: var(--touch-target-min);
+    touch-action: manipulation;
+}
+
+html.cl-mobile .tgm-hint-banner { font-size: var(--font-xs); }
+
+/* The compressed two-column grid cant keep the labels over their columns; the arrow
+   between the inputs already reads as the mapping */
+html.cl-mobile .tgm-rule-header { display: none; }
+
+html.cl-mobile .tgm-strip-toggle {
+    min-height: var(--touch-target-min);
+    touch-action: manipulation;
+}
+
+html.cl-mobile .tgm-rule-test .cl-input { max-width: none; flex: 1; }
+
+html.cl-mobile .tgm-pick-row {
+    min-height: var(--touch-target-min);
+    touch-action: manipulation;
+}
+
+html.cl-mobile .tgm-pick-row input[type="checkbox"] {
+    min-width: 22px;
+    min-height: 22px;
+}
+
+html.cl-mobile .tgm-seed-chip { min-height: var(--touch-target-min); touch-action: manipulation; }
+html.cl-mobile .tgm-pick-footer { padding-bottom: max(20px, env(safe-area-inset-bottom)); }
+
+html.cl-mobile .tgm-list { padding-bottom: max(20px, env(safe-area-inset-bottom)); }

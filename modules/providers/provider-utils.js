@@ -752,6 +752,11 @@ export async function importFromPng({
         characterCard.data.name = characterCard.data.name.substring(0, 128).trimEnd();
     }
 
+    // Import Rules ruleset fires here so every provider path gets it (browse, URL paste, CD)
+    if (Array.isArray(characterCard?.data?.tags)) {
+        characterCard.data.tags = CoreAPI.applyTagAliases(characterCard.data.tags);
+    }
+
     const safeName = fileName.replace(/[^a-zA-Z0-9_.-]/g, '_');
 
     let pngBuffer = await ensurePng(imageBuffer, api);

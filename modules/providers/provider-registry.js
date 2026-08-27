@@ -318,8 +318,8 @@ export function renderProviderSelector(activeId) {
     const options = vps.map(p => {
         const selected = p.id === activeId ? ' selected' : '';
         const iconUrl = p.iconUrl || '';
-        const beta = p.beta ? ' data-beta="true"' : '';
-        return `<option value="${p.id}"${selected} data-icon-url="${iconUrl}"${beta}>${p.name}</option>`;
+        const status = p.deprecated ? ' data-deprecated="true"' : (p.beta ? ' data-beta="true"' : '');
+        return `<option value="${p.id}"${selected} data-icon-url="${iconUrl}"${status}>${p.name}</option>`;
     }).join('');
 
     return `<select id="providerSelect" class="glass-select">${options}</select>`;

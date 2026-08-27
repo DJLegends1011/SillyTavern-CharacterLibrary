@@ -68,6 +68,10 @@ export class ProviderBase {
     /** Whether this provider is in beta. Shows a badge in UI. @returns {boolean} */
     get beta() { return false; }
 
+    /** Whether this source is no longer maintained. Shows a badge and gates the enable flip
+     *  behind a deprecation notice, which supersedes beta and enableWarning. @returns {boolean} */
+    get deprecated() { return false; }
+
     /** Whether this provider should be disabled on first run. @returns {boolean} */
     get disabledByDefault() { return false; }
 
@@ -503,9 +507,11 @@ export class ProviderBase {
      *   api.findCharacterMediaUrls(cardData)
      *
      * @param {string} identifier - provider-specific ID from parseUrl()
+     * @param {Object} [hitData] - browse-view hit data when invoked from a grid, else null
+     * @param {Object} [options] - import options; `onProgress(message)` receives user-facing status strings during slow phases
      * @returns {Promise<ProviderImportResult>}
      */
-    async importCharacter(identifier) {
+    async importCharacter(identifier, hitData, options) {
         return { success: false, error: 'Provider does not support import' };
     }
 

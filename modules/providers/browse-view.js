@@ -10,7 +10,7 @@ import { fetchDatacatCreatorCharacters, fetchDatacatCharacter, submitExtraction,
 import { fetchSaucepanCompanionsOfUser } from './saucepan/saucepan-api.js';
 import { fetchJanitoraiCharacters } from './janitorai/janitorai-api.js';
 import { meiliMultiSearch } from './janny/janny-api.js';
-import { searchCards, isCtSessionActive } from './chartavern/chartavern-api.js';
+import { searchCards, isCtSessionActive, getCtCharName } from './chartavern/chartavern-api.js';
 
 // ── Shared In-Library lookup base ────────────────────────
 // byNameAndCreator + byNormalizedName are pure functions of the global character list, so
@@ -594,7 +594,7 @@ const CD_ADAPTERS = {
                     const hitAuthor = (hit.author_username || hit.author || path.split('/')[0] || '').toLowerCase();
                     if (hitAuthor !== wanted) continue;
                     seen.add(path);
-                    results.push({ key: path, name: hit.name || '', creator: hit.author_username || hit.author || '', raw: hit });
+                    results.push({ key: path, name: getCtCharName(hit), creator: hit.author_username || hit.author || '', raw: hit });
                 }
                 const totalPages = data?.totalPages || 1;
                 if (page >= totalPages || hits.length === 0) break;

@@ -605,11 +605,41 @@ export async function extractViaBrowser(characterId, endpoint) {
     }, { timeoutMs: 240000 });
 }
 
+// Button-sized. The detail belongs in the progress banner, not in a control that has to stay short.
+export function recoverPhaseLabel(phase) {
+    return {
+        setup: 'Opening a chat...',
+        definition: 'Extracting...',
+        extras: 'Extracting...',
+        done: 'Building the card...',
+    }[phase] || 'Extracting...';
+}
+
+// Banner-sized: the live count is what distinguishes slow from hung on a multi-minute turn.
+export function recoverProgressText(phase, detail = null) {
+    const base = {
+        setup: 'Opening a throwaway chat with this character.',
+        definition: 'Asking the JanitorAI model to repeat its definition. This is the slow part.',
+        extras: 'Recovering the remaining sections.',
+        done: 'Building the card.',
+    }[phase] || 'Recovering.';
+    if (phase !== 'definition' && phase !== 'extras') return base;
+
+    const bits = [];
+    if (detail?.chars > 0) bits.push(`${detail.chars.toLocaleString()} characters so far`);
+    if (detail?.elapsedMs >= 5000) {
+        const s = Math.round(detail.elapsedMs / 1000);
+        bits.push(`${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')} elapsed`);
+    }
+    return bits.length ? `${base} ${bits.join(', ')}.` : base;
+}
+
 /**
  * Best effort for a locked definition whose creator forbids proxies. Returns MODEL OUTPUT under
  * janitorai's own field names; callers must keep it labelled as recovered, never treat it as the
- * creator's file. `onProgress(phase)` receives coarse phases ('setup'|'definition'|'extras'|'done')
- * while the run is in flight, for a progress hint; it is best-effort and never blocks the result.
+ * creator's file. `onProgress(phase, detail)` receives coarse phases
+ * ('setup'|'definition'|'extras'|'done') plus `{chars, elapsedMs}` on every poll tick, for a
+ * progress hint; it is best-effort and never blocks the result.
  * @returns {Promise<{personality: string, scenario: string, exampleDialogs: string, firstMessage: string, recovered: string}>}
  */
 export async function recoverViaBrowser(characterId, endpoint, onProgress) {
@@ -620,6 +650,8 @@ export async function recoverViaBrowser(characterId, endpoint, onProgress) {
     // Poll the coarse phase while the long POST runs. Best-effort, stops when it settles.
     let polling = !!onProgress;
     const pollLoop = (async () => {
+        const startedAt = Date.now();
+        let phaseAt = startedAt;
         let last = null;
         while (polling) {
             await new Promise(r => setTimeout(r, 2500));
@@ -628,21 +660,23 @@ export async function recoverViaBrowser(characterId, endpoint, onProgress) {
                 const r = await CoreAPI.apiRequest(
                     `${CL_HELPER_PLUGIN_BASE}/janitorai-recover-progress?job=${encodeURIComponent(jobId)}`, 'GET');
                 const j = await r.json();
-                if (j?.phase && j.phase !== last) { last = j.phase; onProgress(j.phase); }
+                if (!j?.phase) continue;
+                if (j.phase !== last) { last = j.phase; phaseAt = Date.now(); }
+                // Every tick, not just on a phase change: a label that never moves reads as a hang.
+                onProgress(j.phase, { chars: j.chars || 0, elapsedMs: Date.now() - phaseAt });
             } catch { /* progress is a hint, not a requirement */ }
         }
     })();
 
     try {
-        // Must outlast the helper's own budget (60s for generation to start, up to 240s of
-        // streaming, plus navigation and the send) or the client aborts a run that is still working.
+        // Recovery runs up to THREE turns; anything less aborts a run that is still working.
         return await callHelper('/janitorai-recover', {
             ...browserTarget(endpoint),
             characterId,
             jobId,
             token: token || undefined,
             refreshToken: refreshToken || undefined,
-        }, { timeoutMs: 420000 });
+        }, { timeoutMs: 900000 });
     } finally {
         polling = false;
         await pollLoop.catch(() => {});

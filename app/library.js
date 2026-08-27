@@ -227,7 +227,7 @@ function initCustomSelect(select) {
             iconHtml = `<i class="${iconClass} item-icon"></i>`;
         }
 
-        item.innerHTML = `${iconHtml}<span>${option.textContent}</span>${option.dataset.beta ? '<span class="provider-beta-badge">Beta</span>' : ''}`;
+        item.innerHTML = `${iconHtml}<span>${option.textContent}</span>${providerStatusBadgeHtml(option.dataset)}`;
 
         item.addEventListener('click', (e) => {
             e.stopPropagation();
@@ -657,6 +657,10 @@ const DEFAULT_SETTINGS = {
     disabledProviders: ['datacat', 'saucepan', 'janitorai'],
     datacatFollowedCreators: [],
     providerExcludeTags: {},
+    tagAliasRules: [],
+    tagAliasStripDecor: false,
+    tagAliasTrimSpaces: false,
+    tagAliasCapitalize: false,
 
     // ---- Versions ----
     autoSnapshotOnEdit: true,
@@ -1291,6 +1295,129 @@ function setProviderExcludeTags(providerId, tags) {
     setSetting('providerExcludeTags', map);
 }
 
+// Strips emoji with their joiners/modifiers, but not punctuation, so "sci-fi" and "18+" survive.
+const TAG_DECOR_RE = /[\u00A9\u00AE\u2122]\uFE0F|(?![\u00A9\u00AE\u2122])[\p{Extended_Pictographic}\u{FE0F}\u{200D}\u{20E3}\u{1F3FB}-\u{1F3FF}\u{1F1E6}-\u{1F1FF}]/gu;
+
+function stripTagDecoration(tag) {
+    return tag.replace(TAG_DECOR_RE, '').replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Trim, drop empties, case-insensitive dedupe keeping the first occurrence's casing.
+ * The alias engine's cleanup tail; the Tags Manager reuses it for impact attribution.
+ * @param {string[]} tags
+ * @returns {string[]}
+ */
+function normalizeTagArray(tags) {
+    const out = [];
+    const seen = new Set();
+    for (const t of tags) {
+        const name = String(t ?? '').trim();
+        if (!name) continue;
+        const key = name.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push(name);
+    }
+    return out;
+}
+
+/**
+ * Compile the alias ruleset once per run. Blank/junk rows never arm the engine.
+ * A match of the form /pattern/ (optional i/u flags; i is always added) is a REGEX rule:
+ * it partial-replaces via String.replace so $1 groups work; g is deliberately not allowed
+ * (a sticky lastIndex on .test() silently skips every other tag). Exact rules index into
+ * a Map so thousands of rules cost one lookup per tag, not a linear scan.
+ * @param {Array<{match: string, replace: string}>} rules
+ * @returns {{list: Array, exactIdx: Map, regexRules: Array, hasUsable: boolean}}
+ */
+function compileTagAliasRules(rules) {
+    const list = [];
+    for (let i = 0; i < (Array.isArray(rules) ? rules.length : 0); i++) {
+        const rule = rules[i];
+        if (typeof rule?.match !== 'string') continue;
+        const raw = rule.match.trim();
+        if (!raw) continue;
+        const replace = String(rule.replace ?? '').trim();
+        const rx = raw.length > 2 && raw[0] === '/' ? raw.match(/^\/(.+)\/([iu]{0,2})$/s) : null;
+        if (rx) {
+            try {
+                const flags = rx[2].includes('i') ? rx[2] : rx[2] + 'i';
+                list.push({ index: i, isRegex: true, re: new RegExp(rx[1], flags), replace });
+            } catch (e) {
+                list.push({ index: i, isRegex: true, re: null, error: e.message, replace });
+            }
+        } else {
+            // Bad flags must error, not silently become an exact rule on a literal that matches nothing.
+            const badFlags = raw.length > 2 && raw[0] === '/' ? raw.match(/^\/(.+)\/([dgimsuvyDGIMSUVY]+)$/s) : null;
+            if (badFlags) {
+                list.push({ index: i, isRegex: true, re: null, error: `unsupported flags "${badFlags[2]}" (only i and u are allowed)`, replace });
+            } else {
+                list.push({ index: i, isRegex: false, match: raw.toLowerCase(), replace });
+            }
+        }
+    }
+    const exactIdx = new Map();
+    const regexRules = [];
+    for (const entry of list) {
+        if (entry.isRegex) { if (entry.re) regexRules.push(entry); }
+        else if (!exactIdx.has(entry.match)) exactIdx.set(entry.match, entry);
+    }
+    return { list, exactIdx, regexRules, hasUsable: exactIdx.size > 0 || regexRules.length > 0 };
+}
+
+/**
+ * First matching rule in RULE ORDER across exact and regex kinds, or null.
+ * @param {ReturnType<compileTagAliasRules>} compiled
+ * @param {string} tag - trimmed tag
+ * @returns {Object|null}
+ */
+function matchTagAliasRule(compiled, tag) {
+    let winner = compiled.exactIdx.get(tag.toLowerCase()) || null;
+    for (const r of compiled.regexRules) {
+        // Ordered by index, so the first regex past an exact winner cant beat it
+        if (winner && r.index > winner.index) break;
+        if (r.re.test(tag)) { winner = r; break; }
+    }
+    return winner;
+}
+
+/**
+ * Run a tag array through the user's alias ruleset (Tags Manager > Import Rules).
+ * Ordered rules, first match wins: exact rules replace wholesale (empty = drop), regex
+ * rules partial-replace with $1 groups. Optional decoration strip runs before matching;
+ * optional first-letter capitalize runs on UNMATCHED tags only (a rule's replacement is
+ * the user's explicit casing); the trim toggle arms the engine's trim+dedupe tail even
+ * with zero rules. Returns the input array untouched when fully inert.
+ * @param {string[]} tags
+ * @returns {string[]}
+ */
+function applyTagAliases(tags) {
+    if (!Array.isArray(tags) || tags.length === 0) return tags;
+    const compiled = compileTagAliasRules(getSetting('tagAliasRules') || []);
+    const stripDecor = getSetting('tagAliasStripDecor') === true;
+    const trimSpaces = getSetting('tagAliasTrimSpaces') === true;
+    const capitalize = getSetting('tagAliasCapitalize') === true;
+    if (!compiled.hasUsable && !stripDecor && !trimSpaces && !capitalize) return tags;
+
+    const out = [];
+    for (const raw of tags) {
+        let tag = String(raw ?? '').trim();
+        if (stripDecor) tag = stripTagDecoration(tag);
+        if (!tag) continue;
+        const rule = matchTagAliasRule(compiled, tag);
+        if (rule) {
+            tag = rule.isRegex ? tag.replace(rule.re, rule.replace).trim() : rule.replace;
+        } else if (capitalize) {
+            // Surrogate-safe: charAt would split an emoji-leading tag in half
+            const first = [...tag][0];
+            tag = first.toUpperCase() + tag.slice(first.length);
+        }
+        if (tag) out.push(tag);
+    }
+    return normalizeTagArray(out);
+}
+
 // Runtime tokens live in <style id="cl-runtime-tokens"> not inline on the root,
 // so user Custom CSS (later insource order) can override without !important.
 const runtimeTokens = new Map();
@@ -1694,24 +1821,22 @@ async function performClHelperSelfUpdate(btn) {
         const bytes = new Blob([s]).size;
         return bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(1)} KB`;
     };
-    const messageHtml = `
-        <div class="cl-helper-update-summary">
-            <div><span class="cl-update-label">Source:</span> <code>extras/cl-helper/</code> in your Character Library extension folder (v${escapeHtml(bundledVersion)})</div>
-            <div><span class="cl-update-label">Destination:</span> <code>${escapeHtml(installPath)}</code> (currently v${escapeHtml(runningVersion)})</div>
-            <div><span class="cl-update-label">Files to write:</span></div>
-            <ul>
-                <li><code>package.json</code> (${fmtSize(files['package.json'])})</li>
-                <li><code>index.js</code> (${fmtSize(files['index.js'])})</li>
-            </ul>
-            <p class="cl-update-note">The current files will be saved as <code>package.json.bak</code> and <code>index.js.bak</code> next to the originals. After the update, restart SillyTavern to load the new version.</p>
-        </div>
-    `;
     const confirmed = await showConfirm({
         title: 'Update cl-helper plugin?',
-        messageHtml,
         icon: 'fa-solid fa-arrows-rotate',
         confirmLabel: 'Update plugin files',
         cancelLabel: 'Cancel',
+        content: [
+            { type: 'kv', items: [
+                { key: 'Source:', value: `extras/cl-helper/ (v${bundledVersion})`, mono: true },
+                { key: 'Destination:', value: `${installPath} (currently v${runningVersion})`, mono: true },
+            ] },
+            { type: 'list', items: [
+                { text: `package.json (${fmtSize(files['package.json'])})`, mono: true },
+                { text: `index.js (${fmtSize(files['index.js'])})`, mono: true },
+            ] },
+            { type: 'note', text: 'The current files are saved as .bak next to the originals. After the update, restart SillyTavern to load the new version.' },
+        ],
     });
     if (!confirmed) return;
 
@@ -1755,6 +1880,18 @@ function openSettingsToSection(section, afterNav) {
         if (afterNav) setTimeout(afterNav, 100);
     }, 100);
     return true;
+}
+
+/**
+ * One status badge per provider row. Deprecated supersedes beta, so a row never shows two.
+ * Accepts a provider or the dataset of a provider <option>; both carry truthy status flags.
+ * @param {{deprecated?: any, beta?: any}} status
+ * @returns {string} badge HTML, empty when the provider has no status
+ */
+function providerStatusBadgeHtml(status) {
+    if (status?.deprecated) return '<span class="provider-deprecated-badge">Deprecated</span>';
+    if (status?.beta) return '<span class="provider-beta-badge">Beta</span>';
+    return '';
 }
 
 /**
@@ -1934,6 +2071,18 @@ function setupSettingsModal() {
                 const pid = btn.dataset.provider;
                 const prov = viewProviders.find(p => p.id === pid);
 
+                // Deprecation supersedes the other two: a source we no longer maintain should not
+                // also nag about a cl-helper version or call itself merely experimental.
+                if (isCurrentlyDisabled && prov?.deprecated) {
+                    showConfirm({
+                        title: `${prov.name} is no longer maintained`,
+                        message: `Work on ${prov.name} has been paused. Changes on the provider's own site broke how Character Library talks to it. Browsing and importing will most likely fail, and there is currently no ETA for a fix. You can still enable it, but do not expect it to work.`,
+                        icon: 'fa-solid fa-circle-exclamation',
+                        confirmLabel: 'Enable anyway',
+                    }).then(ok => { if (ok) applyProviderToggle(btn, false); });
+                    return;
+                }
+
                 // Version first: a stale helper blocks the provider, enableWarning only warns.
                 if (isCurrentlyDisabled && !(await confirmClHelperVersion(prov))) return;
 
@@ -2035,7 +2184,7 @@ function setupSettingsModal() {
                 </button>
                 <i class="fa-solid ${provider.icon || 'fa-globe'} provider-order-icon"></i>
                 <span class="provider-order-name">${provider.name}</span>
-                ${provider.beta ? '<span class="provider-beta-badge">Beta</span>' : ''}
+                ${providerStatusBadgeHtml(provider)}
                 <span class="provider-order-badge">Default</span>
                 <div class="provider-order-defaults">
                     ${viewSelect}${sortSelect}${hideToggles}
@@ -2227,7 +2376,7 @@ function setupSettingsModal() {
                 </button>
                 <i class="fa-solid ${provider.icon || 'fa-globe'} provider-order-icon"></i>
                 <span class="provider-order-name">${provider.name}</span>
-                ${provider.beta ? '<span class="provider-beta-badge">Beta</span>' : ''}
+                ${providerStatusBadgeHtml(provider)}
                 <span class="provider-order-badge">Default</span>
                 <div class="provider-order-defaults">
                     ${viewSelect}${sortSelect}
@@ -5766,6 +5915,19 @@ function renderLoadingState(container, message, className = 'loading-spinner') {
 }
 
 /**
+ * Full-viewport loader shown while a lazy module imports on its first open.
+ * @param {string} message - Loading message
+ * @returns {Function} Dismiss function
+ */
+function showLazyOpenOverlay(message) {
+    const ov = document.createElement('div');
+    ov.className = 'cl-lazy-overlay';
+    renderLoadingState(ov, message, 'cl-lazy-overlay-inner');
+    document.body.appendChild(ov);
+    return () => ov.remove();
+}
+
+/**
  * Render a simple empty state with just a message
  * @param {HTMLElement|string} container - Container element or ID
  * @param {string} message - Message to display
@@ -8331,14 +8493,68 @@ function showToast(message, type = 'info', duration = 3000) {
     }, duration);
 }
 
+// Owns ALL markup and escapes every caller field, so no raw-HTML path has to exist.
+function buildConfirmContentHtml(blocks) {
+    if (!Array.isArray(blocks)) return '';
+    const out = [];
+    for (const b of blocks) {
+        if (!b || typeof b !== 'object') continue;
+        switch (b.type) {
+            case 'text': {
+                const t = String(b.text ?? '');
+                if (t) out.push(`<p class="cl-confirm-p">${escapeHtml(t)}</p>`);
+                break;
+            }
+            case 'stats': {
+                const items = (Array.isArray(b.items) ? b.items : []).map(it => {
+                    if (!it || typeof it !== 'object') return '';
+                    const icon = it.icon ? `<i class="${escapeHtml(String(it.icon))}"></i>` : '';
+                    const label = it.label ? `<span class="cl-confirm-stat-label">${escapeHtml(String(it.label))}</span>` : '';
+                    return `<span class="cl-confirm-stat">${icon}${label}<span class="cl-confirm-stat-value">${escapeHtml(String(it.value ?? ''))}</span></span>`;
+                }).join('');
+                if (items) out.push(`<div class="cl-confirm-stats">${items}</div>`);
+                break;
+            }
+            case 'list': {
+                // Items are strings or { text, mono } for code-styled entries (eg. filenames)
+                const items = (Array.isArray(b.items) ? b.items : []).map(it => {
+                    const obj = it && typeof it === 'object';
+                    const text = escapeHtml(String((obj ? it.text : it) ?? ''));
+                    return `<li>${obj && it.mono ? `<code>${text}</code>` : text}</li>`;
+                }).join('');
+                if (items) out.push(`<ul class="cl-confirm-list">${items}</ul>`);
+                break;
+            }
+            case 'kv': {
+                const rows = (Array.isArray(b.items) ? b.items : []).map(it => {
+                    if (!it || typeof it !== 'object') return '';
+                    const val = escapeHtml(String(it.value ?? ''));
+                    return `<div class="cl-confirm-kv-row"><span class="cl-confirm-kv-key">${escapeHtml(String(it.key ?? ''))}</span>${it.mono ? `<code>${val}</code>` : `<span>${val}</span>`}</div>`;
+                }).join('');
+                if (rows) out.push(`<div class="cl-confirm-kv">${rows}</div>`);
+                break;
+            }
+            case 'note': {
+                const tone = ['info', 'warning', 'danger'].includes(b.tone) ? b.tone : 'info';
+                const icon = b.icon || (tone === 'info' ? 'fa-solid fa-circle-info' : 'fa-solid fa-triangle-exclamation');
+                const t = String(b.text ?? '');
+                if (t) out.push(`<div class="cl-confirm-note cl-confirm-note-${tone}"><i class="${escapeHtml(String(icon))}"></i><span>${escapeHtml(t)}</span></div>`);
+                break;
+            }
+        }
+    }
+    return out.join('');
+}
+
 // @canonical cl-confirm-overlay
 // Singleton confirmation dialog. Resolves true (confirm), false (cancel button,
 // backdrop, Escape, or Android back via the overlay registry), or the string
 // 'extra' when the optional third button (extraLabel) is shown and chosen.
+// Structured bodies ride `content`: typed blocks, escaped here, never caller markup.
 function showConfirm({
     title = 'Confirm',
     message = '',
-    messageHtml = null,
+    content = null,
     icon = '',
     iconColor = '',
     confirmLabel = 'Confirm',
@@ -8400,9 +8616,14 @@ function showConfirm({
     }
     if (titleEl) titleEl.textContent = title;
     if (msgEl) {
-        if (messageHtml != null) msgEl.innerHTML = messageHtml;
-        else msgEl.textContent = message;
-        msgEl.style.display = (messageHtml != null || message) ? '' : 'none';
+        const blocksHtml = buildConfirmContentHtml(content);
+        if (blocksHtml) {
+            const lead = message ? `<p class="cl-confirm-p">${escapeHtml(message)}</p>` : '';
+            msgEl.innerHTML = lead + blocksHtml;
+        } else {
+            msgEl.textContent = message;
+        }
+        msgEl.style.display = (blocksHtml || message) ? '' : 'none';
     }
     if (cancelBtn) cancelBtn.textContent = cancelLabel;
     if (confirmBtn) {
@@ -9269,6 +9490,38 @@ function updateTagLogicRowVisibility() {
     row.classList.toggle('hidden', activeTagFilters.size === 0);
 }
 
+// The jump promises the manager's carrier count, so every other AND-ing constraint clears.
+function filterLibraryByTag(tag) {
+    if (!tag) return;
+    if ((getCurrentView() || 'characters') !== 'characters') {
+        switchView('characters');
+    }
+    const searchInput = document.getElementById('searchInput');
+    if (searchInput && searchInput.value) {
+        searchInput.value = '';
+        document.getElementById('clearSearchBtn')?.classList.add('hidden');
+    }
+    if (showFavoritesOnly) {
+        showFavoritesOnly = false;
+        const favCheckbox = document.getElementById('searchFavoritesOnly');
+        if (favCheckbox) favCheckbox.checked = false;
+        document.getElementById('searchSettingsBtn')?.classList.remove('active');
+    }
+    if (activePlaylistFilter) {
+        activePlaylistFilter = null;
+        updatePlaylistFilterLabel();
+    }
+    if (charAdvFilterRules.length > 0) {
+        charAdvFilterRules = [];
+        updateAdvFilterIndicator();
+        rerenderAdvFilterRows();
+    }
+    activeTagFilters.clear();
+    activeTagFilters.set(tag, 'include');
+    syncTagFilterPopupRows();
+    performSearch();
+}
+
 function populateTagFilter(tagMap) {
     const sortedTags = Array.from(tagMap.keys()).sort((a, b) => {
         const aActive = activeTagFilters.has(a) ? 0 : 1;
@@ -9426,17 +9679,50 @@ function updateTagFilterButtonIndicator() {
  */
 function clearAllTagFilters() {
     activeTagFilters.clear();
-    
-    document.querySelectorAll('.tag-filter-item .tag-state-btn').forEach(btn => {
-        btn.dataset.state = 'neutral';
-        updateTagStateButton(btn, undefined);
-    });
-    
-    updateTagFilterButtonIndicator();
-    updateTagLogicRowVisibility();
-    
+    syncTagFilterPopupRows();
     // Trigger search update
     document.getElementById('searchInput').dispatchEvent(new Event('input'));
+}
+
+// Popup rows capture state at build time, so a programmatic change must re-stamp them.
+function syncTagFilterPopupRows() {
+    document.querySelectorAll('.tag-filter-item').forEach(item => {
+        const tag = item.querySelector('.tag-label')?.textContent;
+        const state = tag != null ? activeTagFilters.get(tag) : undefined;
+        const btn = item.querySelector('.tag-state-btn');
+        if (!btn) return;
+        btn.dataset.state = state || 'neutral';
+        updateTagStateButton(btn, state);
+    });
+    updateTagFilterButtonIndicator();
+    updateTagLogicRowVisibility();
+}
+
+// Remap (rename/merge) or drop (delete) an active filter whose tag a bulk run just
+// rewrote, so the grid never sits on a dead filter with no popup row left to clear it
+function renameActiveTagFilter(oldTag, newTag) {
+    if (!activeTagFilters.has(oldTag)) return;
+    const state = activeTagFilters.get(oldTag);
+    activeTagFilters.delete(oldTag);
+    if (newTag && !activeTagFilters.has(newTag)) activeTagFilters.set(newTag, state);
+    syncTagFilterPopupRows();
+    document.getElementById('searchInput')?.dispatchEvent(new Event('input'));
+}
+
+// After Apply-to-Library, active filters ride the same mapping the cards just did
+function reconcileTagFiltersWithAliases() {
+    if (activeTagFilters.size === 0) return;
+    let changed = false;
+    for (const [tag, state] of [...activeTagFilters]) {
+        const mapped = applyTagAliases([tag])[0] ?? null;
+        if (mapped === tag) continue;
+        activeTagFilters.delete(tag);
+        if (mapped && !activeTagFilters.has(mapped)) activeTagFilters.set(mapped, state);
+        changed = true;
+    }
+    if (!changed) return;
+    syncTagFilterPopupRows();
+    document.getElementById('searchInput')?.dispatchEvent(new Event('input'));
 }
 
 function getTags(char) {
@@ -19518,7 +19804,10 @@ startImportBtn?.addEventListener('click', async () => {
         
         // Execute the import based on item shape (provider URL vs local/direct file)
         const result = item.provider
-            ? await item.provider.importCharacter(item.identifier)
+            ? await item.provider.importCharacter(item.identifier, null, {
+                // Slow imports (eg. janitorai hidden-definition recovery) narrate their phases
+                onProgress: (msg) => updateLogEntry(logEntry, `${displayName}: ${msg}`, 'pending'),
+            })
             : await importLocalCharacter(item.file);
         
         // Check abort AFTER import completes (import itself is atomic — card was already uploaded)
@@ -21759,7 +22048,8 @@ async function applyBulkAutoLinks() {
                 await saveProviderLink(item.char, provider, {
                     id: resultId,
                     fullPath: selectedResult.fullPath,
-                    pageName: selectedResult.name || null,
+                    // Providers whose results carry a clean name declare listingName; empty means no listing
+                    pageName: ('listingName' in selectedResult) ? (selectedResult.listingName || null) : (selectedResult.name || null),
                 });
                 successCount++;
                 debugLog('[bulkAutoLink] Successfully linked', item.char.name);
@@ -21791,7 +22081,8 @@ async function applyBulkAutoLinks() {
                 await saveProviderLink(item.char, provider, {
                     id: resultId,
                     fullPath: selectedResult.fullPath,
-                    pageName: selectedResult.name || null,
+                    // Providers whose results carry a clean name declare listingName; empty means no listing
+                    pageName: ('listingName' in selectedResult) ? (selectedResult.listingName || null) : (selectedResult.name || null),
                 });
                 successCount++;
                 debugLog('[bulkAutoLink] Successfully linked', item.char.name);
@@ -21836,6 +22127,13 @@ document.getElementById('bulkAutoLinkBtn')?.addEventListener('click', openBulkAu
 document.getElementById('recommenderBtn')?.addEventListener('click', () => window.openRecommender?.());
 document.getElementById('creatorBtn')?.addEventListener('click', () => window.openCharacterCreator?.());
 document.getElementById('lorebooksBtn')?.addEventListener('click', () => window.openLorebookManager?.());
+document.getElementById('tagsManagerBtn')?.addEventListener('click', async () => {
+    // First open imports the module + its CSS; cover the gap so it never paints half-built
+    const cold = !window.ModuleLoader?.modules?.['tags-manager'];
+    const dismiss = cold ? showLazyOpenOverlay('Opening Tags Manager') : null;
+    try { await window.ModuleLoader?.get('tags-manager')?.openModal?.(); }
+    finally { dismiss?.(); }
+});
 document.getElementById('closeBulkAutoLinkModal')?.addEventListener('click', () => {
     // Just set abort flag and close - state is preserved for resuming
     bulkAutoLinkAborted = true;
@@ -29095,6 +29393,7 @@ window.showToast = showToast;
 window.showConfirm = showConfirm;
 window.ensureFeatureClHelper = ensureFeatureClHelper;
 window.openSettingsToSection = openSettingsToSection;
+window.providerStatusBadgeHtml = providerStatusBadgeHtml;
 window.savePresetPicker = savePresetPicker;
 window.escapeHtml = escapeHtml;
 window.utf8ToBase64 = utf8ToBase64;
@@ -29123,6 +29422,14 @@ window.notifySTCharacterAdded = notifySTCharacterAdded;
 window.hydrateCharacter = hydrateCharacter;
 window.getTags = getTags;
 window.getAllAvailableTags = getAllAvailableTags;
+window.applyTagAliases = applyTagAliases;
+window.stripTagDecoration = stripTagDecoration;
+window.normalizeTagArray = normalizeTagArray;
+window.compileTagAliasRules = compileTagAliasRules;
+window.matchTagAliasRule = matchTagAliasRule;
+window.filterLibraryByTag = filterLibraryByTag;
+window.renameActiveTagFilter = renameActiveTagFilter;
+window.reconcileTagFiltersWithAliases = reconcileTagFiltersWithAliases;
 window.getGalleryFolderName = getGalleryFolderName;
 window.isMediaLocalizationEnabled = isMediaLocalizationEnabled;
 window.buildMediaLocalizationMap = buildMediaLocalizationMap;
@@ -29689,13 +29996,20 @@ async function writeCardFields(char, fieldUpdates, opts = {}) {
     }
 
     try {
-        // Must hydrate before building the merge payload - slim chars lack heavy fields
-        // and sending undefined would erase existing content on the server.
-        await hydrateCharacter(char);
+        // Surgical callers must pass complete new values: nothing existing is echoed.
+        const surgical = opts.surgical === true;
+        const writesExtensions = Object.keys(fieldUpdates).some(
+            f => f === 'extensions' || f.startsWith('extensions.') || f.startsWith('depth_prompt.'));
+
+        // Slim chars lack heavy fields; sending undefined would erase them server-side.
+        if (!surgical || (writesExtensions && !extensionsReady(char))) await hydrateCharacter(char);
 
         // PRE-FLIGHT: sentinel-delete null-valued extension keys before the main write; ST otherwise drops object writes aimed at a null namespace. No-op on older ST.
+        // A surgical payload that never touches extensions cant hit the null landmine; skip.
         const existingExtRaw = char.data?.extensions || char.extensions || {};
-        const polluted = Object.keys(existingExtRaw).filter(k => existingExtRaw[k] === null);
+        const polluted = (surgical && !writesExtensions)
+            ? []
+            : Object.keys(existingExtRaw).filter(k => existingExtRaw[k] === null);
         if (polluted.length > 0) {
             const deleteValue = await getExtensionDeleteValue();
             if (deleteValue !== null) {
@@ -29740,43 +30054,66 @@ async function writeCardFields(char, fieldUpdates, opts = {}) {
             resolvedUpdates[field] = value === ST_UNSET_SENTINEL ? deleteValue : value;
         }
 
-        // Start with existing data
-        const updatedData = { ...existingData };
-        // Deep-clone the extensions subtree so a nested write (eg. extensions.chub.tagline) mutates this
-        // copy, not the live char.data.extensions, until the round trip succeeds.
-        updatedData.extensions = (existingExtensions && typeof existingExtensions === 'object')
-            ? JSON.parse(JSON.stringify(existingExtensions))
-            : {};
+        // Surgical echoes nothing, so building the blob would be a wasted deep-clone per carrier.
+        let updatedData = null;
+        if (!surgical) {
+            updatedData = { ...existingData };
+            // Deep-clone the extensions subtree so a nested write (eg. extensions.chub.tagline) mutates this
+            // copy, not the live char.data.extensions, until the round trip succeeds.
+            updatedData.extensions = (existingExtensions && typeof existingExtensions === 'object')
+                ? JSON.parse(JSON.stringify(existingExtensions))
+                : {};
 
-        for (const [field, value] of Object.entries(resolvedUpdates)) {
-            const mapped = field.startsWith('depth_prompt.') ? 'extensions.' + field : field;
-            setNestedValue(updatedData, mapped, value);
+            for (const [field, value] of Object.entries(resolvedUpdates)) {
+                const mapped = field.startsWith('depth_prompt.') ? 'extensions.' + field : field;
+                setNestedValue(updatedData, mapped, value);
+            }
         }
 
-        const payload = {
-            avatar: char.avatar,
-            ...(existingSpec && { spec: existingSpec }),
-            ...(existingSpecVersion && { spec_version: existingSpecVersion }),
-            name: updatedData.name,
-            description: updatedData.description,
-            first_mes: updatedData.first_mes,
-            personality: updatedData.personality,
-            scenario: updatedData.scenario,
-            mes_example: updatedData.mes_example,
-            system_prompt: updatedData.system_prompt,
-            post_history_instructions: updatedData.post_history_instructions,
-            creator_notes: updatedData.creator_notes,
-            creator: updatedData.creator,
-            character_version: updatedData.character_version,
-            tags: updatedData.tags,
-            alternate_greetings: updatedData.alternate_greetings,
-            character_book: updatedData.character_book,
-            create_date: existingCreateDate,
-            data: updatedData,
-            // Root-only fields (chat, fav, create_date) live outside data; ST's
-            // import strips them and dot-path updates cant reach them.
-            ...(opts.rootFields || {}),
-        };
+        let payload;
+        if (surgical) {
+            const surgicalData = {};
+            for (const [field, value] of Object.entries(resolvedUpdates)) {
+                const mapped = field.startsWith('depth_prompt.') ? 'extensions.' + field : field;
+                setNestedValue(surgicalData, mapped, value);
+            }
+            payload = {
+                avatar: char.avatar,
+                data: surgicalData,
+                ...(opts.rootFields || {}),
+            };
+            // Same root V1 mirror set as the full payload below, but only for touched fields
+            for (const f of ['name', 'description', 'first_mes', 'personality', 'scenario', 'mes_example',
+                'system_prompt', 'post_history_instructions', 'creator_notes', 'creator',
+                'character_version', 'tags', 'alternate_greetings', 'character_book']) {
+                if (f in surgicalData) payload[f] = surgicalData[f];
+            }
+        } else {
+            payload = {
+                avatar: char.avatar,
+                ...(existingSpec && { spec: existingSpec }),
+                ...(existingSpecVersion && { spec_version: existingSpecVersion }),
+                name: updatedData.name,
+                description: updatedData.description,
+                first_mes: updatedData.first_mes,
+                personality: updatedData.personality,
+                scenario: updatedData.scenario,
+                mes_example: updatedData.mes_example,
+                system_prompt: updatedData.system_prompt,
+                post_history_instructions: updatedData.post_history_instructions,
+                creator_notes: updatedData.creator_notes,
+                creator: updatedData.creator,
+                character_version: updatedData.character_version,
+                tags: updatedData.tags,
+                alternate_greetings: updatedData.alternate_greetings,
+                character_book: updatedData.character_book,
+                create_date: existingCreateDate,
+                data: updatedData,
+                // Root-only fields (chat, fav, create_date) live outside data; ST's
+                // import strips them and dot-path updates cant reach them.
+                ...(opts.rootFields || {}),
+            };
+        }
 
         const response = await apiRequest('/characters/merge-attributes', 'POST', payload);
         if (!response.ok) {
@@ -29792,25 +30129,40 @@ async function writeCardFields(char, fieldUpdates, opts = {}) {
                 else if (obj[k] && typeof obj[k] === 'object') cleanSentinels(obj[k]);
             }
         };
-        cleanSentinels(updatedData);
+        if (!surgical) cleanSentinels(updatedData);
 
         // In-memory sync. Mutate the passed char and the matching allCharacters entry (which may be the same reference or different).
-        char.data = updatedData;
-        for (const [field, value] of Object.entries(fieldUpdates)) {
-            if (!field.includes('.') && value !== ST_UNSET_SENTINEL) char[field] = value;
-        }
-        for (const [field, value] of Object.entries(opts.rootFields || {})) char[field] = value;
         const charIndex = allCharacters.findIndex(c => c.avatar === char.avatar);
-        if (charIndex !== -1 && allCharacters[charIndex] !== char) {
-            allCharacters[charIndex].data = updatedData;
+        const crossRef = (charIndex !== -1 && allCharacters[charIndex] !== char) ? allCharacters[charIndex] : null;
+        const syncRootFields = (target) => {
             for (const [field, value] of Object.entries(fieldUpdates)) {
-                if (!field.includes('.') && value !== ST_UNSET_SENTINEL) allCharacters[charIndex][field] = value;
+                if (!field.includes('.') && value !== ST_UNSET_SENTINEL) target[field] = value;
             }
-            for (const [field, value] of Object.entries(opts.rootFields || {})) allCharacters[charIndex][field] = value;
+            for (const [field, value] of Object.entries(opts.rootFields || {})) target[field] = value;
+        };
+        if (surgical) {
+            // In-place: a wholesale swap from a stale ref downgrades a hydrated entry but keeps _slim false.
+            const applyFieldsTo = (target) => {
+                if (!target.data) target.data = {};
+                for (const [field, value] of Object.entries(resolvedUpdates)) {
+                    const mapped = field.startsWith('depth_prompt.') ? 'extensions.' + field : field;
+                    setNestedValue(target.data, mapped, value);
+                }
+                cleanSentinels(target.data);
+            };
+            applyFieldsTo(char);
+            if (crossRef) applyFieldsTo(crossRef);
+        } else {
+            char.data = updatedData;
+            if (crossRef) crossRef.data = updatedData;
         }
-        if (updatedData.extensions) _extensionsCache.set(char.avatar, updatedData.extensions);
+        syncRootFields(char);
+        if (crossRef) syncRootFields(crossRef);
+        // Caching pre-recovery extensions marks a stripped set recovered and pins it for the session.
+        if (char.data?.extensions && extensionsReady(char)) _extensionsCache.set(char.avatar, char.data.extensions);
         // Under ST lazy loading the post-save refetch restores the cached estimate, so refresh it at the write.
-        if (TOKEN_ESTIMATE_FIELDS.some(f => f in fieldUpdates)) {
+        // A surgical write can run on a slim char whose other heavy fields are absent; recomputing there would underestimate.
+        if (TOKEN_ESTIMATE_FIELDS.some(f => f in fieldUpdates) && !char._slim) {
             const tok = computeTokenEstimate(char);
             char._tokenEstimate = tok;
             if (charIndex !== -1) allCharacters[charIndex]._tokenEstimate = tok;
@@ -29842,7 +30194,7 @@ async function writeCardFields(char, fieldUpdates, opts = {}) {
  *
  * @param {string} avatar - Character avatar filename
  * @param {Object} fieldUpdates - Object with field paths as keys (supports dot notation)
- * @param {Object} [opts] - awaitNotify: await the ST resync before returning, so a follow-on implicit card save cannot clobber this write. rootFields: payload-root key/values for fields ST keeps outside data (chat, fav, create_date).
+ * @param {Object} [opts] - awaitNotify: await the ST resync before returning, so a follow-on implicit card save cannot clobber this write. rootFields: payload-root key/values for fields ST keeps outside data (chat, fav, create_date). surgical: forwarded to writeCardFields (payload carries only the updated fields).
  * @returns {Promise<boolean>} Success status
  */
 window.applyCardFieldUpdates = async function(avatar, fieldUpdates, opts = {}) {
@@ -29855,7 +30207,8 @@ window.applyCardFieldUpdates = async function(avatar, fieldUpdates, opts = {}) {
     // Capture name BEFORE write for gallery-rename comparison. writeCardFields will mutate char.data in place.
     const oldName = char.data?.name || char.name || '';
 
-    const result = await writeCardFields(char, fieldUpdates, { rootFields: opts.rootFields });
+    // Forward opts wholesale so writeCardFields opts (surgical, rootFields) survive the wrapper
+    const result = await writeCardFields(char, fieldUpdates, opts);
     if (!result.ok) return false;
 
     // Convenience side effects. Failure here doesn't roll back the write.
