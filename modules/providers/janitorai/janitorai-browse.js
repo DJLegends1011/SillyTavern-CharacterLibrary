@@ -25,6 +25,8 @@ import {
     getBrowserEndpoint,
     extractViaBrowser,
     recoverViaBrowser,
+    recoverPhaseLabel,
+    recoverProgressText,
     stripHtml,
     decodeHtmlEntities,
     tagKey,
@@ -745,18 +747,62 @@ function setHiddenNotice(tokens, noProxy = false) {
     });
 }
 
+// Built once, text-only updates, so the spinner doesnt restart on every poll tick.
+function setRecoverProgress(text) {
+    const host = document.getElementById('janitoraiHiddenNotice');
+    if (!host) return;
+    const line = text || 'Starting...';
+    let bar = document.getElementById('janitoraiRecoverProgress');
+    if (!bar) {
+        // Swap, dont stack: two banners about one card read as conflicting states.
+        for (const n of host.querySelectorAll('.browse-notice')) n.classList.add('cl-hidden');
+        const tmp = document.createElement('div');
+        // Never seed '': buildProviderNotice drops the <p> entirely, leaving nothing to update.
+        tmp.innerHTML = buildProviderNotice({
+            kind: 'info',
+            icon: 'fa-solid fa-spinner fa-spin',
+            title: 'Extracting, this can take a few minutes',
+            message: line,
+        });
+        bar = tmp.firstElementChild;
+        if (!bar) return;
+        bar.id = 'janitoraiRecoverProgress';
+        host.insertBefore(bar, host.firstChild);
+        return;
+    }
+    let msg = bar.querySelector('.browse-notice-message');
+    if (!msg) {
+        msg = document.createElement('p');
+        msg.className = 'browse-notice-message';
+        (bar.querySelector('.browse-notice-body') || bar).appendChild(msg);
+    }
+    msg.textContent = line;
+}
+
+function clearRecoverProgress() {
+    const bar = document.getElementById('janitoraiRecoverProgress');
+    if (!bar) return;
+    bar.remove();
+    // Restore the notice so a failed run still shows its retry action.
+    const host = document.getElementById('janitoraiHiddenNotice');
+    if (host) for (const n of host.querySelectorAll('.browse-notice')) n.classList.remove('cl-hidden');
+}
+
 async function recoverDefinitionIntoPreview() {
     const hit = jaSelectedChar;
     const charId = hit?.character_id || hit?.id;
     if (!charId) return;
     const btn = document.querySelector('#janitoraiHiddenNotice [data-notice-action="recover"]');
     if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Extracting...'; }
+    // No phases here, so it stays static; otherwise a multi-minute wait signals only a spinner.
+    setRecoverProgress('Reading the assembled prompt from JanitorAI.');
 
     const token = jaDetailToken;
     try {
         const rec = await extractViaBrowser(String(charId));
         // The user can have moved on to another card during the round trip.
         if (token !== jaDetailToken) return;
+        clearRecoverProgress();
         if (!rec?.definition) throw new Error('Nothing came back');
         if (jaSelectedChar && (jaSelectedChar.character_id || jaSelectedChar.id) === charId) {
             jaSelectedChar._recoveredDefinition = rec.definition;
@@ -773,6 +819,7 @@ async function recoverDefinitionIntoPreview() {
         showToast('Definition and greeting recovered', 'success');
     } catch (err) {
         if (token !== jaDetailToken) return;
+        clearRecoverProgress();
         showToast(`Could not extract this character: ${err.message}`, 'error', 8000);
         if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-unlock"></i> Extract now'; }
     }
@@ -780,16 +827,6 @@ async function recoverDefinitionIntoPreview() {
 
 // The no-proxy sibling of recoverDefinitionIntoPreview. What comes back is model output, so the
 // copy says so and the card carries the same warning into the library.
-// Coarse recovery phases from cl-helper, in the user's words. The model turn is the slow one.
-function recoverPhaseLabel(phase) {
-    return {
-        setup: 'Opening a chat...',
-        definition: 'Recovering the definition, the slow part...',
-        extras: 'Recovering the scenario...',
-        done: 'Building the card...',
-    }[phase] || 'Recovering...';
-}
-
 async function recoverLockedIntoPreview() {
     const hit = jaSelectedChar;
     const charId = hit?.character_id || hit?.id;
@@ -798,13 +835,17 @@ async function recoverLockedIntoPreview() {
     const setBtn = (label) => { if (btn) btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> ${label}`; };
     if (btn) btn.disabled = true;
     setBtn(recoverPhaseLabel('setup'));
+    setRecoverProgress(recoverProgressText('setup'));
 
     const token = jaDetailToken;
     try {
-        const rec = await recoverViaBrowser(String(charId), undefined, (phase) => {
-            if (token === jaDetailToken) setBtn(recoverPhaseLabel(phase));
+        const rec = await recoverViaBrowser(String(charId), undefined, (phase, detail) => {
+            if (token !== jaDetailToken) return;
+            setBtn(recoverPhaseLabel(phase));
+            setRecoverProgress(recoverProgressText(phase, detail));
         });
         if (token !== jaDetailToken) return;
+        clearRecoverProgress();
         if (!rec?.personality) throw new Error('Nothing came back');
         if (jaSelectedChar && (jaSelectedChar.character_id || jaSelectedChar.id) === charId) {
             jaSelectedChar._recoveredNoProxy = rec;
@@ -821,6 +862,7 @@ async function recoverLockedIntoPreview() {
         showToast('Recovered from the model. Check it before relying on it: this is not the creator file.', 'warning', 9000);
     } catch (err) {
         if (token !== jaDetailToken) return;
+        clearRecoverProgress();
         showToast(`Could not recover this character: ${err.message}`, 'error', 8000);
         if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> Try anyway'; }
     }
@@ -1217,10 +1259,14 @@ async function importCharacter(hit) {
         setBtn(willRecover
             ? `<i class="fa-solid fa-spinner fa-spin"></i> ${recoverPhaseLabel('setup')}`
             : '<i class="fa-solid fa-spinner fa-spin"></i> Importing...');
+        if (willRecover) setRecoverProgress(recoverProgressText('setup'));
 
         const result = await provider.importCharacter(String(charId), { _detail: detail }, {
             onProgress: willRecover
-                ? (phase) => setBtn(`<i class="fa-solid fa-spinner fa-spin"></i> ${recoverPhaseLabel(phase)}`)
+                ? (label, extra) => {
+                    setBtn(`<i class="fa-solid fa-spinner fa-spin"></i> ${label}`);
+                    if (extra?.phase) setRecoverProgress(recoverProgressText(extra.phase, extra.detail));
+                }
                 : undefined,
             inheritedGalleryId,
             // Already extracted in the preview: reuse it rather than paying for a second run.
@@ -1229,6 +1275,7 @@ async function importCharacter(hit) {
             // Model output from the no-proxy path; the builder stamps it so the card says so.
             recovered: hit._recoveredNoProxy || null,
         });
+        clearRecoverProgress();
         if (!result.success) throw new Error(result.error || 'Import failed');
 
         const mediaUrls = result.embeddedMediaUrls || [];
@@ -1258,6 +1305,7 @@ async function importCharacter(hit) {
             markImported: () => markCardAsImported(charId),
         });
     } catch (err) {
+        clearRecoverProgress();
         console.error('[JanitoraiBrowse] Import failed:', err);
         showToast(`Import failed: ${err.message}`, 'error');
         if (importBtn) {

@@ -18,6 +18,7 @@ import {
     ctValidateSession,
     ctLogout,
     isCtSessionActive,
+    getCtCharName,
 } from './chartavern-api.js';
 
 const {
@@ -91,16 +92,17 @@ let view; // module-scoped BrowseView instance reference (set once in constructo
 function isCharInLocalLibrary(hit) {
     if (hit.path && view._lookup.byProviderId.has(hit.path)) return true;
 
-    const name = (hit.name || '').toLowerCase().trim();
+    // Both name forms: cards imported before the inChatName remap carry the listing title
+    const names = [getCtCharName(hit).toLowerCase(), (hit.name || '').toLowerCase().trim()];
     const creator = (hit.author_username || hit.author || '').toLowerCase().trim();
-    if (name && creator && view._lookup.byNameAndCreator.has(`${name}|${creator}`)) return true;
+    if (creator && names.some(n => n && view._lookup.byNameAndCreator.has(`${n}|${creator}`))) return true;
 
     return false;
 }
 
 function isCharPossibleMatchObj(h) {
     if (isCharInLocalLibrary(h)) return false;
-    return view.isCharPossibleMatch(h.name || '', h.author_username || h.author || h.path?.split('/')[0] || '');
+    return view.isCharPossibleMatch(getCtCharName(h), h.author_username || h.author || h.path?.split('/')[0] || '');
 }
 
 // ========================================
@@ -230,7 +232,7 @@ function createCtCard(hit) {
     const tokens = formatNumber(hit.totalTokens || 0);
     const author = hit.author || hit.path?.split('/')[0] || '';
     const inLibrary = isCharInLocalLibrary(hit);
-    const possibleTier = inLibrary ? null : view.getPossibleMatchTier(hit.name || '', author);
+    const possibleTier = inLibrary ? null : view.getPossibleMatchTier(getCtCharName(hit), author);
     const possibleMatch = !!possibleTier?.show;
 
     const badges = [];
@@ -464,7 +466,7 @@ function openPreviewModal(hit) {
     const avatarUrl = hit.path ? getAvatarUrl(hit.path) : '/img/ai4.png';
     const ctUrl = hit.path ? getCharacterPageUrl(hit.path) : '#';
     const inLibrary = isCharInLocalLibrary(hit);
-    const possibleTier = inLibrary ? null : view.getPossibleMatchTier(hit.name || '', author);
+    const possibleTier = inLibrary ? null : view.getPossibleMatchTier(getCtCharName(hit), author);
     const possibleMatch = !!possibleTier?.show;
 
     let charDef = '';

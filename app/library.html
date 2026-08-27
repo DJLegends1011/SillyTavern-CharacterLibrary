@@ -7,8 +7,8 @@
     <meta name="referrer" content="no-referrer">
     <meta name="character-library" content="1"><!-- marker for the optional JanitorAI bridge userscript -->
     <title>SillyTavern Character Library</title>
-    <link rel="stylesheet" href="library.css?v=109">
-    <link rel="stylesheet" href="library-mobile.css?v=37">
+    <link rel="stylesheet" href="library.css?v=110">
+    <link rel="stylesheet" href="library-mobile.css?v=38">
     <!-- Noto Sans from SillyTavern's bundled webfonts -->
     <link rel="stylesheet" href="/webfonts/NotoSans/stylesheet.css">
     <!-- Font Awesome from SillyTavern's bundled copy (solid + brands faces; the regular face is vendored, its font-face lives in library.css) -->
@@ -227,6 +227,9 @@
                         </button>
                         <button id="lorebooksBtn" class="dropdown-item">
                             <i class="fa-solid fa-book-atlas"></i> Lorebooks
+                        </button>
+                        <button id="tagsManagerBtn" class="dropdown-item">
+                            <i class="fa-solid fa-tags"></i> Tags Manager
                         </button>
                         <button id="recommenderBtn" class="dropdown-item">
                             <i class="fa-solid fa-wand-magic-sparkles"></i> Card Recommender
@@ -2881,7 +2884,7 @@ https://jannyai.com/characters/uuid_slug
                         <details class="settings-provider-section" id="settingsDatacatSection">
                             <summary>
                                 <i class="fa-solid fa-cat provider-icon"></i> DataCat
-                                <span class="settings-provider-badge">Beta</span>
+                                <span class="settings-provider-badge deprecated">Deprecated</span>
                                 <i class="fa-solid fa-chevron-right provider-chevron"></i>
                             </summary>
                             <div class="settings-provider-body">
@@ -3644,8 +3647,8 @@ https://jannyai.com/characters/uuid_slug
     <div id="toastContainer" class="toast-container"></div>
 
     <!-- Scripts -->
-    <script src="library.js?v=198"></script>
-    <script type="module" src="../modules/module-loader.js?v=49"></script>
-    <script src="library-mobile.js?v=25"></script>
+    <script src="library.js?v=199"></script>
+    <script type="module" src="../modules/module-loader.js?v=50"></script>
+    <script src="library-mobile.js?v=26"></script>
 </body>
 </html>
