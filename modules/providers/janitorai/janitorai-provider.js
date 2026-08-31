@@ -52,7 +52,7 @@ class JanitoraiProvider extends ProviderBase {
     get iconUrl() { return 'https://ella.janitorai.com/favicon.ico'; }
     get beta() { return true; }
     get disabledByDefault() { return true; }
-    get enableWarning() { return 'JanitorAI only answers real browsers: Cloudflare challenges everything else. Character Library runs one for you, but it needs the machine hosting SillyTavern to have a working GPU; if it does not, point Settings > Online > JanitorAI at a browser on a desktop that does. Sign in there too, to get past the first page of results.'; }
+    get enableWarning() { return 'JanitorAI only answers real browsers: Cloudflare challenges everything else. Character Library runs one for you on the machine hosting SillyTavern. Use the Test button under Settings > Online > JanitorAI to see whether that machine gets through; if it does not, point that setting at a browser running on another machine. Sign in there too, to get past the first page of results.'; }
     get minClHelperVersion() { return '1.9.0'; }
     get browseView() { return janitoraiBrowseView; }
 
@@ -373,9 +373,12 @@ class JanitoraiProvider extends ProviderBase {
                         const progress = options?.onProgress;
                         recovered = await recoverViaBrowser(charId, undefined,
                             // Additive: the batch log reads the label, the preview uses the phase.
-                            progress ? (phase, detail) => progress(recoverPhaseLabel(phase), { phase, detail }) : undefined);
+                            progress ? (phase, detail) => progress(recoverPhaseLabel(phase), { phase, detail }) : undefined,
+                            // Without this the caller can abandon the import while the server keeps
+                            // driving the account.
+                            { signal: options?.signal });
                     } else {
-                        const rec = await extractViaBrowser(charId);
+                        const rec = await extractViaBrowser(charId, undefined, { signal: options?.signal });
                         if (rec?.definition) definition = rec.definition;
                         if (rec?.firstMessage) firstMessage = rec.firstMessage;
                     }

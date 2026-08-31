@@ -1132,6 +1132,34 @@ function setHiddenNotice(tokens, noProxy = false) {
     });
 }
 
+// ONE owner per recovery run. Two runs both painting the single progress banner made its text
+// alternate between them, and closing the card left the first driving the account for minutes.
+let jaRecoverRun = null;
+let jaRecoverSeq = 0;
+
+function startRecoverRun(charId, kind) {
+    cancelRecoverRun();
+    jaRecoverRun = { id: ++jaRecoverSeq, charId, kind, controller: new AbortController() };
+    return jaRecoverRun;
+}
+
+function cancelRecoverRun() {
+    if (!jaRecoverRun) return;
+    CoreAPI.debugLog?.(`[JanitoraiBrowse] cancelling ${jaRecoverRun.kind} recovery for ${jaRecoverRun.charId}`);
+    jaRecoverRun.controller.abort();
+    jaRecoverRun = null;
+    clearRecoverProgress();
+}
+
+/** A superseded or cancelled run must not paint, toast, or write to the preview. */
+function isRecoverRunLive(run) {
+    return !!run && !!jaRecoverRun && jaRecoverRun.id === run.id;
+}
+
+function endRecoverRun(run) {
+    if (isRecoverRunLive(run)) jaRecoverRun = null;
+}
+
 // Built once, text-only updates, so the spinner doesnt restart on every poll tick.
 function setRecoverProgress(text) {
     const host = document.getElementById('janitoraiHiddenNotice');
@@ -1182,11 +1210,12 @@ async function recoverDefinitionIntoPreview() {
     // No phases here, so it stays static; otherwise a multi-minute wait signals only a spinner.
     setRecoverProgress('Reading the assembled prompt from JanitorAI.');
 
-    const token = jaDetailToken;
+    const run = startRecoverRun(charId, 'preview');
     try {
-        const rec = await extractViaBrowser(String(charId));
+        const rec = await extractViaBrowser(String(charId), undefined, { signal: run.controller.signal });
         // The user can have moved on to another card during the round trip.
-        if (token !== jaDetailToken) return;
+        if (!isRecoverRunLive(run)) return;
+        endRecoverRun(run);
         clearRecoverProgress();
         if (!rec?.definition) throw new Error('Nothing came back');
         if (jaSelectedChar && (jaSelectedChar.character_id || jaSelectedChar.id) === charId) {
@@ -1203,7 +1232,8 @@ async function recoverDefinitionIntoPreview() {
         setHiddenNotice(null);
         showToast('Definition and greeting recovered', 'success');
     } catch (err) {
-        if (token !== jaDetailToken) return;
+        if (err?.cancelled || !isRecoverRunLive(run)) return;
+        endRecoverRun(run);
         clearRecoverProgress();
         showToast(`Could not extract this character: ${err.message}`, 'error', 8000);
         if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-unlock"></i> Extract now'; }
@@ -1222,14 +1252,15 @@ async function recoverLockedIntoPreview() {
     setBtn(recoverPhaseLabel('setup'));
     setRecoverProgress(recoverProgressText('setup'));
 
-    const token = jaDetailToken;
+    const run = startRecoverRun(charId, 'preview');
     try {
         const rec = await recoverViaBrowser(String(charId), undefined, (phase, detail) => {
-            if (token !== jaDetailToken) return;
+            if (!isRecoverRunLive(run)) return;
             setBtn(recoverPhaseLabel(phase));
             setRecoverProgress(recoverProgressText(phase, detail));
-        });
-        if (token !== jaDetailToken) return;
+        }, { signal: run.controller.signal });
+        if (!isRecoverRunLive(run)) return;
+        endRecoverRun(run);
         clearRecoverProgress();
         if (!rec?.personality) throw new Error('Nothing came back');
         if (jaSelectedChar && (jaSelectedChar.character_id || jaSelectedChar.id) === charId) {
@@ -1246,7 +1277,9 @@ async function recoverLockedIntoPreview() {
         setHiddenNotice(null);
         showToast('Recovered from the model. Check it before relying on it: this is not the creator file.', 'warning', 9000);
     } catch (err) {
-        if (token !== jaDetailToken) return;
+        // A cancel is the reader closing the card, which needs no error about it.
+        if (err?.cancelled || !isRecoverRunLive(run)) return;
+        endRecoverRun(run);
         clearRecoverProgress();
         showToast(`Could not recover this character: ${err.message}`, 'error', 8000);
         if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> Try anyway'; }
@@ -1567,6 +1600,10 @@ function closePreviewModal() {
     jaDetailToken++;
     jaFavoriteToken++;
     jaDetailPromise = null;
+    // Closing the card STOPS its recovery rather than orphaning it: the run drives the real
+    // account, and the server deletes the throwaway chat and persona as it unwinds. Imports
+    // included; a successful one releases ownership before it closes this modal.
+    cancelRecoverRun();
     cleanupCharModal();
     const modal = document.getElementById('janitoraiCharModal');
     if (modal) modal.classList.add('hidden');
@@ -1646,14 +1683,19 @@ async function importCharacter(hit) {
             ? `<i class="fa-solid fa-spinner fa-spin"></i> ${recoverPhaseLabel('setup')}`
             : '<i class="fa-solid fa-spinner fa-spin"></i> Importing...');
         if (willRecover) setRecoverProgress(recoverProgressText('setup'));
+        // Owns the banner so a stale run cannot paint over this one, and carries the signal that
+        // lets closing the card reach the server.
+        const run = willRecover ? startRecoverRun(charId, 'import') : null;
 
         const result = await provider.importCharacter(String(charId), { _detail: detail }, {
             onProgress: willRecover
                 ? (label, extra) => {
+                    if (run && !isRecoverRunLive(run)) return;
                     setBtn(`<i class="fa-solid fa-spinner fa-spin"></i> ${label}`);
                     if (extra?.phase) setRecoverProgress(recoverProgressText(extra.phase, extra.detail));
                 }
                 : undefined,
+            signal: run?.controller?.signal,
             inheritedGalleryId,
             // Already extracted in the preview: reuse it rather than paying for a second run.
             definition: hit._recoveredDefinition || '',
@@ -1661,6 +1703,7 @@ async function importCharacter(hit) {
             // Model output from the no-proxy path; the builder stamps it so the card says so.
             recovered: hit._recoveredNoProxy || null,
         });
+        if (run) endRecoverRun(run);
         clearRecoverProgress();
         if (!result.success) throw new Error(result.error || 'Import failed');
 

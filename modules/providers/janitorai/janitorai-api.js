@@ -521,15 +521,18 @@ function browserTarget(endpoint) {
     return { endpoint: getBrowserEndpoint() };
 }
 
-async function callHelper(route, body, { timeoutMs = 180000 } = {}) {
+async function callHelper(route, body, { timeoutMs = 180000, signal = null } = {}) {
     // apiRequest has no timeout; the abort signal is the only bound on a wedged browser.
     // Pass only `signal`: a `headers` opt would clobber the injected CSRF token.
     let resp;
     try {
+        const timeoutSignal = AbortSignal.timeout(timeoutMs);
         resp = await CoreAPI.apiRequest(`${CL_HELPER_PLUGIN_BASE}${route}`, 'POST', body, {
-            signal: AbortSignal.timeout(timeoutMs),
+            signal: signal ? AbortSignal.any([timeoutSignal, signal]) : timeoutSignal,
         });
     } catch (e) {
+        // The reader's own cancel is not a service failure and must not be reported as one.
+        if (signal?.aborted) { const err = new Error('Cancelled'); err.cancelled = true; throw err; }
         if (e?.name === 'TimeoutError' || e?.name === 'AbortError') {
             throw new Error('The browser endpoint did not answer in time.');
         }
@@ -593,7 +596,7 @@ export async function browserLogout(endpoint) {
  * Public definitions land on `detail` (extracted:false); withheld ones on `definition` (extracted:true).
  * @returns {Promise<{detail: Object, definition: string, extracted: boolean}>}
  */
-export async function extractViaBrowser(characterId, endpoint) {
+export async function extractViaBrowser(characterId, endpoint, { signal } = {}) {
     // Refresh token rides along so cl-helper can rebuild a session cookie for the chat UI.
     const token = (await getValidJanitoraiToken()) || '';
     const refreshToken = CoreAPI.getSetting('janitoraiRefreshToken') || '';
@@ -602,7 +605,7 @@ export async function extractViaBrowser(characterId, endpoint) {
         characterId,
         token: token || undefined,
         refreshToken: refreshToken || undefined,
-    }, { timeoutMs: 240000 });
+    }, { timeoutMs: 240000, signal });
 }
 
 // Button-sized. The detail belongs in the progress banner, not in a control that has to stay short.
@@ -642,10 +645,18 @@ export function recoverProgressText(phase, detail = null) {
  * progress hint; it is best-effort and never blocks the result.
  * @returns {Promise<{personality: string, scenario: string, exampleDialogs: string, firstMessage: string, recovered: string}>}
  */
-export async function recoverViaBrowser(characterId, endpoint, onProgress) {
+export async function recoverViaBrowser(characterId, endpoint, onProgress, { signal } = {}) {
     const token = (await getValidJanitoraiToken()) || '';
     const refreshToken = CoreAPI.getSetting('janitoraiRefreshToken') || '';
     const jobId = `rec_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+
+    // Aborting the POST alone only hangs up on the run; the server keeps driving the account. Tell
+    // it to stop so it deletes the throwaway chat and persona on its way out.
+    const onAbort = () => {
+        CoreAPI.apiRequest(`${CL_HELPER_PLUGIN_BASE}/janitorai-recover-cancel`, 'POST', { jobId })
+            .catch(() => { /* best effort; the run also stops when the page goes */ });
+    };
+    signal?.addEventListener('abort', onAbort, { once: true });
 
     // Poll the coarse phase while the long POST runs. Best-effort, stops when it settles.
     let polling = !!onProgress;
@@ -669,16 +680,18 @@ export async function recoverViaBrowser(characterId, endpoint, onProgress) {
     })();
 
     try {
-        // Recovery runs up to THREE turns; anything less aborts a run that is still working.
+        // One turn per field plus continuations, and a single turn can legitimately stream for
+        // minutes: budget for the whole run, not for one turn.
         return await callHelper('/janitorai-recover', {
             ...browserTarget(endpoint),
             characterId,
             jobId,
             token: token || undefined,
             refreshToken: refreshToken || undefined,
-        }, { timeoutMs: 900000 });
+        }, { timeoutMs: 2700000, signal });
     } finally {
         polling = false;
+        signal?.removeEventListener('abort', onAbort);
         await pollLoop.catch(() => {});
     }
 }
