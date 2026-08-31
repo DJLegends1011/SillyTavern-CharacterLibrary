@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
  * Runs a browser here and publishes its DevTools port, for when the one Character Library starts
- * for itself cannot clear Cloudflare (usually the SillyTavern host has no usable GPU). The browser
- * needs a REAL GPU; software rendering never clears the challenge.
+ * for itself cannot clear Cloudflare. Which machines clear it varies, so the Test button in
+ * Settings decides that, not the host's specs.
  *
  * A reference implementation, not the only one: Character Library speaks plain CDP, so a bare
  * `chrome --remote-debugging-port`, browserless, or your own container all work.
@@ -16,6 +16,7 @@
  *   BIND=0.0.0.0       interface to publish on; use 127.0.0.1 to keep it local
  *   PROFILE=<path>     profile dir (default: ./.janitorai-profile next to this script)
  *   BROWSER=<path>     explicit browser binary
+ *   ADVERTISE_HOST=<ip>  address to print as the one to paste, for containers (see compose.yaml)
  */
 
 import { spawn, spawnSync } from 'node:child_process';
@@ -271,7 +272,8 @@ const finalUaMajor = (String(info['User-Agent'] || '').match(/Chrome\/(\d+)/) ||
 const finalRealMajor = (String(info.Browser || '').match(/(\d+)/) || [])[1];
 if (/headless/i.test(info['User-Agent'] || '')) {
     console.log('\nWARNING: the user-agent still says HeadlessChrome, and JanitorAI answers that');
-    console.log('         with "Access Restricted". The UA probe did not succeed.');
+    console.log('         with "Access Restricted". The UA probe did not succeed, and nothing');
+    console.log('         will work in this state: stop it and retry rather than leaving it up.');
 } else if (finalUaMajor && finalRealMajor && finalUaMajor !== finalRealMajor) {
     console.log(`\nWARNING: the user-agent claims Chrome ${finalUaMajor} but this browser is Chrome ${finalRealMajor}.`);
     console.log('         Cloudflare reads the real version from Sec-CH-UA, so this is a mismatch.');
@@ -279,8 +281,15 @@ if (/headless/i.test(info['User-Agent'] || '')) {
     console.log(`checks  : user-agent and browser both report Chrome ${finalRealMajor || '?'}`);
 }
 console.log('\nPaste ONE of these into Character Library (Settings > Online > JanitorAI):');
+// In a container the only address visible from in here is the private 172.x one, which is useless
+// to a client on the LAN; ADVERTISE_HOST names the host that actually publishes the port.
+const advertise = (process.env.ADVERTISE_HOST || '').trim();
+if (advertise) console.log(`  http://${advertise}:${PORT}${' '.repeat(Math.max(0, 14 - advertise.length))} <== paste this one (the host publishing this port)`);
 console.log(`  http://localhost:${PORT}          (SillyTavern on this machine)`);
-for (const a of addrs) console.log(`  http://${a}:${PORT}${' '.repeat(Math.max(0, 14 - a.length))} (SillyTavern elsewhere on the LAN)`);
+for (const a of addrs) {
+    const label = advertise ? '(container-internal, NOT reachable from the LAN)' : '(SillyTavern elsewhere on the LAN)';
+    console.log(`  http://${a}:${PORT}${' '.repeat(Math.max(0, 14 - a.length))} ${label}`);
+}
 
 // The CDP port is unauthenticated and is full control of a logged-in browser. Warn only when it
 // is reachable off-box, and not when the user already limited it to loopback.
