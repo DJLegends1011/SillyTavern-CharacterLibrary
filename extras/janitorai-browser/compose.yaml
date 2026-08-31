@@ -1,0 +1,54 @@
+# A browser for Character Library's JanitorAI provider, driven over CDP from whatever machine runs
+# SillyTavern. Nothing about Character Library runs in here.
+#
+#   ADVERTISE_HOST=<this host's LAN ip> docker compose up -d --build
+#
+# Then paste the address the logs print into Settings > Online > JanitorAI (browser mode
+# "endpoint") and press Test. A starting point, not a turnkey stack: adjust it to your host.
+#
+# The published CDP port is UNAUTHENTICATED full control of a logged-in browser. The relay in
+# run-browser.mjs drops any request carrying an Origin header, so a web page cannot touch it, but
+# on a LAN the LAN is the trust boundary. Never port-forward it.
+#
+# Address it by IP: Chrome's DevTools endpoint validates the Host header and accepts only an IP or
+# localhost, so a compose service name is rejected even on a shared Docker network.
+services:
+  cl-janitorai-browser:
+    build: .
+    image: cl-janitorai-browser:local
+    container_name: cl-janitorai-browser
+    restart: unless-stopped
+    init: true
+
+    environment:
+      # From in here the only visible address is the container's private one, which no LAN client
+      # can reach. This makes the address the script prints the one you actually paste.
+      ADVERTISE_HOST: ${ADVERTISE_HOST:-}
+
+    ports:
+      - "9222:9222"
+
+    volumes:
+      # Holds the JanitorAI login. Must be writable by the uid the image runs as (see its ARGs).
+      - ./profile:/profile
+
+    # Chromium on the default 64m shm dies in ways that mimic a driver fault.
+    shm_size: 1gb
+
+    # run-browser.mjs launches with the same flags Character Library uses, which do not include
+    # --no-sandbox, and Docker's default seccomp blocks syscalls chromium's own sandbox needs.
+    # Relaxing seccomp keeps the real sandbox, which is the safer of the two ways to make it start.
+    security_opt:
+      - seccomp:unconfined
+
+    # GPU passthrough is optional and off by default; software rendering can pass the browser test.
+    # If you want it: mount the device nodes as volumes
+    # rather than `devices:` (/dev/dma_heap is a directory on some boards), and add the host's
+    # video and render gids via group_add as NUMERIC values, since names resolve against the
+    # container's /etc/group and debian-slim has no "render" entry.
+
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"

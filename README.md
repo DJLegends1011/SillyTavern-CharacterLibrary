@@ -548,32 +548,39 @@ If SillyTavern runs on a Windows or Mac desktop with Chrome or Edge installed (o
 
 #### The Test button is the contract
 
-The endpoint test measures everything the Cloudflare challenge actually cares about (hardware GPU rendering, desktop-class WebGL, H.264/AAC codecs, the challenge itself) and explains each result separately. That makes the support boundary simple:
+The endpoint test runs every check separately and explains each result, because "it failed" is useless when the fix differs per check. **The Cloudflare row is the one that decides**: it measures the challenge itself, which every other row is only predicting. The rendering and WebGL rows are hints shown as warnings, since a software-rendered browser has been measured clearing the challenge and completing an extraction. That makes the support boundary simple:
 
-- **Any check red**: the problem is your browser environment, and getting it green is your side of the contract. The requirements below say what a passing environment looks like; how you produce one on your platform is your own research. We do not troubleshoot browser installs, GPU passthrough, Docker, Termux, or distro quirks; there are too many combinations for that to ever work.
+- **A required check red**: the problem is your browser environment, and getting it green is your side of the contract. The notes below say what helps, and `extras/janitorai-browser/` ships a container that is known to work, but how you produce a passing environment on your own platform is your own research. We do not troubleshoot browser installs, GPU passthrough, Docker, Termux, or distro quirks; there are too many combinations for that to ever work.
 - **All checks green and the provider still misbehaves**: that is a Character Library bug, and we genuinely want the report.
 
 #### Servers, VMs, containers, ARM boards: power user territory
 
-Everything below desktop-with-a-GPU is yours to assemble. What the browser must have:
+Anything that is not a desktop with Chrome or Edge is yours to assemble. Press **Test** instead of reasoning from the machine's specs: Cloudflare's posture changes, and hosts that look unpromising do pass. What helps:
 
 - A Chromium-family binary cl-helper can find: Chrome, Edge, or Chromium, or set `CL_BROWSER` to a path
-- **Real GPU rendering.** This is Cloudflare's gate, not ours. Software rendering (headless servers, VMs without GPU passthrough, SwiftShader/llvmpipe fallbacks) sits on "Just a moment..." forever rather than failing with an error. Headless itself is fine; only the rendering matters
-- H.264 and AAC codecs. This mostly bites Linux ARM, where the common Chromium builds ship without them; Google publishes real Chrome packages for arm64, use those
+- H.264 and AAC codecs. This mostly bites Linux ARM: Playwright's arm64 Chromium ships without them, while Debian's `chromium` package and Google's Chrome debs for arm64 both carry them
 - A synced system clock
-- Known not to work regardless: Mali-class mobile GPUs (tested on an Orange Pi 5 Plus) stall even with everything else correct
+- **Rendering is a hint, not a requirement.** Software rendering sometimes sits on "Just a moment..." and sometimes clears in seconds, so the Cloudflare row is what tells you, not the renderer row. Headless itself is fine
 
-#### No GPU on the SillyTavern machine?
+#### If the SillyTavern machine cannot clear Cloudflare
 
-Run the browser on one that has a GPU and point Character Library at it:
+Run the browser on another machine and point Character Library at it. Switch **Settings → Online → JanitorAI → Browser** to **endpoint**, then either:
 
 ```bash
+# on a desktop
 node extras/janitorai-browser/run-browser.mjs
 ```
 
-It prints a URL to paste into the **Browser Endpoint** field in Settings. Node 22+, no dependencies, leave it running. `BIND=127.0.0.1` keeps it off the LAN. Note this port is **unauthenticated**: anyone who can reach it has full control of that browser, so keep it local unless you have a reason not to.
+```bash
+# or in a container, from extras/janitorai-browser/
+ADVERTISE_HOST=<that host's LAN ip> docker compose up -d --build
+```
 
-A phone-side browser can also qualify (Android Chrome renders on the phone's real GPU) by exposing its debugging socket through Android's developer facilities, but wiring that up is exactly the kind of setup you research yourself.
+Either one prints the URL to paste into the **Browser Endpoint** field. Node 22+, no dependencies, leave it running. `BIND=127.0.0.1` keeps the desktop runner off the LAN. Note this port is **unauthenticated**: anyone who can reach it has full control of that browser and can read its JanitorAI session, so keep it on a network you trust and never port-forward it.
+
+The container is the same script in a Debian image, and it is what runs on the ARM board mentioned above. Expect to adjust it for your host; [`extras/janitorai-browser/README.md`](extras/janitorai-browser/README.md) lists the gotchas that are worth knowing in advance rather than debugging (writable `HOME`, seccomp, shm size, codecs, the profile volume, advertising the right address).
+
+A phone-side browser can also qualify, by exposing its debugging socket through Android's developer facilities, but wiring that up is exactly the kind of setup you research yourself.
 
 #### Signing in
 
