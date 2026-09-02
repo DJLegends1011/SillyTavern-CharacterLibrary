@@ -3255,16 +3255,10 @@ function registerJannyaiBrowserRoutes(router) {
             const status = error?.code === 'JANNY_REQUEST_BLOCKED' ? 403 : 400;
             return res.status(status).json({ ok: false, error: error.message });
         }
-        const token = req.body?.token;
-        if (token !== undefined && (typeof token !== 'string' || token.length > 16_384)) {
-            return res.status(400).json({ ok: false, error: 'Invalid token' });
-        }
-
         try {
             const warm = await getJannyWarmPage(await resolveBrowserEndpoint(req));
             await assertJannyPageOrigin(warm.page);
             const headers = { Accept: request.contentType || 'text/html,application/json' };
-            if (token) headers.Authorization = `Bearer ${token}`;
             if (request.contentType) headers['Content-Type'] = request.contentType;
             const init = {
                 credentials: 'include',

@@ -70,19 +70,6 @@ function throwAbort(signal) {
     throw new DOMException('The operation was aborted.', 'AbortError');
 }
 
-function isExpiredJannyToken(token) {
-    if (typeof token !== 'string' || !token) return false;
-    try {
-        const part = token.split('.')[1];
-        if (!part) return false;
-        const base64 = part.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(part.length / 4) * 4, '=');
-        const claims = JSON.parse(atob(base64));
-        return Number.isFinite(claims?.exp) && claims.exp <= Math.floor(Date.now() / 1000);
-    } catch {
-        return false;
-    }
-}
-
 async function callHelper(route, body, { timeoutMs = 180_000, signal = null, allowFailedResult = false } = {}) {
     if (signal?.aborted) throwAbort(signal);
     const timeoutSignal = AbortSignal.timeout(timeoutMs);
@@ -124,14 +111,12 @@ export async function testJannyBrowserEndpoint(endpoint) {
 }
 
 export async function jannyBrowserFetch(path, {
-    method = 'GET', token = '', jsonBody, formBody, inspectCharacterId, endpoint, timeoutMs = DEFAULT_FETCH_TIMEOUT_MS, signal = null,
+    method = 'GET', jsonBody, formBody, inspectCharacterId, endpoint, timeoutMs = DEFAULT_FETCH_TIMEOUT_MS, signal = null,
 } = {}) {
-    if (isExpiredJannyToken(token)) throw createJannyError('JANNY_TOKEN_EXPIRED');
     const data = await callHelper('/jannyai-browser-fetch', {
         ...jannyBrowserTarget(endpoint),
         path,
         method: String(method || 'GET').toUpperCase(),
-        ...(token ? { token } : {}),
         jsonBody,
         formBody,
         inspectCharacterId,

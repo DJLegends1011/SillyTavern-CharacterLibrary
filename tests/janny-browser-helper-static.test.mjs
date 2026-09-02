@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { runInNewContext } from 'node:vm';
+import { JANNY_ORIGIN, validateJannyBrowserRequest, validateJannyFinalUrl } from '../extras/cl-helper/janny-browser-policy.js';
 
 const helper = readFileSync(new URL('../extras/cl-helper/index.js', import.meta.url), 'utf8');
 const pkg = JSON.parse(readFileSync(new URL('../extras/cl-helper/package.json', import.meta.url), 'utf8'));
@@ -62,11 +64,58 @@ test('hydrated extraction validates the live page origin after navigation', () =
     assert.ok(navigation >= 0 && guard > navigation && inspection > guard, 'hydrated extraction inspects an unverified redirected page');
 });
 
-test('fetch reuse validates the live origin before bearer construction and uses an absolute Janny URL', () => {
+test('fetch reuse validates the live origin before request construction and uses an absolute Janny URL', () => {
     const block = sourceBlock("router.post('/jannyai-browser-fetch'", "router.post('/jannyai-browser-session'");
     const warm = block.indexOf('const warm = await getJannyWarmPage(');
     const guard = block.indexOf('await assertJannyPageOrigin(warm.page);', warm);
-    const bearer = block.indexOf('headers.Authorization', warm);
-    assert.ok(warm >= 0 && guard > warm && bearer > guard, 'bearer can be constructed before the reused page origin is verified');
+    const headers = block.indexOf('const headers =', warm);
+    assert.ok(warm >= 0 && guard > warm && headers > guard, 'request can be constructed before the reused page origin is verified');
     assert.match(block, /fetch\(\$\{JSON\.stringify\(`\$\{JANNY_ORIGIN\}\$\{request\.safePath\}`\)\}/);
+});
+
+test('ordinary Janny helper fetches use browser cookies and never forward legacy tokens', async () => {
+    const routes = new Map();
+    const requests = [];
+    const page = {
+        evaluate: async script => runInNewContext(script, {
+            location: { href: 'https://jannyai.com/' },
+            fetch: async (url, init) => {
+                requests.push({ url, init: JSON.parse(JSON.stringify(init)) });
+                return { status: 200, url: 'https://jannyai.com/collections', text: async () => '' };
+            },
+        }),
+    };
+    const source = sourceBlock('function registerJannyaiBrowserRoutes(', 'function registerJanitoraiBrowserRoutes(');
+    runInNewContext(source + '\nregisterJannyaiBrowserRoutes(router);', {
+        router: { post: (path, handler) => routes.set(path, handler), get() {} },
+        JANNY_ORIGIN, validateJannyBrowserRequest, validateJannyFinalUrl,
+        assertJannyPageOrigin: helperModule.assertJannyPageOrigin,
+        resolveBrowserEndpoint: async () => 'http://browser.test:9222',
+        getJannyWarmPage: async () => ({ page }),
+        closeJannyWarmPage: async () => {},
+    });
+    const handler = routes.get('/jannyai-browser-fetch');
+    for (const token of ['synthetic-legacy-token', 123, 'x'.repeat(16_385)]) {
+        let reply;
+        let status = 200;
+        await handler({ body: {
+            path: '/collections/form/add-collection', method: 'POST',
+            formBody: { name: 'A & B', description: '', isPrivate: 'yes' }, token,
+        } }, {
+            status(value) { status = value; return this; },
+            json(value) { reply = value; },
+        });
+        assert.equal(status, 200);
+        assert.equal(reply.ok, true);
+        assert.equal(reply.body, '');
+    }
+    assert.equal(requests.length, 3);
+    for (const request of requests) {
+        assert.equal(request.url, 'https://jannyai.com/collections/form/add-collection');
+        assert.deepEqual(request.init, {
+            credentials: 'include', method: 'POST',
+            headers: { Accept: 'application/x-www-form-urlencoded', 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: 'name=A+%26+B&description=&isPrivate=yes',
+        });
+    }
 });

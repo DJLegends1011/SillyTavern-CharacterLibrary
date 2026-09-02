@@ -27,15 +27,15 @@ test('reuses Janitor browser configuration', () => {
     assert.deepEqual(browser.jannyBrowserTarget(), { endpoint: 'http://browser:9222' });
 });
 
-test('shapes an authenticated helper fetch without putting the token in the URL', async () => {
+test('ordinary helper fetches ignore legacy caller tokens and anonymous flags', async () => {
     settings.janitoraiBrowserMode = 'managed';
-    await browser.jannyBrowserFetch('/api/bookmark', { token: 'secret-token' });
+    await browser.jannyBrowserFetch('/api/bookmark', { token: 'synthetic-legacy-token', anonymous: true });
     const call = calls.at(-1);
     assert.equal(call.path, '/plugins/cl-helper/jannyai-browser-fetch');
     assert.equal(call.method, 'POST');
     assert.equal(call.body.path, '/api/bookmark');
-    assert.equal(call.body.token, 'secret-token');
-    assert.doesNotMatch(call.path, /secret-token/);
+    assert.equal('token' in call.body, false);
+    assert.equal('anonymous' in call.body, false);
 });
 
 test('forwards browser fetch options and preserves the helper fetch envelope', async () => {
@@ -95,7 +95,6 @@ test('routes browser test and account-session calls through the local helper', a
 });
 
 test('classifies helper and browser fetch failures without exposing credential data', async () => {
-    const expiredToken = `header.${Buffer.from(JSON.stringify({ exp: 1 })).toString('base64url')}.signature`;
     const cases = [
         {
             name: 'missing helper',
@@ -116,10 +115,6 @@ test('classifies helper and browser fetch failures without exposing credential d
             name: 'cloudflare challenge',
             response: { ok: false, status: 502, data: { ok: false, error: 'Cloudflare clearance failed' } },
             options: {}, code: 'JANNY_CF_BLOCKED',
-        },
-        {
-            name: 'expired JWT before dispatch',
-            options: { token: expiredToken }, code: 'JANNY_TOKEN_EXPIRED',
         },
         {
             name: 'account endpoint rejection',
