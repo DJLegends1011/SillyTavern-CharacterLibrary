@@ -2212,6 +2212,11 @@ class CdpPage {
         return r.cookies || [];
     }
 
+    async allCookies() {
+        const r = await this.send('Storage.getCookies');
+        return r.cookies || [];
+    }
+
     /**
      * Arm a one-shot body capture for the first response matching `re`. Must be armed BEFORE
      * whatever triggers the request. Bodies are only readable once loading finishes, so both
@@ -2681,9 +2686,14 @@ async function getJannyWarmPage(endpoint) {
     return pending;
 }
 
+async function allJannyDomainCookies(page) {
+    return (await page.allCookies()).filter(cookie =>
+        String(cookie?.domain || '').replace(/^\.+/, '').toLowerCase() === 'jannyai.com');
+}
+
 export async function injectJannySession(page, accessToken, refreshToken = '') {
     const cookies = buildJannySessionCookies(accessToken, refreshToken);
-    const existingCookies = await page.cookies([JANNY_ORIGIN]);
+    const existingCookies = await allJannyDomainCookies(page);
     const staleNames = new Set(jannyAccountCookiesToDelete(existingCookies));
     for (const cookie of existingCookies) {
         if (!staleNames.has(cookie.name)) continue;
@@ -3336,7 +3346,7 @@ function registerJannyaiBrowserRoutes(router) {
     router.post('/jannyai-browser-logout', async (req, res) => {
         try {
             const warm = await getJannyWarmPage(await resolveBrowserEndpoint(req));
-            const cookies = await warm.page.cookies([JANNY_ORIGIN]);
+            const cookies = await allJannyDomainCookies(warm.page);
             const selectedNames = jannyAccountCookiesToDelete(cookies);
             const cleared = [];
             for (const name of selectedNames) {
