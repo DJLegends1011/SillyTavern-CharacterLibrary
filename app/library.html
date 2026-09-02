@@ -1589,9 +1589,9 @@ https://jannyai.com/characters/uuid_slug
                             <p><strong>Two different tools, and they are not interchangeable.</strong> Which one you need depends only on what you are using:</p>
                             <ul>
                                 <li><strong>The JanitorAI provider</strong> uses a <strong>real browser</strong>, and nothing else. Character Library runs one for you (Settings &rarr; Online &rarr; JanitorAI), or you can point it at a Chrome DevTools endpoint you run yourself. The provider's <strong>hidden-definition</strong> recovery runs through it. Whether a given machine gets past Cloudflare varies, so use the Test button to find out rather than guessing from its specs. The userscript cannot serve this provider.</li>
-                                <li><strong>DataCat's five Hampter sorts</strong> (Latest, Trending, Trending 24h, Popular, Relevance) and <strong>JannyAI card definitions</strong> use the <strong>companion userscript</strong> (<code>extras/cl-janitor-bridge.user.js</code>, Tampermonkey or Violentmonkey), and nothing else. It borrows the Cloudflare pass from the browser you are reading this in, so it works even when SillyTavern runs on a headless server.</li>
+                                <li><strong>DataCat's five Hampter sorts</strong> (Latest, Trending, Trending 24h, Popular, Relevance) use the <strong>companion userscript</strong> (<code>extras/cl-janitor-bridge.user.js</code>, Tampermonkey or Violentmonkey), and nothing else. It borrows the Cloudflare pass from the browser you are reading this in, so it works even when SillyTavern runs on a headless server. <strong>JannyAI card definitions and account actions</strong> instead use the shared real browser, configured under Settings &rarr; Online &rarr; JannyAI.</li>
                             </ul>
-                            <p><strong>What needs no setup at all:</strong> DataCat's own sorts and its MeiliSearch <code>janny_*</code> sorts, JannyAI browsing and search, and signing in. A JannyAI card will still import without the userscript, but with no personality and no greeting, which is not much of a character.</p>
+                            <p><strong>What needs no browser setup:</strong> DataCat's own sorts and its MeiliSearch <code>janny_*</code> sorts, plus JannyAI browsing and search. JannyAI card definitions and account login need the real browser; use JannyAI's own Test to check readiness.</p>
                             <p>Cloudflare's pass expires on a fixed timer rather than on idleness, so it lapses often. The managed browser handles that itself; userscript <strong>v1.2.1+</strong> renews it by briefly opening the site in a background tab. On mobile, a userscript-capable browser such as Firefox for Android works.</p>
                             <p><strong>Across all modes:</strong> Pasting a <strong>JanitorAI character URL</strong> into the search bar will look up the character on DataCat. If it's found, the preview opens directly. If not, an extraction panel appears letting you request the character from DataCat's cloud service.</p>
                             <p><strong>Extraction:</strong> When a character only exists on JanitorAI and hasn't been indexed by DataCat yet, the Import button changes to <strong>Extract</strong>. This sends a request to DataCat's cloud service, which visits the JanitorAI page and retrieves the full character definition. You can also paste a JanitorAI URL directly into the search bar to look up and extract specific characters.</p>
@@ -1626,25 +1626,25 @@ https://jannyai.com/characters/uuid_slug
                             <p class="info-tip"><i class="fa-solid fa-triangle-exclamation"></i> <strong>The Test button is the contract.</strong> The <strong>Cloudflare</strong> row is the one that decides: it measures the thing every other row is only guessing at. The rendering and WebGL rows are hints shown as warnings, since a browser can fail them and still clear the challenge. Red checks mean your browser environment does not meet the spec yet; making it pass on servers, VMs, containers, phones, or ARM boards is power user territory and your own research (the README's JanitorAI section lists what to try and the endpoint runner for pointing at a browser on another machine). Green checks with a misbehaving provider is a Character Library bug: please report that one.</p>
                             <p><strong>Signing in is the second requirement, not an optional extra.</strong> The browser gets you to JanitorAI; an account gets you the content. Without one you get the first page of results and nothing else: no follows, and no character extraction, so no hidden definitions. It happens in Settings rather than in the browser, and only works once the browser above does, since JanitorAI's login captcha runs only on their own page.</p>
                             <p><strong>What recovering a hidden definition does to your JanitorAI account.</strong> There is no API for it, so Character Library makes the site assemble the prompt and reads it back. For that one request it creates a throwaway persona with a random name, adds a temporary proxy preset pointed at an unroutable address so nothing is ever sent anywhere, opens one chat, and sends one message. The persona, the preset, the chat, and your original generation settings are all removed and restored afterwards. It runs only for characters whose definition is actually hidden, and only when you press <strong>Recover definition</strong> or import one.</p>
-                            <p class="info-tip"><i class="fa-solid fa-circle-info"></i> The companion userscript has nothing to do with this provider and cannot substitute for the browser. It serves <a href="#" class="help-jump" data-help-jump="helpDatacatHampter">DataCat's Hampter sorts</a> and <a href="#" class="help-jump" data-help-jump="helpJannyai">JannyAI card definitions</a> only.</p>
+                            <p class="info-tip"><i class="fa-solid fa-circle-info"></i> The companion userscript has nothing to do with this provider and cannot substitute for the browser. It serves <a href="#" class="help-jump" data-help-jump="helpDatacatHampter">DataCat's Hampter sorts</a> only. <a href="#" class="help-jump" data-help-jump="helpJannyai">JannyAI</a> has separate controls for the shared browser.</p>
                         </div>
                         <div class="info-section" id="helpJannyai">
                             <h4><i class="fa-solid fa-mask"></i> JannyAI</h4>
-                            <p>A mirror of JanitorAI content. It needs no browser endpoint, which makes it lighter to set up than <a href="#" class="help-jump" data-help-jump="helpJanitorai">the JanitorAI provider</a>, at the cost of alternate greetings and following. No account needed.</p>
+                            <p>A mirror of JanitorAI content. Browsing and search use MeiliSearch and need no browser or account. Cloudflare-gated card pages and optional account actions use the same configured browser as <a href="#" class="help-jump" data-help-jump="helpJanitorai">the JanitorAI provider</a>, with separate JannyAI controls in Settings.</p>
                             <ul>
                                 <li>Browse and search the JannyAI catalog; filter by tags, token count, and NSFW</li>
                                 <li>Character linking and card updates</li>
                                 <li>No gallery downloads, version history, or alternate greetings</li>
                             </ul>
-                            <p><strong>Card definitions need the companion userscript.</strong> JannyAI now Cloudflare-gates its card pages, and the card page is where the character actually lives. Browsing and searching still work without it, but an import without the userscript gets you the name, avatar, tags, and the site blurb as creator's notes, with no description, no greeting, no scenario, and no example dialogue. That is a stub, not a character.</p>
-                            <p>Install it exactly as for <a href="#" class="help-jump" data-help-jump="helpDatacatHampter">DataCat's Hampter sorts</a>; one install covers both. If definitions stop loading even with it installed, your Cloudflare pass has expired: open jannyai.com in the same browser, let it load, then reopen the preview.</p>
-                            <p><strong>Account sync is optional and needs a second userscript.</strong> The bridge above is read-only and only fetches public card pages, so syncing your bookmarks and collections uses its own companion script, <code>extras/cl-janny-bridge.user.js</code>. The two do not overlap and are safe to install together: Character Library stores your pasted Supabase login token, and the sync script makes the Cloudflare-cleared account request, so jannyai.com never needs to stay open. It works on desktop and Firefox for Android, including remote/Colab-hosted SillyTavern.</p>
+                            <p><strong>Card definitions need a real browser.</strong> Under Settings &rarr; Online &rarr; JannyAI, choose the managed browser or your own Chrome DevTools endpoint, then press <strong>Test</strong>. This tests JannyAI specifically; passing JanitorAI's test does not prove JannyAI is ready. The cl-helper plugin is required for these browser operations. There is no userscript fallback.</p>
+                            <p>If the Cloudflare check fails, address the challenge in the configured browser or use a browser endpoint on a machine that can pass it. The browser displaying Character Library and the browser configured for provider requests can be different machines.</p>
+                            <p><strong>Account sync is optional and browser-owned.</strong> To sync bookmarks and collections, transfer a complete JannyAI session once into the configured browser. Character Library settings never store the pasted credentials. The browser profile owns the session and its renewal; a JannyAI tab does not need to stay open on the device displaying Character Library.</p>
                             <ul>
-                                <li>Install <code>extras/cl-janny-bridge.user.js</code> in Tampermonkey or Violentmonkey alongside the definitions bridge, then reload Character Library</li>
-                                <li>Under <strong>Settings &rarr; Online &rarr; JannyAI</strong>, paste the JannyAI auth cookie value or access-token JWT and select <strong>Save Login</strong></li>
+                                <li>Under <strong>Settings &rarr; Online &rarr; JannyAI &rarr; Step 1: Browser</strong>, start or configure the browser and test JannyAI readiness</li>
+                                <li>Log in at jannyai.com, copy the complete <code>sb-eenzcbluoctduymzksoq-auth-token.0</code> and <code>sb-eenzcbluoctduymzksoq-auth-token.1</code> cookie values in order, paste them under <strong>Step 2: Account Login</strong>, and select <strong>Save Login</strong></li>
                                 <li>Browsing and importing stay available without an account; sync only adds your saved characters and collections</li>
                             </ul>
-                            <p class="info-tip"><i class="fa-solid fa-lightbulb"></i> JannyAI access tokens currently last about seven days. If Account shows "Token expired" or "Token rejected," copy a fresh login token and save it again.</p>
+                            <p class="info-tip"><i class="fa-solid fa-lightbulb"></i> A bare access-token JWT is accepted but cannot renew. Prefer the full session cookie pair. Log Out removes JannyAI account cookies while preserving Cloudflare cookies, and reports whether browser cleanup succeeded.</p>
                         </div>
                         <div class="info-section" id="helpSaucepan">
                             <h4><i class="fa-solid fa-utensils"></i> Saucepan</h4>
@@ -2631,14 +2631,46 @@ https://jannyai.com/characters/uuid_slug
                                 <i class="fa-solid fa-chevron-right provider-chevron"></i>
                             </summary>
                             <div class="settings-provider-body">
-                                <div class="settings-group">
-                                    <div class="settings-group-title"><i class="fa-solid fa-user-lock"></i> JannyAI Login</div>
+                                <div class="cl-helper-banner cl-hidden" id="jannyBrowserPluginBanner">
+                                    <i class="fa-solid fa-circle-info"></i>
+                                    <span>JannyAI card pages and account actions need the <strong>cl-helper</strong> plugin. MeiliSearch browsing does not. <a href="#" class="cl-goto-info">Open cl-helper status &rarr;</a></span>
+                                </div>
+                                <div class="settings-group" id="jannyBrowserFields">
+                                    <div class="settings-group-title"><i class="fa-solid fa-window-restore"></i> Step 1: Browser</div>
                                     <div class="settings-row">
-                                        <span class="settings-hint">Install <code>extras/cl-janny-bridge.user.js</code> in Tampermonkey or Violentmonkey, then paste your JannyAI Supabase login token below. This mirrors the maintainer's JanitorAI Hampter login: Character Library stores the token locally and the userscript handles Cloudflare. <strong>No JannyAI tab needs to stay open.</strong> Accepted formats: the full <code>sb-eenzcbluoctduymzksoq-auth-token</code> cookie (including split <code>.0</code>/<code>.1</code> chunks), its value, session JSON, the old <code>sb-access-token</code> value, or a bare access-token JWT.</span>
+                                        <span class="settings-hint">Required only for Cloudflare-gated card pages and account actions. <strong>MeiliSearch browsing and search work without a browser.</strong> Managed and external modes share JanitorAI's configured browser; changing the mode or endpoint here changes it for both providers. <strong>Test measures JannyAI specifically.</strong></span>
                                     </div>
                                     <div class="settings-row">
-                                        <label>Bridge:</label>
-                                        <span id="jannySettingsBridgeStatus" class="settings-status-badge inactive"><i class="fa-solid fa-circle"></i> Checking&hellip;</span>
+                                        <label>Browser:</label>
+                                        <select id="settingsJannyBrowserMode" class="glass-select" title="Browser source (shared with JanitorAI)">
+                                            <option value="managed">Run one for me (recommended)</option>
+                                            <option value="endpoint">Use my own browser endpoint</option>
+                                        </select>
+                                    </div>
+                                    <div class="settings-row" id="jannyManagedRow">
+                                        <span class="settings-hint">The shared hidden browser starts on the machine running SillyTavern when needed and stops after 10 minutes idle. Press <strong>Test</strong> to check whether this machine can clear JannyAI's Cloudflare challenge. Starting or stopping it affects both providers.</span>
+                                    </div>
+                                    <div class="settings-row" id="jannyManagedStatusRow">
+                                        <span id="jannyManagedStatus" class="settings-status-badge inactive"><i class="fa-solid fa-circle"></i> Not started</span>
+                                        <button id="jannyManagedStartBtn" class="settings-action-btn">Start now</button>
+                                        <button id="jannyManagedStopBtn" class="settings-action-btn">Stop</button>
+                                    </div>
+                                    <div class="settings-row" id="jannyEndpointHintRow">
+                                        <span class="settings-hint">Use a Chrome DevTools endpoint accessible to SillyTavern. <code>extras/janitorai-browser/run-browser.mjs</code> can run the shared browser on another machine and print its endpoint URL.</span>
+                                    </div>
+                                    <div class="settings-row">
+                                        <label>Endpoint:</label>
+                                        <div class="settings-input-group">
+                                            <input type="search" class="glass-input" id="settingsJannyBrowserEndpoint" placeholder="http://localhost:9222" autocomplete="off" spellcheck="false">
+                                            <button id="testJannyBrowserBtn" class="glass-btn icon-only" title="Test JannyAI in this browser"><i class="fa-solid fa-plug-circle-check"></i></button>
+                                        </div>
+                                    </div>
+                                    <div class="settings-row"><div id="jannyBrowserChecks" class="janitorai-check-list hidden"></div></div>
+                                </div>
+                                <div class="settings-group">
+                                    <div class="settings-group-title"><i class="fa-solid fa-user-lock"></i> Step 2: Account Login</div>
+                                    <div class="settings-row">
+                                        <span class="settings-hint">Optional, for bookmarks and collections. Log in at jannyai.com and open DevTools &rarr; Application &rarr; Cookies. Prefer the full <code>sb-eenzcbluoctduymzksoq-auth-token.0</code>/<code>sb-eenzcbluoctduymzksoq-auth-token.1</code> cookie pair: paste both named cookies or join their values in order. A complete unsplit cookie or session JSON also works. <strong>Save Login transfers it once into the browser profile, which owns renewal; Character Library settings never store these credentials.</strong> A bare access-token JWT (including the old <code>sb-access-token</code> value) is accepted but cannot renew. The input is cleared after each install attempt.</span>
                                     </div>
                                     <div class="settings-row">
                                         <label>Login token:</label>
@@ -2661,7 +2693,7 @@ https://jannyai.com/characters/uuid_slug
                                         <span class="settings-hint">Off by default: collection cards are sorted by newest character first. Turn this on to reshuffle cards whenever a collection is loaded or refreshed.</span>
                                     </div>
                                     <div class="settings-row"><a id="jannySettingsOpenJannyLink" class="settings-hint" href="https://jannyai.com/" target="_blank" rel="noopener noreferrer">Open JannyAI to copy a fresh token</a></div>
-                                    <div class="settings-row"><span id="jannySettingsAccountHint" class="settings-hint">The saved token works after the JannyAI tab is closed. JannyAI access tokens currently last about seven days; paste a fresh one when it expires.</span></div>
+                                    <div class="settings-row"><span id="jannySettingsAccountHint" class="settings-hint">Account status comes from the configured browser. Log Out clears JannyAI account cookies but preserves Cloudflare readiness, and reports browser cleanup separately.</span></div>
                                 </div>
                                 <div class="settings-group">
                                     <div class="settings-group-title"><i class="fa-solid fa-ban"></i> Exclude Tags</div>

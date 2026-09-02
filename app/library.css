@@ -9373,7 +9373,8 @@ html:not(.cl-mobile) .settings-row[data-platform="mobile"] { display: none !impo
 
 /* Badge plus its action buttons on one baseline. Without this the inline-flex badge and the
    inline-block buttons sit on different baselines and the row looks broken. */
-#janitoraiManagedStatusRow {
+#janitoraiManagedStatusRow,
+#jannyManagedStatusRow {
     display: flex;
     align-items: center;
     gap: var(--space-sm);

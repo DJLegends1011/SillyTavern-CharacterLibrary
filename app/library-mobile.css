@@ -2763,13 +2763,15 @@ html.cl-mobile .settings-status-badge i {
 }
 
 /* Rows that pair a status badge with action buttons stack instead of overflowing. */
-html.cl-mobile #janitoraiManagedStatusRow {
+html.cl-mobile #janitoraiManagedStatusRow,
+html.cl-mobile #jannyManagedStatusRow {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
     gap: var(--space-sm);
 }
-html.cl-mobile #janitoraiManagedStatusRow .settings-action-btn {
+html.cl-mobile #janitoraiManagedStatusRow .settings-action-btn,
+html.cl-mobile #jannyManagedStatusRow .settings-action-btn {
     flex: 1 1 auto;
     min-height: 44px;
 }
