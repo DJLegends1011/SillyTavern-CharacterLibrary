@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import vm from 'node:vm';
 import { createJannyHelperHarness, jannyCharacterDocument } from './helpers/janny-helper-harness.mjs';
 
 const helper = readFileSync(new URL('../extras/cl-helper/index.js', import.meta.url), 'utf8');
@@ -35,6 +36,79 @@ test('bumps and bundles the three-file helper', () => {
     assert.equal(pkg.version, '1.13.0');
     assert.match(helper, /\['package\.json', 'index\.js', 'janny-browser-policy\.js'\]/);
     assert.match(library, /\['package\.json', 'index\.js', 'janny-browser-policy\.js'\]/);
+});
+
+test('the helper resolves its Janny policy defensively and gates the Janny routes on it', () => {
+    // A static top-level import of the policy would take the whole plugin down when a
+    // pre-bundle self-update leaves the file behind. See cl-helper-policy-fallback.test.mjs
+    // for the executable proof; this pins the shape so it cannot regress into a static import.
+    assert.doesNotMatch(helper, /^import\s[\s\S]*?from '\.\/janny-browser-policy\.js';/m);
+    assert.match(helper, /await import\('\.\/janny-browser-policy\.js'\)/);
+    assert.match(helper, /if \(_jannyPolicy\) registerJannyaiBrowserRoutes\(router\);\s*\n\s*else registerJannyaiUnavailableRoutes\(router\);/);
+});
+
+// Run the real in-app updater against DOM and service doubles: the guard has to refuse a
+// helper whose /self-update cannot copy janny-browser-policy.js, not just warn about it.
+// Both blocks end at the JSDoc opening the next declaration, so slice back to that `/**`.
+function librarySourceBlock(startMarker, nextDocLine) {
+    const from = library.indexOf(startMarker);
+    const to = library.lastIndexOf('/**', library.indexOf(nextDocLine, from));
+    assert.ok(from >= 0 && to > from, `missing library block: ${startMarker}`);
+    return library.slice(from, to);
+}
+
+function selfUpdateHarness(runningVersion, { confirm = true } = {}) {
+    const elements = new Map();
+    const el = id => {
+        if (!elements.has(id)) {
+            const classes = new Set();
+            elements.set(id, {
+                id, innerHTML: '', textContent: '', disabled: false,
+                classList: { add: n => classes.add(n), remove: n => classes.delete(n), contains: n => classes.has(n), toggle: (n, f) => f ? classes.add(n) : classes.delete(n) },
+            });
+        }
+        return elements.get(id);
+    };
+    const toasts = [], calls = [];
+    const context = vm.createContext({
+        document: { getElementById: el },
+        fetch: async path => ({
+            ok: true, status: 200,
+            text: async () => path.endsWith('package.json') ? '{"name":"cl-helper","version":"1.13.0"}' : 'source',
+        }),
+        apiRequest: async (path, method, body) => {
+            calls.push([path, method, body]);
+            return { ok: true, status: 200, json: async () => (path.endsWith('/health')
+                ? { ok: true, version: runningVersion, installPath: 'ST/plugins/cl-helper', admin: true }
+                : { ok: true, version: '1.13.0' }) };
+        },
+        showToast: (...args) => toasts.push(args),
+        showConfirm: async () => confirm,
+        Blob: class { constructor(parts) { this.size = String(parts[0] ?? '').length; } },
+    });
+    vm.runInContext(librarySourceBlock('function compareVersions(', ' * Shared cl-helper version evaluation')
+        + librarySourceBlock('const CL_HELPER_BUNDLE_FILES =', ' * Open the Settings modal'), context);
+    return { el, toasts, calls, run: () => context.performClHelperSelfUpdate(el('btn')) };
+}
+
+test('the in-app update refuses a helper that cannot copy the whole bundle', async () => {
+    const h = selfUpdateHarness('1.12.0');
+    await h.run();
+    assert.equal(h.calls.some(([path]) => path.endsWith('/self-update')), false, 'bricking update was sent anyway');
+    assert.match(h.el('clHelperUpdateBody').textContent, /janny-browser-policy\.js/);
+    assert.match(h.el('clHelperUpdateBody').textContent, /restart SillyTavern/);
+    assert.equal(h.el('clHelperUpdateActions').classList.contains('cl-hidden'), true);
+    const [[message, kind]] = h.toasts;
+    assert.equal(kind, 'error');
+    assert.match(message, /package\.json, index\.js, janny-browser-policy\.js/);
+    assert.match(message, /ST\/plugins\/cl-helper/);
+});
+
+test('the in-app update still runs for a helper that installs all three files', async () => {
+    const h = selfUpdateHarness('1.13.0');
+    await h.run();
+    assert.equal(h.calls.some(([path]) => path.endsWith('/self-update')), true);
+    assert.equal(h.toasts.some(([, kind]) => kind === 'success'), true);
 });
 
 test('Janny page-origin guard accepts only the exact Janny origin', async () => {

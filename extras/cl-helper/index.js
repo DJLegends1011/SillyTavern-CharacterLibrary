@@ -14,19 +14,38 @@ import { stat, lstat, readFile, writeFile, rename, unlink, readdir, open } from 
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import * as zlib from 'node:zlib';
 import { promisify } from 'node:util';
-import {
-    JANNY_ORIGIN,
-    JANNY_AUTH_COOKIE,
-    JANNY_CF_COOKIE_NAMES,
-    JANNY_SESSION_TOKEN_LIMIT,
-    JANNY_SESSION_VALUE_LIMIT,
-    buildJannySessionCookies,
-    jannyAccountCookiesToDelete,
-    validateJannyFinalUrl,
-    validateJannyBrowserRequest,
-} from './janny-browser-policy.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+
+// The JannyAI request policy lives in a sibling file. A helper installed before the
+// three-file bundle (<= 1.12.0) copies only package.json + index.js when it self-updates,
+// so this file can legitimately land next to a missing policy module. A static import
+// would throw ERR_MODULE_NOT_FOUND and take the WHOLE plugin down with it (JanitorAI,
+// DataCat, thumbnails, hidden-definition recovery). Resolve it defensively instead and
+// degrade only JannyAI.
+export const JANNY_POLICY_MISSING = 'JannyAI browser support is unavailable: janny-browser-policy.js is missing from the installed cl-helper. Copy package.json, index.js and janny-browser-policy.js from the extension bundle into the plugin folder, then restart SillyTavern.';
+let _jannyPolicy = null;
+let _jannyPolicyError = '';
+try {
+    _jannyPolicy = await import('./janny-browser-policy.js');
+} catch (error) {
+    _jannyPolicyError = String(error?.message || error);
+    console.warn(`[cl-helper] ${JANNY_POLICY_MISSING} (${_jannyPolicyError})`);
+}
+
+function jannyPolicyUnavailable() {
+    throw Object.assign(new Error(JANNY_POLICY_MISSING), { code: 'JANNY_POLICY_MISSING' });
+}
+
+const JANNY_ORIGIN = _jannyPolicy?.JANNY_ORIGIN ?? 'https://jannyai.com';
+const JANNY_AUTH_COOKIE = _jannyPolicy?.JANNY_AUTH_COOKIE ?? 'sb-eenzcbluoctduymzksoq-auth-token';
+const JANNY_CF_COOKIE_NAMES = _jannyPolicy?.JANNY_CF_COOKIE_NAMES ?? new Set();
+const JANNY_SESSION_TOKEN_LIMIT = _jannyPolicy?.JANNY_SESSION_TOKEN_LIMIT ?? 0;
+const JANNY_SESSION_VALUE_LIMIT = _jannyPolicy?.JANNY_SESSION_VALUE_LIMIT ?? 0;
+const buildJannySessionCookies = _jannyPolicy?.buildJannySessionCookies ?? jannyPolicyUnavailable;
+const jannyAccountCookiesToDelete = _jannyPolicy?.jannyAccountCookiesToDelete ?? jannyPolicyUnavailable;
+const validateJannyFinalUrl = _jannyPolicy?.validateJannyFinalUrl ?? jannyPolicyUnavailable;
+const validateJannyBrowserRequest = _jannyPolicy?.validateJannyBrowserRequest ?? jannyPolicyUnavailable;
 
 export const info = {
     id: 'cl-helper',
@@ -3170,6 +3189,26 @@ function isSoftwareRenderer(renderer) {
     return /swiftshader|llvmpipe|softpipe|software/i.test(String(renderer || ''));
 }
 
+// Stand-ins used when janny-browser-policy.js could not be resolved. Every JannyAI route still
+// answers with the same well-formed { ok: false, error } envelope the client already classifies,
+// so JannyAI reports "unavailable" instead of 404-ing or crashing the plugin.
+const JANNY_ROUTE_PATHS = [
+    '/jannyai-managed/start', '/jannyai-managed/stop',
+    '/jannyai-browser-test', '/jannyai-browser-fetch', '/jannyai-browser-session',
+    '/jannyai-browser-session-status', '/jannyai-browser-refresh-session', '/jannyai-browser-logout',
+];
+
+function registerJannyaiUnavailableRoutes(router) {
+    const unavailable = (req, res) => res.status(503).json({ ok: false, error: JANNY_POLICY_MISSING });
+    for (const path of JANNY_ROUTE_PATHS) router.post(path, unavailable);
+    // Status is a GET and the settings panel reads its shape, so keep the fields it expects.
+    router.get('/jannyai-managed/status', (req, res) => res.status(503).json({
+        ok: false, running: false, endpoint: null, browser: null, binary: null,
+        userAgentOverridden: null, idleStopMinutes: MANAGED_IDLE_MS / 60000,
+        lastError: JANNY_POLICY_MISSING, error: JANNY_POLICY_MISSING,
+    }));
+}
+
 function registerJannyaiBrowserRoutes(router) {
     router.post('/jannyai-managed/start', async (req, res) => {
         try {
@@ -4888,7 +4927,8 @@ export async function init(router) {
     registerSaucepanRoutes(router);
     registerDropboxRoutes(router);
     registerJanitoraiBrowserRoutes(router);
-    registerJannyaiBrowserRoutes(router);
+    if (_jannyPolicy) registerJannyaiBrowserRoutes(router);
+    else registerJannyaiUnavailableRoutes(router);
 
     console.log('[cl-helper] Character Library helper plugin loaded');
 

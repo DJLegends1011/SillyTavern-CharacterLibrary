@@ -1787,6 +1787,11 @@ async function refreshClHelperUpdateBanner(available, runningVersion, linkedInst
 }
 
 const CL_HELPER_BUNDLE_FILES = ['package.json', 'index.js', 'janny-browser-policy.js'];
+// /self-update runs inside the RUNNING helper and copies the file list that helper was compiled
+// with, ignoring the payload we send. Helpers before this version only knew package.json and
+// index.js, so letting them self-update would install an index.js whose sibling policy module
+// never lands. Refuse and send the user to the manual copy instead.
+const CL_HELPER_BUNDLE_FILES_SINCE = '1.13.0';
 
 async function performClHelperSelfUpdate(btn) {
     if (!btn) return;
@@ -1820,6 +1825,18 @@ async function performClHelperSelfUpdate(btn) {
     }
     btn.disabled = false;
     btn.innerHTML = origHtml;
+
+    // compareVersions fails OPEN on anything unparseable, so an unknown running version still
+    // gets the in-app path; the helper's own guarded policy import keeps that case recoverable.
+    if (compareVersions(runningVersion, CL_HELPER_BUNDLE_FILES_SINCE) < 0) {
+        const manualCopy = `Copy all ${CL_HELPER_BUNDLE_FILES.length} files from extras/cl-helper/ (${CL_HELPER_BUNDLE_FILES.join(', ')}) into ${installPath}, then restart SillyTavern.`;
+        const bodyEl = document.getElementById('clHelperUpdateBody');
+        const actionsEl = document.getElementById('clHelperUpdateActions');
+        if (bodyEl) bodyEl.textContent = `cl-helper v${runningVersion} can only install package.json and index.js, so the in-app update would leave the rest of the bundle behind and break JannyAI. ${manualCopy}`;
+        if (actionsEl) actionsEl.classList.add('cl-hidden');
+        showToast(`This cl-helper is too old to update itself completely. ${manualCopy}`, 'error', 12000);
+        return;
+    }
 
     const fmtSize = (s) => {
         const bytes = new Blob([s]).size;
