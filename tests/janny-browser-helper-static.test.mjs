@@ -1,8 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { runInNewContext } from 'node:vm';
-import { JANNY_ORIGIN, validateJannyBrowserRequest, validateJannyFinalUrl } from '../extras/cl-helper/janny-browser-policy.js';
+import { createJannyHelperHarness } from './helpers/janny-helper-harness.mjs';
 
 const helper = readFileSync(new URL('../extras/cl-helper/index.js', import.meta.url), 'utf8');
 const pkg = JSON.parse(readFileSync(new URL('../extras/cl-helper/package.json', import.meta.url), 'utf8'));
@@ -74,48 +73,74 @@ test('fetch reuse validates the live origin before request construction and uses
 });
 
 test('ordinary Janny helper fetches use browser cookies and never forward legacy tokens', async () => {
-    const routes = new Map();
-    const requests = [];
-    const page = {
-        evaluate: async script => runInNewContext(script, {
-            location: { href: 'https://jannyai.com/' },
-            fetch: async (url, init) => {
-                requests.push({ url, init: JSON.parse(JSON.stringify(init)) });
-                return { status: 200, url: 'https://jannyai.com/collections', text: async () => '' };
-            },
-        }),
-    };
-    const source = sourceBlock('function registerJannyaiBrowserRoutes(', 'function registerJanitoraiBrowserRoutes(');
-    runInNewContext(source + '\nregisterJannyaiBrowserRoutes(router);', {
-        router: { post: (path, handler) => routes.set(path, handler), get() {} },
-        JANNY_ORIGIN, validateJannyBrowserRequest, validateJannyFinalUrl,
-        assertJannyPageOrigin: helperModule.assertJannyPageOrigin,
-        resolveBrowserEndpoint: async () => 'http://browser.test:9222',
-        getJannyWarmPage: async () => ({ page }),
-        closeJannyWarmPage: async () => {},
-    });
-    const handler = routes.get('/jannyai-browser-fetch');
+    const harness = createJannyHelperHarness(Array.from({ length: 3 }, () => ({
+        status: 200, finalUrl: 'https://jannyai.com/collections', body: '',
+    })));
     for (const token of ['synthetic-legacy-token', 123, 'x'.repeat(16_385)]) {
-        let reply;
-        let status = 200;
-        await handler({ body: {
+        const response = await harness.apiRequest('/plugins/cl-helper/jannyai-browser-fetch', 'POST', {
             path: '/collections/form/add-collection', method: 'POST',
             formBody: { name: 'A & B', description: '', isPrivate: 'yes' }, token,
-        } }, {
-            status(value) { status = value; return this; },
-            json(value) { reply = value; },
         });
-        assert.equal(status, 200);
+        assert.equal(response.status, 200);
+        const reply = await response.json();
         assert.equal(reply.ok, true);
         assert.equal(reply.body, '');
     }
-    assert.equal(requests.length, 3);
-    for (const request of requests) {
+    assert.equal(harness.requests.length, 3);
+    for (const request of harness.requests) {
         assert.equal(request.url, 'https://jannyai.com/collections/form/add-collection');
         assert.deepEqual(request.init, {
             credentials: 'include', method: 'POST',
             headers: { Accept: 'application/x-www-form-urlencoded', 'Content-Type': 'application/x-www-form-urlencoded' },
             body: 'name=A+%26+B&description=&isPrivate=yes',
         });
+    }
+});
+
+for (const fixture of [
+    { name: 'unauthorized form response', status: 401, finalUrl: 'https://jannyai.com/collections/form/add-collection', body: '{}' },
+    { name: 'rate-limited form response', status: 429, finalUrl: 'https://jannyai.com/collections/form/add-collection', body: '{"error":"slow down"}' },
+    { name: 'server-error form response', status: 500, finalUrl: 'https://jannyai.com/collections/form/add-collection', body: '{}' },
+    { name: 'same-origin login redirect', status: 200, finalUrl: 'https://jannyai.com/auth/login?next=%2Fcollections', body: '<html>Sign in</html>' },
+    { name: 'successful collection redirect', status: 200, finalUrl: 'https://jannyai.com/collections/aaaaaaaa-1111-4111-8111-111111111111_set', body: '' },
+    { name: 'successful collection edit redirect', status: 200, finalUrl: 'https://jannyai.com/collections/aaaaaaaa-1111-4111-8111-111111111111_set/edit', body: '' },
+]) {
+    test('helper preserves ' + fixture.name + ' for client completion', async () => {
+        const harness = createJannyHelperHarness([fixture]);
+        const response = await harness.apiRequest('/plugins/cl-helper/jannyai-browser-fetch', 'POST', {
+            path: '/collections/form/add-collection', method: 'POST',
+            formBody: { name: 'Set', description: '', isPrivate: 'yes' },
+        });
+        assert.equal(response.status, 200);
+        assert.deepEqual(await response.json(), {
+            ok: true, status: fixture.status, finalUrl: fixture.finalUrl, body: fixture.body, hydratedCharacter: null,
+        });
+    });
+}
+
+test('helper rejects cross-origin form redirects at successful and failed statuses', async () => {
+    for (const status of [200, 302, 401, 429, 500]) {
+        const harness = createJannyHelperHarness([{ status, finalUrl: 'https://other.example/collections', body: 'untrusted' }]);
+        const response = await harness.apiRequest('/plugins/cl-helper/jannyai-browser-fetch', 'POST', {
+            path: '/collections/form/add-collection', method: 'POST',
+            formBody: { name: 'Set', description: '', isPrivate: 'yes' },
+        });
+        assert.equal(response.ok, false);
+        const result = await response.json();
+        assert.equal(result.ok, false);
+        assert.equal('body' in result, false);
+    }
+});
+
+test('helper still rejects unexpected successful form destinations', async () => {
+    for (const path of ['/admin', '/collections/form/add-collection', '/auth/login-unrelated',
+        '/collections/aaaaaaaa-1111-4111-8111-111111111111_set/edit/admin']) {
+        const harness = createJannyHelperHarness([{ status: 200, finalUrl: 'https://jannyai.com' + path, body: 'unexpected' }]);
+        const response = await harness.apiRequest('/plugins/cl-helper/jannyai-browser-fetch', 'POST', {
+            path: '/collections/form/add-collection', method: 'POST',
+            formBody: { name: 'Set', description: '', isPrivate: 'yes' },
+        });
+        assert.equal(response.ok, false);
+        assert.equal((await response.json()).ok, false);
     }
 });

@@ -1,5 +1,6 @@
 import test, { beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { createJannyHelperHarness } from './helpers/janny-helper-harness.mjs';
 
 const seenFetchBodies = [];
 const helperReplies = [];
@@ -304,4 +305,51 @@ test('MeiliSearch still uses its direct search transport', async () => {
     assert.deepEqual(await api.meiliMultiSearch({ search: 'story' }), { results: [] });
     assert.equal(directFetchCount, 1);
     assert.equal(seenFetchBodies.length, 0);
+});
+
+test('form mutation recovers once through the real helper boundary and preserves its form body', async () => {
+    const harness = createJannyHelperHarness([
+        { status: 401, finalUrl: 'https://jannyai.com/collections/form/add-collection', body: '{}' },
+        { status: 200, finalUrl: 'https://jannyai.com/collections/' + collectionId + '_set/edit', body: '' },
+    ]);
+    const previous = window.apiRequest;
+    window.apiRequest = harness.apiRequest;
+    try {
+        assert.deepEqual(await api.createJannyCollection({ name: 'Set & more' }), {
+            success: true, id: collectionId, location: 'https://jannyai.com/collections/' + collectionId + '_set/edit',
+        });
+        assert.equal(recoveryCalls, 1);
+        assert.equal(harness.requests.length, 2);
+        assert.deepEqual(harness.requests[1], harness.requests[0]);
+        assert.equal(harness.requests[0].init.body, 'name=Set+%26+more&description=&isPrivate=yes');
+    } finally { window.apiRequest = previous; }
+});
+
+test('form mutation stops after a second helper-boundary 401', async () => {
+    const harness = createJannyHelperHarness([
+        { status: 401, finalUrl: 'https://jannyai.com/collections/form/delete-collection', body: '{}' },
+        { status: 401, finalUrl: 'https://jannyai.com/collections/form/delete-collection', body: '{}' },
+    ]);
+    const previous = window.apiRequest;
+    window.apiRequest = harness.apiRequest;
+    try {
+        await assert.rejects(api.deleteJannyCollection(collectionId), error => error.code === 'JANNY_LOGIN_REQUIRED' && error.status === 401);
+        assert.equal(recoveryCalls, 1);
+        assert.equal(harness.requests.length, 2);
+    } finally { window.apiRequest = previous; }
+});
+
+test('form login redirects and rate limits retain stable errors through the helper boundary', async () => {
+    const harness = createJannyHelperHarness([
+        { status: 200, finalUrl: 'https://jannyai.com/auth/login?next=%2Fcollections', body: '<html>Sign in</html>' },
+        { status: 429, finalUrl: 'https://jannyai.com/collections/form/edit-collection', body: '{}' },
+    ]);
+    const previous = window.apiRequest;
+    window.apiRequest = harness.apiRequest;
+    try {
+        await assert.rejects(api.updateJannyCollection({ id: collectionId, name: 'Set' }), error => error.code === 'JANNY_LOGIN_REQUIRED');
+        await assert.rejects(api.updateJannyCollection({ id: collectionId, name: 'Set' }), error => error.code === 'JANNY_RATE_LIMITED');
+        assert.equal(recoveryCalls, 0);
+        assert.equal(harness.requests.length, 2);
+    } finally { window.apiRequest = previous; }
 });

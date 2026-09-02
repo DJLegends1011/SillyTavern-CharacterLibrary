@@ -3271,7 +3271,7 @@ function registerJannyaiBrowserRoutes(router) {
                 return { status: response.status, body: await response.text(), finalUrl: response.url };
             })()`);
             const formPost = request.contentType === 'application/x-www-form-urlencoded';
-            const finalUrl = validateJannyFinalUrl(response?.finalUrl, formPost);
+            const finalUrl = validateJannyFinalUrl(response?.finalUrl, formPost, response?.status ?? 0);
             const hydratedCharacter = request.inspectCharacterId
                 ? await extractHydratedJannyCharacter(warm.page, request.safePath, request.inspectCharacterId)
                 : null;

@@ -78,13 +78,19 @@ export function jannyAccountCookiesToDelete(cookies) {
     return [...new Set((cookies || []).map(cookie => String(cookie?.name || '')).filter(name => name === JANNY_AUTH_COOKIE || name.startsWith(`${JANNY_AUTH_COOKIE}.`)).filter(name => !JANNY_CF_COOKIE_NAMES.has(name)))];
 }
 
-export function validateJannyFinalUrl(finalUrl, formPost = false) {
+export function validateJannyFinalUrl(finalUrl, formPost = false, status = 200) {
     let parsed;
     try { parsed = new URL(String(finalUrl || ''), JANNY_ORIGIN); } catch { blocked('Malformed JannyAI final URL'); }
     if (parsed.origin !== JANNY_ORIGIN) blocked('Cross-origin JannyAI redirect rejected');
     let decodedPath;
     try { decodedPath = decodeURIComponent(parsed.pathname); } catch { blocked('Malformed JannyAI final pathname'); }
-    if (formPost && !(decodedPath === '/collections' || COLLECTION_RE.test(decodedPath))) blocked('Unexpected JannyAI collection redirect');
+    // Failed forms may remain on their action URL. Preserve their HTTP status for
+    // client recovery/classification, but never relax the origin check above.
+    if (formPost && status >= 200 && status < 300) {
+        const login = /^\/(?:auth\/)?(?:login|log-in|signin|sign-in)\/?$/i.test(decodedPath);
+        const collection = decodedPath === '/collections' || COLLECTION_RE.test(decodedPath.replace(/\/edit$/, ''));
+        if (!login && !collection) blocked('Unexpected JannyAI collection redirect');
+    }
     return parsed.href;
 }
 

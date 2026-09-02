@@ -61,6 +61,31 @@ test('rejects cross-origin redirects and constrains form success locations', () 
     assert.throws(() => validateJannyFinalUrl('https://jannyai.com/admin', true), error => error.code === 'JANNY_REQUEST_BLOCKED');
 });
 
+test('failed form response URLs preserve origin validation without requiring a success destination', () => {
+    for (const status of [401, 429, 500]) {
+        assert.equal(validateJannyFinalUrl('https://jannyai.com/collections/form/add-collection', true, status),
+            'https://jannyai.com/collections/form/add-collection');
+    }
+    for (const status of [200, 302, 401, 429, 500]) {
+        assert.throws(() => validateJannyFinalUrl('https://other.example/collections', true, status),
+            error => error.code === 'JANNY_REQUEST_BLOCKED');
+    }
+});
+
+test('form login redirects reach client classification while other successful destinations stay blocked', () => {
+    for (const path of ['/auth/login?next=%2Fcollections', '/login', '/auth/sign-in', '/signin/']) {
+        assert.equal(validateJannyFinalUrl('https://jannyai.com' + path, true, 200), 'https://jannyai.com' + path);
+    }
+    assert.equal(validateJannyFinalUrl('https://jannyai.com/collections/' + A + '_set/edit', true, 200),
+        'https://jannyai.com/collections/' + A + '_set/edit');
+    assert.throws(() => validateJannyBrowserRequest({ method: 'GET', path: '/collections/' + A + '_set/edit' }),
+        error => error.code === 'JANNY_REQUEST_BLOCKED');
+    for (const path of ['/admin', '/collections/form/add-collection', '/auth/login-unrelated', '/collections/' + A + '_set/edit/admin']) {
+        assert.throws(() => validateJannyFinalUrl('https://jannyai.com' + path, true, 200),
+            error => error.code === 'JANNY_REQUEST_BLOCKED');
+    }
+});
+
 test('complete sessions retain refresh cookies for 400 days without extending access expiry', () => {
     const nowSeconds = 1_900_000_000;
     const accessExp = 2_000_000_000;
