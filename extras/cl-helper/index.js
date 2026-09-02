@@ -2629,6 +2629,10 @@ function armJannyWarmReaper() {
     _jannyWarmReaper.unref?.();
 }
 
+export async function assertJannyPageOrigin(page) {
+    return validateJannyFinalUrl(await page.evaluate('location.href'));
+}
+
 async function getJannyWarmPage(endpoint) {
     if (_jannyWarmPage && _jannyWarmEndpoint === endpoint && !_jannyWarmPage.client._closed) {
         _jannyWarmLastUsed = Date.now();
@@ -2652,7 +2656,9 @@ async function getJannyWarmPage(endpoint) {
         try {
             page = await CdpPage.create(client);
             await page.goto(`${JANNY_ORIGIN}/`, { timeout: CDP_NAV_TIMEOUT });
+            await assertJannyPageOrigin(page);
             await waitForCloudflare(page);
+            await assertJannyPageOrigin(page);
         } catch (error) {
             try { await page?.close(); } catch {}
             client.close();
@@ -2695,6 +2701,7 @@ async function injectJannySession(page, accessToken, refreshToken = '') {
 
 async function extractHydratedJannyCharacter(page, safePath, characterId) {
     await page.goto(`${JANNY_ORIGIN}${safePath}`, { timeout: CDP_NAV_TIMEOUT });
+    await assertJannyPageOrigin(page);
     await page.evaluate(`new Promise(resolve => {
         if (document.readyState === 'complete' || document.readyState === 'interactive') return resolve(true);
         document.addEventListener('DOMContentLoaded', () => resolve(true), { once: true });
@@ -3182,6 +3189,7 @@ function registerJannyaiBrowserRoutes(router) {
 
         try {
             const warm = await getJannyWarmPage(await resolveBrowserEndpoint(req));
+            await assertJannyPageOrigin(warm.page);
             const headers = { Accept: request.contentType || 'text/html,application/json' };
             if (token) headers.Authorization = `Bearer ${token}`;
             if (request.contentType) headers['Content-Type'] = request.contentType;
@@ -3192,7 +3200,7 @@ function registerJannyaiBrowserRoutes(router) {
                 ...(request.body ? { body: request.body } : {}),
             };
             const response = await warm.page.evaluate(`(async () => {
-                const response = await fetch(${JSON.stringify(request.safePath)}, ${JSON.stringify(init)});
+                const response = await fetch(${JSON.stringify(`${JANNY_ORIGIN}${request.safePath}`)}, ${JSON.stringify(init)});
                 return { status: response.status, body: await response.text(), finalUrl: response.url };
             })()`);
             const formPost = request.contentType === 'application/x-www-form-urlencoded';
