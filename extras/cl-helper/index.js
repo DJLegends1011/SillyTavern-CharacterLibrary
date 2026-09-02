@@ -37,8 +37,11 @@ function jannyPolicyUnavailable() {
     throw Object.assign(new Error(JANNY_POLICY_MISSING), { code: 'JANNY_POLICY_MISSING' });
 }
 
-const JANNY_ORIGIN = _jannyPolicy?.JANNY_ORIGIN ?? 'https://jannyai.com';
-const JANNY_AUTH_COOKIE = _jannyPolicy?.JANNY_AUTH_COOKIE ?? 'sb-eenzcbluoctduymzksoq-auth-token';
+// Every one of these is read only from the JannyAI routes, and those are not registered when
+// the policy is missing. The fallbacks exist so this module still evaluates; they are inert
+// rather than copies of the policy's own constants, which would be free to drift out of sync.
+const JANNY_ORIGIN = _jannyPolicy?.JANNY_ORIGIN ?? '';
+const JANNY_AUTH_COOKIE = _jannyPolicy?.JANNY_AUTH_COOKIE ?? '';
 const JANNY_CF_COOKIE_NAMES = _jannyPolicy?.JANNY_CF_COOKIE_NAMES ?? new Set();
 const JANNY_SESSION_TOKEN_LIMIT = _jannyPolicy?.JANNY_SESSION_TOKEN_LIMIT ?? 0;
 const JANNY_SESSION_VALUE_LIMIT = _jannyPolicy?.JANNY_SESSION_VALUE_LIMIT ?? 0;
