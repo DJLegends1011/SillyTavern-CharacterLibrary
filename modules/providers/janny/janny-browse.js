@@ -2,7 +2,6 @@
 
 import { BrowseView } from '../browse-view.js';
 import CoreAPI from '../../core-api.js';
-import { isJanitorBridgeAvailable, warmJanitorClearance } from '../janitor-bridge.js';
 import { IMG_PLACEHOLDER, formatNumber, BROWSE_PURIFY_CONFIG, skeletonLines, deferRender, deferCall, isMobileMode, finishBrowseImport, renderBrowseError } from '../provider-utils.js';
 import { orderJannyCollectionCharacters } from './janny-collection-order.js';
 import { collectionEntryCharacterId, collectionEntryMatchesCharacter } from './janny-collection-membership.js';
@@ -95,7 +94,8 @@ let jannyBookmarkIds = new Set();
 let jannyBookmarksLoaded = false;
 let jannyBookmarkTotalCount = null;
 let jannyBookmarkLimitToastShown = false;
-let jannyAccountStatus = { bridge: false, active: false, cloudflare: false, reason: '' };
+let jannyAccountStatus = { browser: false, active: false, cloudflare: false, reason: '', code: '' };
+let jannyAccountGeneration = 0;
 let jannyOwnedCollections = [];
 let jannyOwnedCollectionsLoaded = false;
 let jannyOwnedCollectionsLoading = false;
@@ -470,6 +470,7 @@ async function loadCharacters(append = false) {
 async function loadBookmarkedIntoGrid(thisToken) {
     const grid = document.getElementById('jannyGrid');
     const ids = [...await loadJannyBookmarks(true)];
+    if (thisToken !== jannyLoadToken || !jannyBookmarksLoaded) return;
     const fetched = await fetchJannyCharactersByIds(ids);
     if (thisToken !== jannyLoadToken || !delegatesInitialized) return;
     let chars = fetched.map(normalizeJannyCollectionCharacter).filter(Boolean);
@@ -508,6 +509,8 @@ let jannyDetailFetchPromise = null;
 
 function openPreviewModal(hit) {
     jannySelectedChar = hit;
+    delete hit._fullData;
+    delete hit._detailError;
     jannyCollectionDropdownOpen = false;
     jannyModalCollectionIds = new Set();
     jannyModalCollectionChecksLoadedFor = '';
@@ -592,7 +595,7 @@ function openPreviewModal(hit) {
         importBtn.classList.add('primary');
         importBtn.classList.remove('secondary', 'warning');
     }
-    importBtn.disabled = false;
+    importBtn.disabled = true;
 
     modal.classList.remove('hidden');
     const charBody = modal.querySelector('.browse-char-body');
@@ -611,34 +614,20 @@ async function fetchAndPopulateDetails(hit, token) {
 
     try {
         const provider = CoreAPI.getProvider('jannyai');
-        if (!provider) return;
-
-        let charData = null;
-        try {
-            const data = await provider.fetchMetadata(`${charId}_character-${slug}`);
-            if (data) charData = data;
-        } catch (e) {
-            console.warn('[JannyBrowse] Detail fetch failed:', e.message);
-        }
+        if (!provider) throw Object.assign(new Error('JannyAI provider unavailable'), { code: 'JANNY_HELPER_UNAVAILABLE' });
+        const charData = await provider.fetchMetadata(`${charId}_character-${slug}`);
 
         // Stale check - user may have opened a different card
         if (token !== jannyDetailFetchToken) return;
 
-        if (!charData) {
-            const descSection = document.getElementById('jannyCharDescriptionSection');
-            const descEl = document.getElementById('jannyCharDescription');
-            if (descSection && descEl) {
-                descSection.style.display = 'block';
-                descEl.innerHTML = isJanitorBridgeAvailable()
-                    ? '<em style="color: var(--text-secondary, #888)">JannyAI\'s Cloudflare wall blocked the definition fetch. Your Cloudflare pass may have expired: open jannyai.com in this browser, let it load, then reopen this preview. Importing now would save a card with no definition or greeting.</em>'
-                    : '<em style="color: var(--text-secondary, #888)">JannyAI now Cloudflare-gates card definitions. Install or update the companion userscript (extras/cl-janitor-bridge.user.js) for reliable access. Importing without it would save a card with no definition or greeting.</em>';
-            }
-            return;
-        }
+        if (!hasCompleteJannyDefinition(charData, charId)) throw Object.assign(new Error('Incomplete definition'), { code: 'JANNY_PAGE_SHAPE_CHANGED' });
 
         // Store full data on the selected char for import
         if (jannySelectedChar?.id === hit.id) {
             jannySelectedChar._fullData = charData;
+            delete jannySelectedChar._detailError;
+            const importBtn = document.getElementById('jannyImportBtn');
+            if (importBtn) importBtn.disabled = false;
         }
 
         // Update creator display with scraped username (MeiliSearch only has UUID)
@@ -696,12 +685,29 @@ async function fetchAndPopulateDetails(hit, token) {
             examplesSection.style.display = 'none';
         }
     } catch (err) {
-        debugLog('[JannyBrowse] Detail fetch error:', err);
         if (token === jannyDetailFetchToken) {
+            delete hit._fullData;
+            hit._detailError = err;
+            handleJannyAccountFailure(err);
+            const importBtn = document.getElementById('jannyImportBtn');
+            if (importBtn) importBtn.disabled = true;
+            const descSection = document.getElementById('jannyCharDescriptionSection');
+            if (descSection) descSection.style.display = 'block';
             const descEl = document.getElementById('jannyCharDescription');
-            if (descEl) descEl.innerHTML = '<em style="color: var(--text-secondary, #888)">Could not load character definition. Importing now would save a card with no definition or greeting; retry before importing.</em>';
+            if (descEl) descEl.innerHTML = `<em>${escapeHtml(describeJannyAccountError(err))} Import is disabled. Reopen this preview after resolving the error.</em>`;
+            for (const id of ['jannyCharScenarioSection', 'jannyCharFirstMsgSection', 'jannyCharExamplesSection']) {
+                const section = document.getElementById(id);
+                if (section) section.style.display = 'none';
+            }
         }
     }
+}
+
+function hasCompleteJannyDefinition(data, id) {
+    const hasText = value => typeof value === 'string' && !!value.trim();
+    return !!data && String(data.id) === String(id) && hasText(data.firstMessage)
+        && [data.personality, data.scenario, data.exampleDialogs].every(value => value == null || typeof value === 'string')
+        && [data.personality, data.scenario, data.exampleDialogs].some(hasText);
 }
 
 function cleanupJannyCharModal() {
@@ -762,7 +768,10 @@ async function importCharacter(charData) {
             try { await jannyDetailFetchPromise; } catch { /* ignore */ }
         }
 
-        const fallbackData = charData._fullData || charData;
+        if (!hasCompleteJannyDefinition(charData._fullData, charId)) {
+            throw charData._detailError || Object.assign(new Error('Incomplete definition'), { code: 'JANNY_PAGE_SHAPE_CHANGED' });
+        }
+        const fallbackData = charData._fullData;
         if (!fallbackData.tagIds && charData.tagIds) {
             fallbackData.tagIds = charData.tagIds;
         }
@@ -848,9 +857,15 @@ async function importCharacter(charData) {
 
     } catch (err) {
         console.error('[JannyBrowse] Import failed:', err);
-        showToast(`Import failed: ${err.message}`, 'error');
+        if (err?.code?.startsWith('JANNY_')) {
+            delete charData._fullData;
+            charData._detailError = err;
+        }
+        handleJannyAccountFailure(err);
+        showToast(`Import failed: ${describeJannyAccountError(err)}`, 'error');
         if (importBtn) {
-            importBtn.disabled = false;
+            importBtn.disabled = !hasCompleteJannyDefinition(charData._fullData, charId)
+                || ['JANNY_CF_BLOCKED', 'JANNY_PAGE_SHAPE_CHANGED'].includes(err?.code);
             importBtn.innerHTML = '<i class="fa-solid fa-download"></i> Import';
         }
     }
@@ -1418,11 +1433,82 @@ function updateNsfwToggle() {
 // ========================================
 
 function describeJannyAccountError(err) {
-    if (err?.cloudflare) {
-        return 'Cloudflare challenged the request. Reload jannyai.com in this browser to clear the challenge, then try again.';
-    }
-    return err?.message || String(err || 'unknown error');
+    const messages = {
+        JANNY_HELPER_UNAVAILABLE: 'Install or update cl-helper, then run the JannyAI browser Test in Settings.',
+        JANNY_BROWSER_UNAVAILABLE: 'The browser endpoint is unavailable. Start the shared browser or check the endpoint in JannyAI Settings.',
+        JANNY_BROWSER_TIMEOUT: 'The JannyAI browser request timed out. Check the browser and retry.',
+        JANNY_CF_BLOCKED: 'Cloudflare challenged JannyAI. Open jannyai.com in the configured browser, clear the challenge, then retry.',
+        JANNY_LOGIN_REQUIRED: 'JannyAI login is required. Install your login in JannyAI Settings.',
+        JANNY_TOKEN_EXPIRED: 'The browser-owned JannyAI login has expired. Install a fresh login in JannyAI Settings.',
+        JANNY_TOKEN_REJECTED: 'JannyAI rejected the browser-owned login. Install a fresh login in JannyAI Settings.',
+        JANNY_PAGE_SHAPE_CHANGED: 'JannyAI loaded, but its character page changed or returned an incomplete definition. Update Character Library or retry later.',
+    };
+    return messages[err?.code] || (err?.cloudflare ? messages.JANNY_CF_BLOCKED : 'The JannyAI request failed. Check the JannyAI browser Test in Settings and retry.');
 }
+
+function openJannyAccountSettings() {
+    CoreAPI.openSettingsToSection('online', () => {
+        const section = document.getElementById('settingsJannySection');
+        if (section) { section.open = true; section.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
+    });
+}
+
+function invalidateJannyAccountCache() {
+    ++jannyAccountGeneration;
+    jannyAccountStatus = { browser: false, active: false, cloudflare: false, reason: '', code: '' };
+    jannyBookmarksLoaded = false;
+    jannyBookmarkIds = new Set();
+    jannyBookmarkTotalCount = null;
+    jannyBookmarkLimitToastShown = false;
+    jannyOwnedCollectionsLoaded = false;
+    jannyOwnedCollections = [];
+    jannyOwnedCollectionsLoading = false;
+    jannyOwnedCollectionsError = '';
+    ++jannyOwnedPreviewHydrationToken;
+    jannyModalCollectionIds = new Set();
+    jannyModalCollectionChecksLoadedFor = '';
+    jannyCollectionRowMutations = new Set();
+    ++jannyCollectionManageLoadToken;
+    jannyManageCollection = null;
+    const managePanel = document.getElementById('jannyCollectionManagePanel');
+    if (managePanel) { managePanel.innerHTML = ''; managePanel.classList.add('hidden'); }
+    if (jannyActiveCollection?.kind === 'owned') {
+        ++jannyCollectionDetailLoadToken;
+        jannyActiveCollection = null;
+        jannyCollectionCharacters = [];
+        const panel = document.getElementById('jannyCollectionDetailPanel');
+        if (panel) { panel.innerHTML = ''; panel.classList.add('hidden'); }
+    }
+    if (jannyFilterOnlyBookmarked) {
+        ++jannyLoadToken;
+        jannyCharacters = [];
+        jannyGridRenderedCount = 0;
+        jannyIsLoading = false;
+        const grid = document.getElementById('jannyGrid');
+        if (grid) grid.innerHTML = '<div class="browse-empty-state">JannyAI account changed. Refresh My Bookmarks after signing in.</div>';
+    }
+    const dropdown = document.getElementById('jannyCollectionDropdown');
+    if (dropdown) dropdown.innerHTML = '';
+    updateJannyBookmarkButton();
+    renderJannyOwnedCollectionsList();
+    renderJannyCollectionDropdown();
+    ++jannyDetailFetchToken;
+    jannyDetailFetchPromise = null;
+    if (jannySelectedChar) delete jannySelectedChar._fullData;
+    const importBtn = document.getElementById('jannyImportBtn');
+    if (importBtn) importBtn.disabled = true;
+    if (document.getElementById('jannyCharModal')) closePreviewModal();
+}
+
+function handleJannyAccountFailure(err, generation = jannyAccountGeneration) {
+    if (generation !== jannyAccountGeneration) return;
+    if (['JANNY_LOGIN_REQUIRED', 'JANNY_TOKEN_EXPIRED', 'JANNY_TOKEN_REJECTED'].includes(err?.code)) {
+        invalidateJannyAccountCache();
+        jannyAccountStatus = { browser: true, active: false, cloudflare: false, reason: '', code: err.code };
+    }
+}
+
+window.jannyInvalidateAccountCache = invalidateJannyAccountCache;
 
 function collectionCharacterCount(collection) {
     if (Array.isArray(collection?.collectionCharacters)) return collection.collectionCharacters.length;
@@ -1452,20 +1538,21 @@ function normalizeJannyCollectionCharacter(item) {
 // Tracks account readiness for gating (ensureJannyAccountReady) only. Login state is
 // shown in Settings, matching every other provider.
 async function refreshJannyAccountStatus() {
-    jannyAccountStatus = await probeJannyAccount();
+    const generation = jannyAccountGeneration;
+    const status = await probeJannyAccount();
+    if (generation !== jannyAccountGeneration) return jannyAccountStatus;
+    handleJannyAccountFailure(status, generation);
+    jannyAccountStatus = status;
     return jannyAccountStatus;
 }
 
 async function ensureJannyAccountReady() {
-    if (!jannyAccountStatus.bridge || !jannyAccountStatus.active) {
+    if (!jannyAccountStatus.browser || !jannyAccountStatus.active) {
         await refreshJannyAccountStatus();
     }
-    if (!jannyAccountStatus.bridge) {
-        showToast('Install the JannyAI bridge userscript (extras/cl-janny-bridge.user.js) to use account sync', 'warning', 6000);
-        return false;
-    }
-    if (!jannyAccountStatus.active) {
-        showToast('Log into jannyai.com in this browser, then try again', 'warning', 5000);
+    if (!jannyAccountStatus.browser || !jannyAccountStatus.active) {
+        showToast(describeJannyAccountError(jannyAccountStatus), 'warning', 7000);
+        openJannyAccountSettings();
         return false;
     }
     return true;
@@ -1473,13 +1560,20 @@ async function ensureJannyAccountReady() {
 
 async function loadJannyBookmarks(force = false) {
     if (jannyBookmarksLoaded && !force) return jannyBookmarkIds;
-    if (!await ensureJannyAccountReady()) return jannyBookmarkIds;
-    const ids = await fetchJannyBookmarks();
-    jannyBookmarkIds = new Set(ids.map(String));
-    jannyBookmarkTotalCount = ids.length;
-    jannyBookmarksLoaded = true;
-    updateJannyBookmarkButton();
-    return jannyBookmarkIds;
+    const generation = jannyAccountGeneration;
+    if (!await ensureJannyAccountReady() || generation !== jannyAccountGeneration) return jannyBookmarkIds;
+    try {
+        const ids = await fetchJannyBookmarks();
+        if (generation !== jannyAccountGeneration) return jannyBookmarkIds;
+        jannyBookmarkIds = new Set(ids.map(String));
+        jannyBookmarkTotalCount = ids.length;
+        jannyBookmarksLoaded = true;
+        updateJannyBookmarkButton();
+        return jannyBookmarkIds;
+    } catch (err) {
+        handleJannyAccountFailure(err, generation);
+        throw err;
+    }
 }
 
 function updateJannyBookmarkButton() {
@@ -1504,7 +1598,9 @@ function updateJannyBookmarkButton() {
 
 async function toggleSelectedJannyBookmark() {
     if (!jannySelectedChar?.id) return;
-    if (!await ensureJannyAccountReady()) return;
+    const generation = jannyAccountGeneration;
+    const id = String(jannySelectedChar.id);
+    if (!await ensureJannyAccountReady() || generation !== jannyAccountGeneration) return;
     const btn = document.getElementById('jannyBookmarkBtn');
     if (btn) {
         btn.disabled = true;
@@ -1515,9 +1611,10 @@ async function toggleSelectedJannyBookmark() {
 
     try {
         if (!jannyBookmarksLoaded) await loadJannyBookmarks(true);
-        const id = String(jannySelectedChar.id);
+        if (generation !== jannyAccountGeneration || !jannyBookmarksLoaded) return;
         if (jannyBookmarkIds.has(id)) {
             await removeJannyBookmarks([id]);
+            if (generation !== jannyAccountGeneration) return;
             jannyBookmarkIds.delete(id);
             if (typeof jannyBookmarkTotalCount === 'number') jannyBookmarkTotalCount = Math.max(0, jannyBookmarkTotalCount - 1);
             showToast('Removed from Janny bookmarks', 'success');
@@ -1530,11 +1627,14 @@ async function toggleSelectedJannyBookmark() {
                 return;
             }
             await addJannyBookmarks([id]);
+            if (generation !== jannyAccountGeneration) return;
             jannyBookmarkIds.add(id);
             jannyBookmarkTotalCount = (jannyBookmarkTotalCount || jannyBookmarkIds.size - 1) + 1;
             showToast('Saved to Janny bookmarks', 'success');
         }
     } catch (err) {
+        if (generation !== jannyAccountGeneration) return;
+        handleJannyAccountFailure(err, generation);
         showToast(`Janny bookmark sync failed: ${describeJannyAccountError(err)}`, 'error', 8000);
     } finally {
         if (btn) btn.classList.remove('loading');
@@ -1588,6 +1688,7 @@ function collectionHasPreviewImages(collection) {
 }
 
 async function hydrateJannyOwnedCollectionPreviews() {
+    const generation = jannyAccountGeneration;
     const token = ++jannyOwnedPreviewHydrationToken;
     const candidates = jannyOwnedCollections.filter(collection =>
         collection?.id && collectionCharacterCount(collection) > 0 && !collectionHasPreviewImages(collection)
@@ -1615,7 +1716,10 @@ async function hydrateJannyOwnedCollectionPreviews() {
             collection.previewCharacters = previewCharacters;
             renderJannyOwnedCollectionsList();
         } catch (err) {
+            if (generation !== jannyAccountGeneration) return;
+            handleJannyAccountFailure(err, generation);
             debugLog('[JannyAccount] owned collection preview hydration failed:', err.message);
+            if (generation !== jannyAccountGeneration) return;
         }
     }
 }
@@ -1867,26 +1971,33 @@ function renderJannyCollectorCollections() {
 async function loadJannyOwnedCollections(force = false) {
     if (jannyOwnedCollectionsLoaded && !force) return jannyOwnedCollections;
     if (jannyOwnedCollectionsLoading) return jannyOwnedCollections;
+    const generation = jannyAccountGeneration;
     jannyOwnedCollectionsLoading = true;
     jannyOwnedCollectionsError = '';
     renderJannyOwnedCollectionsList();
     try {
-        if (!await ensureJannyAccountReady()) {
+        if (!await ensureJannyAccountReady() || generation !== jannyAccountGeneration) {
             renderJannyCollectionDropdown();
             return [];
         }
-        jannyOwnedCollections = await fetchJannyCollections();
+        const collections = await fetchJannyCollections();
+        if (generation !== jannyAccountGeneration) return [];
+        jannyOwnedCollections = collections;
         jannyOwnedCollectionsLoaded = true;
         hydrateJannyOwnedCollectionPreviews().catch(err => debugLog('[JannyAccount] owned preview hydration failed:', err.message));
         renderJannyCollectionDropdown();
         return jannyOwnedCollections;
     } catch (err) {
+        if (generation !== jannyAccountGeneration) return [];
+        handleJannyAccountFailure(err, generation);
         jannyOwnedCollectionsError = describeJannyAccountError(err);
         showToast(`Could not load Janny collections: ${jannyOwnedCollectionsError}`, 'error', 8000);
         return [];
     } finally {
-        jannyOwnedCollectionsLoading = false;
-        renderJannyOwnedCollectionsList();
+        if (generation === jannyAccountGeneration) {
+            jannyOwnedCollectionsLoading = false;
+            renderJannyOwnedCollectionsList();
+        }
     }
 }
 
@@ -1902,7 +2013,7 @@ function renderJannyOwnedCollectionsList() {
         return;
     }
     if (!jannyOwnedCollectionsLoaded) {
-        list.innerHTML = '<div class="browse-empty-state">Log into jannyai.com in this browser to load your collections.</div>';
+        list.innerHTML = '<div class="browse-empty-state">Install your browser-owned login in JannyAI Settings to load your collections.</div>';
         return;
     }
     if (!jannyOwnedCollections.length) {
@@ -1921,6 +2032,7 @@ function getCollectionEntries(collection) {
 
 
 async function refreshSelectedJannyCollectionMemberships() {
+    const generation = jannyAccountGeneration;
     const characterId = String(jannySelectedChar?.id || '');
     const membershipIds = new Set();
     if (!characterId || !jannyOwnedCollectionsLoaded) return jannyModalCollectionIds;
@@ -1934,15 +2046,17 @@ async function refreshSelectedJannyCollectionMemberships() {
         if (!collection?.id || collectionCharacterCount(collection) <= 0) continue;
         try {
             const fetched = await fetchJannyCollectionCharacters(collection.id);
-            if (String(jannySelectedChar?.id || '') !== characterId) return jannyModalCollectionIds;
+            if (generation !== jannyAccountGeneration || String(jannySelectedChar?.id || '') !== characterId) return jannyModalCollectionIds;
             if (Array.isArray(fetched) && fetched.some(entry => collectionEntryMatchesCharacter(entry, characterId))) {
                 membershipIds.add(String(collection.id));
             }
         } catch (err) {
+            handleJannyAccountFailure(err, generation);
             debugLog('[JannyAccount] membership check failed:', err.message);
+            return jannyModalCollectionIds;
         }
     }
-    if (String(jannySelectedChar?.id || '') !== characterId) return jannyModalCollectionIds;
+    if (generation !== jannyAccountGeneration || String(jannySelectedChar?.id || '') !== characterId) return jannyModalCollectionIds;
     jannyModalCollectionIds = membershipIds;
     jannyModalCollectionChecksLoadedFor = characterId;
     return jannyModalCollectionIds;
@@ -1957,7 +2071,7 @@ function renderJannyCollectionDropdown() {
     if (!jannyCollectionDropdownOpen) return;
 
     if (!jannyAccountStatus.active) {
-        dropdown.innerHTML = '<div class="janny-collection-dropdown-title">Janny collections</div><div class="janny-collection-dropdown-empty">Log into jannyai.com in this browser (with the bridge userscript installed) to use owned collections.</div>';
+        dropdown.innerHTML = '<div class="janny-collection-dropdown-title">Janny collections</div><div class="janny-collection-dropdown-empty">Install your browser-owned login in JannyAI Settings to use owned collections.</div>';
         return;
     }
     if (!jannyOwnedCollectionsLoaded) {
@@ -2012,10 +2126,11 @@ function closeJannyCollectionDropdown() {
 }
 
 async function toggleSelectedJannyCollectionMembership(collectionId) {
+    const generation = jannyAccountGeneration;
     const characterId = String(jannySelectedChar?.id || '');
     const characterName = jannySelectedChar?.name || 'character';
     if (!characterId || !collectionId) return;
-    if (!await ensureJannyAccountReady()) return;
+    if (!await ensureJannyAccountReady() || generation !== jannyAccountGeneration) return;
     const collection = jannyOwnedCollections.find(c => String(c.id) === String(collectionId));
     const name = collection?.name || 'collection';
     const wasMember = jannyModalCollectionIds.has(String(collectionId));
@@ -2024,11 +2139,13 @@ async function toggleSelectedJannyCollectionMembership(collectionId) {
     try {
         if (wasMember) {
             await removeJannyCharacterFromCollection(collectionId, characterId);
+            if (generation !== jannyAccountGeneration) return;
             if (String(jannySelectedChar?.id || '') === characterId) jannyModalCollectionIds.delete(String(collectionId));
             updateOwnedCollectionCount(collectionId, -1);
             showToast(`Removed ${characterName} from ${name}.`, 'success');
         } else {
             await addJannyCharacterToCollection(collectionId, characterId);
+            if (generation !== jannyAccountGeneration) return;
             if (String(jannySelectedChar?.id || '') === characterId) jannyModalCollectionIds.add(String(collectionId));
             updateOwnedCollectionCount(collectionId, 1);
             showToast(`Added ${characterName} to ${name}.`, 'success');
@@ -2038,28 +2155,14 @@ async function toggleSelectedJannyCollectionMembership(collectionId) {
             openJannyOwnedCollection(collectionId);
         }
     } catch (err) {
-        let duplicateAddReconciled = false;
-        if (!wasMember && err?.status === 401) {
-            try {
-                const entries = await fetchJannyCollectionCharacters(collectionId);
-                duplicateAddReconciled = Array.isArray(entries)
-                    && entries.some(entry => collectionEntryMatchesCharacter(entry, characterId));
-            } catch (refreshErr) {
-                debugLog('[JannyAccount] duplicate-add membership refresh failed:', refreshErr.message);
-            }
-        }
-
-        if (duplicateAddReconciled) {
-            if (String(jannySelectedChar?.id || '') === characterId) {
-                jannyModalCollectionIds.add(String(collectionId));
-            }
-            showToast(`${characterName} is already in ${name}. Membership refreshed.`, 'info');
-        } else {
-            showToast(`Could not update collection: ${describeJannyAccountError(err)}`, 'error', 8000);
-        }
+        if (generation !== jannyAccountGeneration) return;
+        handleJannyAccountFailure(err, generation);
+        showToast(`Could not update collection: ${describeJannyAccountError(err)}`, 'error', 8000);
     } finally {
-        jannyCollectionRowMutations.delete(String(collectionId));
-        if (String(jannySelectedChar?.id || '') === characterId) renderJannyCollectionDropdown();
+        if (generation === jannyAccountGeneration) {
+            jannyCollectionRowMutations.delete(String(collectionId));
+            if (String(jannySelectedChar?.id || '') === characterId) renderJannyCollectionDropdown();
+        }
     }
 }
 
@@ -2142,7 +2245,8 @@ async function openJannyPublicCollection(path) {
 
 async function openJannyOwnedCollection(collectionId) {
     if (!collectionId) return;
-    if (!await ensureJannyAccountReady()) return;
+    const generation = jannyAccountGeneration;
+    if (!await ensureJannyAccountReady() || generation !== jannyAccountGeneration) return;
     const requestedId = String(collectionId);
     const token = ++jannyCollectionDetailLoadToken;
     jannyActiveCollection = { kind: 'owned', id: requestedId, name: 'Collection' };
@@ -2165,12 +2269,14 @@ async function openJannyOwnedCollection(collectionId) {
         renderJannyCollectionDetail();
     } catch (err) {
         if (token !== jannyCollectionDetailLoadToken || jannyActiveCollection?.kind !== 'owned' || String(jannyActiveCollection.id || '') !== requestedId) return;
+        handleJannyAccountFailure(err, generation);
         renderJannyCollectionDetail({ error: describeJannyAccountError(err) });
         showToast(`Could not load Janny collection: ${describeJannyAccountError(err)}`, 'error', 8000);
     }
 }
 
 async function createCollectionFromPanel() {
+    const generation = jannyAccountGeneration;
     const nameEl = document.getElementById('jannyNewCollectionName');
     const descEl = document.getElementById('jannyNewCollectionDescription');
     const privateEl = document.getElementById('jannyNewCollectionPrivate');
@@ -2183,16 +2289,20 @@ async function createCollectionFromPanel() {
         showToast('Name the collection first', 'warning');
         return;
     }
-    if (!await ensureJannyAccountReady()) return;
+    if (!await ensureJannyAccountReady() || generation !== jannyAccountGeneration) return;
     try {
         const isPrivate = privateEl ? !!privateEl.checked : true;
         await createJannyCollection({ name, description: descEl?.value || '', isPrivate });
+        if (generation !== jannyAccountGeneration) return;
         if (nameEl) nameEl.value = '';
         if (descEl) descEl.value = '';
         jannyOwnedCollectionsLoaded = false;
         await loadJannyOwnedCollections(true);
+        if (generation !== jannyAccountGeneration) return;
         showToast('Janny collection created', 'success');
     } catch (err) {
+        if (generation !== jannyAccountGeneration) return;
+        handleJannyAccountFailure(err, generation);
         if (errorEl) {
             errorEl.classList.remove('hidden');
             errorEl.innerHTML = `Couldn't create the collection here (${escapeHtml(describeJannyAccountError(err))}). <a href="${JANNY_SITE_BASE}/collections/new" target="_blank" rel="noopener noreferrer">Create it on JannyAI</a> instead.`;
@@ -2204,7 +2314,8 @@ async function createCollectionFromPanel() {
 
 async function openJannyCollectionManage(collectionId) {
     if (!collectionId) return;
-    if (!await ensureJannyAccountReady()) return;
+    const generation = jannyAccountGeneration;
+    if (!await ensureJannyAccountReady() || generation !== jannyAccountGeneration) return;
     const requestedId = String(collectionId);
     const collection = jannyOwnedCollections.find(c => String(c.id) === requestedId);
     if (!collection) {
@@ -2229,6 +2340,11 @@ async function openJannyCollectionManage(collectionId) {
         renderJannyCollectionManage();
     } catch (err) {
         if (token !== jannyCollectionManageLoadToken || String(jannyManageCollection?.collection?.id || '') !== requestedId) return;
+        handleJannyAccountFailure(err, generation);
+        if (generation !== jannyAccountGeneration) {
+            showToast(describeJannyAccountError(err), 'error', 8000);
+            return;
+        }
         jannyManageCollection.error = describeJannyAccountError(err);
         renderJannyCollectionManage();
     }
@@ -2288,6 +2404,8 @@ function renderJannyCollectionManage({ loading = false } = {}) {
 
 async function saveJannyManagedCollection() {
     if (!jannyManageCollection?.collection?.id) return;
+    const generation = jannyAccountGeneration;
+    const managed = jannyManageCollection;
     const collection = jannyManageCollection.collection;
     const name = (document.getElementById('jannyManageCollectionName')?.value || '').trim();
     const description = document.getElementById('jannyManageCollectionDescription')?.value || '';
@@ -2297,6 +2415,7 @@ async function saveJannyManagedCollection() {
     }
     try {
         await updateJannyCollection({ id: collection.id, name, description, isPrivate: collectionIsPrivate(collection) });
+        if (generation !== jannyAccountGeneration || managed !== jannyManageCollection) return;
         collection.name = name;
         collection.description = description;
         const existing = jannyOwnedCollections.find(c => String(c.id) === String(collection.id));
@@ -2305,6 +2424,8 @@ async function saveJannyManagedCollection() {
         renderJannyCollectionManage();
         showToast('Collection saved.', 'success');
     } catch (err) {
+        if (generation !== jannyAccountGeneration) return;
+        handleJannyAccountFailure(err, generation);
         showToast(`Could not save collection: ${describeJannyAccountError(err)}`, 'error', 8000);
     }
 }
@@ -2318,6 +2439,8 @@ function parseJannyCharacterIdFromInput(value) {
 
 async function addCharacterToManagedCollection() {
     if (!jannyManageCollection?.collection?.id) return;
+    const generation = jannyAccountGeneration;
+    const managed = jannyManageCollection;
     const input = document.getElementById('jannyManageAddCharacterInput');
     const id = parseJannyCharacterIdFromInput(input?.value || '');
     if (!id) {
@@ -2330,7 +2453,9 @@ async function addCharacterToManagedCollection() {
     }
     try {
         await addJannyCharacterToCollection(jannyManageCollection.collection.id, id);
+        if (generation !== jannyAccountGeneration || managed !== jannyManageCollection) return;
         const fetched = await fetchJannyCharactersByIds([id]);
+        if (generation !== jannyAccountGeneration || managed !== jannyManageCollection) return;
         const normalized = fetched.map(normalizeJannyCollectionCharacter).filter(Boolean)[0] || { id, name: id, avatar: '' };
         jannyManageCollection.characters = arrangeJannyCollectionCharacters([...jannyManageCollection.characters, normalized]);
         updateOwnedCollectionCount(jannyManageCollection.collection.id, 1);
@@ -2339,38 +2464,49 @@ async function addCharacterToManagedCollection() {
         renderJannyCollectionManage();
         showToast('Character added to collection.', 'success');
     } catch (err) {
+        if (generation !== jannyAccountGeneration) return;
+        handleJannyAccountFailure(err, generation);
         showToast(`Could not add character: ${describeJannyAccountError(err)}`, 'error', 8000);
     }
 }
 
 async function removeCharacterFromManagedCollection(characterId) {
     if (!jannyManageCollection?.collection?.id || !characterId) return;
+    const generation = jannyAccountGeneration;
+    const managed = jannyManageCollection;
     try {
         await removeJannyCharacterFromCollection(jannyManageCollection.collection.id, characterId);
+        if (generation !== jannyAccountGeneration || managed !== jannyManageCollection) return;
         jannyManageCollection.characters = jannyManageCollection.characters.filter(c => String(c.id) !== String(characterId));
         updateOwnedCollectionCount(jannyManageCollection.collection.id, -1);
         renderJannyOwnedCollectionsList();
         renderJannyCollectionManage();
         showToast('Character removed from collection.', 'success');
     } catch (err) {
+        if (generation !== jannyAccountGeneration) return;
+        handleJannyAccountFailure(err, generation);
         showToast(`Could not remove character: ${describeJannyAccountError(err)}`, 'error', 8000);
     }
 }
 
 async function confirmAndDeleteJannyCollection(collectionId) {
     if (!collectionId) return;
+    const generation = jannyAccountGeneration;
     const ok = showConfirm
         ? await showConfirm({ title: 'Delete Janny collection?', message: 'This cannot be undone from Character Library.', confirmText: 'Delete', cancelText: 'Cancel', danger: true, icon: 'fa-solid fa-trash' })
         : window.confirm('Delete this Janny collection? This cannot be undone from Character Library.');
-    if (!ok) return;
+    if (!ok || generation !== jannyAccountGeneration) return;
     try {
         await deleteJannyCollection(collectionId);
+        if (generation !== jannyAccountGeneration) return;
         jannyOwnedCollections = jannyOwnedCollections.filter(c => String(c.id) !== String(collectionId));
         jannyManageCollection = null;
         renderJannyOwnedCollectionsList();
         setJannyCollectionsMode('owned');
         showToast('Collection deleted.', 'success');
     } catch (err) {
+        if (generation !== jannyAccountGeneration) return;
+        handleJannyAccountFailure(err, generation);
         showToast(`Could not delete collection: ${describeJannyAccountError(err)}`, 'error', 8000);
     }
 }
@@ -2769,8 +2905,7 @@ class JannyBrowseView extends BrowseView {
         const grid = document.getElementById('jannyGrid');
         if (grid) this.observeImages(grid);
         // No initial load here: init() runs before applyDefaults(), so activate() issues it.
-        // The account status probe is independent of the grid, so it still belongs here.
-        refreshJannyAccountStatus();
+        // Account probing is lazy: anonymous MeiliSearch browsing needs no browser.
     }
 
     getSearchInputId(mode) {
@@ -2825,11 +2960,6 @@ class JannyBrowseView extends BrowseView {
             renderGrid(jannyCharacters, false);
         }
 
-        // Browsing itself rides MeiliSearch (CORS-open), but opening any card needs the
-        // Cloudflare-gated page fetch. Clear it now, while the user is still scanning the grid,
-        // so the first card they open does not sit through a refresh. Probe-first, so a valid
-        // clearance costs one request and no tab; fire-and-forget so activation never blocks.
-        warmJanitorClearance(`${JANNY_SITE_BASE}/characters/`).catch(() => {});
     }
 
     // ── Library Lookup (BrowseView contract) ────────────────

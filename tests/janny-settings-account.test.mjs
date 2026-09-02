@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
+import { browseHarness } from './helpers/janny-browse-harness.mjs';
 
 const html = readFileSync(new URL('../app/library.html', import.meta.url), 'utf8');
 const js = readFileSync(new URL('../app/library.js', import.meta.url), 'utf8');
@@ -75,6 +76,35 @@ async function harness(overrides = {}) {
     vm.runInContext(declarations + js.slice(start, end) + js.slice(janitorStart, janitorEnd), context);
     await flush();
     return { settings, writes, calls, toasts, installs, window, context, el: id => elements.get(id) };
+}
+
+for (const action of ['saveJannyTokenBtn', 'clearJannyTokenBtn']) {
+    test(`${action} clears real browse account caches after success`, async () => {
+        const browse = browseHarness(); browse.seedAccount();
+        const h = await harness({ jannyInvalidateAccountCache: browse.window.jannyInvalidateAccountCache });
+        h.el('settingsJannyToken').value = 'synthetic-session';
+        await h.el(action).dispatch('click');
+        assert.equal(browse.run('jannyBookmarkIds.size + jannyOwnedCollections.length + jannyModalCollectionIds.size'), 0);
+        assert.equal(browse.run('jannyBookmarksLoaded || jannyOwnedCollectionsLoaded'), false);
+    });
+}
+
+test('refresh detecting an inactive browser session invalidates browse account data', async () => {
+    const browse = browseHarness(); browse.seedAccount();
+    const h = await harness({ jannyInvalidateAccountCache: browse.window.jannyInvalidateAccountCache, jannySessionStatus: async () => ({ active: false }) });
+    await h.el('jannySettingsRefreshBtn').dispatch('click');
+    assert.equal(browse.run('jannyBookmarkIds.size + jannyOwnedCollections.length'), 0);
+});
+
+for (const [action, boundary] of [['saveJannyTokenBtn', 'jannySetSession'], ['clearJannyTokenBtn', 'jannyLogout']]) {
+    test(`${action} also clears old caches after uncertain browser failure without claiming success`, async () => {
+        const browse = browseHarness(); browse.seedAccount();
+        const h = await harness({ jannyInvalidateAccountCache: browse.window.jannyInvalidateAccountCache, [boundary]: async () => { throw new Error('Synthetic failure'); } });
+        h.el('settingsJannyToken').value = 'synthetic-session';
+        await h.el(action).dispatch('click');
+        assert.equal(browse.run('jannyBookmarkIds.size + jannyOwnedCollections.length'), 0);
+        assert.equal(h.toasts.some(([, type]) => type === 'success'), false);
+    });
 }
 
 test('Janny writes shared browser settings and both sections re-read them on expansion', async () => {

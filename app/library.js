@@ -2550,6 +2550,7 @@ function setupSettingsModal() {
             const status = await window.jannySessionStatus?.();
             if (read !== jannyAccountStatusRead) return;
             if (!status) throw new Error('No browser session status');
+            if (status.active === false) window.jannyInvalidateAccountCache?.();
             accountEl.className = `settings-status-badge ${status.active ? 'active' : 'inactive'}`;
             accountEl.textContent = `${status.active ? 'Logged in' : 'Not logged in'}${status.email ? ' as ' + status.email : ''}`;
             if (hintEl) {
@@ -2601,6 +2602,8 @@ function setupSettingsModal() {
             // Do not echo transport errors: they may contain the one-time pasted credentials.
             showToast('Could not install JannyAI login in the browser. Check the browser Test and paste a fresh complete JannyAI session.', 'error');
         } finally {
+            // A failed transport can still have replaced browser cookies. Never reuse prior-account data.
+            window.jannyInvalidateAccountCache?.();
             clearJannyLoginInput();
             jannyAccountBusy = false;
             if (clearJannyTokenBtn) clearJannyTokenBtn.disabled = false;
@@ -2624,6 +2627,7 @@ function setupSettingsModal() {
         } catch {
             showToast('Login input cleared, but browser account-cookie cleanup could not be confirmed. The browser may still be logged in; reconnect and retry Log Out.', 'warning');
         } finally {
+            window.jannyInvalidateAccountCache?.();
             jannyAccountBusy = false;
             clearJannyTokenBtn.disabled = false;
             applyJannyBrowserMode();
