@@ -1,0 +1,79 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {
+    buildJannySessionCookies,
+    jannyAccountCookiesToDelete,
+    validateJannyFinalUrl,
+    validateJannyBrowserRequest,
+} from '../extras/cl-helper/janny-browser-policy.js';
+
+const A = 'aaaaaaaa-1111-4111-8111-111111111111';
+const B = 'bbbbbbbb-2222-4222-8222-222222222222';
+
+test('allows the exact public and account request surface', () => {
+    assert.equal(validateJannyBrowserRequest({ method: 'GET', path: `/characters/${A}_demo` }).safePath, `/characters/${A}_demo`);
+    assert.equal(validateJannyBrowserRequest({ method: 'GET', path: '/collections?page=2&sort=latest' }).safePath, '/collections?page=2&sort=latest');
+    assert.equal(validateJannyBrowserRequest({ method: 'GET', path: '/collections?q=robots&page=1&sort=popular' }).method, 'GET');
+    assert.equal(validateJannyBrowserRequest({ method: 'GET', path: `/collectors/demo-user` }).safePath, '/collectors/demo-user');
+    assert.equal(validateJannyBrowserRequest({ method: 'GET', path: `/collections/${A}_set` }).safePath, `/collections/${A}_set`);
+    assert.equal(validateJannyBrowserRequest({ method: 'GET', path: '/api/bookmark' }).method, 'GET');
+    assert.equal(validateJannyBrowserRequest({ method: 'POST', path: '/api/bookmark', jsonBody: { characterIDs: [A, B] } }).contentType, 'application/json');
+    assert.equal(validateJannyBrowserRequest({ method: 'DELETE', path: `/api/bookmark?ids=${A},${B}` }).method, 'DELETE');
+    assert.equal(validateJannyBrowserRequest({ method: 'GET', path: `/api/get-characters?ids=${A},${B}` }).method, 'GET');
+    assert.equal(validateJannyBrowserRequest({ method: 'GET', path: '/api/collections/mine' }).method, 'GET');
+    assert.equal(validateJannyBrowserRequest({ method: 'GET', path: `/api/collections/${A}/characters` }).method, 'GET');
+    assert.equal(validateJannyBrowserRequest({ method: 'POST', path: `/api/collections/${A}/characters`, jsonBody: { characterId: B } }).method, 'POST');
+    assert.equal(validateJannyBrowserRequest({ method: 'DELETE', path: `/api/collections/${A}/characters?characterId=${B}` }).method, 'DELETE');
+    assert.equal(validateJannyBrowserRequest({ method: 'POST', path: '/collections/form/add-collection', formBody: { name: 'Set', description: '', isPrivate: 'yes' } }).contentType, 'application/x-www-form-urlencoded');
+    assert.equal(validateJannyBrowserRequest({ method: 'POST', path: '/collections/form/edit-collection', formBody: { id: A, name: 'Set', description: 'Updated', isPrivate: 'no' } }).method, 'POST');
+    assert.equal(validateJannyBrowserRequest({ method: 'POST', path: '/collections/form/delete-collection', formBody: { id: A } }).method, 'POST');
+});
+
+test('rejects origin escape, traversal, extra query keys, invalid UUIDs and body shapes', () => {
+    const blocked = [
+        { method: 'GET', path: 'https://evil.example/api/bookmark' },
+        { method: 'GET', path: 'https://jannyai.com:444/api/bookmark' },
+        { method: 'GET', path: '/api/bookmark/../admin' },
+        { method: 'GET', path: '/api/bookmark/%2e%2e/admin' },
+        { method: 'GET', path: '/collections?page=1&token=secret' },
+        { method: 'DELETE', path: '/api/bookmark?ids=not-a-uuid' },
+        { method: 'POST', path: '/api/bookmark', jsonBody: { characterIDs: ['not-a-uuid'] } },
+        { method: 'PATCH', path: '/api/bookmark' },
+        { method: 'POST', path: '/collections/form/add-collection', formBody: { name: 'x'.repeat(5000) } },
+    ];
+    for (const input of blocked) {
+        assert.throws(() => validateJannyBrowserRequest(input), error => error.code === 'JANNY_REQUEST_BLOCKED');
+    }
+});
+
+test('allows hydrated inspection only when the id matches the character path', () => {
+    assert.equal(validateJannyBrowserRequest({ method: 'GET', path: `/characters/${A}_demo`, inspectCharacterId: A }).inspectCharacterId, A);
+    assert.throws(
+        () => validateJannyBrowserRequest({ method: 'GET', path: `/characters/${A}_demo`, inspectCharacterId: B }),
+        error => error.code === 'JANNY_REQUEST_BLOCKED',
+    );
+});
+
+test('rejects cross-origin redirects and constrains form success locations', () => {
+    assert.equal(validateJannyFinalUrl('https://jannyai.com/characters', false), 'https://jannyai.com/characters');
+    assert.equal(validateJannyFinalUrl(`https://jannyai.com/collections/${A}_set`, true), `https://jannyai.com/collections/${A}_set`);
+    assert.throws(() => validateJannyFinalUrl('https://evil.example/collections', false), error => error.code === 'JANNY_REQUEST_BLOCKED');
+    assert.throws(() => validateJannyFinalUrl('https://jannyai.com/admin', true), error => error.code === 'JANNY_REQUEST_BLOCKED');
+});
+
+test('builds Supabase chunks and selects only account cookies for logout', () => {
+    const accessToken = `x.${Buffer.from(JSON.stringify({ exp: 2_000_000_000 })).toString('base64url')}.y`;
+    const cookies = buildJannySessionCookies(accessToken, 'r'.repeat(7000), 1_900_000_000);
+    assert.deepEqual(cookies.map(cookie => cookie.name), [
+        'sb-eenzcbluoctduymzksoq-auth-token.0',
+        'sb-eenzcbluoctduymzksoq-auth-token.1',
+        'sb-eenzcbluoctduymzksoq-auth-token.2',
+    ]);
+    assert.ok(cookies.every(cookie => cookie.expires === 2_000_000_000));
+    assert.deepEqual(jannyAccountCookiesToDelete([
+        { name: 'cf_clearance' },
+        { name: '__cf_bm' },
+        { name: 'sb-eenzcbluoctduymzksoq-auth-token.0' },
+        { name: 'unrelated' },
+    ]), ['sb-eenzcbluoctduymzksoq-auth-token.0']);
+});
