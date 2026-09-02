@@ -5,6 +5,7 @@ import CoreAPI from '../../core-api.js';
 import { IMG_PLACEHOLDER, formatNumber, BROWSE_PURIFY_CONFIG, skeletonLines, deferRender, deferCall, isMobileMode, finishBrowseImport, renderBrowseError } from '../provider-utils.js';
 import { orderJannyCollectionCharacters } from './janny-collection-order.js';
 import { collectionEntryCharacterId, collectionEntryMatchesCharacter } from './janny-collection-membership.js';
+import { jannySessionStatus } from './janny-session.js';
 import {
     JANNY_IMAGE_BASE,
     JANNY_SITE_BASE,
@@ -860,6 +861,10 @@ async function importCharacter(charData) {
             avatarFileName: result.fileName,
             markImported: () => markCardAsImported(charId),
         });
+        // Same guard every other await in this function carries. Nothing follows it today, so
+        // it changes no behaviour; it is here so anything appended after the import cannot run
+        // against an account that was replaced while the import was in flight.
+        if (generation !== jannyAccountGeneration) return;
 
     } catch (err) {
         if (generation !== jannyAccountGeneration) return;
@@ -2166,13 +2171,43 @@ async function toggleSelectedJannyCollectionMembership(collectionId) {
         }
     } catch (err) {
         if (generation !== jannyAccountGeneration) return;
-        handleJannyAccountFailure(err, generation);
-        showToast(`Could not update collection: ${describeJannyAccountError(err)}`, 'error', 8000);
+        if (await reconcileJannyDuplicateAdd(err, { wasMember, collectionId, characterId, generation })) {
+            if (generation !== jannyAccountGeneration) return;
+            if (String(jannySelectedChar?.id || '') === characterId) jannyModalCollectionIds.add(String(collectionId));
+            showToast(`${characterName} is already in ${name}. Membership refreshed.`, 'info');
+            renderJannyOwnedCollectionsList();
+        } else {
+            if (generation !== jannyAccountGeneration) return;
+            handleJannyAccountFailure(err, generation);
+            showToast(`Could not update collection: ${describeJannyAccountError(err)}`, 'error', 8000);
+        }
     } finally {
         if (generation === jannyAccountGeneration) {
             jannyCollectionRowMutations.delete(String(collectionId));
             if (String(jannySelectedChar?.id || '') === characterId) renderJannyCollectionDropdown();
         }
+    }
+}
+
+/**
+ * JannyAI answers an add of a character already in the collection with a 401, which is
+ * indistinguishable from a rejected login by status alone. The browser transport has already
+ * spent its one recovery attempt by the time this runs, so ask the browser what the session
+ * actually looks like: only a still-active session plus a collection re-fetch that shows the
+ * character present counts as a duplicate. Anything else stays a login failure and fails closed.
+ * @returns {Promise<boolean>} true when the "add" was a no-op on an existing membership
+ */
+async function reconcileJannyDuplicateAdd(err, { wasMember, collectionId, characterId, generation }) {
+    if (wasMember || err?.status !== 401) return false;
+    try {
+        const status = await jannySessionStatus();
+        if (generation !== jannyAccountGeneration || status?.active !== true) return false;
+        const entries = await fetchJannyCollectionCharacters(collectionId);
+        if (generation !== jannyAccountGeneration) return false;
+        return Array.isArray(entries) && entries.some(entry => collectionEntryMatchesCharacter(entry, characterId));
+    } catch (refreshErr) {
+        debugLog('[JannyAccount] duplicate-add membership check failed:', refreshErr.message);
+        return false;
     }
 }
 

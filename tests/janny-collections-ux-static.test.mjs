@@ -208,6 +208,44 @@ test('definitive collection rejection clears old account caches without duplicat
     assert.equal(h.toasts.some(([, kind]) => kind === 'success' || kind === 'info'), false);
 });
 
+test('a duplicate add on a still-active session reports membership instead of a login failure', async () => {
+    let reads = 0;
+    const h = browseHarness({
+        addJannyCharacterToCollection: async () => { throw Object.assign(failure('JANNY_LOGIN_REQUIRED'), { status: 401 }); },
+        jannySessionStatus: async () => ({ active: true, email: '', expMs: 0, hasRefresh: true, refreshable: true }),
+        fetchJannyCollectionCharacters: async () => { reads++; return [{ characterId: 'old-character' }]; },
+    });
+    h.seedAccount(); h.run('jannyModalCollectionIds.clear()');
+    h.el('jannyCharModal');
+    await h.run("toggleSelectedJannyCollectionMembership('old-collection')");
+    assert.equal(reads, 1, 'membership was not re-fetched');
+    // Caches survive: the account was never invalidated.
+    assert.equal(h.run('jannyOwnedCollections.length'), 1);
+    assert.equal(h.run('jannyBookmarkIds.size'), 1);
+    assert.equal(h.run('jannyBookmarksLoaded && jannyOwnedCollectionsLoaded'), true);
+    assert.equal(h.run('jannyAccountStatus.active'), true);
+    assert.equal(h.run("jannyModalCollectionIds.has('old-collection')"), true);
+    // The preview modal stays open and the count is not double-counted.
+    assert.equal(h.el('jannyCharModal').classList.contains('hidden'), false);
+    assert.equal(h.run('jannySelectedChar?.id'), 'old-character');
+    assert.equal(h.run('jannyOwnedCollections[0].characterCount'), 1);
+    assert.equal(h.toasts.some(([message, kind]) => kind === 'info' && /already in Old private collection/.test(message)), true);
+    assert.equal(h.toasts.some(([, kind]) => kind === 'error'), false);
+});
+
+test('a duplicate-add reconciliation is refused once the browser session is gone', async () => {
+    let reads = 0;
+    const h = browseHarness({
+        addJannyCharacterToCollection: async () => { throw Object.assign(failure('JANNY_LOGIN_REQUIRED'), { status: 401 }); },
+        jannySessionStatus: async () => ({ active: false, hasRefresh: false, refreshable: false }),
+        fetchJannyCollectionCharacters: async () => { reads++; return [{ characterId: 'old-character' }]; },
+    });
+    h.seedAccount(); h.run('jannyModalCollectionIds.clear()');
+    await h.run("toggleSelectedJannyCollectionMembership('old-collection')");
+    assert.equal(reads, 0, 'an inactive session must not be reconciled against collection contents');
+    assert.equal(h.run('jannyOwnedCollections.length + jannyBookmarkIds.size + jannyModalCollectionIds.size'), 0);
+});
+
 test('failed collection mutation leaves membership and count unchanged', async () => {
     const h = browseHarness({ removeJannyCharacterFromCollection: async () => { throw failure('JANNY_CF_BLOCKED'); } });
     h.seedAccount();

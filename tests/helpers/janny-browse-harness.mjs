@@ -65,6 +65,9 @@ export function browseHarness(overrides = {}) {
         skeletonLines: () => 'Loading...', deferCall: (el, fn) => fn(), deferRender: (el, fn) => { el.innerHTML = fn(); },
         collectionEntryCharacterId, collectionEntryMatchesCharacter, orderJannyCollectionCharacters,
         probeJannyAccount: async () => ({ ...ready }),
+        // Fail-closed default: no browser session is installed unless a test says otherwise,
+        // so a 401 reads as a real rejection rather than a duplicate-add no-op.
+        jannySessionStatus: async () => ({ active: false, email: '', expMs: 0, hasRefresh: false, refreshable: false }),
         fetchJannyBookmarks: async () => [], fetchJannyCollections: async () => [],
         fetchJannyCollectionCharacters: async () => [],
         addJannyBookmarks: async () => [], removeJannyBookmarks: async () => [],
