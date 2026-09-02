@@ -2796,8 +2796,11 @@ async function extractHydratedJannyCharacter(page, safePath, characterId) {
         const decode = (value) => {
             if (!Array.isArray(value)) return value;
             const [type, data] = value;
+            // [0] is Astro's undefined value; other supported tuples have two members.
+            if (value.length !== 2 && !(type === 0 && value.length === 1)) throw new Error('Invalid Astro tuple');
             if (type === 0) {
-                if (data && typeof data === 'object' && !Array.isArray(data)) {
+                if (Array.isArray(data)) throw new Error('Invalid Astro primitive payload');
+                if (data && typeof data === 'object') {
                     const out = {};
                     for (const [key, child] of Object.entries(data)) out[key] = decode(child);
                     return out;
@@ -2805,7 +2808,7 @@ async function extractHydratedJannyCharacter(page, safePath, characterId) {
                 return data;
             }
             if (type === 1 && Array.isArray(data)) return data.map(decode);
-            return data;
+            throw new Error('Unsupported Astro tuple or payload');
         };
         const islands = document.querySelectorAll('astro-island[component-export="CharacterButtons"], astro-island[component-url*="CharacterButtons"]');
         for (const island of islands) {

@@ -123,3 +123,22 @@ test('imports hydrated definitions and only backfills metadata from an identity-
         assert.equal(importCalls.length, 1);
     } finally { globalThis.fetch = originalFetch; }
 });
+
+for (const [name, character] of [
+    ['character', [99, completeCharacter]],
+    ['definition field', [0, { ...completeCharacter, personality: [99, 'Definition'] }]],
+]) {
+    test('actual helper/provider boundary rejects unsupported Astro tag around ' + name, async () => {
+        const harness = createJannyHelperHarness([], {
+            document: jannyCharacterDocument(completeCharacter, { rawProps: JSON.stringify({ character }) }),
+        });
+        const original = window.apiRequest;
+        window.apiRequest = harness.apiRequest;
+        try {
+            await assert.rejects(provider.fetchMetadata(identifier), error => error.code === 'JANNY_PAGE_SHAPE_CHANGED');
+            assert.equal(harness.navigations.length, 1);
+            assert.equal(harness.requests.length, 0);
+            assert.equal(importCalls.length, 0);
+        } finally { window.apiRequest = original; }
+    });
+}

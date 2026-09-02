@@ -228,3 +228,45 @@ test('a character named Forbidden with normal site title chrome is not a blocked
     const { result } = await inspectCharacter(completeCharacter, { title: 'Forbidden | JannyAI' });
     assert.deepEqual(result.hydratedCharacter?.character, completeCharacter);
 });
+
+const serializedCharacter = Object.fromEntries(Object.entries(completeCharacter).map(([key, value]) => [key, [0, value]]));
+for (const [name, props] of [
+    ['unknown character tag', { character: [99, completeCharacter] }],
+    ['unknown personality tag', { character: [0, { ...serializedCharacter, personality: [99, 'Definition'] }] }],
+    ['unknown greeting tag', { character: [0, { ...serializedCharacter, firstMessage: [99, 'Hello'] }] }],
+    ['unknown image tag', { character: [0, serializedCharacter], imageUrl: [99, 'https://image.jannyai.com/demo.png'] }],
+    ['array tag with object payload', { character: [1, completeCharacter] }],
+    ['array tag with string payload', { character: [0, { ...serializedCharacter, personality: [1, 'Definition'] }] }],
+    ['primitive tag with array payload', { character: [0, serializedCharacter], imageUrl: [0, ['https://image.jannyai.com/demo.png']] }],
+    ['extra tuple members', { character: [0, { ...serializedCharacter, personality: [0, 'Definition', 'extra'] }] }],
+    ['missing array payload', { character: [0, { ...serializedCharacter, tagIds: [1] }] }],
+    ['empty tuple', { character: [0, { ...serializedCharacter, tagIds: [] }] }],
+]) {
+    test('rejects malformed Astro serialization: ' + name, async () => {
+        const { harness, result } = await inspectCharacter(completeCharacter, { rawProps: JSON.stringify(props) });
+        assert.equal(result.ok, false);
+        assert.equal(result.error, 'JANNY_PAGE_SHAPE_CHANGED');
+        assert.equal('hydratedCharacter' in result, false);
+        assert.equal(harness.navigations.length, 1);
+        assert.equal(harness.requests.length, 0);
+    });
+}
+
+test('preserves supported Astro primitives, undefined, objects, arrays, and literal character text', async () => {
+    const text = 'Literal [99, "not a tuple"] text & <b>markup</b>';
+    const props = {
+        character: [0, {
+            ...serializedCharacter,
+            personality: [0, text], scenario: 'Raw legitimate text',
+            tagIds: [1, [[0, 1], [0, 2]]],
+            extensions: [0, { visible: [0, true], absent: [0], empty: [0, null] }],
+        }],
+        imageUrl: [0, null],
+    };
+    const { result } = await inspectCharacter(completeCharacter, { rawProps: JSON.stringify(props) });
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.hydratedCharacter, {
+        character: { ...completeCharacter, personality: text, scenario: 'Raw legitimate text', tagIds: [1, 2], extensions: { visible: true, empty: null } },
+        imageUrl: null,
+    });
+});
