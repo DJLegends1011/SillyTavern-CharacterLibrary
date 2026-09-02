@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace JannyAI's broken userscript transports with JanitorAI-style real-browser Cloudflare transport, refreshable Supabase sessions, and fail-closed definition extraction while preserving direct MeiliSearch browsing and all bookmark/collection features.
+**Goal:** Replace JannyAI's broken userscript transports with a real-browser Cloudflare/session transport and direct hydrated-page definition extraction while preserving direct MeiliSearch browsing and all bookmark/collection features.
 
 **Architecture:** JannyAI receives provider-specific browser client/helper routes and a dedicated session module, but reuses the existing JanitorAI managed/external browser process, profile, endpoint configuration, and low-level CDP primitives. `search.jannyai.com` stays direct; only `jannyai.com` pages and account operations use the browser. JanitorAI's route contracts and settings UI remain unchanged.
 
-**Tech Stack:** Browser ES modules, Node.js 22.15+ ESM, SillyTavern `cl-helper`, Chrome DevTools Protocol, Supabase GoTrue, Node's built-in `node:test`, HTML/CSS settings UI.
+**Tech Stack:** Browser ES modules, Node.js 22.15+ ESM, SillyTavern `cl-helper`, Chrome DevTools Protocol, JannyAI's server-rendered Astro pages, Node's built-in `node:test`, HTML/CSS settings UI.
 
 **Spec:** `docs/superpowers/specs/2026-09-01-jannyai-browser-transport-design.md`
 
@@ -16,11 +16,11 @@
 - Do not change existing `/janitorai-*` route names, request/response shapes, settings IDs, or provider behavior.
 - Keep `search.jannyai.com` MeiliSearch requests browser-independent and anonymously usable.
 - Use the existing `janitoraiBrowserMode` and `janitoraiBrowserEndpoint` settings as the single shared browser configuration.
-- Give JannyAI separate warm-page state, helper routes, request policy, account tokens, cookies, UI IDs, diagnostics, and tests.
-- Accept a complete `sb-eenzcbluoctduymzksoq-auth-token.0`/`.1` session first and a bare JWT only as a non-refreshable fallback.
-- Never persist the raw pasted cookie header; persist only `jannyToken` and `jannyRefreshToken`.
+- Give JannyAI separate warm-page state, helper routes, request policy, account-session cookies, UI IDs, diagnostics, and tests.
+- Accept a complete `sb-eenzcbluoctduymzksoq-auth-token.0`/`.1` session first and a bare JWT only as a non-renewable fallback.
+- Treat pasted credentials as one-time browser installation input; persist neither the raw cookie header nor parsed access/refresh tokens in Character Library settings.
 - Never place account tokens in URLs, helper responses, logs, fixtures, screenshots, committed files, or command output.
-- Preserve Cloudflare cookies on Janny logout while clearing Janny account cookies and stored tokens.
+- Preserve Cloudflare cookies on Janny logout while clearing Janny account cookies and any inert legacy token settings.
 - Never import a listing-only or empty-definition card after a 403, challenge, malformed page, or parser failure.
 - Remove every active Janny dependency and user-facing instruction for `cl-janny-bridge.user.js` and `cl-janitor-bridge.user.js`; retain the latter for DataCat.
 - Live account mutations must be reversible, inspect original state first, and restore it in cleanup.
@@ -34,10 +34,10 @@
 | `extras/cl-helper/index.js` | Shared managed browser lifecycle plus isolated Janny warm page, CDP fetch/session/logout/test routes |
 | `extras/cl-helper/package.json` | Bundled helper version `1.13.0` |
 | `modules/providers/janny/janny-auth.js` | Pure cookie/session parsing and JWT claim decoding |
-| `modules/providers/janny/janny-session.js` | Stateful token verification, rotation, persistence, status, and browser-session hooks |
+| `modules/providers/janny/janny-session.js` | One-time session installation, redacted browser status, recovery coordination, and logout |
 | `modules/providers/janny/janny-browser.js` | Browser configuration and typed client wrappers for Janny helper routes |
 | `modules/providers/janny/janny-api.js` | Bookmarks, collections, and public-page APIs through the browser client |
-| `modules/providers/janny/janny-html.js` | Public collection parsers plus testable character-page/Astro parsing |
+| `modules/providers/janny/janny-html.js` | Public collection and collector-page parsers |
 | `modules/providers/janny/janny-provider.js` | Provider lifecycle and fail-closed character definition flow |
 | `modules/providers/janny/janny-browse.js` | Account readiness, cache invalidation, collection/bookmark UX, and precise errors |
 | `app/library.html` | Separate Janny browser/account settings and updated Help & Tips |
@@ -48,10 +48,10 @@
 | `tests/janny-browser-policy.test.mjs` | Pure allowlist security matrix |
 | `tests/janny-browser-helper-static.test.mjs` | Helper route/warm-page/version/log-redaction regression checks |
 | `tests/janny-browser-client.test.mjs` | Client request shaping, config reuse, timeout and error classification |
-| `tests/janny-session.test.mjs` | Parsing, verification, refresh rotation, persistence, retry prerequisites, logout |
+| `tests/janny-session.test.mjs` | Parsing, browser installation, non-persistence, recovery serialization, redacted status, logout |
 | `tests/janny-api-account.test.mjs` | Account/public API behavior over the browser client |
-| `tests/janny-html.test.mjs` | Public collection plus static character-page parsing |
-| `tests/janny-definition-browser.test.mjs` | Provider transport ladder and empty-import refusal |
+| `tests/janny-html.test.mjs` | Public collection and collector-page parsing |
+| `tests/janny-definition-browser.test.mjs` | Single hydrated-page provider path and empty-import refusal |
 | `tests/janny-settings-account.test.mjs` | Browser/account settings structure and copy |
 | `tests/janny-no-userscript-regression.test.mjs` | No active Janny userscript source, imports, copy, or docs |
 
@@ -608,9 +608,8 @@ Use this classification table in one private classifier and assert representativ
 | endpoint/connect/process failure | `JANNY_BROWSER_UNAVAILABLE` |
 | local timeout | `JANNY_BROWSER_TIMEOUT` |
 | challenge title/body or helper clearance failure | `JANNY_CF_BLOCKED` |
-| 401 with no usable refresh result | `JANNY_LOGIN_REQUIRED` |
-| decoded expiry reached before request | `JANNY_TOKEN_EXPIRED` |
-| definitive `/user` or refresh rejection | `JANNY_TOKEN_REJECTED` |
+| 401 after one browser-owned recovery | `JANNY_LOGIN_REQUIRED` |
+| browser-reported expiry reached | `JANNY_TOKEN_EXPIRED` |
 | HTTP 429 | `JANNY_RATE_LIMITED` |
 | valid page with unknown character schema | `JANNY_PAGE_SHAPE_CHANGED` |
 | helper policy refusal | `JANNY_REQUEST_BLOCKED` |
@@ -648,34 +647,26 @@ git commit -m "feat: add JannyAI browser client"
 
 ---
 
-### Task 4: Refreshable Janny Supabase session lifecycle
+### Task 4: Browser-owned Janny account session lifecycle
 
 **Files:**
+- Modify: `extras/cl-helper/index.js:2640-2710,3225-3270`
+- Modify: `extras/cl-helper/janny-browser-policy.js:59-70`
 - Modify: `modules/providers/janny/janny-auth.js`
+- Modify: `modules/providers/janny/janny-browser.js`
 - Create: `modules/providers/janny/janny-session.js`
 - Modify: `app/library.js:524-555`
 - Modify: `tests/janny-auth.test.mjs`
+- Modify: `tests/janny-browser-policy.test.mjs`
+- Modify: `tests/janny-browser-client.test.mjs`
 - Replace: `tests/janny-provider-session.test.mjs`
 - Create: `tests/janny-session.test.mjs`
 
 **Interfaces:**
-- Consumes: `parseJannySession`, `decodeJannyClaims`, `CoreAPI.getSetting`, `CoreAPI.setSettings`, browser hooks.
-- Produces: `JANNY_AUTH_BASE`, `jannyVerifyToken`, `jannyRefreshGrant`, `getValidJannyToken`, `jannyForceRefresh`, `jannySetSession`, `jannyLogout`, `jannySessionStatus`, `setJannySessionBrowserHooks`, `initJannySession`.
+- Consumes: `parseJannySession`, `decodeJannyClaims`, `jannyBrowserSetSession`, `jannyBrowserLogout`, and the persistent Janny browser profile from Tasks 2-3.
+- Produces: `jannyBrowserSessionStatus(endpoint)`, `jannyBrowserRefreshSession(endpoint)`, `jannySetSession(raw)`, `jannySessionStatus()`, `jannyRecoverSession()`, `jannyLogout()`, `setJannySessionBrowserHooks(hooks)`, and `initJannySession()`.
 
-- [ ] **Step 1: Capture and pin JannyAI's public Supabase anon key safely**
-
-Use the now-working Janny browser/CDP connection to load `https://jannyai.com/`, enumerate same-origin public JavaScript resources, and inspect only public client configuration for the project ref `eenzcbluoctduymzksoq`. Record the public anon JWT in source as `JANNY_ANON_KEY`. Do not inspect, print, or record account cookies during this step.
-
-Verify the captured key by calling:
-
-```text
-GET https://eenzcbluoctduymzksoq.supabase.co/auth/v1/settings
-apikey: the public anon JWT captured from JannyAI's shipped client configuration
-```
-
-Expected: HTTP 200. The account access token is not used as the `apikey`.
-
-- [ ] **Step 2: Expand parser tests for contiguous chunks and rejection cases**
+- [ ] **Step 1: Expand parser tests for contiguous chunks and rejection cases**
 
 Add to `tests/janny-auth.test.mjs`:
 
@@ -692,79 +683,140 @@ test('parseJannySession accepts a Cookie prefix and URL-encoded chunk values', (
 });
 ```
 
-- [ ] **Step 3: Write stateful session tests**
+- [ ] **Step 2: Write failing browser-session client and coordinator tests**
 
-In `tests/janny-session.test.mjs`, add a `makeJwt({ exp, iss, sub, email })` helper, a settings shim that records each `setSettings` object, a queued-fetch shim, and a `loadSession(scenarioName)` helper that imports `janny-session.js` with a unique query string. Then implement these isolated cases with exact assertions:
-
-1. Saving an encoded full session calls the browser hook once with its access/refresh pair, returns `hasRefresh: true`, and makes one atomic settings write containing both keys.
-2. Saving a bare future JWT writes `{ jannyToken: jwt, jannyRefreshToken: null }`, returns `hasRefresh: false`, and exposes the non-refreshable state without calling the refresh endpoint.
-3. Three concurrent `getValidJannyToken()` calls for an expiring token receive the same rotated access token, perform exactly one refresh fetch, and make exactly one atomic write with the rotated pair.
-4. A refresh response containing only one member of the pair is rejected and never partially persisted.
-5. HTTP 503/network refresh failure leaves both stored credentials intact; HTTP 400 and 401 clear both credentials in one settings write and call browser logout.
-6. `/user` verification rejects wrong issuer, expired `exp`, and a returned user ID different from `sub` using the matching stable error code.
-7. `jannyLogout()` clears both settings atomically, calls the browser logout hook once, and its public return/status objects contain neither token.
-
-- [ ] **Step 4: Run the tests and verify failures**
-
-Run: `node --test tests/janny-auth.test.mjs tests/janny-session.test.mjs`
-
-Expected: parser gap assertions fail and `janny-session.js` is missing.
-
-- [ ] **Step 5: Implement parser contiguity and the stateful module**
-
-`janny-auth.js` must reject numbered chunks unless indices are exactly `0..N` with no gaps. Create `janny-session.js` with the following public surface:
+Extend `tests/janny-browser-client.test.mjs` to assert the exact local routes:
 
 ```js
-import CoreAPI from '../../core-api.js';
-import { parseJannySession, decodeJannyClaims } from './janny-auth.js';
+await browser.jannyBrowserSessionStatus();
+assert.equal(calls.at(-1).path, '/plugins/cl-helper/jannyai-browser-session-status');
 
-export const JANNY_AUTH_BASE = 'https://eenzcbluoctduymzksoq.supabase.co/auth/v1';
-export const JANNY_ISSUER = `${JANNY_AUTH_BASE}`;
+await browser.jannyBrowserRefreshSession();
+assert.equal(calls.at(-1).path, '/plugins/cl-helper/jannyai-browser-refresh-session');
+```
 
+Update `tests/janny-browser-policy.test.mjs` so a complete session keeps its cookie for 400 days while its serialized `expires_at` remains the access JWT expiry, and a bare JWT cookie still expires with that JWT:
+
+```js
+const full = buildJannySessionCookies(accessToken, 'refresh-1', nowSeconds);
+assert.ok(full.every(cookie => cookie.expires === nowSeconds + (400 * 24 * 60 * 60)));
+
+const bare = buildJannySessionCookies(accessToken, '', nowSeconds);
+assert.ok(bare.every(cookie => cookie.expires === accessExp));
+```
+
+In `tests/janny-session.test.mjs`, use browser-hook fakes and exact assertions for:
+
+1. A complete encoded session is installed once with its access/refresh pair, then only redacted browser status is returned.
+2. A bare future JWT is installed with an empty refresh token and is reported as non-renewable.
+3. Wrong Janny issuer and an expired bare JWT are rejected before any browser hook runs.
+4. An expired access token accompanied by a refresh token is installed, receives exactly one browser recovery attempt, and succeeds only when the browser reports an active rotated session.
+5. Neither successful installation nor status writes the pasted cookie, access token, or refresh token to `CoreAPI` settings.
+6. Three concurrent `jannyRecoverSession()` calls share one browser recovery navigation.
+7. `jannyLogout()` calls browser logout once, clears legacy `jannyToken` and `jannyRefreshToken` settings, and returns no credentials.
+8. The module source contains no Supabase `apikey`, `/auth/v1/user`, or `grant_type=refresh_token` call.
+
+- [ ] **Step 3: Run the tests and verify failures**
+
+Run:
+
+```bash
+node --test tests/janny-auth.test.mjs tests/janny-browser-policy.test.mjs tests/janny-browser-client.test.mjs tests/janny-session.test.mjs
+```
+
+Expected: parser gap assertions fail and the new browser/session exports are missing.
+
+- [ ] **Step 4: Add redacted helper session status and vanilla recovery routes**
+
+Add a private `readJannyBrowserSession(cookies)` beside `injectJannySession`. It must join the unsuffixed cookie or contiguous `.0`, `.1`, ... chunks, decode only the known Supabase session representation, and return this shape without either token:
+
+```js
+{
+    active: Boolean(accessToken && (!expMs || expMs > Date.now())),
+    email: claims.email || '',
+    expMs,
+    hasRefresh: Boolean(refreshToken),
+    refreshable: Boolean(refreshToken),
+}
+```
+
+Register:
+
+- `POST /jannyai-browser-session-status`: obtain the warm page, read Janny cookies, and return the redacted shape.
+- `POST /jannyai-browser-refresh-session`: navigate the Janny warm page to `/auth/profile`, wait for document readiness and Cloudflare completion, then return freshly read redacted status. This delegates renewal to JannyAI's own server/browser flow; it must not call Supabase directly.
+
+Both routes return generic local transport errors and never log or echo cookie/token values.
+
+Update `buildJannySessionCookies` so `session.expires_at` continues to describe the access JWT, but cookie metadata uses `nowSeconds + 400 * 24 * 60 * 60` when a refresh token exists. A bare JWT cookie retains the access-token expiry. This prevents the browser from deleting the refresh token at access-token expiry and matches Supabase SSR's long-lived cookie storage model.
+
+- [ ] **Step 5: Add browser client wrappers**
+
+In `janny-browser.js`, implement:
+
+```js
+export function jannyBrowserSessionStatus(endpoint) {
+    return callHelper('/jannyai-browser-session-status', jannyBrowserTarget(endpoint), { timeoutMs: 60_000 });
+}
+
+export function jannyBrowserRefreshSession(endpoint) {
+    return callHelper('/jannyai-browser-refresh-session', jannyBrowserTarget(endpoint), { timeoutMs: 120_000 });
+}
+```
+
+Expose both from `initJannyBrowserClient()` without changing Janitor's globals.
+
+- [ ] **Step 6: Implement browser-owned session coordination**
+
+Create `janny-session.js` with this hook boundary:
+
+```js
 let browserHooks = {
     setSession: async () => ({ ok: false, error: 'Browser client not initialized' }),
+    status: async () => ({ active: false, hasRefresh: false, refreshable: false }),
+    refresh: async () => ({ active: false, hasRefresh: false, refreshable: false }),
     logout: async () => ({ ok: false, error: 'Browser client not initialized' }),
 };
-let refreshInFlight = null;
+let recoveryInFlight = null;
 
 export function setJannySessionBrowserHooks(hooks) {
     browserHooks = { ...browserHooks, ...hooks };
 }
 ```
 
-Define `jannyVerifyToken(accessToken)`, `jannyRefreshGrant(refreshToken)`, `getValidJannyToken()`, `jannyForceRefresh()`, `jannySetSession(raw)`, `jannyLogout()`, `jannySessionStatus()`, and `initJannySession()` below that state. Mirror the proven Janitor session rules: two-minute refresh threshold, `/user` verification, one shared refresh promise, `CoreAPI.setSettings({ jannyToken, jannyRefreshToken })`, definitive 400/401 clearing only, and best-effort browser reinstall after successful save/refresh. `initJannySession` exposes the six session handles needed by `library.js`.
+Implement these rules:
 
-Use these exact auth calls:
+- `jannySetSession(raw)` parses the input, validates the Janny issuer locally, rejects an expired bare JWT, and installs a complete pair even when its access JWT just expired so the browser can rotate it. After installation it calls `status()`; when inactive with `hasRefresh`, it calls `jannyRecoverSession()` once. Only an active result clears legacy token settings and counts as success.
+- `jannySessionStatus()` delegates to the browser and returns only `{ active, email, expMs, hasRefresh, refreshable }`.
+- `jannyRecoverSession()` serializes one call to the browser `refresh` hook and returns its redacted status.
+- `jannyLogout()` clears legacy token settings, calls browser logout, and returns the helper's non-secret result.
+- `initJannySession()` exposes `window.jannySetSession`, `window.jannySessionStatus`, `window.jannyRecoverSession`, and `window.jannyLogout`.
 
-- verification: `GET ${JANNY_AUTH_BASE}/user` with `apikey: JANNY_ANON_KEY` and `Authorization: Bearer ${accessToken}`;
-- refresh: `POST ${JANNY_AUTH_BASE}/token?grant_type=refresh_token` with `apikey: JANNY_ANON_KEY`, JSON content type, and body `{ refresh_token: refreshToken }`;
-- before either call, reject malformed JWTs, an issuer other than `JANNY_ISSUER`, or an expired `exp`; after `/user`, require its returned ID to match the token's `sub` claim;
-- verification success returns decoded user/expiry plus the access token; refresh success requires both a nonempty `access_token` and `refresh_token` before the pair is persisted;
-- `jannySessionStatus()` returns only `{ active, email, expiresAt, hasRefresh, refreshable }`, never either token.
+Do not define `JANNY_ANON_KEY`, `jannyVerifyToken`, `jannyRefreshGrant`, `getValidJannyToken`, or `jannyForceRefresh`. Do not add `jannyRefreshToken` to defaults; the browser profile is the durable store.
 
-Add `jannyRefreshToken: null` beside `jannyToken` in `DEFAULT_SETTINGS`.
+- [ ] **Step 7: Replace the provider-session static test**
 
-- [ ] **Step 6: Replace the provider-session static test with module behavior**
+Rewrite `tests/janny-provider-session.test.mjs` to assert that provider initialization wires all four browser hooks into `janny-session.js` and contains no inline token persistence or direct Supabase calls.
 
-Rewrite `tests/janny-provider-session.test.mjs` to assert that provider initialization exposes `window.jannySetSession`, `window.getValidJannyToken`, `window.jannySessionStatus`, and `window.jannyLogout` from `janny-session.js`, with no implementation remaining inside `janny-provider.js`.
-
-- [ ] **Step 7: Run session tests**
+- [ ] **Step 8: Run session tests**
 
 Run:
 
 ```bash
+node --check extras/cl-helper/index.js
+node --check extras/cl-helper/janny-browser-policy.js
 node --check modules/providers/janny/janny-auth.js
+node --check modules/providers/janny/janny-browser.js
 node --check modules/providers/janny/janny-session.js
-node --test tests/janny-auth.test.mjs tests/janny-session.test.mjs tests/janny-provider-session.test.mjs
+node --test tests/janny-auth.test.mjs tests/janny-browser-policy.test.mjs tests/janny-browser-client.test.mjs tests/janny-session.test.mjs tests/janny-provider-session.test.mjs
 ```
 
 Expected: PASS.
 
-- [ ] **Step 8: Commit session lifecycle**
+- [ ] **Step 9: Commit browser-owned session lifecycle**
 
 ```bash
-git add modules/providers/janny/janny-auth.js modules/providers/janny/janny-session.js app/library.js tests/janny-auth.test.mjs tests/janny-session.test.mjs tests/janny-provider-session.test.mjs
-git commit -m "feat: refresh JannyAI account sessions"
+git add extras/cl-helper/index.js extras/cl-helper/janny-browser-policy.js modules/providers/janny/janny-auth.js modules/providers/janny/janny-browser.js modules/providers/janny/janny-session.js app/library.js tests/janny-auth.test.mjs tests/janny-browser-policy.test.mjs tests/janny-browser-client.test.mjs tests/janny-session.test.mjs tests/janny-provider-session.test.mjs
+git commit -m "feat: use browser-owned JannyAI sessions"
 ```
 
 ---
@@ -772,29 +824,40 @@ git commit -m "feat: refresh JannyAI account sessions"
 ### Task 5: Rewire bookmarks, collections, and public pages
 
 **Files:**
+- Modify: `extras/cl-helper/index.js:3177-3223`
+- Modify: `modules/providers/janny/janny-browser.js`
 - Modify: `modules/providers/janny/janny-api.js:111-334`
+- Modify: `tests/janny-browser-client.test.mjs`
 - Replace: `tests/janny-api-account.test.mjs`
 - Delete: `tests/janny-public-collections-bridge-optional.test.mjs`
 
 **Interfaces:**
-- Consumes: `jannyBrowserFetch`, `getValidJannyToken`, `jannyForceRefresh`, existing Janny HTML parsers.
+- Consumes: `jannyBrowserFetch`, `jannyRecoverSession`, `jannySessionStatus`, and existing Janny HTML parsers.
 - Produces: Existing bookmark/collection/public-page exports with unchanged caller signatures; `probeJannyAccount()` returning `{ browser, active, cloudflare, reason, code }`.
 
-- [ ] **Step 1: Rewrite account tests around helper transport**
+- [ ] **Step 1: Rewrite account tests around cookie-authenticated helper transport**
 
 Replace the postMessage fake userscript in `tests/janny-api-account.test.mjs` with a fake `window.apiRequest` router for `/plugins/cl-helper/jannyai-browser-fetch`. Preserve assertions for bookmark object normalization, JSON bodies, delete queries, form posts, collection ID extraction, character chunking, and public collection parsing.
 
 Add these cases:
 
 ```js
-test('retries one 401 after rotating the session', async () => {
+test('retries one 401 after one browser-owned recovery', async () => {
     helperReplies.push({ ok: true, status: 401, body: '{}' });
     helperReplies.push({ ok: true, status: 200, body: '{"bookmarks":[]}' });
-    refreshResult = 'fresh-access';
+    refreshStatus = { active: true, hasRefresh: true, refreshable: true };
     assert.deepEqual(await api.fetchJannyBookmarks(), []);
+    assert.equal(recoveryCalls, 1);
     assert.equal(seenFetchBodies.length, 2);
-    assert.equal(seenFetchBodies[0].token, 'old-access');
-    assert.equal(seenFetchBodies[1].token, 'fresh-access');
+    assert.equal('token' in seenFetchBodies[0], false);
+    assert.equal('token' in seenFetchBodies[1], false);
+});
+
+test('stops after a second 401', async () => {
+    helperReplies.push({ ok: true, status: 401, body: '{}' });
+    helperReplies.push({ ok: true, status: 401, body: '{}' });
+    await assert.rejects(api.fetchJannyBookmarks(), error => error.code === 'JANNY_LOGIN_REQUIRED');
+    assert.equal(recoveryCalls, 1);
 });
 
 test('public collection pages require browser transport and have no direct fetch fallback', async () => {
@@ -814,24 +877,25 @@ Expected: FAIL because `janny-api.js` still imports and calls the userscript bri
 
 ```js
 import { jannyBrowserFetch } from './janny-browser.js';
-import { getValidJannyToken, jannyForceRefresh } from './janny-session.js';
+import { jannyRecoverSession, jannySessionStatus } from './janny-session.js';
 
-async function jannyBrowserRequest(method, path, { jsonBody, formBody, anonymous = false } = {}) {
-    const token = anonymous ? '' : await getValidJannyToken();
-    let result = await jannyBrowserFetch(path, { method, token, jsonBody, formBody });
-    if (result.status === 401 && token) {
-        const fresh = await jannyForceRefresh();
-        if (fresh) result = await jannyBrowserFetch(path, { method, token: fresh, jsonBody, formBody });
+async function jannyBrowserRequest(method, path, { jsonBody, formBody } = {}) {
+    let result = await jannyBrowserFetch(path, { method, jsonBody, formBody });
+    if (result.status === 401) {
+        const recovered = await jannyRecoverSession();
+        if (recovered.active) result = await jannyBrowserFetch(path, { method, jsonBody, formBody });
     }
-    return finishJannyBrowserResponse(result, { hadToken: !!token });
+    return finishJannyBrowserResponse(result);
 }
 ```
 
-`finishJannyBrowserResponse` maps status/helper error codes to the stable design codes. It accepts empty successful bodies for form redirects, detects Cloudflare HTML, and rejects a 200 challenge/login page.
+`finishJannyBrowserResponse` maps status/helper error codes to the stable design codes. It accepts empty successful bodies for form redirects, detects Cloudflare HTML, and rejects a 200 challenge/login page. Every browser request relies on `credentials: include`; no caller passes a token or `anonymous` flag.
 
-Use `anonymous: true` only for public collection/collector pages. `/api/get-characters` may omit the token only when used from a public flow; account bookmark hydration uses the current token.
+`probeJannyAccount()` first reads redacted browser status. When inactive, it returns `JANNY_LOGIN_REQUIRED` without attempting an account mutation. When active, it performs a read-only `/api/bookmark` request as the end-to-end account check.
 
-Remove all imports, availability checks, postMessage assumptions, and direct `fetch` fallback from `janny-api.js`.
+Remove all imports, availability checks, postMessage assumptions, bearer-token handling, and direct `fetch` fallback from `janny-api.js`.
+
+Remove the `token` option from `jannyBrowserFetch`, its helper request body, and its tests. Remove the `req.body.token` validation and `headers.Authorization` branch from `/jannyai-browser-fetch`; `/jannyai-browser-session` remains the only route that accepts account credentials.
 
 - [ ] **Step 4: Remove the obsolete optional-bridge test and run focused tests**
 
@@ -839,7 +903,9 @@ Run:
 
 ```bash
 node --check modules/providers/janny/janny-api.js
-node --test tests/janny-api-account.test.mjs tests/janny-html.test.mjs
+node --check modules/providers/janny/janny-browser.js
+node --check extras/cl-helper/index.js
+node --test tests/janny-api-account.test.mjs tests/janny-browser-client.test.mjs tests/janny-html.test.mjs
 ```
 
 Expected: PASS.
@@ -847,93 +913,105 @@ Expected: PASS.
 - [ ] **Step 5: Commit account transport**
 
 ```bash
-git add modules/providers/janny/janny-api.js tests/janny-api-account.test.mjs
+git add extras/cl-helper/index.js modules/providers/janny/janny-browser.js modules/providers/janny/janny-api.js tests/janny-browser-client.test.mjs tests/janny-api-account.test.mjs
 git rm tests/janny-public-collections-bridge-optional.test.mjs
-git commit -m "feat: route JannyAI account APIs through browser"
+git commit -m "feat: route JannyAI accounts through browser cookies"
 ```
 
 ---
 
-### Task 6: Browser-backed definition parsing and provider lifecycle
+### Task 6: Direct hydrated-page definition extraction and provider lifecycle
 
 **Files:**
-- Modify: `modules/providers/janny/janny-html.js`
+- Modify: `extras/cl-helper/index.js:2700-2750,3177-3223`
 - Modify: `modules/providers/janny/janny-provider.js:1-390,454-463,547-560,739-744`
-- Modify: `tests/janny-html.test.mjs`
+- Modify: `tests/janny-browser-helper-static.test.mjs`
 - Create: `tests/janny-definition-browser.test.mjs`
 
 **Interfaces:**
-- Consumes: `jannyBrowserFetch`, `initJannyBrowserClient`, `initJannySession`, `setJannySessionBrowserHooks`, browser set/logout functions.
-- Produces: `parseJannyCharacterPage(html, expectedId)`, `fetchCharacterDetails(characterId, slug)`, provider `minClHelperVersion = '1.13.0'`.
+- Consumes: `jannyBrowserFetch(path, { inspectCharacterId })`, `initJannyBrowserClient`, `initJannySession`, and the Task 4 browser hooks.
+- Produces: one-navigation `fetchCharacterDetails(characterId, slug)` returning `{ character, imageUrl }`; provider `minClHelperVersion = '1.13.0'`.
 
-- [ ] **Step 1: Add failing character-page parser tests**
+- [ ] **Step 1: Add failing helper assertions for one-navigation extraction**
 
-Move the existing Astro decode fixture builder into `tests/janny-html.test.mjs` and add:
+Extend `tests/janny-browser-helper-static.test.mjs` to isolate the `inspectCharacterId` branch and assert:
 
 ```js
-test('parseJannyCharacterPage extracts and identity-checks Astro character data', () => {
-    const html = makeCharacterPage({ id: characterId, name: 'Demo', personality: 'Definition', firstMessage: 'Hello' });
-    const parsed = parseJannyCharacterPage(html, characterId);
-    assert.equal(parsed.character.personality, 'Definition');
-    assert.equal(parsed.character.firstMessage, 'Hello');
-    assert.throws(() => parseJannyCharacterPage(html, otherId), error => error.code === 'JANNY_PAGE_SHAPE_CHANGED');
-});
-
-test('parseJannyCharacterPage rejects challenge and listing-only bodies', () => {
-    assert.throws(() => parseJannyCharacterPage('<title>Just a moment...</title>', characterId));
-    assert.throws(() => parseJannyCharacterPage('<html><h1>Demo</h1></html>', characterId), error => error.code === 'JANNY_PAGE_SHAPE_CHANGED');
-});
+assert.match(inspectBranch, /extractHydratedJannyCharacter/);
+assert.doesNotMatch(inspectBranch, /fetch\(/);
+assert.match(extractor, /component-(?:export|url)[^\n]*CharacterButtons/);
+assert.match(extractor, /firstMessage/);
+assert.match(extractor, /personality/);
+assert.match(extractor, /scenario/);
+assert.match(extractor, /exampleDialogs/);
 ```
 
-- [ ] **Step 2: Write failing provider transport-ladder tests**
+The test must also assert that the extractor rejects a requested-ID mismatch and never reads cookies, local storage, or response headers.
+
+- [ ] **Step 2: Write failing provider tests around hydrated data as the only definition source**
 
 `tests/janny-definition-browser.test.mjs` must fake helper responses and assert:
 
 ```js
-test('uses browser HTML first and returns complete character data', async () => {
-    browserReplies.push({ status: 200, body: completeAstroHtml, finalUrl: characterUrl });
+test('requests hydrated character data in one browser call', async () => {
+    browserReplies.push({
+        status: 200,
+        body: '',
+        finalUrl: characterUrl,
+        hydratedCharacter: { character: completeCharacter, imageUrl },
+    });
     const result = await provider.fetchMetadata(`${characterId}_demo`);
     assert.equal(result.personality, 'Definition');
+    assert.equal(result.firstMessage, 'Hello');
     assert.equal(browserCalls.length, 1);
+    assert.equal(browserCalls[0].inspectCharacterId, characterId);
 });
 
-test('requests hydrated inspection only after a valid page shape misses character data', async () => {
-    browserReplies.push({ status: 200, body: validPageWithoutProps, finalUrl: characterUrl });
-    browserReplies.push({ status: 200, body: validPageWithoutProps, finalUrl: characterUrl, hydratedCharacter: { character: completeCharacter, imageUrl } });
-    const result = await provider.fetchMetadata(`${characterId}_demo`);
-    assert.equal(result.personality, 'Definition');
-    assert.equal(browserCalls[1].inspectCharacterId, characterId);
+test('rejects hydrated payloads missing a greeting or all definition fields', async () => {
+    browserReplies.push({ status: 200, hydratedCharacter: { character: { ...completeCharacter, firstMessage: '' } } });
+    await assert.rejects(provider.fetchMetadata(`${characterId}_demo`), error => error.code === 'JANNY_PAGE_SHAPE_CHANGED');
 });
 
-test('propagates a classified block and never labels a listing stub as a full definition', async () => {
+test('propagates a classified block and never imports a listing stub', async () => {
     browserReplies.push({ status: 403, body: '<title>Forbidden</title>', finalUrl: characterUrl });
-    await assert.rejects(
-        provider.fetchMetadata(`${characterId}_demo`),
-        error => error.code === 'JANNY_CF_BLOCKED',
-    );
+    await assert.rejects(provider.fetchMetadata(`${characterId}_demo`), error => error.code === 'JANNY_CF_BLOCKED');
     assert.equal(importCalls.length, 0);
 });
 ```
 
-- [ ] **Step 3: Run the tests and verify current proxy/bridge failures**
+- [ ] **Step 3: Run the tests and verify current ladder behavior fails**
 
-Run: `node --test tests/janny-html.test.mjs tests/janny-definition-browser.test.mjs`
+Run:
 
-Expected: FAIL because the parser is private and provider fetches through bridge/proxy strategies.
+```bash
+node --test tests/janny-browser-helper-static.test.mjs tests/janny-definition-browser.test.mjs
+```
 
-- [ ] **Step 4: Move character parsing into `janny-html.js`**
+Expected: FAIL because the helper currently fetches the character URL and then navigates again, while the provider still uses userscript/proxy transports.
 
-Export `parseJannyCharacterPage(html, expectedId)` from `janny-html.js`.
+- [ ] **Step 4: Make hydrated extraction the character branch of the helper route**
 
-Move the Astro value decoder, HTML entity decode, `CharacterButtons` selection, creator extraction, ID check, and `{ character, imageUrl }` return shape out of `janny-provider.js`. Throw errors carrying `JANNY_CF_BLOCKED` for challenge bodies and `JANNY_PAGE_SHAPE_CHANGED` for valid but unknown shapes.
+For a validated request carrying `inspectCharacterId`, `/jannyai-browser-fetch` must skip its in-page `fetch` branch and call `extractHydratedJannyCharacter` directly. That routine:
 
-- [ ] **Step 5: Replace all character-page transports with the browser ladder**
+1. navigates once to the allowlisted character URL;
+2. validates the final Janny origin/path and waits for document readiness;
+3. classifies Cloudflare challenge/login pages before parsing;
+4. selects the `CharacterButtons` Astro island by `component-export` or `component-url`;
+5. decodes only `character` and `imageUrl` from its `props` attribute;
+6. requires the decoded ID to equal `inspectCharacterId`;
+7. requires a nonempty `firstMessage` and at least one nonempty definition field among `personality`, `scenario`, and `exampleDialogs`; and
+8. returns `{ character, imageUrl }` without cookies, storage, headers, or unrelated page state.
+
+Return `{ status: 200, body: '', finalUrl, hydratedCharacter }` after a successful extraction. Unknown/missing island data becomes the existing page-shape error response; it must not trigger a second definition endpoint or transport.
+
+- [ ] **Step 5: Replace all provider character-page transports with the single browser extraction**
 
 In `janny-provider.js` remove:
 
 - both bridge imports;
 - `proxyEncode` and unused proxy imports;
 - `fetchHtmlPage`, Puter, corsproxy.io, and ST-proxy helpers;
+- the inline Astro HTML decoder/parser;
 - inline session storage/exposure;
 - both bridge initialization calls.
 
@@ -942,14 +1020,8 @@ Implement:
 ```js
 async function fetchCharacterDetails(characterId, slug) {
     const path = `/characters/${characterId}_${slug || 'character'}`;
-    const first = await jannyBrowserFetch(path, { method: 'GET' });
-    try {
-        return parseJannyCharacterPage(first.body, characterId);
-    } catch (error) {
-        if (error.code !== 'JANNY_PAGE_SHAPE_CHANGED') throw error;
-    }
-    const inspected = await jannyBrowserFetch(path, { method: 'GET', inspectCharacterId: characterId });
-    const hydrated = inspected.hydratedCharacter;
+    const result = await jannyBrowserFetch(path, { method: 'GET', inspectCharacterId: characterId });
+    const hydrated = result.hydratedCharacter;
     if (!hydrated?.character || String(hydrated.character.id) !== String(characterId)) {
         const error = new Error('JannyAI loaded, but its character payload shape changed');
         error.code = 'JANNY_PAGE_SHAPE_CHANGED';
@@ -959,18 +1031,18 @@ async function fetchCharacterDetails(characterId, slug) {
 }
 ```
 
-Provider initialization must call `initJannyBrowserClient()`, configure session hooks with `jannyBrowserSetSession`/`jannyBrowserLogout`, then call `initJannySession()`. Add `get minClHelperVersion() { return '1.13.0'; }`.
+Provider initialization must call `initJannyBrowserClient()`, configure the Task 4 session hooks, then call `initJannySession()`. Add `get minClHelperVersion() { return '1.13.0'; }`.
 
-`fetchMetadata`, `fetchRemoteCard`, and `importCharacter` must rethrow errors that carry a stable `JANNY_*` code so the caller can render the correct recovery action. Remove the `importCharacter` MeiliSearch-hit fallback entirely; a listing hit may backfill tags, creator ID, and avatar only after a complete definition payload has been obtained.
+`fetchMetadata`, `fetchRemoteCard`, and `importCharacter` must rethrow stable `JANNY_*` errors. Remove the `importCharacter` MeiliSearch-hit fallback entirely; a listing hit may backfill tags, creator ID, and avatar only after complete hydrated definition data has been obtained.
 
 - [ ] **Step 6: Run definition/provider tests**
 
 Run:
 
 ```bash
-node --check modules/providers/janny/janny-html.js
+node --check extras/cl-helper/index.js
 node --check modules/providers/janny/janny-provider.js
-node --test tests/janny-html.test.mjs tests/janny-definition-browser.test.mjs tests/janny-provider-session.test.mjs
+node --test tests/janny-browser-helper-static.test.mjs tests/janny-definition-browser.test.mjs tests/janny-provider-session.test.mjs tests/janny-html.test.mjs
 ```
 
 Expected: PASS.
@@ -978,13 +1050,13 @@ Expected: PASS.
 - [ ] **Step 7: Commit definition transport**
 
 ```bash
-git add modules/providers/janny/janny-html.js modules/providers/janny/janny-provider.js tests/janny-html.test.mjs tests/janny-definition-browser.test.mjs
-git commit -m "feat: fetch JannyAI definitions through browser"
+git add extras/cl-helper/index.js modules/providers/janny/janny-provider.js tests/janny-browser-helper-static.test.mjs tests/janny-definition-browser.test.mjs
+git commit -m "feat: extract JannyAI definitions from hydrated pages"
 ```
 
 ---
 
-### Task 7: Duplicate Janny browser settings and refreshed account controls
+### Task 7: Duplicate Janny browser settings and browser-owned account controls
 
 **Files:**
 - Modify: `app/library.html:1580-1650,2627-2677`
@@ -995,7 +1067,7 @@ git commit -m "feat: fetch JannyAI definitions through browser"
 
 **Interfaces:**
 - Consumes: `window.jannyTestBrowserEndpoint`, `window.jannySetSession`, `window.jannyLogout`, `window.jannySessionStatus`, existing helper status APIs.
-- Produces: Provider-local Janny browser controls bound to shared settings plus accurate account/renewal status.
+- Produces: Provider-local Janny browser controls bound to shared settings plus accurate redacted browser-session/renewal status.
 
 - [ ] **Step 1: Replace the settings static tests**
 
@@ -1036,8 +1108,9 @@ Duplicate the Janitor browser control structure under Janny-specific IDs. Copy m
 - browser is required only for Cloudflare-gated pages/account actions, not MeiliSearch browsing;
 - managed and external modes share JanitorAI's configured browser;
 - Test measures JannyAI specifically;
-- full `.0`/`.1` cookie pair is preferred;
-- bare JWT is accepted but cannot auto-renew.
+- full `.0`/`.1` cookie pair is preferred and is transferred once into the browser;
+- the browser profile, not Character Library settings, owns renewal;
+- bare JWT is accepted but cannot renew.
 
 Do not add Janny email/password fields.
 
@@ -1055,9 +1128,9 @@ Requirements:
 - Each settings section re-reads values on open/toggle; it does not assume the duplicate controls stayed synchronized.
 - Janny Start/Stop/Status call `/plugins/cl-helper/jannyai-managed/*`.
 - Janny Test calls `window.jannyTestBrowserEndpoint` and renders Janny-specific checks.
-- Save Login calls `window.jannySetSession`, reports whether refresh/browser install succeeded, clears only the visible input, and never writes the raw cookie to settings.
+- Save Login calls `window.jannySetSession`, reports whether browser installation succeeded, clears only the visible input, and never writes raw or parsed credentials to settings.
 - Log Out awaits `window.jannyLogout`, reports browser-cookie cleanup separately, and preserves Cloudflare readiness.
-- Account status shows email, expiry, and `hasRefresh`; a bare token gets a non-refreshable warning.
+- Account status awaits the helper's redacted browser result and shows email, expiry, and `hasRefresh`; a bare token gets a non-renewable warning.
 
 - [ ] **Step 5: Extend desktop/mobile selectors to the Janny row**
 
@@ -1115,7 +1188,7 @@ assert.match(js, /JANNY_BROWSER_UNAVAILABLE/);
 assert.match(js, /JANNY_PAGE_SHAPE_CHANGED/);
 assert.match(js, /jannyInvalidateAccountCache/);
 assert.doesNotMatch(js, /bridge userscript|cl-janny-bridge|cl-janitor-bridge/);
-assert.doesNotMatch(js, /Log into jannyai\.com in this browser/);
+assert.doesNotMatch(js, /refresh the userscript|direct Supabase|copy cf_clearance/i);
 ```
 
 - [ ] **Step 2: Run focused UX tests and verify failures**
@@ -1137,7 +1210,7 @@ let jannyAccountStatus = { browser: false, active: false, cloudflare: false, rea
 - missing/outdated helper;
 - browser endpoint unavailable;
 - Cloudflare challenge;
-- missing/expired/rejected account token.
+- missing, expired, or rejected browser-owned account session.
 
 Use `CoreAPI.openSettingsToSection('online', ...)` or the existing settings deep-link pattern to open the Janny section from actionable errors.
 
@@ -1155,7 +1228,7 @@ function invalidateJannyAccountCache() {
 window.jannyInvalidateAccountCache = invalidateJannyAccountCache;
 ```
 
-Call this after login/logout/session replacement from `library.js` and after definitive token rejection.
+Call this after browser-session installation/logout and after definitive session rejection.
 
 Update definition preview/import handling so `JANNY_CF_BLOCKED` and `JANNY_PAGE_SHAPE_CHANGED` keep import disabled and show distinct messages. Remove the listing-only fallback that could produce a stub when full page data is unavailable.
 
@@ -1259,8 +1332,8 @@ README and Help & Tips must describe:
 - MeiliSearch browse works without the browser;
 - character definitions and `jannyai.com` pages require the shared real-browser setup;
 - Janny has its own Test button and provider-local controls;
-- bookmarks/owned collections additionally require the preferred `.0`/`.1` Supabase session;
-- complete sessions auto-refresh; bare JWTs do not;
+- bookmarks/owned collections additionally require the preferred `.0`/`.1` Supabase session installed into the browser;
+- JannyAI owns complete-session renewal inside the browser; bare JWTs do not renew;
 - DataCat remains the only documented consumer of the shared Janitor userscript in this scope;
 - Termux/mobile uses managed or external browser setup, not a userscript.
 
@@ -1344,7 +1417,7 @@ In Settings → Online → JannyAI:
 - Janny Test passes endpoint, browser, script, codecs, Cloudflare, clearance, and character-page checks;
 - changing browser mode/endpoint in one provider is reflected when reopening the other section.
 
-- [ ] **Step 5: Verify anonymous definitions before using the account token**
+- [ ] **Step 5: Verify anonymous definitions before installing the account session**
 
 With Janny account logged out but Cloudflare ready:
 
@@ -1354,15 +1427,15 @@ With Janny account logged out but Cloudflare ready:
 - verify preview/import remains blocked for a deliberately simulated 403 or page-shape response;
 - do not save a local test card merely to validate parsing.
 
-- [ ] **Step 6: Save the authorized full session and verify refreshable account state**
+- [ ] **Step 6: Install the authorized full session and verify browser-owned account state**
 
 Paste the complete authorized `.0`/`.1` cookie header through the masked Janny settings input. Do not paste it into a terminal or test fixture.
 
 Verify:
 
-- UI shows the decoded email and `hasRefresh` state;
+- UI shows the browser-reported email and `hasRefresh` state;
 - raw input clears after save;
-- `jannyToken` and `jannyRefreshToken` exist in settings without the raw cookie header;
+- neither the raw cookie header nor parsed `jannyToken`/`jannyRefreshToken` values are persisted in settings;
 - helper logs contain no token or cookie values;
 - bookmarks and owned collections load.
 
@@ -1379,13 +1452,13 @@ Before each write, record only object IDs and original membership state, never a
 
 Put cleanup in a `finally` path. If cleanup cannot complete, stop and report the exact temporary object name/ID to the user rather than touching unrelated account data.
 
-- [ ] **Step 8: Exercise refresh rotation and logout semantics**
+- [ ] **Step 8: Exercise browser-owned recovery and logout semantics**
 
-Force one refresh through the module's explicit refresh action, verify exactly one refresh request, confirm the rotated pair was atomically stored, and confirm account APIs still work.
+Use the automated 401 fixture to verify exactly one `/auth/profile` recovery navigation and one account retry. In the live browser, navigate between profile, bookmarks, and one character page, then confirm redacted session status and account APIs remain active. Do not call Supabase directly, force a refresh grant, or print/compare cookie values.
 
 Log out once and verify:
 
-- `jannyToken` and `jannyRefreshToken` are cleared;
+- any inert legacy `jannyToken` and `jannyRefreshToken` settings are cleared;
 - Janny account cookies are cleared from the browser;
 - `cf_clearance` remains;
 - anonymous character definition fetch still works.

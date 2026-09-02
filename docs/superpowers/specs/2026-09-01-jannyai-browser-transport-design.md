@@ -4,7 +4,7 @@
 
 **Branch:** `codex/jannyai-account-sync`
 
-**Status:** Approved in brainstorming; awaiting written-spec review
+**Status:** Approved; revised 2026-09-02 from live-browser findings
 
 **Supersedes:** The JannyAI userscript-bridge transport described in the 2026-07-18 design and plan
 
@@ -40,8 +40,8 @@ DataCat.
    dependency or extra latency there.
 3. Preserve the existing bookmark and collection features while replacing
    their authentication and transport layers.
-4. Prefer a complete chunked JannyAI Supabase session and support automatic
-   access-token refresh.
+4. Prefer a complete chunked JannyAI Supabase session and let JannyAI renew it
+   inside the persistent browser, exactly as the vanilla site does.
 5. Continue accepting a bare access JWT as a non-refreshable fallback.
 6. Reuse the existing JanitorAI browser process and configuration without
    changing JanitorAI's public routes, settings UI, or provider behavior.
@@ -70,13 +70,16 @@ DataCat.
    JanitorAI/JannyAI settings surface.
 4. Bind both provider sections to the same browser mode and endpoint values.
 5. Keep separate per-provider warm pages and request allowlists.
-6. Use the real browser as Cloudflare transport; use the Supabase token as the
-   account identity.
+6. Use the real browser as both Cloudflare transport and account-session
+   authority. Character Library may decode a pasted session for one-time
+   installation, but it does not become a second Supabase client.
 7. Prefer the complete
    `sb-eenzcbluoctduymzksoq-auth-token.0` and `.1` cookie pair.
-8. Store parsed access and refresh tokens, not the raw pasted cookie header.
-9. Install a full Supabase session into the browser when both tokens are
-   available, while still adding the bearer token to authenticated requests.
+8. Treat a pasted cookie pair or bare JWT as one-time browser-session input;
+   do not persist either the raw cookie header or parsed credentials in
+   Character Library settings.
+9. Install the supplied session into the browser, then execute authenticated
+   requests with the browser's current cookies and `credentials: include`.
 10. Allow anonymous definition imports with browser clearance alone; require an
     account only for bookmarks and owned collections.
 11. Remove both Janny userscript dependencies rather than absorbing or
@@ -94,11 +97,10 @@ Janny character pages and public collections
             -> Janny warm page and Cloudflare cookies
 
 Janny account operations
-    -> refreshable Supabase session in Character Library
-        -> Janny-specific cl-helper route
-            -> browser same-origin request
-                -> Authorization bearer token
-                -> Janny session cookies when available
+    -> Janny-specific cl-helper route
+        -> persistent browser profile
+            -> current Janny session cookies
+                -> vanilla same-origin request with credentials included
 ```
 
 ### Shared browser lifecycle
@@ -132,14 +134,23 @@ Janny-specific transport and session routes are:
 - `POST /jannyai-browser-test`
 - `POST /jannyai-browser-fetch`
 - `POST /jannyai-browser-session`
+- `POST /jannyai-browser-session-status`
+- `POST /jannyai-browser-refresh-session`
 - `POST /jannyai-browser-logout`
 
 The lifecycle aliases delegate to the existing internal browser manager. They
 do not create a second process or profile.
 
-`/jannyai-browser-fetch` accepts an origin-relative path, method, optional
-bearer token, and either a JSON or form body. It returns status, body, final URL,
-and selected safe response metadata. It never accepts an arbitrary origin.
+`/jannyai-browser-fetch` accepts an origin-relative path, method, and either a
+JSON or form body. It returns status, body, final URL, and selected safe
+response metadata. It never accepts an arbitrary origin or credential value.
+
+`/jannyai-browser-session-status` reads only the known Janny auth-cookie shape
+inside the helper and returns redacted state: active, email, expiry, and whether
+a refresh token exists. `/jannyai-browser-refresh-session` navigates the warm
+page through JannyAI's own `/auth/profile` path so its normal server/browser
+session handling can rotate cookies, then returns the same redacted status. It
+does not call Supabase directly and never returns cookie or token values.
 
 ### Request policy
 
@@ -171,10 +182,10 @@ Methods, query keys, UUIDs, content types, request-body types, and body sizes
 are validated independently. Redirect success is accepted only when the final
 URL remains on the Janny origin and matches an expected collection route.
 
-The browser executes same-origin requests with `credentials: include`. An
-authenticated call also receives `Authorization: Bearer <current-access-token>`.
-The token is sent in the request body from Character Library to its own
-CSRF-protected helper route and is never placed in a URL or echoed back.
+The browser executes same-origin requests with `credentials: include`. Account
+identity comes from the browser's current Janny cookies, matching the vanilla
+site. Character Library does not add an `Authorization` header and does not
+send account credentials on each helper request.
 
 ## Authentication and session lifecycle
 
@@ -192,63 +203,58 @@ chunk zero, concatenates them, URL-decodes the result, handles the Supabase
 refresh tokens. It also continues to accept unchunked session JSON and a bare
 access JWT.
 
-A bare JWT is valid login input but is explicitly marked non-refreshable. The
-settings UI displays its expiry and warns that a fresh login value will be
-required after it expires.
+A bare JWT is valid one-time installation input but is explicitly marked
+non-refreshable. An expired bare JWT is rejected. A complete pair whose access
+JWT just expired may still be installed so JannyAI's browser flow can attempt
+one refresh-token rotation. The settings UI reports the browser session's
+expiry and warns when a fresh value is required.
 
-### Stored settings
+### Session authority and renewal
 
-- Existing `jannyToken` remains the access-token setting for migration.
-- New `jannyRefreshToken` stores the rotating refresh token when supplied.
-- The raw pasted cookie header is never persisted.
-- JannyAI email and password are not collected or stored.
+The persistent browser profile is the sole durable session store. Character
+Library parses pasted input only long enough to validate the Janny issuer and
+expiry and install the resulting access/refresh pair into the browser. Neither
+the raw cookie header nor either parsed token is persisted in settings.
 
-### Validation and refresh
+This intentionally differs from `janitor-session.js`. JanitorAI publishes the
+Supabase application key needed for direct `/user` verification and refresh;
+JannyAI's current shipped client does not. Character Library therefore never
+substitutes a user JWT for an application `apikey` and never calls JannyAI's
+Supabase `/user` or refresh-grant endpoints directly.
 
-A stateful Janny session module mirrors `janitor-session.js` while using
-JannyAI's Supabase project:
-
-- auth base: `https://eenzcbluoctduymzksoq.supabase.co/auth/v1`
-- a pinned public Supabase anon-key constant, verified against JannyAI's public
-  client configuration during implementation rather than scraped at runtime
-- `/user` verification for a newly pasted access token
-- `/token?grant_type=refresh_token` for refresh rotation
-
-JWT issuer and expiry are checked locally before network validation. A token
-from a different Supabase project is rejected.
-
-`getValidJannyToken()` returns the current access token when it has more than
-two minutes remaining. Otherwise it enters a single shared refresh operation.
-Concurrent requests await that operation so a single-use rotating refresh
-token cannot be consumed twice.
-
-On successful refresh, the new access and refresh tokens are saved atomically
-before requests resume. On a definitive 400/401 refresh failure, both stored
-tokens are cleared. Network errors, 429s, and server errors are transient and
-preserve the stored session for retry.
-
-An authenticated account request that receives 401 forces one refresh and one
-retry. It never loops indefinitely.
+The helper decodes the browser cookie only to produce redacted status and to
+decide whether the browser has a renewable session. JannyAI's own server-side
+middleware and browser code own refresh-token rotation. If an account request
+returns 401, the helper makes one recovery navigation to `/auth/profile`, then
+the account request is retried exactly once. A second 401 becomes
+`JANNY_LOGIN_REQUIRED`; it never loops.
 
 ### Browser session installation
 
-When a complete session is saved or refreshed, Character Library calls
-`/jannyai-browser-session` with the latest access and refresh tokens.
+When a complete session is saved, Character Library calls
+`/jannyai-browser-session` with the access and refresh tokens parsed from the
+masked input.
 `cl-helper` constructs the standard Janny Supabase auth-cookie payload and
 installs it for the Janny origin, replacing stale unchunked or numbered chunks.
+For a complete pair, cookie storage uses a 400-day expiry while the serialized
+session retains the access JWT's true `expires_at`; a bare JWT cookie expires
+with its JWT. The long cookie lifetime preserves the refresh token long enough
+for JannyAI to rotate the short-lived access token.
 
-This keeps cookie/form-based routes and browser-hydrated pages consistent with
-the bearer identity. Account API requests still carry the bearer header so
-their correctness does not rely solely on cookie behavior.
+After installation, the browser is authoritative. Cookie/form routes,
+server-rendered pages, and client account APIs all observe the same vanilla
+session. The browser may replace the cookie chunks during renewal without
+requiring Character Library to copy the rotated credentials back into settings.
 
-When only a bare access JWT exists, the browser request uses the bearer header
-without claiming that a durable browser session was installed.
+When only a bare access JWT is supplied, the helper installs a session cookie
+with no refresh token and reports it as non-renewable.
 
 ### Logout
 
 Logout performs both actions:
 
-1. Clear `jannyToken` and `jannyRefreshToken` from Character Library settings.
+1. Clear any legacy `jannyToken`/`jannyRefreshToken` settings left by an older
+   build.
 2. Delete Janny account/session cookies from the browser profile.
 
 Cloudflare cookies such as `cf_clearance` and `__cf_bm` are preserved. JannyAI
@@ -259,21 +265,19 @@ can therefore remain anonymously reachable immediately after logout.
 The existing MeiliSearch result remains the catalog/listing record. Opening a
 preview or importing a character obtains its full page through the browser.
 
-Extraction is a fail-closed ladder:
+Extraction is a fail-closed browser-page flow:
 
 1. Warm or recreate the Janny browser page and establish Cloudflare access.
-2. Fetch the allowlisted character URL inside the browser.
-3. Reject non-2xx responses, challenge pages, login pages, and malformed HTML.
-4. Pass valid HTML to the existing Astro-island parser.
-5. If valid HTML lacks the expected serialized character payload, navigate the
-   warm page to the character URL and inspect only known Astro state, hydrated
-   DOM data, and same-origin character-data responses associated with the
-   requested UUID.
-6. Return a structured character only when its identity matches the requested
+2. Navigate the warm page once to the allowlisted character URL.
+3. Reject challenge pages, login pages, redirects, and malformed documents.
+4. Read the `CharacterButtons` Astro island's already-hydrated `props` data.
+   This is the same character payload the original provider decoded from raw
+   page HTML; no separate definition endpoint exists or is called.
+5. Return a structured character only when its identity matches the requested
    UUID and required definition data is present.
-7. Otherwise return a `JANNY_PAGE_SHAPE_CHANGED` error and block import.
+6. Otherwise return a `JANNY_PAGE_SHAPE_CHANGED` error and block import.
 
-The hydrated fallback is not an arbitrary browser evaluator exposed to the
+The hydrated extractor is not an arbitrary browser evaluator exposed to the
 client. It is a fixed helper routine that reads only the expected character
 shape and never returns cookies, local storage, authorization headers, or
 unrelated network traffic.
@@ -296,8 +300,8 @@ than background synchronization.
 
 ### Reads
 
-- Account status uses an authenticated bookmark request after local/Supabase
-  validation.
+- Account status reads redacted browser-session state, then uses an
+  authenticated bookmark request as an end-to-end check.
 - Bookmarks and owned collections load lazily when their UI is opened.
 - Bookmarked character IDs are hydrated in bounded chunks.
 - Collection membership is fetched only when needed and cached for the current
@@ -309,7 +313,8 @@ than background synchronization.
   after success.
 - Collection create/edit/delete and membership changes are sent immediately.
 - A failed mutation does not update the local cache as though it succeeded.
-- A 401 receives one refresh/retry before the UI reports failure.
+- A 401 receives one vanilla browser-session recovery navigation and one retry
+  before the UI reports failure.
 - Login, logout, and session replacement invalidate cached account state.
 
 There is no offline mutation queue or conflict resolver.
@@ -341,9 +346,9 @@ The Janny account subsection contains:
 
 - a masked session/token input;
 - Save Login and Log Out actions;
-- parsed account email when available;
-- access-token expiry;
-- automatic-renewal availability; and
+- account email reported by the browser session when available;
+- browser-session expiry;
+- browser-owned renewal availability; and
 - a warning for a bare, non-refreshable JWT.
 
 The UI states are explicit:
@@ -353,8 +358,10 @@ The UI states are explicit:
 - **Browser ready, no account:** public character definitions and public
   collections work; bookmarks and owned collections do not.
 - **Browser ready, account ready:** all supported features work.
-- **Refreshable expiry:** refresh silently, then update the displayed expiry.
-- **Definitive token rejection:** request a fresh complete cookie pair.
+- **Renewable expiry:** let JannyAI rotate the browser cookie, then update the
+  displayed redacted status.
+- **Definitive browser-session rejection:** request a fresh complete cookie
+  pair.
 - **Page-shape change:** identify parser incompatibility rather than blaming
   Cloudflare or login.
 
@@ -387,8 +394,8 @@ cancellation rather than being relabeled as a browser failure.
    protection.
 2. The helper accepts no arbitrary origin and normalizes every path before
    allowlist evaluation.
-3. Account tokens appear only in request bodies and browser request headers,
-   never in URLs.
+3. Account tokens appear only in the one-time local session-install request and
+   the browser's auth cookie, never in URLs or ordinary account-request bodies.
 4. Helper responses never echo tokens, cookies, storage, or raw browser
    debugging state.
 5. Logs redact authorization headers, session cookie names/values, request
@@ -413,8 +420,8 @@ cancellation rather than being relabeled as a browser failure.
 - bridge-specific tests and shims
 - active README, Help & Tips, error, and installation text describing a Janny
   userscript
-- obsolete code paths that save only an unverified access token because a
-  bridge is absent
+- obsolete code paths that persist access or refresh tokens in Character
+  Library settings
 
 The shared Janitor userscript and its DataCat consumers remain unchanged.
 Historical bridge design documents may remain only when clearly marked as
@@ -422,8 +429,10 @@ superseded; they must not be linked as current setup instructions.
 
 ### Migrate
 
-- Existing `jannyToken` values remain usable as bare access-token sessions.
-- `jannyRefreshToken` starts empty until the user saves a complete cookie pair.
+- Legacy `jannyToken`/`jannyRefreshToken` values are not used as the new
+  runtime's session authority. A successful new session installation or logout
+  clears them; until then they remain inert so an upgrade does not silently
+  destroy recoverable account data.
 - Existing Janitor browser mode and endpoint settings are reused as-is.
 - Users do not need to configure the duplicated Janny browser section when the
   Janitor browser already works.
@@ -443,10 +452,13 @@ Session tests cover:
 - full cookie headers, URL encoding, `base64-` sessions, raw session JSON, and
   bare JWTs;
 - malformed input, wrong issuer, and expired tokens;
-- access/refresh persistence and logout;
-- refresh rotation, concurrent refresh serialization, transient errors, and
-  definitive revocation;
-- one retry after authenticated 401.
+- long-lived complete-session cookies versus access-expiry-bounded bare JWT
+  cookies;
+- one-time browser installation without credential persistence;
+- redacted browser status and logout;
+- a single browser-owned recovery navigation and one retry after authenticated
+  401;
+- absence of direct Supabase `apikey`, `/user`, and refresh-grant calls.
 
 Helper and policy tests cover:
 
@@ -461,8 +473,7 @@ Helper and policy tests cover:
 Definition tests cover:
 
 - existing Astro serialization fixtures;
-- valid HTML with expected definition fields;
-- hydrated-browser fallback data;
+- hydrated `CharacterButtons` data with expected definition fields;
 - requested UUID mismatch;
 - challenge/login/malformed bodies;
 - valid page with changed schema producing `JANNY_PAGE_SHAPE_CHANGED`;
@@ -492,8 +503,8 @@ persisting its contents:
 6. Add and remove a test bookmark, restoring the original state.
 7. Create, edit, add a character to, remove the character from, and delete a
    temporary test collection without modifying existing collections.
-8. Exercise one refresh-token rotation, atomically store the new pair, and
-   reinstall it in the browser.
+8. Verify the session survives helper/browser reuse and that an automated 401
+   recovery uses JannyAI's browser flow rather than a direct Supabase call.
 9. Verify logout clears Janny account state while Cloudflare access remains,
    then restore the current valid session if the test displaced it.
 
@@ -509,10 +520,11 @@ in a `finally` path where practical.
   JannyAI exposes them to a normal browser.
 - A challenge, 403, or changed page shape cannot produce an apparently
   successful empty import.
-- A complete `.0`/`.1` session supports automatic token rotation.
+- A complete `.0`/`.1` session is installed once and remains renewable under
+  JannyAI's own browser session handling.
 - A bare JWT works until expiry and is clearly identified as non-refreshable.
 - Bookmarks and all existing owned-collection operations work through the
-  browser and survive a forced access-token refresh.
+  browser and survive the tested browser-owned recovery path.
 - Janny logout clears account state but not Cloudflare clearance.
 - Janny has no runtime or user-facing dependency on either userscript bridge.
 - JanitorAI behavior and public interfaces remain unchanged.
