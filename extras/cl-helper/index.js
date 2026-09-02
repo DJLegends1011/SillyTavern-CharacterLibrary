@@ -2699,6 +2699,59 @@ async function injectJannySession(page, accessToken, refreshToken = '') {
     }
 }
 
+function readJannyBrowserSession(cookies) {
+    const empty = { active: false, email: '', expMs: 0, hasRefresh: false, refreshable: false };
+    const accountCookies = (cookies || []).filter(cookie => cookie?.name === JANNY_AUTH_COOKIE || cookie?.name?.startsWith(`${JANNY_AUTH_COOKIE}.`));
+    const unchunked = accountCookies.find(cookie => cookie.name === JANNY_AUTH_COOKIE);
+    let value = unchunked?.value || '';
+
+    if (!value) {
+        const chunks = new Map();
+        let invalid = false;
+        for (const cookie of accountCookies) {
+            const match = cookie.name.match(new RegExp(`^${JANNY_AUTH_COOKIE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\.(\\d+)$`));
+            if (!match) continue;
+            const index = Number(match[1]);
+            if (chunks.has(index)) invalid = true;
+            chunks.set(index, String(cookie.value || ''));
+        }
+        const indices = [...chunks.keys()].sort((a, b) => a - b);
+        if (invalid || indices.some((index, position) => index !== position)) return empty;
+        value = indices.map(index => chunks.get(index)).join('');
+    }
+
+    try { value = decodeURIComponent(value); } catch { /* cookie already decoded */ }
+    if (!value.startsWith('base64-') || value.length > 40_000) return empty;
+
+    let stored;
+    try {
+        stored = JSON.parse(Buffer.from(value.slice('base64-'.length), 'base64').toString('utf8'));
+    } catch {
+        return empty;
+    }
+    const accessToken = typeof stored?.access_token === 'string' && stored.access_token.length <= 16_384 ? stored.access_token : '';
+    const refreshToken = typeof stored?.refresh_token === 'string' && stored.refresh_token.length <= 16_384 ? stored.refresh_token : '';
+    let claims = {};
+    try {
+        claims = JSON.parse(Buffer.from(accessToken.split('.')[1], 'base64url').toString('utf8'));
+    } catch { /* malformed access token remains inactive */ }
+    const expMs = Number.isFinite(claims?.exp) && claims.exp > 0 ? claims.exp * 1000 : 0;
+    return {
+        active: Boolean(accessToken && (!expMs || expMs > Date.now())),
+        email: typeof claims?.email === 'string' ? claims.email : '',
+        expMs,
+        hasRefresh: Boolean(refreshToken),
+        refreshable: Boolean(refreshToken),
+    };
+}
+
+async function waitForJannyDocumentReady(page) {
+    await page.evaluate(`new Promise(resolve => {
+        if (document.readyState === 'complete' || document.readyState === 'interactive') return resolve(true);
+        document.addEventListener('DOMContentLoaded', () => resolve(true), { once: true });
+    })`);
+}
+
 async function extractHydratedJannyCharacter(page, safePath, characterId) {
     await page.goto(`${JANNY_ORIGIN}${safePath}`, { timeout: CDP_NAV_TIMEOUT });
     await assertJannyPageOrigin(page);
@@ -3236,6 +3289,37 @@ function registerJannyaiBrowserRoutes(router) {
         } catch {
             await closeJannyWarmPage().catch(() => {});
             res.status(502).json({ ok: false, error: 'JannyAI browser session update failed' });
+        }
+    });
+
+    router.post('/jannyai-browser-session-status', async (req, res) => {
+        try {
+            const warm = await getJannyWarmPage(await resolveBrowserEndpoint(req));
+            await assertJannyPageOrigin(warm.page);
+            const cookies = await warm.page.cookies([JANNY_ORIGIN]);
+            _jannyWarmLastUsed = Date.now();
+            res.json(readJannyBrowserSession(cookies));
+        } catch {
+            await closeJannyWarmPage().catch(() => {});
+            res.status(502).json({ ok: false, error: 'JannyAI browser session status failed' });
+        }
+    });
+
+    router.post('/jannyai-browser-refresh-session', async (req, res) => {
+        try {
+            const warm = await getJannyWarmPage(await resolveBrowserEndpoint(req));
+            await assertJannyPageOrigin(warm.page);
+            await warm.page.goto(`${JANNY_ORIGIN}/auth/profile`, { timeout: CDP_NAV_TIMEOUT });
+            await assertJannyPageOrigin(warm.page);
+            await waitForJannyDocumentReady(warm.page);
+            await waitForCloudflare(warm.page);
+            await assertJannyPageOrigin(warm.page);
+            const cookies = await warm.page.cookies([JANNY_ORIGIN]);
+            _jannyWarmLastUsed = Date.now();
+            res.json(readJannyBrowserSession(cookies));
+        } catch {
+            await closeJannyWarmPage().catch(() => {});
+            res.status(502).json({ ok: false, error: 'JannyAI browser session recovery failed' });
         }
     });
 

@@ -545,7 +545,7 @@ const DEFAULT_SETTINGS = {
     saucepanToken: null,
     janitoraiToken: null,
     janitoraiRefreshToken: null,
-    jannyToken: null,
+    jannyToken: null, // Legacy cleanup slot only; browser-owned session credentials are never written here.
     // Kept so a lapsed session can be renewed without hunting for the password again.
     janitoraiEmail: null,
     janitoraiPassword: null,

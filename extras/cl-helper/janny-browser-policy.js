@@ -61,12 +61,13 @@ export function buildJannySessionCookies(accessToken, refreshToken = '', nowSeco
     let expiresAt = nowSeconds + 3600;
     try {
         const claims = JSON.parse(Buffer.from(accessToken.split('.')[1], 'base64url').toString('utf8'));
-        if (Number.isInteger(claims.exp) && claims.exp > nowSeconds) expiresAt = claims.exp;
+        if (Number.isInteger(claims.exp) && claims.exp > 0) expiresAt = claims.exp;
     } catch { /* use the bounded fallback expiry */ }
     const session = { access_token: accessToken, token_type: 'bearer', expires_in: Math.max(60, expiresAt - nowSeconds), expires_at: expiresAt, refresh_token: refreshToken, user: {} };
     const value = `base64-${Buffer.from(JSON.stringify(session), 'utf8').toString('base64')}`;
     const values = value.length <= JANNY_COOKIE_CHUNK_LIMIT ? [value] : Array.from({ length: Math.ceil(value.length / JANNY_COOKIE_CHUNK_LIMIT) }, (_, index) => value.slice(index * JANNY_COOKIE_CHUNK_LIMIT, (index + 1) * JANNY_COOKIE_CHUNK_LIMIT));
-    return values.map((chunk, index) => ({ name: values.length === 1 ? JANNY_AUTH_COOKIE : `${JANNY_AUTH_COOKIE}.${index}`, value: chunk, expires: expiresAt }));
+    const cookieExpiresAt = refreshToken ? nowSeconds + (400 * 24 * 60 * 60) : expiresAt;
+    return values.map((chunk, index) => ({ name: values.length === 1 ? JANNY_AUTH_COOKIE : `${JANNY_AUTH_COOKIE}.${index}`, value: chunk, expires: cookieExpiresAt }));
 }
 
 export function jannyAccountCookiesToDelete(cookies) {

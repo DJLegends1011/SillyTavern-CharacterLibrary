@@ -162,6 +162,14 @@ export async function jannyBrowserSetSession(token, refreshToken, endpoint) {
     }, { timeoutMs: 90_000 });
 }
 
+export function jannyBrowserSessionStatus(endpoint) {
+    return callHelper('/jannyai-browser-session-status', jannyBrowserTarget(endpoint), { timeoutMs: 60_000 });
+}
+
+export function jannyBrowserRefreshSession(endpoint) {
+    return callHelper('/jannyai-browser-refresh-session', jannyBrowserTarget(endpoint), { timeoutMs: 120_000 });
+}
+
 export async function jannyBrowserLogout(endpoint) {
     return callHelper('/jannyai-browser-logout', jannyBrowserTarget(endpoint), { timeoutMs: 60_000 });
 }
@@ -169,5 +177,7 @@ export async function jannyBrowserLogout(endpoint) {
 export function initJannyBrowserClient() {
     window.jannyTestBrowserEndpoint = testJannyBrowserEndpoint;
     window.jannyBrowserSetSession = jannyBrowserSetSession;
+    window.jannyBrowserSessionStatus = jannyBrowserSessionStatus;
+    window.jannyBrowserRefreshSession = jannyBrowserRefreshSession;
     window.jannyBrowserLogout = jannyBrowserLogout;
 }

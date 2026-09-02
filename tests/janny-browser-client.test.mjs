@@ -68,7 +68,7 @@ test('forwards browser fetch options and preserves the helper fetch envelope', a
     });
 });
 
-test('routes browser test, session, and logout calls through the local helper', async () => {
+test('routes browser test and account-session calls through the local helper', async () => {
     responseData = { ok: true, checks: [{ key: 'connect', ok: true }] };
     assert.deepEqual(await browser.testJannyBrowserEndpoint('http://override:9222'), responseData);
     assert.deepEqual(calls.at(-1).body, { endpoint: 'http://override:9222' });
@@ -80,6 +80,14 @@ test('routes browser test, session, and logout calls through the local helper', 
     assert.equal(session.path, '/plugins/cl-helper/jannyai-browser-session');
     assert.equal(session.body.token.length, 16_384);
     assert.equal(session.body.refreshToken, 'refresh-token');
+
+    await browser.jannyBrowserSessionStatus();
+    assert.equal(calls.at(-1).path, '/plugins/cl-helper/jannyai-browser-session-status');
+    assert.deepEqual(calls.at(-1).body, { managed: true });
+
+    await browser.jannyBrowserRefreshSession('http://refresh:9222');
+    assert.equal(calls.at(-1).path, '/plugins/cl-helper/jannyai-browser-refresh-session');
+    assert.deepEqual(calls.at(-1).body, { endpoint: 'http://refresh:9222' });
 
     await browser.jannyBrowserLogout('http://logout:9222');
     assert.equal(calls.at(-1).path, '/plugins/cl-helper/jannyai-browser-logout');
@@ -272,5 +280,7 @@ test('exposes only the browser client handles needed by the settings script', ()
     browser.initJannyBrowserClient();
     assert.equal(window.jannyTestBrowserEndpoint, browser.testJannyBrowserEndpoint);
     assert.equal(window.jannyBrowserSetSession, browser.jannyBrowserSetSession);
+    assert.equal(window.jannyBrowserSessionStatus, browser.jannyBrowserSessionStatus);
+    assert.equal(window.jannyBrowserRefreshSession, browser.jannyBrowserRefreshSession);
     assert.equal(window.jannyBrowserLogout, browser.jannyBrowserLogout);
 });

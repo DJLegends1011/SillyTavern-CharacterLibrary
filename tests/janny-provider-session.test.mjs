@@ -1,46 +1,28 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
-function b64url(value) {
-    return Buffer.from(JSON.stringify(value)).toString('base64url');
-}
+globalThis.window = {};
 
-function makeJannyJwt(overrides = {}) {
-    const claims = {
-        sub: 'user-1',
-        email: 'mobile@example.com',
-        exp: Math.floor(Date.now() / 1000) + 3600,
-        iss: 'https://eenzcbluoctduymzksoq.supabase.co/auth/v1',
-        ...overrides,
-    };
-    return `${b64url({ alg: 'HS256', typ: 'JWT' })}.${b64url(claims)}.signature`;
-}
+const session = await import('../modules/providers/janny/janny-session.js');
+const source = readFileSync(new URL('../modules/providers/janny/janny-session.js', import.meta.url), 'utf8');
+const library = readFileSync(new URL('../app/library.js', import.meta.url), 'utf8');
 
-async function loadProvider(settings = {}) {
-    globalThis.window = {
-        location: { origin: 'http://127.0.0.1:8001' },
-        getSetting(key) { return settings[key]; },
-        setSetting(key, value) { settings[key] = value; },
-        addEventListener() {},
-        postMessage() {},
-    };
-    globalThis.document = {};
-
-    const tag = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
-    const CoreAPI = (await import(`../modules/core-api.js?janny_session=${tag}`)).default;
-    const provider = (await import(`../modules/providers/janny/janny-provider.js?janny_session=${tag}`)).default;
-    await provider.init(CoreAPI);
-    return { settings };
-}
-
-test('JannyAI saves a valid pasted login token even when the userscript bridge is absent', async () => {
-    const { settings } = await loadProvider();
-    const jwt = makeJannyJwt();
-
-    const result = await window.jannySetSession(jwt);
-
-    assert.equal(result.ok, true);
-    assert.equal(result.email, 'mobile@example.com');
-    assert.equal(settings.jannyToken, jwt);
+test('session initialization exposes the four browser-owned lifecycle operations', () => {
+    session.initJannySession();
+    assert.equal(window.jannySetSession, session.jannySetSession);
+    assert.equal(window.jannySessionStatus, session.jannySessionStatus);
+    assert.equal(window.jannyRecoverSession, session.jannyRecoverSession);
+    assert.equal(window.jannyLogout, session.jannyLogout);
 });
 
+test('session coordination has no direct Supabase transport or credential persistence path', () => {
+    assert.doesNotMatch(source, /\bapikey\b|\/auth\/v1\/user|grant_type=refresh_token/i);
+    const legacyWrites = [...source.matchAll(/CoreAPI\.setSetting\(\s*['"]janny(?:Refresh)?Token['"]\s*,\s*([^)\n]+)\)/g)]
+        .map(match => match[1].trim());
+    assert.deepEqual(legacyWrites, ['null', 'null']);
+
+    const defaults = library.slice(library.indexOf('const DEFAULT_SETTINGS = {'), library.indexOf('// ---- NSFW Toggles ----'));
+    assert.match(defaults, /\bjannyToken\s*:\s*null/);
+    assert.doesNotMatch(defaults, /\bjannyRefreshToken\s*:/);
+});

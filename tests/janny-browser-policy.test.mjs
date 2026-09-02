@@ -61,15 +61,26 @@ test('rejects cross-origin redirects and constrains form success locations', () 
     assert.throws(() => validateJannyFinalUrl('https://jannyai.com/admin', true), error => error.code === 'JANNY_REQUEST_BLOCKED');
 });
 
-test('builds Supabase chunks and selects only account cookies for logout', () => {
-    const accessToken = `x.${Buffer.from(JSON.stringify({ exp: 2_000_000_000 })).toString('base64url')}.y`;
-    const cookies = buildJannySessionCookies(accessToken, 'r'.repeat(7000), 1_900_000_000);
+test('complete sessions retain refresh cookies for 400 days without extending access expiry', () => {
+    const nowSeconds = 1_900_000_000;
+    const accessExp = 2_000_000_000;
+    const accessToken = `x.${Buffer.from(JSON.stringify({ exp: accessExp })).toString('base64url')}.y`;
+    const cookies = buildJannySessionCookies(accessToken, 'r'.repeat(7000), nowSeconds);
     assert.deepEqual(cookies.map(cookie => cookie.name), [
         'sb-eenzcbluoctduymzksoq-auth-token.0',
         'sb-eenzcbluoctduymzksoq-auth-token.1',
         'sb-eenzcbluoctduymzksoq-auth-token.2',
     ]);
-    assert.ok(cookies.every(cookie => cookie.expires === 2_000_000_000));
+    assert.ok(cookies.every(cookie => cookie.expires === nowSeconds + (400 * 24 * 60 * 60)));
+
+    const serialized = cookies.map(cookie => cookie.value).join('').slice('base64-'.length);
+    assert.equal(JSON.parse(Buffer.from(serialized, 'base64').toString('utf8')).expires_at, accessExp);
+
+    const bare = buildJannySessionCookies(accessToken, '', nowSeconds);
+    assert.ok(bare.every(cookie => cookie.expires === accessExp));
+});
+
+test('selects only account cookies for logout', () => {
     assert.deepEqual(jannyAccountCookiesToDelete([
         { name: 'cf_clearance' },
         { name: '__cf_bm' },

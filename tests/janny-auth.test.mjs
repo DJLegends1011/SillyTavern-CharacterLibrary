@@ -26,6 +26,20 @@ test('parseJannySession accepts the full split Supabase cookie header', () => {
     assert.deepEqual(parseJannySession(cookie), session);
 });
 
+test('parseJannySession rejects missing or out-of-order chunk sequences', () => {
+    assert.equal(parseJannySession('sb-eenzcbluoctduymzksoq-auth-token.1=tail'), null);
+    assert.equal(parseJannySession('sb-eenzcbluoctduymzksoq-auth-token.0=head; sb-eenzcbluoctduymzksoq-auth-token.2=tail'), null);
+    assert.equal(parseJannySession(`sb-eenzcbluoctduymzksoq-auth-token.1=${encoded}`), null);
+    const middle = Math.ceil(encoded.length / 2);
+    assert.equal(parseJannySession(`sb-eenzcbluoctduymzksoq-auth-token.0=${encoded.slice(0, middle)}; sb-eenzcbluoctduymzksoq-auth-token.2=${encoded.slice(middle)}`), null);
+});
+
+test('parseJannySession accepts a Cookie prefix and URL-encoded chunk values', () => {
+    const middle = Math.ceil(encoded.length / 2);
+    const raw = `Cookie: sb-eenzcbluoctduymzksoq-auth-token.0=${encodeURIComponent(encoded.slice(0, middle))}; sb-eenzcbluoctduymzksoq-auth-token.1=${encodeURIComponent(encoded.slice(middle))}`;
+    assert.deepEqual(parseJannySession(raw), session);
+});
+
 test('parseJannySession accepts raw session JSON and the old sb-access-token cookie', () => {
     assert.deepEqual(parseJannySession(JSON.stringify(session)), session);
     assert.deepEqual(parseJannySession(`sb-access-token=${jwt}`), { access_token: jwt, refresh_token: '' });

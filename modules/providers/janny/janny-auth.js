@@ -15,7 +15,8 @@ function sessionValueFromCookieHeader(raw) {
     const input = String(raw || '').replace(/^cookie\s*:\s*/i, '');
     if (!input.includes('=')) return input.trim();
 
-    const chunks = [];
+    const chunks = new Map();
+    let chunkSequenceInvalid = false;
     let unchunked = '';
     let legacyAccess = '';
     for (const part of input.split(';')) {
@@ -27,9 +28,18 @@ function sessionValueFromCookieHeader(raw) {
         const match = name.match(JANNY_COOKIE_RE);
         if (!match) continue;
         if (match[1] == null) unchunked = value;
-        else chunks[Number(match[1])] = value;
+        else {
+            const index = Number(match[1]);
+            if (chunks.has(index)) chunkSequenceInvalid = true;
+            chunks.set(index, value);
+        }
     }
-    return chunks.filter(value => value != null).join('') || unchunked || legacyAccess || input.trim();
+    if (chunks.size > 0) {
+        const indices = [...chunks.keys()].sort((a, b) => a - b);
+        if (chunkSequenceInvalid || indices.some((index, position) => index !== position)) return '';
+        return indices.map(index => chunks.get(index)).join('');
+    }
+    return unchunked || legacyAccess || input.trim();
 }
 
 /**
