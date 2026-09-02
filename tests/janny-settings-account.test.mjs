@@ -300,6 +300,18 @@ test('opening the settings modal re-reads shared configuration for both sections
     }
 });
 
+test('reopening the Janny section drops check rows from a since-changed browser config', async () => {
+    const h = await harness();
+    const checks = h.el('jannyBrowserChecks');
+    checks.innerHTML = '<div class="janitorai-check ok">Cleared in 2s</div>';
+    checks.classList.remove('hidden');
+    const section = h.el('settingsJannySection');
+    section.open = true;
+    await section.dispatch('toggle');
+    assert.equal(checks.innerHTML, '');
+    assert.equal(checks.classList.contains('hidden'), true);
+});
+
 test('Janny browser controls participate in the helper availability check', async () => {
     const h = await harness();
     const start = js.indexOf('        checkClHelperPlugin(');

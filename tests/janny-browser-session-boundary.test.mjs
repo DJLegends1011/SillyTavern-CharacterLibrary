@@ -124,3 +124,20 @@ test('session replacement removes path-scoped Janny chunks without touching Clou
         ],
     );
 });
+
+test('a float exp claim is ignored identically when writing and when reading the session', async () => {
+    const header = b64url({ alg: 'HS256', typ: 'JWT' });
+    const accessToken = `${header}.${b64url({ email: 'reader@example.test', exp: 2_000_000_000.5 })}.signature`;
+    const page = new MemoryPage();
+
+    await helper.injectJannySession(page, accessToken, '');
+    const cookies = await page.cookies([JANNY_ORIGIN]);
+    const stored = JSON.parse(Buffer.from(
+        decodeURIComponent(cookies[0].value).slice('base64-'.length), 'base64').toString('utf8'));
+
+    // The writer falls back to its bounded one-hour expiry; the reader must not honour the
+    // float either, or the two sides disagree about when the session dies.
+    assert.notEqual(stored.expires_at, 2_000_000_000);
+    assert.equal(helper.readJannyBrowserSession(cookies).expMs, 0);
+    assert.equal(helper.readJannyBrowserSession(cookies).active, true);
+});

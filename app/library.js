@@ -2717,7 +2717,11 @@ function setupSettingsModal() {
     }
 
     document.getElementById('settingsJannySection')?.addEventListener('toggle', (e) => {
-        if (e.target.open) refreshJannySettingsUi();
+        if (!e.target.open) return;
+        // The JanitorAI section edits the same shared browser config, so rows from the last run
+        // can describe a configuration that no longer exists. Drop them like the change handlers do.
+        renderJannyBrowserChecks([], null);
+        refreshJannySettingsUi();
     });
     jannyModeSelect?.addEventListener('change', () => {
         setSetting('janitoraiBrowserMode', jannyModeSelect.value === 'endpoint' ? 'endpoint' : 'managed');

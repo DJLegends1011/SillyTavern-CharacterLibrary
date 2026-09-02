@@ -2774,7 +2774,9 @@ export function readJannyBrowserSession(cookies) {
     try {
         claims = JSON.parse(Buffer.from(accessToken.split('.')[1], 'base64url').toString('utf8'));
     } catch { /* malformed access token remains inactive */ }
-    const expMs = Number.isFinite(claims?.exp) && claims.exp > 0 ? claims.exp * 1000 : 0;
+    // Same test buildJannySessionCookies applies when writing, so a float exp is ignored on
+    // both sides instead of being honoured on read and dropped on write.
+    const expMs = Number.isInteger(claims?.exp) && claims.exp > 0 ? claims.exp * 1000 : 0;
     return {
         active: Boolean(accessToken && (!expMs || expMs > Date.now())),
         email: typeof claims?.email === 'string' ? claims.email : '',

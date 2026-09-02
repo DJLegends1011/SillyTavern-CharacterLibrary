@@ -124,6 +124,35 @@ test('imports hydrated definitions and only backfills metadata from an identity-
     } finally { globalThis.fetch = originalFetch; }
 });
 
+// The hydrated island's imageUrl is page-supplied: it must not become an outbound fetch to
+// wherever the page says. Anything off JannyAI's image hosts falls back to the avatar path
+// this provider builds itself.
+for (const [name, imageUrl, expectedAvatar] of [
+    ['a foreign https host is refused', 'https://attacker.example/pixel.png', 'https://image.jannyai.com/bot-avatars/demo.png'],
+    ['a lookalike host is refused', 'https://image.jannyai.com.attacker.example/pixel.png', 'https://image.jannyai.com/bot-avatars/demo.png'],
+    ['a non-https scheme is refused', 'http://image.jannyai.com/demo.png', 'https://image.jannyai.com/bot-avatars/demo.png'],
+    ['a relative path is refused', '/demo.png', 'https://image.jannyai.com/bot-avatars/demo.png'],
+    ['a JannyAI image host is used as given', 'https://image.jannyai.com/hydrated.png', 'https://image.jannyai.com/hydrated.png'],
+]) {
+    test('hydrated avatar URL: ' + name, async () => {
+        const originalFetch = globalThis.fetch;
+        let embeddedCard;
+        await provider.init({ embedCharacterDataInPng: (png, card) => { embeddedCard = card; return png; } });
+        globalThis.fetch = async url => {
+            directCalls.push(url);
+            if (url === '/api/characters/import') { importCalls.push(url); return { ok: true, text: async () => '{"file_name":"demo"}' }; }
+            return { ok: true, arrayBuffer: async () => new Uint8Array([137, 80, 78, 71]).buffer };
+        };
+        try {
+            browserReplies.push({ status: 200, hydratedCharacter: { character: { ...completeCharacter, avatar: 'demo.png' }, imageUrl } });
+            const result = await provider.importCharacter(identifier, { id: characterId });
+            assert.equal(result.success, true);
+            assert.ok(embeddedCard, 'import did not produce a card');
+            assert.deepEqual(directCalls, [expectedAvatar, '/api/characters/import']);
+        } finally { globalThis.fetch = originalFetch; }
+    });
+}
+
 for (const [name, character] of [
     ['character', [99, completeCharacter]],
     ['definition field', [0, { ...completeCharacter, personality: [99, 'Definition'] }]],

@@ -23,6 +23,23 @@ import {
 
 let api = null;
 
+// Hosts JannyAI serves character art from. Anything the hydrated page hands us that is not
+// one of these is not fetched: the props are page-supplied, so an arbitrary URL there would
+// otherwise become an outbound request from the user's server on import.
+const JANNY_IMAGE_HOSTS = new Set(['image.jannyai.com', 'jannyai.com', 'www.jannyai.com']);
+
+/**
+ * @param {unknown} value - candidate avatar URL out of the hydrated island props
+ * @returns {boolean} true when it is an absolute https URL on a JannyAI image host
+ */
+export function isJannyImageUrl(value) {
+    if (typeof value !== 'string' || !value) return false;
+    try {
+        const url = new URL(value);
+        return url.protocol === 'https:' && JANNY_IMAGE_HOSTS.has(url.hostname.toLowerCase());
+    } catch { return false; }
+}
+
 // ========================================
 // API FUNCTIONS
 // ========================================
@@ -511,8 +528,11 @@ class JannyProvider extends ProviderBase {
             // Gallery ID: inherit from replaced character, or generate new
             assignGalleryId(characterCard, options, api);
 
-            // Download avatar
-            const avatarUrl = data.imageUrl || (char.avatar ? `${JANNY_IMAGE_BASE}${char.avatar}` : null);
+            // Download avatar. data.imageUrl is decoded out of the page's hydrated island props,
+            // so it is page-supplied: keep it on JannyAI's own image hosts before fetching it,
+            // and otherwise fall back to the avatar path we build ourselves.
+            const fallbackAvatarUrl = char.avatar ? `${JANNY_IMAGE_BASE}${char.avatar}` : null;
+            const avatarUrl = isJannyImageUrl(data.imageUrl) ? data.imageUrl : fallbackAvatarUrl;
             let imageBuffer = null;
 
             if (avatarUrl) {

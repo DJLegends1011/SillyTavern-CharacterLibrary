@@ -75,7 +75,7 @@ test('routes browser test and account-session calls through the local helper', a
     assert.equal(calls.at(-1).path, '/plugins/cl-helper/jannyai-browser-test');
 
     responseData = { ok: true };
-    await browser.jannyBrowserSetSession('a'.repeat(16_385), 'refresh-token');
+    await browser.jannyBrowserSetSession('a'.repeat(16_384), 'refresh-token');
     const session = calls.at(-1);
     assert.equal(session.path, '/plugins/cl-helper/jannyai-browser-session');
     assert.equal(session.body.token.length, 16_384);
@@ -92,6 +92,23 @@ test('routes browser test and account-session calls through the local helper', a
     await browser.jannyBrowserLogout('http://logout:9222');
     assert.equal(calls.at(-1).path, '/plugins/cl-helper/jannyai-browser-logout');
     assert.deepEqual(calls.at(-1).body, { endpoint: 'http://logout:9222' });
+});
+
+test('an over-length session is refused before it can replace the installed one', async () => {
+    const before = calls.length;
+    for (const [token, refresh] of [['a'.repeat(16_385), 'refresh-token'], ['a'.repeat(64), 'r'.repeat(16_385)]]) {
+        await assert.rejects(
+            () => browser.jannyBrowserSetSession(token, refresh),
+            error => {
+                assert.equal(error.code, 'JANNY_REQUEST_BLOCKED');
+                assert.match(error.message, /longer than 16384 characters/);
+                assert.match(error.message, /left untouched/);
+                assert.doesNotMatch(error.message, /aaaa|rrrr/);
+                return true;
+            },
+        );
+    }
+    assert.equal(calls.length, before, 'a refused session must not reach the helper');
 });
 
 test('classifies helper and browser fetch failures without exposing credential data', async () => {

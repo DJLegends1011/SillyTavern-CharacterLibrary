@@ -144,10 +144,20 @@ export async function jannyBrowserFetch(path, {
 }
 
 export async function jannyBrowserSetSession(token, refreshToken, endpoint) {
+    const accessToken = String(token || '');
+    const refresh = String(refreshToken || '');
+    // Truncating would hand the helper a corrupt token that still passes its length check:
+    // it would replace the working cookies and only surface later as "session is not active".
+    // Refuse before the call so the existing browser session survives intact.
+    if (accessToken.length > MAX_TOKEN_LENGTH || refresh.length > MAX_TOKEN_LENGTH) {
+        const error = createJannyError('JANNY_REQUEST_BLOCKED');
+        error.message = `That JannyAI session value is longer than ${MAX_TOKEN_LENGTH} characters, so it is not a usable login. Copy the session again without any surrounding text; the browser login already installed was left untouched.`;
+        throw error;
+    }
     return callHelper('/jannyai-browser-session', {
         ...jannyBrowserTarget(endpoint),
-        token: String(token || '').slice(0, MAX_TOKEN_LENGTH),
-        refreshToken: String(refreshToken || '').slice(0, MAX_TOKEN_LENGTH),
+        token: accessToken,
+        refreshToken: refresh,
     }, { timeoutMs: 90_000 });
 }
 
