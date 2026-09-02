@@ -1,5 +1,7 @@
 # JannyAI Bridge Transport Implementation Plan
 
+> **⚠️ Superseded 2026-09-02.** The userscript-bridge transport this plan built was removed. Character Library now uses a real-browser transport instead. See [`docs/superpowers/specs/2026-09-01-jannyai-browser-transport-design.md`](../specs/2026-09-01-jannyai-browser-transport-design.md) and [`docs/superpowers/plans/2026-09-01-jannyai-browser-transport.md`](./2026-09-01-jannyai-browser-transport.md) for the current design and plan. The rest of this document is kept for history only and no longer describes current behavior.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace the JannyAI cookie-relay transport (cl-helper server proxy) with a Tampermonkey userscript bridge, mirroring upstream v6.7.0's `cl-janitor-bridge.user.js` pattern, with zero-paste login.

@@ -1,4 +1,4 @@
-// JannyAI HTML parsers for public collection pages — moved client-side from cl-helper now that the userscript bridge fetches these pages in the browser.
+// JannyAI HTML parsers for public collection pages — the shared cl-helper-managed browser fetches these Cloudflare-gated pages; this module only parses the resulting HTML.
 
 export const JANNY_BASE = 'https://jannyai.com';
 

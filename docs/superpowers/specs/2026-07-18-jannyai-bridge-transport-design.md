@@ -1,5 +1,7 @@
 # JannyAI Account Sync via Userscript Bridge — Design
 
+> **⚠️ Superseded 2026-09-02.** The userscript-bridge transport this document describes was removed. Character Library now uses a real-browser transport instead. See [`docs/superpowers/specs/2026-09-01-jannyai-browser-transport-design.md`](./2026-09-01-jannyai-browser-transport-design.md) and [`docs/superpowers/plans/2026-09-01-jannyai-browser-transport.md`](../plans/2026-09-01-jannyai-browser-transport.md) for the current design and plan. The rest of this document is kept for history only and no longer describes current behavior.
+
 **Date:** 2026-07-18
 **Branch:** `codex/jannyai-account-sync`
 **Status:** Approved by user

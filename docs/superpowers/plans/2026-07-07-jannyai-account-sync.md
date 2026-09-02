@@ -1,5 +1,7 @@
 # JannyAI account sync
 
+> **⚠️ Superseded 2026-09-02.** The server-side cookie-relay account session this plan built was replaced, first by a userscript bridge and then by a real-browser transport. See [`docs/superpowers/specs/2026-09-01-jannyai-browser-transport-design.md`](../specs/2026-09-01-jannyai-browser-transport-design.md) and [`docs/superpowers/plans/2026-09-01-jannyai-browser-transport.md`](./2026-09-01-jannyai-browser-transport.md) for the current design and plan. The rest of this document is kept for history only and no longer describes current behavior.
+
 ## Context
 
 Janny account endpoints are behind Cloudflare. In a logged-in browser, Janny's same-origin UI can read and mutate bookmarks. Raw cl-helper/curl-style requests to `/bookmark`, `/api/bookmark`, and `/api/collections/mine` return Cloudflare challenge responses. Browser JavaScript cannot read the likely HttpOnly session cookies, so Character Library needs an explicit server-side account session and clear diagnostics.
