@@ -2,6 +2,8 @@ export const JANNY_ORIGIN = 'https://jannyai.com';
 export const JANNY_AUTH_COOKIE = 'sb-eenzcbluoctduymzksoq-auth-token';
 export const JANNY_CF_COOKIE_NAMES = new Set(['cf_clearance', '__cf_bm']);
 export const JANNY_COOKIE_CHUNK_LIMIT = 3180;
+export const JANNY_SESSION_TOKEN_LIMIT = 16_384;
+export const JANNY_SESSION_VALUE_LIMIT = 48 * 1024;
 
 const UUID_SOURCE = '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
 const UUID_RE = new RegExp(`^${UUID_SOURCE}$`, 'i');
@@ -57,7 +59,8 @@ function validatedCollectionForm(path, formBody) {
 }
 
 export function buildJannySessionCookies(accessToken, refreshToken = '', nowSeconds = Math.floor(Date.now() / 1000)) {
-    if (typeof accessToken !== 'string' || !accessToken || accessToken.length > 16_384 || typeof refreshToken !== 'string' || refreshToken.length > 16_384) blocked('Invalid JannyAI session');
+    if (typeof accessToken !== 'string' || !accessToken || accessToken.length > JANNY_SESSION_TOKEN_LIMIT
+        || typeof refreshToken !== 'string' || refreshToken.length > JANNY_SESSION_TOKEN_LIMIT) blocked('Invalid JannyAI session');
     let expiresAt = nowSeconds + 3600;
     try {
         const claims = JSON.parse(Buffer.from(accessToken.split('.')[1], 'base64url').toString('utf8'));
@@ -65,6 +68,7 @@ export function buildJannySessionCookies(accessToken, refreshToken = '', nowSeco
     } catch { /* use the bounded fallback expiry */ }
     const session = { access_token: accessToken, token_type: 'bearer', expires_in: Math.max(60, expiresAt - nowSeconds), expires_at: expiresAt, refresh_token: refreshToken, user: {} };
     const value = `base64-${Buffer.from(JSON.stringify(session), 'utf8').toString('base64')}`;
+    if (value.length > JANNY_SESSION_VALUE_LIMIT) blocked('Invalid JannyAI session');
     const values = value.length <= JANNY_COOKIE_CHUNK_LIMIT ? [value] : Array.from({ length: Math.ceil(value.length / JANNY_COOKIE_CHUNK_LIMIT) }, (_, index) => value.slice(index * JANNY_COOKIE_CHUNK_LIMIT, (index + 1) * JANNY_COOKIE_CHUNK_LIMIT));
     const cookieExpiresAt = refreshToken ? nowSeconds + (400 * 24 * 60 * 60) : expiresAt;
     return values.map((chunk, index) => ({ name: values.length === 1 ? JANNY_AUTH_COOKIE : `${JANNY_AUTH_COOKIE}.${index}`, value: chunk, expires: cookieExpiresAt }));

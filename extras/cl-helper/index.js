@@ -18,6 +18,8 @@ import {
     JANNY_ORIGIN,
     JANNY_AUTH_COOKIE,
     JANNY_CF_COOKIE_NAMES,
+    JANNY_SESSION_TOKEN_LIMIT,
+    JANNY_SESSION_VALUE_LIMIT,
     buildJannySessionCookies,
     jannyAccountCookiesToDelete,
     validateJannyFinalUrl,
@@ -2679,11 +2681,19 @@ async function getJannyWarmPage(endpoint) {
     return pending;
 }
 
-async function injectJannySession(page, accessToken, refreshToken = '') {
+export async function injectJannySession(page, accessToken, refreshToken = '') {
     const cookies = buildJannySessionCookies(accessToken, refreshToken);
-    const staleNames = [JANNY_AUTH_COOKIE, ...Array.from({ length: 8 }, (_, index) => `${JANNY_AUTH_COOKIE}.${index}`)];
-    for (const name of staleNames) {
-        try { await page.send('Network.deleteCookies', { name, domain: 'jannyai.com', path: '/' }); } catch {}
+    const existingCookies = await page.cookies([JANNY_ORIGIN]);
+    const staleNames = new Set(jannyAccountCookiesToDelete(existingCookies));
+    for (const cookie of existingCookies) {
+        if (!staleNames.has(cookie.name)) continue;
+        try {
+            await page.send('Network.deleteCookies', {
+                name: cookie.name,
+                domain: cookie.domain || 'jannyai.com',
+                path: cookie.path || '/',
+            });
+        } catch { /* continue replacing the remaining account cookies */ }
     }
     for (const cookie of cookies) {
         await page.send('Network.setCookie', {
@@ -2699,7 +2709,7 @@ async function injectJannySession(page, accessToken, refreshToken = '') {
     }
 }
 
-function readJannyBrowserSession(cookies) {
+export function readJannyBrowserSession(cookies) {
     const empty = { active: false, email: '', expMs: 0, hasRefresh: false, refreshable: false };
     const accountCookies = (cookies || []).filter(cookie => cookie?.name === JANNY_AUTH_COOKIE || cookie?.name?.startsWith(`${JANNY_AUTH_COOKIE}.`));
     const unchunked = accountCookies.find(cookie => cookie.name === JANNY_AUTH_COOKIE);
@@ -2721,7 +2731,7 @@ function readJannyBrowserSession(cookies) {
     }
 
     try { value = decodeURIComponent(value); } catch { /* cookie already decoded */ }
-    if (!value.startsWith('base64-') || value.length > 40_000) return empty;
+    if (!value.startsWith('base64-') || value.length > JANNY_SESSION_VALUE_LIMIT) return empty;
 
     let stored;
     try {
@@ -2729,8 +2739,8 @@ function readJannyBrowserSession(cookies) {
     } catch {
         return empty;
     }
-    const accessToken = typeof stored?.access_token === 'string' && stored.access_token.length <= 16_384 ? stored.access_token : '';
-    const refreshToken = typeof stored?.refresh_token === 'string' && stored.refresh_token.length <= 16_384 ? stored.refresh_token : '';
+    const accessToken = typeof stored?.access_token === 'string' && stored.access_token.length <= JANNY_SESSION_TOKEN_LIMIT ? stored.access_token : '';
+    const refreshToken = typeof stored?.refresh_token === 'string' && stored.refresh_token.length <= JANNY_SESSION_TOKEN_LIMIT ? stored.refresh_token : '';
     let claims = {};
     try {
         claims = JSON.parse(Buffer.from(accessToken.split('.')[1], 'base64url').toString('utf8'));
@@ -3277,8 +3287,8 @@ function registerJannyaiBrowserRoutes(router) {
 
     router.post('/jannyai-browser-session', async (req, res) => {
         const { token, refreshToken = '' } = req.body ?? {};
-        if (typeof token !== 'string' || !token || token.length > 16_384
-            || typeof refreshToken !== 'string' || refreshToken.length > 16_384) {
+        if (typeof token !== 'string' || !token || token.length > JANNY_SESSION_TOKEN_LIMIT
+            || typeof refreshToken !== 'string' || refreshToken.length > JANNY_SESSION_TOKEN_LIMIT) {
             return res.status(400).json({ ok: false, error: 'Invalid session' });
         }
         try {

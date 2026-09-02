@@ -1,0 +1,96 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {
+    JANNY_AUTH_COOKIE,
+    JANNY_ORIGIN,
+} from '../extras/cl-helper/janny-browser-policy.js';
+
+const helper = await import('../extras/cl-helper/index.js');
+
+function b64url(value) {
+    return Buffer.from(JSON.stringify(value)).toString('base64url');
+}
+
+function makeAccessToken(length = 16_384) {
+    const prefix = `${b64url({ alg: 'HS256', typ: 'JWT' })}.${b64url({
+        email: 'reader@example.test',
+        exp: 2_000_000_000,
+    })}.`;
+    return prefix + 's'.repeat(length - prefix.length);
+}
+
+class MemoryPage {
+    constructor(cookies = []) {
+        this.cookieJar = new Map();
+        for (const cookie of cookies) this.store(cookie);
+    }
+
+    key(cookie) {
+        return `${cookie.name}|${cookie.domain || 'jannyai.com'}|${cookie.path || '/'}`;
+    }
+
+    store(cookie) {
+        this.cookieJar.set(this.key(cookie), {
+            domain: 'jannyai.com',
+            path: '/',
+            ...cookie,
+        });
+    }
+
+    async cookies(urls) {
+        assert.deepEqual(urls, [JANNY_ORIGIN]);
+        return [...this.cookieJar.values()].map(cookie => ({ ...cookie }));
+    }
+
+    async send(method, payload) {
+        if (method === 'Network.deleteCookies') {
+            this.cookieJar.delete(this.key(payload));
+            return {};
+        }
+        if (method === 'Network.setCookie') {
+            this.store(payload);
+            return { success: true };
+        }
+        throw new Error(`Unexpected page method: ${method}`);
+    }
+}
+
+test('maximum accepted session round-trips through helper installation and redacted reading', async () => {
+    const page = new MemoryPage();
+    const accessToken = makeAccessToken();
+
+    await helper.injectJannySession(page, accessToken, 'r'.repeat(16_384));
+    const cookies = await page.cookies([JANNY_ORIGIN]);
+
+    assert.ok(cookies.filter(cookie => cookie.name.startsWith(`${JANNY_AUTH_COOKIE}.`)).length > 8);
+    assert.deepEqual(helper.readJannyBrowserSession(cookies), {
+        active: true,
+        email: 'reader@example.test',
+        expMs: 2_000_000_000_000,
+        hasRefresh: true,
+        refreshable: true,
+    });
+});
+
+test('session replacement removes every stale account chunk without touching Cloudflare cookies', async () => {
+    const page = new MemoryPage([
+        { name: `${JANNY_AUTH_COOKIE}.0`, value: 'stale-head' },
+        { name: `${JANNY_AUTH_COOKIE}.8`, value: 'stale-middle' },
+        { name: `${JANNY_AUTH_COOKIE}.99`, value: 'stale-tail', domain: '.jannyai.com', path: '/auth' },
+        { name: 'cf_clearance', value: 'clearance-value' },
+        { name: '__cf_bm', value: 'browser-value' },
+        { name: 'unrelated', value: 'keep-me' },
+    ]);
+
+    await helper.injectJannySession(page, makeAccessToken(512), '');
+    const cookies = await page.cookies([JANNY_ORIGIN]);
+
+    assert.deepEqual(
+        cookies.filter(cookie => cookie.name === JANNY_AUTH_COOKIE || cookie.name.startsWith(`${JANNY_AUTH_COOKIE}.`)).map(cookie => cookie.name),
+        [JANNY_AUTH_COOKIE],
+    );
+    assert.deepEqual(
+        cookies.filter(cookie => ['cf_clearance', '__cf_bm', 'unrelated'].includes(cookie.name)).map(cookie => [cookie.name, cookie.value]),
+        [['cf_clearance', 'clearance-value'], ['__cf_bm', 'browser-value'], ['unrelated', 'keep-me']],
+    );
+});
