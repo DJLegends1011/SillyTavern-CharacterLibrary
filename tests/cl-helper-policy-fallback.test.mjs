@@ -80,7 +80,7 @@ test('Janny routes answer a well-formed unavailable error instead of vanishing',
     for (const key of [
         'POST /jannyai-browser-fetch', 'POST /jannyai-browser-session',
         'POST /jannyai-browser-session-status', 'POST /jannyai-browser-refresh-session',
-        'POST /jannyai-browser-logout', 'POST /jannyai-browser-test',
+        'POST /jannyai-browser-logout',
         'POST /jannyai-managed/start', 'POST /jannyai-managed/stop',
         'GET /jannyai-managed/status',
     ]) {
@@ -88,10 +88,21 @@ test('Janny routes answer a well-formed unavailable error instead of vanishing',
         const { status, data } = await call(key);
         assert.equal(status, 503, `${key} status`);
         assert.equal(data.ok, false, `${key} ok`);
-        assert.match(data.error, /janny-browser-policy\.js is missing/);
-        assert.match(data.error, /package\.json, index\.js and janny-browser-policy\.js/);
+        // The code the browser client already classifies, not free prose it would misread.
+        assert.equal(data.error, 'JANNY_HELPER_UNAVAILABLE', `${key} error`);
+        assert.match(data.detail, /janny-browser-policy\.js is missing/);
+        assert.match(data.detail, /package\.json, index\.js and janny-browser-policy\.js/);
     }
     assert.equal((await call('GET /jannyai-managed/status')).data.running, false);
+});
+
+test('the browser Test renders the repair steps as a failed check row', async () => {
+    const { status, data } = await call('POST /jannyai-browser-test');
+    assert.equal(status, 200, 'the settings panel only renders rows from an HTTP-ok answer');
+    assert.equal(data.ok, false);
+    assert.equal(data.checks.length, 1);
+    assert.equal(data.checks[0].ok, false);
+    assert.match(data.checks[0].detail, /package\.json, index\.js and janny-browser-policy\.js/);
 });
 
 test('the shipped bundle resolves its policy and registers the real Janny routes', async () => {

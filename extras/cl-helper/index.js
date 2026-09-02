@@ -3192,22 +3192,32 @@ function isSoftwareRenderer(renderer) {
 }
 
 // Stand-ins used when janny-browser-policy.js could not be resolved. Every JannyAI route still
-// answers with the same well-formed { ok: false, error } envelope the client already classifies,
-// so JannyAI reports "unavailable" instead of 404-ing or crashing the plugin.
+// answers a well-formed envelope, so JannyAI reports "unavailable" instead of 404-ing or taking
+// the plugin down. `error` carries the code the client already classifies (its own copy supplies
+// the "install or update cl-helper" wording); `detail` carries the specific repair steps.
 const JANNY_ROUTE_PATHS = [
     '/jannyai-managed/start', '/jannyai-managed/stop',
-    '/jannyai-browser-test', '/jannyai-browser-fetch', '/jannyai-browser-session',
+    '/jannyai-browser-fetch', '/jannyai-browser-session',
     '/jannyai-browser-session-status', '/jannyai-browser-refresh-session', '/jannyai-browser-logout',
 ];
 
 function registerJannyaiUnavailableRoutes(router) {
-    const unavailable = (req, res) => res.status(503).json({ ok: false, error: JANNY_POLICY_MISSING });
+    const unavailable = (req, res) => res.status(503).json({
+        ok: false, error: 'JANNY_HELPER_UNAVAILABLE', detail: JANNY_POLICY_MISSING,
+    });
     for (const path of JANNY_ROUTE_PATHS) router.post(path, unavailable);
+    // The settings panel renders /jannyai-browser-test as check rows, so answer in that shape:
+    // a failed check carrying the repair steps is more useful than a bare transport error.
+    router.post('/jannyai-browser-test', (req, res) => res.json({
+        ok: false,
+        checks: [{ key: 'plugin', label: 'cl-helper install is complete', ok: false, detail: JANNY_POLICY_MISSING }],
+        error: 'JANNY_HELPER_UNAVAILABLE',
+    }));
     // Status is a GET and the settings panel reads its shape, so keep the fields it expects.
     router.get('/jannyai-managed/status', (req, res) => res.status(503).json({
         ok: false, running: false, endpoint: null, browser: null, binary: null,
         userAgentOverridden: null, idleStopMinutes: MANAGED_IDLE_MS / 60000,
-        lastError: JANNY_POLICY_MISSING, error: JANNY_POLICY_MISSING,
+        lastError: JANNY_POLICY_MISSING, error: 'JANNY_HELPER_UNAVAILABLE', detail: JANNY_POLICY_MISSING,
     }));
 }
 
