@@ -7,12 +7,13 @@ let responseData = { ok: true, status: 200, body: '{}', finalUrl: 'https://janny
 let responseOk = true;
 let responseStatus = 200;
 let requestError = null;
+let responseJson = async () => responseData;
 globalThis.window = {
     getSetting: key => settings[key],
     apiRequest: async (path, method, body, options) => {
         calls.push({ path, method, body, options });
         if (requestError) throw requestError;
-        return { ok: responseOk, status: responseStatus, json: async () => responseData };
+        return { ok: responseOk, status: responseStatus, json: responseJson };
     },
 };
 await import('../modules/core-api.js');
@@ -175,6 +176,63 @@ test('reports a valid character page that cannot be hydrated as a page-shape cha
         browser.jannyBrowserFetch('/characters/char-1_character', { inspectCharacterId: 'char-1' }),
         error => error.code === 'JANNY_PAGE_SHAPE_CHANGED',
     );
+});
+
+test('rejects successful HTTP challenge pages as Cloudflare blocks', async () => {
+    responseData = {
+        ok: true,
+        status: 200,
+        body: '<!doctype html><html><head><title>Just a moment...</title></head><body>Checking your browser</body></html>',
+        finalUrl: 'https://jannyai.com/api/bookmark',
+    };
+    await assert.rejects(
+        browser.jannyBrowserFetch('/api/bookmark'),
+        error => error.code === 'JANNY_CF_BLOCKED',
+    );
+});
+
+test('classifies rejected local helper calls as helper unavailability', async () => {
+    for (const failure of [
+        new TypeError('network request failed'),
+        new DOMException('request interrupted before helper response', 'AbortError'),
+    ]) {
+        requestError = failure;
+        try {
+            await assert.rejects(
+                browser.jannyBrowserFetch('/api/bookmark'),
+                error => error.code === 'JANNY_HELPER_UNAVAILABLE',
+            );
+        } finally {
+            requestError = null;
+        }
+    }
+});
+
+test('rethrows caller cancellation that occurs while parsing helper JSON', async () => {
+    responseData = { ok: true, status: 200, body: '{}', finalUrl: 'https://jannyai.com/api/bookmark' };
+    const controller = new AbortController();
+    const reason = new Error('cancel while decoding response');
+    responseJson = async () => {
+        controller.abort(reason);
+        throw new DOMException('The operation was aborted.', 'AbortError');
+    };
+    try {
+        await assert.rejects(
+            browser.jannyBrowserFetch('/api/bookmark', { signal: controller.signal }),
+            error => error === reason,
+        );
+    } finally {
+        responseJson = async () => responseData;
+    }
+});
+
+test('returns failed browser probe checks from a reachable helper', async () => {
+    responseData = {
+        ok: false,
+        checks: [{ key: 'cloudflare', label: 'Cloudflare cleared', ok: false, detail: 'Still challenged.' }],
+        error: 'Cloudflare check failed',
+    };
+    assert.deepEqual(await browser.testJannyBrowserEndpoint(), responseData);
 });
 
 test('keeps abort signals out of helper bodies and rethrows the caller abort reason', async () => {

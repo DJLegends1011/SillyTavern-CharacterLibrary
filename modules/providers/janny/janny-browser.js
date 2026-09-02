@@ -75,7 +75,7 @@ function isExpiredJannyToken(token) {
     }
 }
 
-async function callHelper(route, body, { timeoutMs = 180_000, signal = null } = {}) {
+async function callHelper(route, body, { timeoutMs = 180_000, signal = null, allowFailedResult = false } = {}) {
     if (signal?.aborted) throwAbort(signal);
     const timeoutSignal = AbortSignal.timeout(timeoutMs);
     const helperSignal = signal ? AbortSignal.any([timeoutSignal, signal]) : timeoutSignal;
@@ -84,9 +84,9 @@ async function callHelper(route, body, { timeoutMs = 180_000, signal = null } = 
         response = await CoreAPI.apiRequest(`${CL_HELPER_PLUGIN_BASE}${route}`, 'POST', body, { signal: helperSignal });
     } catch (error) {
         if (signal?.aborted) throwAbort(signal);
-        const code = timeoutSignal.aborted || error?.name === 'TimeoutError' || error?.name === 'AbortError'
+        const code = timeoutSignal.aborted || error?.name === 'TimeoutError'
             ? 'JANNY_BROWSER_TIMEOUT'
-            : classifyJannyFailure({ error: error?.message || '' });
+            : 'JANNY_HELPER_UNAVAILABLE';
         throw createJannyError(code);
     }
     if (!response) throw createJannyError('JANNY_HELPER_UNAVAILABLE');
@@ -94,9 +94,14 @@ async function callHelper(route, body, { timeoutMs = 180_000, signal = null } = 
     let data = null;
     try {
         data = await response.json();
-    } catch {
+    } catch (error) {
+        if (signal?.aborted) throwAbort(signal);
+        if (timeoutSignal.aborted || error?.name === 'TimeoutError') {
+            throw createJannyError('JANNY_BROWSER_TIMEOUT', response.status);
+        }
         throw createJannyError(classifyJannyFailure({ helperStatus: response.status, error: 'non-JSON helper response' }), response.status);
     }
+    if (allowFailedResult && response.ok && data?.ok === false && Array.isArray(data.checks)) return data;
     if (!response.ok || data?.ok === false) {
         throw createJannyError(classifyJannyFailure({
             helperStatus: response.status,
@@ -107,7 +112,7 @@ async function callHelper(route, body, { timeoutMs = 180_000, signal = null } = 
 }
 
 export async function testJannyBrowserEndpoint(endpoint) {
-    return callHelper('/jannyai-browser-test', jannyBrowserTarget(endpoint), { timeoutMs: 120_000 });
+    return callHelper('/jannyai-browser-test', jannyBrowserTarget(endpoint), { timeoutMs: 120_000, allowFailedResult: true });
 }
 
 export async function jannyBrowserFetch(path, {
@@ -125,6 +130,9 @@ export async function jannyBrowserFetch(path, {
     }, { timeoutMs, signal });
     const status = Number(data.status) || 0;
     if (status < 200 || status >= 300) throw createJannyError(classifyJannyFailure({ status, body: data.body || '', path }), status);
+    if (classifyJannyFailure({ body: data.body || '' }) === 'JANNY_CF_BLOCKED') {
+        throw createJannyError('JANNY_CF_BLOCKED', status);
+    }
     if (inspectCharacterId && status >= 200 && status < 300 && data.hydratedCharacter === null) {
         throw createJannyError('JANNY_PAGE_SHAPE_CHANGED', status);
     }
