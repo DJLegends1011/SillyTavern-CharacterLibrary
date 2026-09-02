@@ -14,6 +14,15 @@ import { stat, lstat, readFile, writeFile, rename, unlink, readdir, open } from 
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import * as zlib from 'node:zlib';
 import { promisify } from 'node:util';
+import {
+    JANNY_ORIGIN,
+    JANNY_AUTH_COOKIE,
+    JANNY_CF_COOKIE_NAMES,
+    buildJannySessionCookies,
+    jannyAccountCookiesToDelete,
+    validateJannyFinalUrl,
+    validateJannyBrowserRequest,
+} from './janny-browser-policy.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -2586,6 +2595,145 @@ async function getWarmPage(endpoint) {
     return wrapped;
 }
 
+// JannyAI shares the managed browser process, but never JanitorAI's target, cookies, or warm-page
+// lifecycle. A transport failure can therefore discard this tab without disrupting JanitorAI.
+let _jannyWarmPage = null; // { client, page }
+let _jannyWarmEndpoint = '';
+let _jannyWarmLastUsed = 0;
+let _jannyWarmReaper = null;
+let _jannyWarmPending = null;
+let _jannyWarmPendingEndpoint = '';
+const JANNY_WARM_IDLE_MS = 10 * 60 * 1000;
+
+async function closeJannyWarmPage() {
+    const warm = _jannyWarmPage;
+    _jannyWarmPage = null;
+    _jannyWarmEndpoint = '';
+    _jannyWarmLastUsed = 0;
+    if (_jannyWarmReaper) {
+        clearInterval(_jannyWarmReaper);
+        _jannyWarmReaper = null;
+    }
+    if (!warm) return;
+    try { await warm.page.close(); } catch {}
+    try { warm.client.close(); } catch {}
+}
+
+function armJannyWarmReaper() {
+    if (_jannyWarmReaper) return;
+    _jannyWarmReaper = setInterval(() => {
+        if (_jannyWarmPage && Date.now() - _jannyWarmLastUsed > JANNY_WARM_IDLE_MS) {
+            closeJannyWarmPage().catch(() => {});
+        }
+    }, 60000);
+    _jannyWarmReaper.unref?.();
+}
+
+async function getJannyWarmPage(endpoint) {
+    if (_jannyWarmPage && _jannyWarmEndpoint === endpoint && !_jannyWarmPage.client._closed) {
+        _jannyWarmLastUsed = Date.now();
+        return _jannyWarmPage;
+    }
+    while (_jannyWarmPending) {
+        if (_jannyWarmPendingEndpoint === endpoint) return _jannyWarmPending;
+        await _jannyWarmPending.catch(() => {});
+        if (_jannyWarmPage && _jannyWarmEndpoint === endpoint && !_jannyWarmPage.client._closed) {
+            _jannyWarmLastUsed = Date.now();
+            return _jannyWarmPage;
+        }
+    }
+
+    _jannyWarmPendingEndpoint = endpoint;
+    let pending;
+    pending = (async () => {
+        await closeJannyWarmPage();
+        const client = await CdpClient.connect(endpoint);
+        let page = null;
+        try {
+            page = await CdpPage.create(client);
+            await page.goto(`${JANNY_ORIGIN}/`, { timeout: CDP_NAV_TIMEOUT });
+            await waitForCloudflare(page);
+        } catch (error) {
+            try { await page?.close(); } catch {}
+            client.close();
+            throw error;
+        }
+        _jannyWarmPage = { client, page };
+        _jannyWarmEndpoint = endpoint;
+        _jannyWarmLastUsed = Date.now();
+        armJannyWarmReaper();
+        return _jannyWarmPage;
+    })().finally(() => {
+        if (_jannyWarmPending === pending) {
+            _jannyWarmPending = null;
+            _jannyWarmPendingEndpoint = '';
+        }
+    });
+    _jannyWarmPending = pending;
+    return pending;
+}
+
+async function injectJannySession(page, accessToken, refreshToken = '') {
+    const cookies = buildJannySessionCookies(accessToken, refreshToken);
+    const staleNames = [JANNY_AUTH_COOKIE, ...Array.from({ length: 8 }, (_, index) => `${JANNY_AUTH_COOKIE}.${index}`)];
+    for (const name of staleNames) {
+        try { await page.send('Network.deleteCookies', { name, domain: 'jannyai.com', path: '/' }); } catch {}
+    }
+    for (const cookie of cookies) {
+        await page.send('Network.setCookie', {
+            name: cookie.name,
+            value: cookie.value,
+            domain: 'jannyai.com',
+            path: '/',
+            secure: true,
+            httpOnly: false,
+            sameSite: 'Lax',
+            expires: cookie.expires,
+        });
+    }
+}
+
+async function extractHydratedJannyCharacter(page, safePath, characterId) {
+    await page.goto(`${JANNY_ORIGIN}${safePath}`, { timeout: CDP_NAV_TIMEOUT });
+    await page.evaluate(`new Promise(resolve => {
+        if (document.readyState === 'complete' || document.readyState === 'interactive') return resolve(true);
+        document.addEventListener('DOMContentLoaded', () => resolve(true), { once: true });
+    })`);
+    return page.evaluate(`(() => {
+        const requestedId = ${JSON.stringify(characterId)}.toLowerCase();
+        const decode = (value) => {
+            if (!Array.isArray(value)) return value;
+            const [type, data] = value;
+            if (type === 0) {
+                if (data && typeof data === 'object' && !Array.isArray(data)) {
+                    const out = {};
+                    for (const [key, child] of Object.entries(data)) out[key] = decode(child);
+                    return out;
+                }
+                return data;
+            }
+            if (type === 1 && Array.isArray(data)) return data.map(decode);
+            return data;
+        };
+        const islands = [
+            ...document.querySelectorAll('astro-island[component-export="CharacterButtons"]'),
+            ...document.querySelectorAll('astro-island:not([component-export="CharacterButtons"])'),
+        ];
+        for (const island of islands) {
+            const raw = island.getAttribute('props');
+            if (!raw) continue;
+            try {
+                const props = JSON.parse(raw);
+                const character = decode(props.character);
+                const foundId = String(character?.id || character?.characterId || character?.character_id || '').toLowerCase();
+                if (!character || foundId !== requestedId) continue;
+                return { character, imageUrl: decode(props.imageUrl) || null };
+            } catch { /* inspect the next known island */ }
+        }
+        return null;
+    })()`);
+}
+
 // ============================================================================================
 // Managed browser
 //
@@ -2918,6 +3066,198 @@ async function probeRenderStack(page) {
 
 function isSoftwareRenderer(renderer) {
     return /swiftshader|llvmpipe|softpipe|software/i.test(String(renderer || ''));
+}
+
+function registerJannyaiBrowserRoutes(router) {
+    router.post('/jannyai-managed/start', async (req, res) => {
+        try {
+            const endpoint = await getManagedEndpoint(req, true);
+            res.json({ ok: true, endpoint, browser: _managed?.browser || null, binary: _managed?.binary || null });
+        } catch (error) {
+            res.status(503).json({ ok: false, error: error.message, binary: findManagedBrowser() });
+        }
+    });
+
+    router.post('/jannyai-managed/stop', async (req, res) => {
+        await closeJannyWarmPage();
+        await stopManagedBrowser();
+        res.json({ ok: true });
+    });
+
+    router.get('/jannyai-managed/status', (req, res) => {
+        const running = !!(_managed && _managed.proc.exitCode === null && _managed.proc.signalCode === null);
+        res.json({
+            running,
+            endpoint: running ? _managed.endpoint : null,
+            browser: running ? _managed.browser : null,
+            binary: running ? _managed.binary : findManagedBrowser(),
+            userAgentOverridden: running ? !!_managed.ua : null,
+            idleStopMinutes: MANAGED_IDLE_MS / 60000,
+            lastError: _managedLastError,
+        });
+    });
+
+    router.post('/jannyai-browser-test', async (req, res) => {
+        const checks = [];
+        const add = (key, label, ok, detail, optional = false) =>
+            checks.push({ key, label, ok: !!ok, detail: detail || '', ...(optional ? { optional: true } : {}) });
+        let client = null;
+        let page = null;
+        try {
+            const endpoint = await resolveBrowserEndpoint(req, true);
+            client = await CdpClient.connect(endpoint);
+            add('endpoint', 'Endpoint reachable', true, endpoint);
+            add('browser', 'Browser version', !!client.info.Browser, client.info.Browser || 'unknown');
+
+            page = await CdpPage.create(client);
+            add('script', 'Can run injected script', (await page.evaluate('1 + 1')) === 2);
+            const stack = await probeRenderStack(page);
+            const software = isSoftwareRenderer(stack.renderer);
+            add('rendering', 'WebGL rendering available', !!stack.renderer,
+                stack.renderer ? `${String(stack.renderer).slice(0, 90)}${software ? ' (software)' : ''}` : 'No WebGL renderer reported.',
+                true);
+            add('codecs', 'H.264 and AAC available', !!stack.video && !!stack.audio,
+                stack.video && stack.audio ? 'Present.' : 'This browser build is missing H.264 or AAC support.');
+
+            await page.goto(`${JANNY_ORIGIN}/`, { timeout: CDP_NAV_TIMEOUT });
+            const cf = await waitForCloudflare(page);
+            add('cloudflare', 'Cloudflare cleared', !cf.blocked,
+                cf.blocked
+                    ? `Still challenged after ${Math.round(cf.waitedMs / 1000)}s (page title: "${cf.title}"). ${cf.hint}`
+                    : `Cleared in ${Math.round(cf.waitedMs / 1000)}s (page title: "${cf.title}").`);
+
+            const cookies = await page.cookies([JANNY_ORIGIN]);
+            const cloudflareCookies = cookies.filter(cookie => JANNY_CF_COOKIE_NAMES.has(cookie.name));
+            const hasClearance = cloudflareCookies.some(cookie => cookie.name === 'cf_clearance');
+            add('clearance', 'Holds a valid cf_clearance cookie', hasClearance && !cf.blocked,
+                !hasClearance ? 'Absent.' : (cf.blocked ? 'Present but not clearing the current challenge.' : 'Present and working.'));
+
+            const characterProbe = await page.evaluate(`(async () => {
+                try {
+                    const list = await fetch('/collections?sort=latest&page=1', { credentials: 'include' });
+                    const html = await list.text();
+                    const doc = new DOMParser().parseFromString(html, 'text/html');
+                    const link = [...doc.querySelectorAll('a[href*="/characters/"]')]
+                        .map(anchor => anchor.getAttribute('href') || '')
+                        .find(href => /^\\/characters\\/[0-9a-f-]{36}(?:_|$)/i.test(new URL(href, location.origin).pathname));
+                    if (!link) return { ok: false, detail: 'No character link found on the public collections page.' };
+                    const target = new URL(link, location.origin);
+                    if (target.origin !== location.origin) return { ok: false, detail: 'Character link left the JannyAI origin.' };
+                    const character = await fetch(target.pathname, { credentials: 'include' });
+                    const body = await character.text();
+                    return {
+                        ok: character.ok && /astro-island|CharacterButtons/i.test(body),
+                        detail: 'HTTP ' + character.status + ' ' + target.pathname.slice(0, 120),
+                    };
+                } catch (error) {
+                    return { ok: false, detail: String(error?.message || error).slice(0, 160) };
+                }
+            })()`);
+            add('character', 'Can load a JannyAI character page', characterProbe?.ok, characterProbe?.detail || 'Probe failed.');
+
+            const required = checks.filter(check => !check.optional);
+            res.json({ ok: required.every(check => check.ok), checks, browser: client.info.Browser || null });
+        } catch (error) {
+            if (!client) add('endpoint', 'Endpoint reachable', false, error.message);
+            else add('error', 'Test failed', false, error.message);
+            res.json({ ok: false, checks, error: error.message });
+        } finally {
+            if (page) await page.close();
+            if (client) client.close();
+        }
+    });
+
+    router.post('/jannyai-browser-fetch', async (req, res) => {
+        let request;
+        try {
+            request = validateJannyBrowserRequest(req.body ?? {});
+        } catch (error) {
+            const status = error?.code === 'JANNY_REQUEST_BLOCKED' ? 403 : 400;
+            return res.status(status).json({ ok: false, error: error.message });
+        }
+        const token = req.body?.token;
+        if (token !== undefined && (typeof token !== 'string' || token.length > 16_384)) {
+            return res.status(400).json({ ok: false, error: 'Invalid token' });
+        }
+
+        try {
+            const warm = await getJannyWarmPage(await resolveBrowserEndpoint(req));
+            const headers = { Accept: request.contentType || 'text/html,application/json' };
+            if (token) headers.Authorization = `Bearer ${token}`;
+            if (request.contentType) headers['Content-Type'] = request.contentType;
+            const init = {
+                credentials: 'include',
+                method: request.method,
+                headers,
+                ...(request.body ? { body: request.body } : {}),
+            };
+            const response = await warm.page.evaluate(`(async () => {
+                const response = await fetch(${JSON.stringify(request.safePath)}, ${JSON.stringify(init)});
+                return { status: response.status, body: await response.text(), finalUrl: response.url };
+            })()`);
+            const formPost = request.contentType === 'application/x-www-form-urlencoded';
+            const finalUrl = validateJannyFinalUrl(response?.finalUrl, formPost);
+            const hydratedCharacter = request.inspectCharacterId
+                ? await extractHydratedJannyCharacter(warm.page, request.safePath, request.inspectCharacterId)
+                : null;
+            _jannyWarmLastUsed = Date.now();
+            res.json({
+                ok: true,
+                status: response?.status ?? 0,
+                body: response?.body ?? '',
+                finalUrl,
+                hydratedCharacter,
+            });
+        } catch {
+            await closeJannyWarmPage().catch(() => {});
+            res.status(502).json({ ok: false, error: 'JannyAI browser transport failed' });
+        }
+    });
+
+    router.post('/jannyai-browser-session', async (req, res) => {
+        const { token, refreshToken = '' } = req.body ?? {};
+        if (typeof token !== 'string' || !token || token.length > 16_384
+            || typeof refreshToken !== 'string' || refreshToken.length > 16_384) {
+            return res.status(400).json({ ok: false, error: 'Invalid session' });
+        }
+        try {
+            const warm = await getJannyWarmPage(await resolveBrowserEndpoint(req));
+            await injectJannySession(warm.page, token, refreshToken);
+            _jannyWarmLastUsed = Date.now();
+            res.json({ ok: true });
+        } catch {
+            await closeJannyWarmPage().catch(() => {});
+            res.status(502).json({ ok: false, error: 'JannyAI browser session update failed' });
+        }
+    });
+
+    router.post('/jannyai-browser-logout', async (req, res) => {
+        try {
+            const warm = await getJannyWarmPage(await resolveBrowserEndpoint(req));
+            const cookies = await warm.page.cookies([JANNY_ORIGIN]);
+            const selectedNames = jannyAccountCookiesToDelete(cookies);
+            const cleared = [];
+            for (const name of selectedNames) {
+                let deleted = false;
+                for (const cookie of cookies.filter(candidate => candidate.name === name)) {
+                    try {
+                        await warm.page.send('Network.deleteCookies', {
+                            name,
+                            domain: cookie.domain || 'jannyai.com',
+                            path: cookie.path || '/',
+                        });
+                        deleted = true;
+                    } catch { /* continue clearing the remaining account cookies */ }
+                }
+                if (deleted) cleared.push(name);
+            }
+            _jannyWarmLastUsed = Date.now();
+            res.json({ ok: true, cleared });
+        } catch {
+            await closeJannyWarmPage().catch(() => {});
+            res.status(502).json({ ok: false, error: 'JannyAI browser logout failed' });
+        }
+    });
 }
 
 function registerJanitoraiBrowserRoutes(router) {
@@ -3810,7 +4150,7 @@ async function extractHiddenDefinition(page, token, detail) {
  * @param {import('express').Router} router
  */
 // Files installed by /self-update. Add here if the bundle grows; nothing else lands on disk.
-const _SELF_UPDATE_FILES = ['package.json', 'index.js'];
+const _SELF_UPDATE_FILES = ['package.json', 'index.js', 'janny-browser-policy.js'];
 const _SELF_UPDATE_MAX_BYTES = 2 * 1024 * 1024;
 const _SELF_UPDATE_VERSION_RE = /^[\w.\-+]{1,32}$/;
 let _selfUpdateInFlight = false;
@@ -4415,6 +4755,7 @@ export async function init(router) {
     registerSaucepanRoutes(router);
     registerDropboxRoutes(router);
     registerJanitoraiBrowserRoutes(router);
+    registerJannyaiBrowserRoutes(router);
 
     console.log('[cl-helper] Character Library helper plugin loaded');
 

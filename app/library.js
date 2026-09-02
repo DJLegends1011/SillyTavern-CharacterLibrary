@@ -1786,6 +1786,8 @@ async function refreshClHelperUpdateBanner(available, runningVersion, linkedInst
     banner.classList.remove('cl-hidden');
 }
 
+const CL_HELPER_BUNDLE_FILES = ['package.json', 'index.js', 'janny-browser-policy.js'];
+
 async function performClHelperSelfUpdate(btn) {
     if (!btn) return;
     const origHtml = btn.innerHTML;
@@ -1797,7 +1799,7 @@ async function performClHelperSelfUpdate(btn) {
     let bundledVersion = 'unknown';
     try {
         files = {};
-        for (const name of ['package.json', 'index.js']) {
+        for (const name of CL_HELPER_BUNDLE_FILES) {
             const r = await fetch(`../extras/cl-helper/${name}`, { cache: 'no-cache' });
             if (!r.ok) throw new Error(`could not read bundled ${name} (${r.status})`);
             files[name] = await r.text();
@@ -1833,10 +1835,10 @@ async function performClHelperSelfUpdate(btn) {
                 { key: 'Source:', value: `extras/cl-helper/ (v${bundledVersion})`, mono: true },
                 { key: 'Destination:', value: `${installPath} (currently v${runningVersion})`, mono: true },
             ] },
-            { type: 'list', items: [
-                { text: `package.json (${fmtSize(files['package.json'])})`, mono: true },
-                { text: `index.js (${fmtSize(files['index.js'])})`, mono: true },
-            ] },
+            { type: 'list', items: CL_HELPER_BUNDLE_FILES.map(name => ({
+                text: `${name} (${fmtSize(files[name])})`,
+                mono: true,
+            })) },
             { type: 'note', text: 'The current files are saved as .bak next to the originals. After the update, restart SillyTavern to load the new version.' },
         ],
     });
