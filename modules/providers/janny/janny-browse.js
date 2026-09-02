@@ -746,6 +746,7 @@ function closePreviewModal() {
 
 async function importCharacter(charData) {
     if (!charData?.id) return;
+    const generation = jannyAccountGeneration;
 
     const charId = charData.id;
     const slug = slugify(charData.name || 'character');
@@ -767,6 +768,7 @@ async function importCharacter(charData) {
         if (jannyDetailFetchPromise) {
             try { await jannyDetailFetchPromise; } catch { /* ignore */ }
         }
+        if (generation !== jannyAccountGeneration) return;
 
         if (!hasCompleteJannyDefinition(charData._fullData, charId)) {
             throw charData._detailError || Object.assign(new Error('Incomplete definition'), { code: 'JANNY_PAGE_SHAPE_CHANGED' });
@@ -788,6 +790,7 @@ async function importCharacter(charData) {
             first_mes: fallbackData.firstMessage || '',
             scenario: fallbackData.scenario || ''
         });
+        if (generation !== jannyAccountGeneration) return;
 
         if (duplicateMatches && duplicateMatches.length > 0) {
             if (importBtn) importBtn.innerHTML = '<i class="fa-solid fa-exclamation-triangle"></i> Duplicate found...';
@@ -799,6 +802,7 @@ async function importCharacter(charData) {
                 fullPath: identifier,
                 avatarUrl
             }, duplicateMatches);
+            if (generation !== jannyAccountGeneration) return;
 
             if (result.choice === 'skip') {
                 showToast('Import cancelled', 'info');
@@ -814,6 +818,7 @@ async function importCharacter(charData) {
                 inheritedGalleryId = getCharacterGalleryId(toReplace);
                 if (importBtn) importBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Replacing...';
                 const deleteSuccess = await deleteCharacter(toReplace, false);
+                if (generation !== jannyAccountGeneration) return;
                 if (!deleteSuccess) {
                     console.warn('[JannyBrowse] Could not delete existing character, proceeding with import anyway');
                 }
@@ -824,6 +829,7 @@ async function importCharacter(charData) {
         if (importBtn) importBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Importing...';
 
         const result = await provider.importCharacter(identifier, fallbackData, { inheritedGalleryId });
+        if (generation !== jannyAccountGeneration) return;
         if (!result.success) throw new Error(result.error || 'Import failed');
 
         const mediaUrls = result.embeddedMediaUrls || [];
@@ -856,12 +862,13 @@ async function importCharacter(charData) {
         });
 
     } catch (err) {
+        if (generation !== jannyAccountGeneration) return;
         console.error('[JannyBrowse] Import failed:', err);
         if (err?.code?.startsWith('JANNY_')) {
             delete charData._fullData;
             charData._detailError = err;
         }
-        handleJannyAccountFailure(err);
+        handleJannyAccountFailure(err, generation);
         showToast(`Import failed: ${describeJannyAccountError(err)}`, 'error');
         if (importBtn) {
             importBtn.disabled = !hasCompleteJannyDefinition(charData._fullData, charId)
@@ -1489,6 +1496,7 @@ function invalidateJannyAccountCache() {
     }
     const dropdown = document.getElementById('jannyCollectionDropdown');
     if (dropdown) dropdown.innerHTML = '';
+    document.getElementById('jannyBookmarkBtn')?.classList.remove('loading');
     updateJannyBookmarkButton();
     renderJannyOwnedCollectionsList();
     renderJannyCollectionDropdown();
@@ -1637,8 +1645,10 @@ async function toggleSelectedJannyBookmark() {
         handleJannyAccountFailure(err, generation);
         showToast(`Janny bookmark sync failed: ${describeJannyAccountError(err)}`, 'error', 8000);
     } finally {
-        if (btn) btn.classList.remove('loading');
-        updateJannyBookmarkButton();
+        if (generation === jannyAccountGeneration) {
+            if (btn) btn.classList.remove('loading');
+            updateJannyBookmarkButton();
+        }
     }
 }
 

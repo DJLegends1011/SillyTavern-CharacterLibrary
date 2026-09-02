@@ -161,3 +161,84 @@ test('account cache reset clears reusable preview definition and visible modal',
     assert.equal(h.el('jannyCharDescription').innerHTML, '');
     assert.equal(h.el('jannyImportBtn').disabled, true);
 });
+
+for (const rejected of [false, true]) {
+    test(`old import ${rejected ? 'rejection' : 'success'} cannot change replacement-account caches or UI`, async () => {
+        const d = deferred();
+        const h = browseHarness({
+            CoreAPI: { getProvider: () => ({ importCharacter: () => d.promise }) },
+            finishBrowseImport: async ({ closePreview, importBtn }) => {
+                importBtn.innerHTML = 'Imported old character';
+                closePreview();
+            },
+        });
+        h.seedAccount();
+        const btn = h.el('jannyImportBtn');
+        h.run("jannySelectedChar._fullData = { id: 'old-character', personality: 'Definition', firstMessage: 'Hello' }");
+        const pending = h.run('importCharacter(jannySelectedChar)');
+        await flush(); h.window.jannyInvalidateAccountCache(); h.seedAccount();
+        btn.disabled = true; btn.innerHTML = 'Replacement import pending';
+        if (rejected) d.reject(failure('JANNY_TOKEN_REJECTED'));
+        else d.resolve({ success: true, characterName: 'Old character', fileName: 'old-character.png' });
+        await pending;
+        assert.equal(h.run('jannyAccountStatus.active'), true);
+        assert.equal(h.run('jannyBookmarkIds.size'), 1);
+        assert.equal(h.run('jannyOwnedCollections.length'), 1);
+        assert.equal(h.run('jannyAccountStatus.code'), '');
+        assert.equal(btn.innerHTML, 'Replacement import pending');
+        assert.equal(btn.disabled, true);
+        assert.equal(h.toasts.length, 0);
+    });
+}
+
+for (const phase of ['duplicate check', 'duplicate decision', 'replacement deletion']) {
+    test(`account replacement during import ${phase} stops later writes and UI continuations`, async () => {
+        const d = deferred();
+        let imports = 0;
+        const h = browseHarness({ CoreAPI: {
+            getProvider: () => ({ importCharacter: async () => { imports++; return { success: true }; } }),
+            checkCharacterForDuplicatesAsync: () => phase === 'duplicate check' ? d.promise : [{ char: { name: 'Duplicate' } }],
+            showPreImportDuplicateWarning: () => phase === 'duplicate decision' ? d.promise : { choice: 'replace' },
+            getCharacterGalleryId: () => null,
+            deleteCharacter: () => d.promise,
+        } });
+        h.seedAccount();
+        const btn = h.el('jannyImportBtn');
+        h.run("jannySelectedChar._fullData = { id: 'old-character', personality: 'Definition', firstMessage: 'Hello' }");
+        const pending = h.run('importCharacter(jannySelectedChar)');
+        await flush(); h.window.jannyInvalidateAccountCache(); h.seedAccount();
+        btn.disabled = true; btn.innerHTML = 'Replacement import pending';
+        d.resolve(phase === 'duplicate check' ? [] : phase === 'duplicate decision' ? { choice: 'skip' } : true);
+        await pending;
+        assert.equal(imports, 0);
+        assert.equal(btn.innerHTML, 'Replacement import pending');
+        assert.equal(btn.disabled, true);
+        assert.equal(h.toasts.length, 0);
+    });
+}
+
+for (const rejected of [false, true]) {
+    test(`old bookmark ${rejected ? 'rejection' : 'success'} cannot unlock replacement-account mutation`, async () => {
+        const old = deferred(), current = deferred();
+        let calls = 0;
+        const h = browseHarness({ removeJannyBookmarks: () => ++calls === 1 ? old.promise : current.promise });
+        h.seedAccount();
+        const btn = h.el('jannyBookmarkBtn');
+        const first = h.run('toggleSelectedJannyBookmark()');
+        await flush(); h.window.jannyInvalidateAccountCache(); h.seedAccount();
+        const second = h.run('toggleSelectedJannyBookmark()');
+        await flush();
+        assert.equal(btn.disabled, true);
+        assert.equal(btn.classList.contains('loading'), true);
+        if (rejected) old.reject(failure('JANNY_TOKEN_REJECTED'));
+        else old.resolve([]);
+        await first;
+        assert.equal(btn.disabled, true);
+        assert.equal(btn.classList.contains('loading'), true);
+        assert.equal(btn['aria-label'], 'Syncing Janny bookmark');
+        current.resolve([]); await second;
+        assert.equal(btn.disabled, false);
+        assert.equal(btn.classList.contains('loading'), false);
+        assert.equal(h.run('jannyBookmarkIds.size'), 0);
+    });
+}
