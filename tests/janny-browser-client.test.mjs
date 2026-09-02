@@ -182,13 +182,29 @@ test('rejects successful HTTP challenge pages as Cloudflare blocks', async () =>
     responseData = {
         ok: true,
         status: 200,
-        body: '<!doctype html><html><head><title>Just a moment...</title></head><body>Checking your browser</body></html>',
+        body: '<!doctype html><html><head><title>Just a moment...</title></head><body>Checking your browser; this request is not allowed by policy.</body></html>',
         finalUrl: 'https://jannyai.com/api/bookmark',
     };
     await assert.rejects(
         browser.jannyBrowserFetch('/api/bookmark'),
         error => error.code === 'JANNY_CF_BLOCKED',
     );
+});
+
+test('accepts successful JSON and ordinary HTML that mention challenge words', async () => {
+    for (const body of [
+        JSON.stringify({ description: 'Cloudflare captcha challenge checklist' }),
+        '<!doctype html><html><head><title>Challenge notes</title></head><body>Cloudflare CAPTCHA challenge notes</body></html>',
+    ]) {
+        responseData = {
+            ok: true,
+            status: 200,
+            body,
+            finalUrl: 'https://jannyai.com/api/bookmark',
+        };
+        const result = await browser.jannyBrowserFetch('/api/bookmark');
+        assert.equal(result.body, body);
+    }
 });
 
 test('classifies rejected local helper calls as helper unavailability', async () => {

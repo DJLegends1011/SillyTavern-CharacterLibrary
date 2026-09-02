@@ -57,6 +57,14 @@ function classifyJannyFailure({ error = '', body = '', status = 0, helperStatus 
     return 'JANNY_HTTP_ERROR';
 }
 
+function isJannyCloudflareChallengePage(body) {
+    if (typeof body !== 'string') return false;
+    const isHtml = /<!doctype html|<html\b/i.test(body);
+    const hasChallengeTitle = /<title[^>]*>\s*(?:just a moment|attention required|verify you are human|security check)/i.test(body);
+    const hasChallengeMarker = /checking (?:your )?browser|cf-chl-|challenge-platform|cf-turnstile|__cf_chl_|captcha/i.test(body);
+    return isHtml && hasChallengeTitle && hasChallengeMarker;
+}
+
 function throwAbort(signal) {
     if (signal?.reason !== undefined) throw signal.reason;
     throw new DOMException('The operation was aborted.', 'AbortError');
@@ -130,7 +138,9 @@ export async function jannyBrowserFetch(path, {
     }, { timeoutMs, signal });
     const status = Number(data.status) || 0;
     if (status < 200 || status >= 300) throw createJannyError(classifyJannyFailure({ status, body: data.body || '', path }), status);
-    if (classifyJannyFailure({ body: data.body || '' }) === 'JANNY_CF_BLOCKED') {
+    // Successful JSON and ordinary pages may mention Cloudflare or challenges. Only a recognizable
+    // Cloudflare interstitial is blocked here; failed responses use the broader error classifier.
+    if (isJannyCloudflareChallengePage(data.body)) {
         throw createJannyError('JANNY_CF_BLOCKED', status);
     }
     if (inspectCharacterId && status >= 200 && status < 300 && data.hydratedCharacter === null) {
