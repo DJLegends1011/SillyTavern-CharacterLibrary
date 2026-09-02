@@ -41,6 +41,7 @@ function createJannyError(code, status = 0) {
 }
 
 function classifyJannyFailure({ error = '', body = '', status = 0, helperStatus = 0, path = '' } = {}) {
+    if (Object.hasOwn(JANNY_ERROR_MESSAGES, error)) return error;
     const detail = `${error} ${body}`.toLowerCase();
     if (detail.includes('janny_request_blocked') || /policy|not permitted|not allowed/.test(detail)) return 'JANNY_REQUEST_BLOCKED';
     if (/cloudflare|cf[_ -]?clearance|captcha|just a moment|attention required|challenge/.test(detail)) return 'JANNY_CF_BLOCKED';
@@ -122,6 +123,9 @@ export async function jannyBrowserFetch(path, {
         inspectCharacterId,
     }, { timeoutMs, signal });
     const status = Number(data.status) || 0;
+    if (inspectCharacterId && status === 403 && /<title[^>]*>\s*(?:403\s*)?Forbidden\s*<\/title>/i.test(data.body || '')) {
+        throw createJannyError('JANNY_CF_BLOCKED', status);
+    }
     if (status < 200 || status >= 300) throw createJannyError(classifyJannyFailure({ status, body: data.body || '', path }), status);
     // Successful JSON and ordinary pages may mention Cloudflare or challenges. Only a recognizable
     // Cloudflare interstitial is blocked here; failed responses use the broader error classifier.

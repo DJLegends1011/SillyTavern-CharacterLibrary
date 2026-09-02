@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { createJannyHelperHarness } from './helpers/janny-helper-harness.mjs';
+import { createJannyHelperHarness, jannyCharacterDocument } from './helpers/janny-helper-harness.mjs';
 
 const helper = readFileSync(new URL('../extras/cl-helper/index.js', import.meta.url), 'utf8');
 const pkg = JSON.parse(readFileSync(new URL('../extras/cl-helper/package.json', import.meta.url), 'utf8'));
@@ -55,12 +55,17 @@ test('warm-up validates the live page origin after navigation', () => {
     assert.ok(navigation >= 0 && guard > navigation && publish > guard, 'warm page is published without a post-navigation origin guard');
 });
 
-test('hydrated extraction validates the live page origin after navigation', () => {
-    const block = sourceBlock('async function extractHydratedJannyCharacter(', '// Managed browser');
-    const navigation = block.indexOf('await page.goto(');
-    const guard = block.indexOf('await assertJannyPageOrigin(page);', navigation);
-    const inspection = block.indexOf('document.readyState');
-    assert.ok(navigation >= 0 && guard > navigation && inspection > guard, 'hydrated extraction inspects an unverified redirected page');
+test('hydrated extraction rejects foreign navigation before any document inspection', async () => {
+    const reads = [];
+    const harness = createJannyHelperHarness([], {
+        finalUrl: 'https://other.example/',
+        document: new Proxy({}, { get: (_target, key) => { reads.push(key); throw new Error('Unverified document'); } }),
+    });
+    const response = await harness.apiRequest('/plugins/cl-helper/jannyai-browser-fetch', 'POST', {
+        path: characterPath, method: 'GET', inspectCharacterId: characterId,
+    });
+    assert.equal((await response.json()).error, 'JANNY_REQUEST_BLOCKED');
+    assert.deepEqual(reads, []);
 });
 
 test('fetch reuse validates the live origin before request construction and uses an absolute Janny URL', () => {
@@ -143,4 +148,83 @@ test('helper still rejects unexpected successful form destinations', async () =>
         assert.equal(response.ok, false);
         assert.equal((await response.json()).ok, false);
     }
+});
+
+const characterId = 'aaaaaaaa-1111-4111-8111-111111111111';
+const characterPath = `/characters/${characterId}_demo`;
+const completeCharacter = { id: characterId, name: 'Demo', firstMessage: 'Hello', personality: 'Definition', scenario: '', exampleDialogs: '' };
+
+async function inspectCharacter(character = completeCharacter, options = {}) {
+    const harness = createJannyHelperHarness([{ status: 200, finalUrl: 'https://jannyai.com' + characterPath, body: '' }], {
+        document: jannyCharacterDocument(character, options), finalUrl: options.finalUrl,
+    });
+    const response = await harness.apiRequest('/plugins/cl-helper/jannyai-browser-fetch', 'POST', {
+        path: characterPath, method: 'GET', inspectCharacterId: characterId,
+    });
+    return { harness, response, result: await response.json() };
+}
+
+for (const attributes of [{}, { componentExport: 'default', componentUrl: '/_astro/CharacterButtons.hash.js' }]) {
+    test('extracts only CharacterButtons props with one navigation: ' + JSON.stringify(attributes), async () => {
+        const { harness, response, result } = await inspectCharacter(completeCharacter, attributes);
+        assert.equal(response.ok, true);
+        assert.deepEqual(result, { ok: true, status: 200, body: '', finalUrl: 'https://jannyai.com' + characterPath,
+            hydratedCharacter: { character: completeCharacter, imageUrl: 'https://image.jannyai.com/demo.png' } });
+        assert.deepEqual(harness.navigations, ['https://jannyai.com' + characterPath]);
+        assert.equal(harness.requests.length, 0, 'definition inspection must not fetch before navigating');
+    });
+}
+
+for (const [name, character, options] of [
+    ['wrong identity', { ...completeCharacter, id: 'bbbbbbbb-2222-4222-8222-222222222222' }, {}],
+    ['missing greeting', { ...completeCharacter, firstMessage: ' ' }, {}],
+    ['listing only', { ...completeCharacter, personality: '', scenario: '', exampleDialogs: '' }, {}],
+    ['nonstring definition', { ...completeCharacter, personality: {} }, {}],
+    ['mixed malformed definition', { ...completeCharacter, scenario: {} }, {}],
+    ['unrelated island', completeCharacter, { componentExport: 'ListingCard' }],
+    ['malformed props', completeCharacter, { rawProps: '{broken' }],
+]) {
+    test('rejects ' + name + ' without another transport', async () => {
+        const { harness, result } = await inspectCharacter(character, options);
+        assert.equal(result.ok, false);
+        assert.equal(result.error, 'JANNY_PAGE_SHAPE_CHANGED');
+        assert.equal(harness.requests.length, 0);
+        assert.equal(harness.navigations.length, 1);
+        assert.equal('hydratedCharacter' in result, false);
+    });
+}
+
+for (const [name, options, code] of [
+    ['challenge', { title: 'Just a moment...', marker: true }, 'JANNY_CF_BLOCKED'],
+    ['forbidden', { title: 'Forbidden' }, 'JANNY_CF_BLOCKED'],
+    ['login', { finalUrl: 'https://jannyai.com/auth/login?next=%2Fcharacters' }, 'JANNY_LOGIN_REQUIRED'],
+    ['inline login form', { title: 'Sign in', marker: 'login' }, 'JANNY_LOGIN_REQUIRED'],
+    ['foreign redirect', { finalUrl: 'https://other.example/characters/demo' }, 'JANNY_REQUEST_BLOCKED'],
+    ['unrelated path', { finalUrl: 'https://jannyai.com/collections' }, 'JANNY_REQUEST_BLOCKED'],
+    ['different character path', { finalUrl: 'https://jannyai.com/characters/bbbbbbbb-2222-4222-8222-222222222222_demo' }, 'JANNY_REQUEST_BLOCKED'],
+]) {
+    test('classifies ' + name + ' before reading props', async () => {
+        let propsRead = false;
+        const { result } = await inspectCharacter(completeCharacter, { ...options, onPropsRead: () => { propsRead = true; } });
+        assert.equal(result.ok, false);
+        assert.equal(result.error, code);
+        assert.equal('hydratedCharacter' in result, false);
+        assert.equal(propsRead, false);
+    });
+}
+
+test('authored challenge words and ambient Cloudflare scripts do not block a complete character', async () => {
+    const character = { ...completeCharacter, personality: 'Cloudflare captcha challenge: Just a moment, verify you are human.' };
+    const { result } = await inspectCharacter(character, { marker: true });
+    assert.deepEqual(result.hydratedCharacter?.character, character);
+});
+
+test('a character title matching challenge copy plus an ambient script is not an interstitial', async () => {
+    const { result } = await inspectCharacter(completeCharacter, { title: 'Just a moment', marker: 'script' });
+    assert.deepEqual(result.hydratedCharacter?.character, completeCharacter);
+});
+
+test('a character named Forbidden with normal site title chrome is not a blocked page', async () => {
+    const { result } = await inspectCharacter(completeCharacter, { title: 'Forbidden | JannyAI' });
+    assert.deepEqual(result.hydratedCharacter?.character, completeCharacter);
 });

@@ -279,3 +279,20 @@ test('exposes only the browser client handles needed by the settings script', ()
     assert.equal(window.jannyBrowserRefreshSession, browser.jannyBrowserRefreshSession);
     assert.equal(window.jannyBrowserLogout, browser.jannyBrowserLogout);
 });
+
+test('preserves known helper definition error codes without forwarding arbitrary error text', async () => {
+    responseOk = false;
+    responseStatus = 502;
+    try {
+        for (const code of ['JANNY_CF_BLOCKED', 'JANNY_LOGIN_REQUIRED', 'JANNY_PAGE_SHAPE_CHANGED', 'JANNY_BROWSER_TIMEOUT']) {
+            responseData = { ok: false, error: code };
+            await assert.rejects(browser.jannyBrowserFetch('/characters/demo', { inspectCharacterId: 'demo' }), error => error.code === code);
+        }
+    } finally { responseOk = true; responseStatus = 200; }
+});
+
+test('bare Forbidden on inspected character pages is blocked without changing account 403 semantics', async () => {
+    responseData = { ok: true, status: 403, body: '<title>Forbidden</title>' };
+    await assert.rejects(browser.jannyBrowserFetch('/characters/demo', { inspectCharacterId: 'demo' }), error => error.code === 'JANNY_CF_BLOCKED');
+    await assert.rejects(browser.jannyBrowserFetch('/api/bookmark'), error => error.code === 'JANNY_HTTP_ERROR');
+});

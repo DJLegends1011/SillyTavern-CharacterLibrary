@@ -2775,12 +2775,24 @@ async function waitForJannyDocumentReady(page) {
 async function extractHydratedJannyCharacter(page, safePath, characterId) {
     await page.goto(`${JANNY_ORIGIN}${safePath}`, { timeout: CDP_NAV_TIMEOUT });
     await assertJannyPageOrigin(page);
-    await page.evaluate(`new Promise(resolve => {
-        if (document.readyState === 'complete' || document.readyState === 'interactive') return resolve(true);
-        document.addEventListener('DOMContentLoaded', () => resolve(true), { once: true });
-    })`);
-    return page.evaluate(`(() => {
-        const requestedId = ${JSON.stringify(characterId)}.toLowerCase();
+    await waitForJannyDocumentReady(page);
+    const finalUrl = new URL(await assertJannyPageOrigin(page));
+    if (/^\/(?:auth\/)?(?:login|log-in|signin|sign-in)\/?$/i.test(finalUrl.pathname)) {
+        throw Object.assign(new Error('JANNY_LOGIN_REQUIRED'), { code: 'JANNY_LOGIN_REQUIRED' });
+    }
+    validateJannyBrowserRequest({ path: finalUrl.pathname + finalUrl.search, method: 'GET', inspectCharacterId: characterId });
+    const result = await page.evaluate(`(() => {
+        // Use page chrome, never body/definition text: authors can write about challenges.
+        const title = String(document.title || '').trim();
+        const challengeTitle = /^(?:just a moment|attention required|verify you are human|security check)(?:\\b|$)/i.test(title);
+        const challengeMarker = document.querySelector('#challenge-form, #cf-challenge-running, #cf-please-wait, .cf-turnstile');
+        if (/^(?:403\\s*)?Forbidden$/i.test(title) || (challengeTitle && challengeMarker)) {
+            return { error: 'JANNY_CF_BLOCKED' };
+        }
+        if (/^(?:sign[ -]?in|log[ -]?in)(?:\\b|$)/i.test(title) && document.querySelector('form input[type="password"]')) {
+            return { error: 'JANNY_LOGIN_REQUIRED' };
+        }
+        const requestedId = ${JSON.stringify(characterId)};
         const decode = (value) => {
             if (!Array.isArray(value)) return value;
             const [type, data] = value;
@@ -2795,23 +2807,30 @@ async function extractHydratedJannyCharacter(page, safePath, characterId) {
             if (type === 1 && Array.isArray(data)) return data.map(decode);
             return data;
         };
-        const islands = [
-            ...document.querySelectorAll('astro-island[component-export="CharacterButtons"]'),
-            ...document.querySelectorAll('astro-island:not([component-export="CharacterButtons"])'),
-        ];
+        const islands = document.querySelectorAll('astro-island[component-export="CharacterButtons"], astro-island[component-url*="CharacterButtons"]');
         for (const island of islands) {
             const raw = island.getAttribute('props');
             if (!raw) continue;
             try {
                 const props = JSON.parse(raw);
                 const character = decode(props.character);
-                const foundId = String(character?.id || character?.characterId || character?.character_id || '').toLowerCase();
-                if (!character || foundId !== requestedId) continue;
+                const hasText = value => typeof value === 'string' && value.trim().length > 0;
+                if (!character || String(character.id) !== String(requestedId)
+                    || !hasText(character.firstMessage)
+                    || ![character.personality, character.scenario, character.exampleDialogs].every(value => value == null || typeof value === 'string')
+                    || ![character.personality, character.scenario, character.exampleDialogs].some(hasText)) continue;
                 return { character, imageUrl: decode(props.imageUrl) || null };
             } catch { /* inspect the next known island */ }
         }
         return null;
     })()`);
+    if (['JANNY_CF_BLOCKED', 'JANNY_LOGIN_REQUIRED'].includes(result?.error)) {
+        throw Object.assign(new Error(result.error), { code: result.error });
+    }
+    if (!result?.character) {
+        throw Object.assign(new Error('JANNY_PAGE_SHAPE_CHANGED'), { code: 'JANNY_PAGE_SHAPE_CHANGED' });
+    }
+    return result;
 }
 
 // ============================================================================================
@@ -3258,6 +3277,12 @@ function registerJannyaiBrowserRoutes(router) {
         try {
             const warm = await getJannyWarmPage(await resolveBrowserEndpoint(req));
             await assertJannyPageOrigin(warm.page);
+            if (request.inspectCharacterId) {
+                const hydratedCharacter = await extractHydratedJannyCharacter(warm.page, request.safePath, request.inspectCharacterId);
+                const finalUrl = await assertJannyPageOrigin(warm.page);
+                _jannyWarmLastUsed = Date.now();
+                return res.json({ ok: true, status: 200, body: '', finalUrl, hydratedCharacter });
+            }
             const headers = { Accept: request.contentType || 'text/html,application/json' };
             if (request.contentType) headers['Content-Type'] = request.contentType;
             const init = {
@@ -3272,20 +3297,19 @@ function registerJannyaiBrowserRoutes(router) {
             })()`);
             const formPost = request.contentType === 'application/x-www-form-urlencoded';
             const finalUrl = validateJannyFinalUrl(response?.finalUrl, formPost, response?.status ?? 0);
-            const hydratedCharacter = request.inspectCharacterId
-                ? await extractHydratedJannyCharacter(warm.page, request.safePath, request.inspectCharacterId)
-                : null;
             _jannyWarmLastUsed = Date.now();
             res.json({
                 ok: true,
                 status: response?.status ?? 0,
                 body: response?.body ?? '',
                 finalUrl,
-                hydratedCharacter,
+                hydratedCharacter: null,
             });
-        } catch {
+        } catch (error) {
             await closeJannyWarmPage().catch(() => {});
-            res.status(502).json({ ok: false, error: 'JannyAI browser transport failed' });
+            const code = ['JANNY_REQUEST_BLOCKED', 'JANNY_LOGIN_REQUIRED', 'JANNY_CF_BLOCKED', 'JANNY_PAGE_SHAPE_CHANGED'].includes(error?.code)
+                ? error.code : 'JannyAI browser transport failed';
+            res.status(502).json({ ok: false, error: code });
         }
     });
 
