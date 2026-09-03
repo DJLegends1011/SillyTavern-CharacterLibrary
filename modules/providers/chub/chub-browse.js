@@ -2,6 +2,7 @@
 
 import { BrowseView } from '../browse-view.js';
 import CoreAPI from '../../core-api.js';
+import { createChubTagFilter } from './chub-tag-filter.js';
 import { IMG_PLACEHOLDER, formatNumber, BROWSE_PURIFY_CONFIG, skeletonLines, deferRender, deferCall, isMobileMode, finishBrowseImport, proxyEncode, readJsonClassified, renderBrowseError } from '../provider-utils.js';
 import {
     CHUB_API_BASE,
@@ -123,6 +124,38 @@ let chubDetailFetchController = null; // AbortController for in-flight detail fe
 
 const chubDetailCache = new Map();
 const CHUB_DETAIL_CACHE_MAX = 5; // LRU cap - keep small for mobile memory (stripped entries only)
+
+let chubTagFilterController = null;
+const chubTagFilter = createChubTagFilter(async (fullPath, signal) => {
+    const url = `${CHUB_API_BASE}/api/characters/${fullPath}?full=true`;
+    const options = { headers: getChubHeaders(true), signal };
+    let response;
+    try {
+        response = await fetch(url, options);
+    } catch (error) {
+        if (error.name === 'AbortError') throw error;
+        response = await fetch(`/proxy/${proxyEncode(url)}`, options);
+    }
+    const data = await readJsonClassified(response);
+    return data.node?.topics;
+});
+
+function getChubExcludedTags() {
+    const tags = [...getProviderExcludeTags('chub')];
+    for (const [tag, state] of chubTagFilters) {
+        if (state === 'exclude') tags.push(tag);
+    }
+    return [...new Set(tags.filter(tag => typeof tag === 'string').map(tag => tag.trim().toLowerCase()).filter(Boolean))];
+}
+
+async function filterChubExcludedTags(characters, excludedTags, signal) {
+    const result = await chubTagFilter.filter(characters, excludedTags, { signal });
+    signal?.throwIfAborted();
+    if (result.uncheckedCount) {
+        showToast(`Chub could not verify tags for ${result.uncheckedCount} card(s). They were hidden; refresh to retry.`, 'warning');
+    }
+    return result.characters;
+}
 
 // Append-only rendering: track how many cards are already in DOM to avoid full re-render on Load More
 let chubGridRenderedCount = 0;
@@ -917,6 +950,8 @@ class ChubBrowseView extends BrowseView {
     deactivate() {
         super.deactivate();
         chubDelegatesInitialized = false;
+        chubLoadToken++;
+        chubTagFilterController?.abort();
         // Increment render token to cancel in-flight chunked renders
         chubTimelineRenderToken++;
         // Reset in-flight flag so a stuck flag from a hung fetch can't block the
@@ -1899,6 +1934,11 @@ function updateChubTagsButtonState() {
 // ============================================================================
 
 async function switchChubViewMode(mode) {
+    if (mode === 'timeline') {
+        chubLoadToken++;
+        chubTagFilterController?.abort();
+        chubTagFilterController = null;
+    }
     chubViewMode = mode;
 
     document.querySelectorAll('.chub-view-btn').forEach(btn => {
@@ -2812,6 +2852,10 @@ function updateChubAiRatingFieldState() {
 
 async function loadChubCharacters(forceRefresh = false) {
     const thisToken = ++chubLoadToken;
+    chubTagFilterController?.abort();
+    chubTagFilterController = new AbortController();
+    const signal = chubTagFilterController.signal;
+    if (forceRefresh) chubTagFilter.clear();
 
     updateChubAiRatingFieldState();
 
@@ -2819,7 +2863,7 @@ async function loadChubCharacters(forceRefresh = false) {
 
     // Special handling for favorites filter - use gateway API directly
     if (chubFilterFavorites && chubToken) {
-        await loadChubFavorites(forceRefresh, thisToken);
+        await loadChubFavorites(forceRefresh, thisToken, signal);
         return;
     }
     
@@ -2902,14 +2946,9 @@ async function loadChubCharacters(forceRefresh = false) {
         // === Advanced Tag Filters ===
         // Include tags (topics)
         const includeTags = [];
-        const excludeTags = [];
+        const excludeTags = getChubExcludedTags();
         for (const [tag, state] of chubTagFilters) {
             if (state === 'include') includeTags.push(tag);
-            else if (state === 'exclude') excludeTags.push(tag);
-        }
-        // Merge persistent exclude tags from settings
-        for (const t of getProviderExcludeTags('chub')) {
-            if (!excludeTags.includes(t)) excludeTags.push(t);
         }
         if (includeTags.length > 0) {
             params.set('topics', includeTags.join(','));
@@ -2947,7 +2986,8 @@ async function loadChubCharacters(forceRefresh = false) {
         
         const response = await fetch(`${CHUB_API_BASE}/search?${params.toString()}`, {
             method: 'GET',
-            headers
+            headers,
+            signal,
         });
         
         const data = await readJsonClassified(response);
@@ -2967,6 +3007,11 @@ async function loadChubCharacters(forceRefresh = false) {
             nodes = data;
         }
         
+        // Pagination must use the raw page, even when every card is excluded.
+        chubHasMore = (data.data?.cursor ?? data.cursor) != null && nodes.length > 0;
+        nodes = await filterChubExcludedTags(nodes, excludeTags, signal);
+        if (thisToken !== chubLoadToken || !chubDelegatesInitialized) return;
+
         if (chubCurrentPage === 1) {
             chubCharacters = nodes;
             // Extract popular tags from search results on first page
@@ -2982,7 +3027,6 @@ async function loadChubCharacters(forceRefresh = false) {
             }
         }
         
-        chubHasMore = (data.data?.cursor ?? data.cursor) != null && nodes.length > 0;
         const wasAppend = chubCurrentPage > 1;
         
         // When "hide owned" is active, auto-fetch additional pages if too many
@@ -2991,7 +3035,7 @@ async function loadChubCharacters(forceRefresh = false) {
         // 3 extra fetches to avoid runaway requests when most results are owned.
         // Cost: up to 3 additional lightweight search API calls (JSON-only, no
         // image data); the extra card objects in chubCharacters are ~1-2 KB each.
-        const chubHasClientFilters = chubFilterHideOwned || chubFilterHidePossible;
+        const chubHasClientFilters = chubFilterHideOwned || chubFilterHidePossible || excludeTags.length > 0;
         if (chubHasClientFilters && chubHasMore) {
             const isFiltered = (c) => {
                 if (chubFilterHideOwned && isCharInLocalLibrary(c)) return true;
@@ -3009,7 +3053,8 @@ async function loadChubCharacters(forceRefresh = false) {
                 
                 const moreRes = await fetch(`${CHUB_API_BASE}/search?${params.toString()}`, {
                     method: 'GET',
-                    headers
+                    headers,
+                    signal,
                 });
                 if (!moreRes.ok) break;
                 
@@ -3021,6 +3066,10 @@ async function loadChubCharacters(forceRefresh = false) {
                 else if (Array.isArray(moreData.data)) moreNodes = moreData.data;
                 else if (Array.isArray(moreData)) moreNodes = moreData;
                 
+                chubHasMore = (moreData.data?.cursor ?? moreData.cursor) != null && moreNodes.length > 0;
+                moreNodes = await filterChubExcludedTags(moreNodes, excludeTags, signal);
+                if (thisToken !== chubLoadToken || !chubDelegatesInitialized) return;
+
                 for (const node of moreNodes) {
                     const fp = getChubFullPath(node);
                     if (!fp || !existingPaths.has(fp)) {
@@ -3028,7 +3077,6 @@ async function loadChubCharacters(forceRefresh = false) {
                         if (fp) existingPaths.add(fp);
                     }
                 }
-                chubHasMore = (moreData.data?.cursor ?? moreData.cursor) != null && moreNodes.length > 0;
                 visibleNew += moreNodes.filter(c => !isFiltered(c)).length;
             }
             
@@ -3040,10 +3088,10 @@ async function loadChubCharacters(forceRefresh = false) {
         renderChubGrid(wasAppend);
         
         // Show/hide load more button
-        chubBrowseView.updateLoadMoreVisibility('chubLoadMore', chubHasMore, chubCharacters.length > 0);
+        chubBrowseView.updateLoadMoreVisibility('chubLoadMore', chubHasMore, true);
         
     } catch (e) {
-        if (thisToken !== chubLoadToken) return;
+        if (thisToken !== chubLoadToken || signal.aborted) return;
         console.error('ChubAI load error:', e);
         if (chubCurrentPage === 1) {
             renderBrowseError(grid, {
@@ -3108,7 +3156,7 @@ async function fetchChubUserFavoriteIds({ maxAgeMs = 0 } = {}) {
  * Load user's favorites from ChubAI gateway API
  * This uses a different endpoint than the search API
  */
-async function loadChubFavorites(forceRefresh = false, loadToken = 0) {
+async function loadChubFavorites(forceRefresh = false, loadToken = 0, signal) {
     const grid = document.getElementById('chubGrid');
 
     if (chubCurrentPage === 1) {
@@ -3131,6 +3179,7 @@ async function loadChubFavorites(forceRefresh = false, loadToken = 0) {
         
         const response = await fetch(url, {
             method: 'GET',
+            signal,
             headers: {
                 'Accept': 'application/json',
                 'samwise': chubToken,
@@ -3145,6 +3194,9 @@ async function loadChubFavorites(forceRefresh = false, loadToken = 0) {
         
         // Extract nodes from response
         let nodes = data.nodes || data.data || [];
+        const hasMore = data.cursor != null && nodes.length > 0;
+        nodes = await filterChubExcludedTags(nodes, getChubExcludedTags(), signal);
+        if ((loadToken && loadToken !== chubLoadToken) || !chubDelegatesInitialized) return;
         
         // Apply additional filters client-side
         if (chubFilterImages) {
@@ -3209,15 +3261,15 @@ async function loadChubFavorites(forceRefresh = false, loadToken = 0) {
             }
         }
         
-        chubHasMore = data.cursor !== null && nodes.length > 0;
+        chubHasMore = hasMore;
         
         renderChubGrid(chubCurrentPage > 1);
         
         // Show/hide load more button
-        chubBrowseView.updateLoadMoreVisibility('chubLoadMore', chubHasMore, chubCharacters.length > 0);
+        chubBrowseView.updateLoadMoreVisibility('chubLoadMore', chubHasMore, true);
         
     } catch (e) {
-        if (loadToken && loadToken !== chubLoadToken) return;
+        if ((loadToken && loadToken !== chubLoadToken) || signal?.aborted) return;
         console.error('[ChubAI] Favorites load error:', e);
         if (chubCurrentPage === 1) {
             renderBrowseError(grid, {
