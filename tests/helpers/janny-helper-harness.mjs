@@ -67,7 +67,7 @@ export function createJannyHelperHarness(replies, { document = { cookie: '' }, f
 
 // Small DOM boundary double: selectors are evaluated against explicit island
 // attributes; props use the real Astro tuple format and no browser-owned state.
-export function jannyCharacterDocument(character, { componentExport = 'CharacterButtons', componentUrl = '', title = 'Demo', marker = false, rawProps, onPropsRead = () => {} } = {}) {
+export function jannyCharacterDocument(character, { componentExport = 'CharacterButtons', componentUrl = '', title = 'Demo', marker = false, rawProps, onPropsRead = () => {}, creatorLinks = [] } = {}) {
     const encode = value => Array.isArray(value) ? [1, value.map(encode)]
         : [0, value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).map(([key, child]) => [key, encode(child)])) : value];
     const attrs = {
@@ -75,13 +75,18 @@ export function jannyCharacterDocument(character, { componentExport = 'Character
         props: rawProps ?? JSON.stringify({ character: encode(character), imageUrl: [0, 'https://image.jannyai.com/demo.png'], unrelated: [99, null] }),
     };
     const island = { getAttribute: name => { if (name === 'props') onPropsRead(); return attrs[name] || null; } };
+    const links = creatorLinks.map(({ href, text, label = 'Creator:', inCharacterLayout = true }) => ({
+        textContent: text,
+        getAttribute: name => name === 'href' ? href : null,
+        parentElement: { textContent: `${label} ${text}`, parentElement: { contains: candidate => inCharacterLayout && candidate === island } },
+    }));
     return {
         readyState: 'complete', title,
         get cookie() { throw new Error('Extractor must not read cookies'); },
         get body() { throw new Error('Extractor must not scan character text for challenges'); },
         querySelector: selector => (marker === 'script' ? selector.includes('script[')
             : marker === 'login' ? selector.includes('password') : marker && /cf-|challenge|turnstile/.test(selector)) ? {} : null,
-        querySelectorAll: selector => selector.split(',').some(part => {
+        querySelectorAll: selector => selector === 'h2 > a[href]' ? links : selector.split(',').some(part => {
             if (!part.includes('astro-island')) return false;
             const match = part.match(/\[(component-export|component-url)(\*?=)"([^"]+)"\]/);
             if (!match) return true;

@@ -114,7 +114,7 @@ function buildV2FromDetails(charData) {
             system_prompt: '',
             post_history_instructions: '',
             creator_notes: rawDesc,
-            creator: char.creatorUsername || char.creatorId || '',
+            creator: char.creatorUsername || '',
             character_version: '1.0',
             tags: resolveTagNames(char.tagIds),
             alternate_greetings: [],
@@ -141,7 +141,7 @@ class JannyProvider extends ProviderBase {
     get icon() { return 'fa-solid fa-broom'; }
     get iconUrl() { return 'https://tse3.mm.bing.net/th/id/OIP.nb-qi0od9W6zRsskVwL6QAHaHa?rs=1&pid=ImgDetMain&o=7&rm=3'; }
     get browseView() { return jannyBrowseView; }
-    get minClHelperVersion() { return '1.13.2'; }
+    get minClHelperVersion() { return '1.13.3'; }
 
     get linkStatFields() {
         return {
@@ -341,6 +341,7 @@ class JannyProvider extends ProviderBase {
 
         // Fallback to local data if remote fetch failed
         const jannyData = char?.data?.extensions?.jannyai || {};
+        const creatorName = jannyData.creatorUsername || char?.data?.creator || '';
         return {
             id: charId,
             name: char?.name || 'Unknown',
@@ -349,7 +350,8 @@ class JannyProvider extends ProviderBase {
             tagIds: jannyData.tagIds || [],
             totalToken: jannyData.totalToken || char?.data?.extensions?.total_tokens || 0,
             createdAtStamp: jannyData.createdAtStamp || 0,
-            creatorId: jannyData.creatorId || char?.data?.creator || ''
+            creatorId: jannyData.creatorId || '',
+            creatorUsername: creatorName !== jannyData.creatorId ? creatorName : '',
         };
     }
 

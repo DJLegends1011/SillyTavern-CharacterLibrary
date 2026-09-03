@@ -2886,6 +2886,25 @@ async function extractHydratedJannyCharacter(page, safePath, characterId) {
                     || !hasText(character.firstMessage)
                     || ![character.personality, character.scenario, character.exampleDialogs].every(value => value == null || typeof value === 'string')
                     || ![character.personality, character.scenario, character.exampleDialogs].some(hasText)) continue;
+                if (!hasText(character.creatorUsername) && hasText(character.creatorId)) {
+                    const names = new Set();
+                    for (const link of document.querySelectorAll('h2 > a[href]')) {
+                        const heading = link.parentElement;
+                        // The site's Creator heading shares the character layout with
+                        // this island. Ignore links embedded inside creator notes.
+                        if (!/^Creator\\s*:/i.test(heading?.textContent?.trim() || '')
+                            || !heading?.parentElement?.contains(island)) continue;
+                        try {
+                            const url = new URL(link.getAttribute('href'), location.href);
+                            const match = url.pathname.match(/^\\/creators\\/([^/_]+)(?:_[^/]*)?$/);
+                            if (url.origin !== location.origin || !match
+                                || decodeURIComponent(match[1]) !== character.creatorId) continue;
+                            const username = (link.textContent || '').trim().replace(/^@/, '').trim();
+                            if (username && username.length <= 128 && username !== character.creatorId) names.add(username);
+                        } catch { /* malformed creator link */ }
+                    }
+                    if (names.size === 1) character.creatorUsername = [...names][0];
+                }
                 return { character, imageUrl: decode(props.imageUrl) || null };
             } catch { /* inspect the next known island */ }
         }

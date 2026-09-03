@@ -97,6 +97,44 @@ test('provider consumes actual helper extraction and maps full card fields', asy
     } finally { window.apiRequest = original; }
 });
 
+test('local preview fallback preserves a known creator name separately from the creator ID', async () => {
+    const preview = await provider.buildPreviewObject({ name: 'Local character', data: {
+        creator: 'Kinose', extensions: { jannyai: { creatorId: 'creator-id' } },
+    } }, { id: characterId, fullPath: identifier });
+    assert.equal(preview.creatorUsername, 'Kinose');
+    assert.equal(preview.creatorId, 'creator-id');
+});
+
+test('creator attribution comes from the character page link matching its creator ID', async () => {
+    const creatorId = '01daa0f4-9de1-4f80-91bd-c259a7052569';
+    const harness = createJannyHelperHarness([], { document: jannyCharacterDocument({ ...completeCharacter, creatorId }, {
+        creatorLinks: [{ href: `/creators/${creatorId}_profile-kinose`, text: '\n@Kinose ' }],
+    }) });
+    const original = window.apiRequest;
+    window.apiRequest = harness.apiRequest;
+    try {
+        const card = await provider.fetchRemoteCard({ id: characterId, slug: 'demo' });
+        assert.equal(card.data.creator, 'Kinose');
+        assert.equal(harness.navigations.length, 1);
+        assert.equal(harness.requests.length, 0);
+    } finally { window.apiRequest = original; }
+});
+
+for (const link of [
+    { href: '/creators/another-id_profile-collector', text: '@CollectionOwner' },
+    { href: 'https://other.example/creators/creator_profile-fake', text: '@Fake' },
+    { href: '/creators/creator_profile-fake', text: '@Fake', label: 'Mentioned creator:' },
+    { href: '/creators/creator_profile-fake', text: '@Fake', inCharacterLayout: false },
+]) {
+    test('unrelated links cannot become the card creator: ' + JSON.stringify(link), async () => {
+        const harness = createJannyHelperHarness([], { document: jannyCharacterDocument(completeCharacter, { creatorLinks: [link] }) });
+        const response = await harness.apiRequest('/plugins/cl-helper/jannyai-browser-fetch', 'POST', {
+            path: '/characters/' + identifier, inspectCharacterId: characterId,
+        });
+        assert.equal((await response.json()).hydratedCharacter.character.creatorUsername, undefined);
+    });
+}
+
 test('imports hydrated definitions and only backfills metadata from an identity-matched listing', async () => {
     const originalFetch = globalThis.fetch;
     let embeddedCard;
@@ -116,7 +154,7 @@ test('imports hydrated definitions and only backfills metadata from an identity-
         assert.equal(result.success, true);
         assert.equal(embeddedCard.data.description, 'Definition');
         assert.equal(embeddedCard.data.first_mes, 'Hello');
-        assert.equal(embeddedCard.data.creator, 'listing-creator');
+        assert.equal(embeddedCard.data.creator, '', 'a creator ID is not a display name');
         assert.deepEqual(embeddedCard.data.tags, ['Tag 987654321']);
         assert.equal(browserCalls.length, 1);
         assert.deepEqual(directCalls, ['https://image.jannyai.com/demo.png', '/api/characters/import']);

@@ -542,7 +542,7 @@ function openPreviewModal(hit) {
     avatarImg.onerror = () => { avatarImg.src = '/img/ai4.png'; };
     BrowseView.adjustPortraitPosition(avatarImg);
     document.getElementById('jannyCharName').textContent = name;
-    document.getElementById('jannyCharCreator').textContent = hit.creatorUsername || hit.creatorId || 'Unknown';
+    document.getElementById('jannyCharCreator').textContent = hit.creatorUsername || 'Unknown';
     document.getElementById('jannyOpenInBrowserBtn').href = jannyUrl;
 
     // Stats
@@ -638,6 +638,18 @@ async function fetchAndPopulateDetails(hit, token) {
             if (jannySelectedChar?.id === hit.id) {
                 jannySelectedChar.creatorUsername = charData.creatorUsername;
             }
+        }
+
+        // Collection listings may omit dates even though the hydrated character
+        // contains one. Normalize Janny's SQL timestamp for consistent parsing.
+        const rawDate = typeof charData.createdAt === 'string'
+            ? charData.createdAt.trim().replace(' ', 'T').replace(/([+-]\d{2})$/, '$1:00')
+            : (charData.createdAtStamp ? Number(charData.createdAtStamp) * 1000 : null);
+        const detailDate = rawDate ? new Date(rawDate) : null;
+        if (detailDate && Number.isFinite(detailDate.getTime())) {
+            const dateEl = document.getElementById('jannyCharDate');
+            if (dateEl) dateEl.textContent = detailDate.toLocaleDateString();
+            if (jannySelectedChar?.id === hit.id) jannySelectedChar.createdAt = detailDate.toISOString();
         }
 
         const personality = charData.personality || '';
