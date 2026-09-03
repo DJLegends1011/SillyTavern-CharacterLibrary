@@ -3349,7 +3349,45 @@ function registerJannyaiBrowserRoutes(router) {
                 ...(request.body ? { body: request.body } : {}),
             };
             const response = await warm.page.evaluate(`(async () => {
-                const response = await fetch(${JSON.stringify(`${JANNY_ORIGIN}${request.safePath}`)}, ${JSON.stringify(init)});
+                const init = ${JSON.stringify(init)};
+                // Janny's account APIs require a bearer header as well as browser cookies.
+                // Derive it here on every request so rotated credentials never leave the
+                // browser or become stale in Character Library/the helper process.
+                if (${JSON.stringify(request.safePath.split('?')[0] === '/api/bookmark' || request.safePath.startsWith('/api/collections/'))}) {
+                    try {
+                        const cookieName = ${JSON.stringify(JANNY_AUTH_COOKIE)};
+                        const chunks = new Map();
+                        let value = '';
+                        for (const part of document.cookie.split(';')) {
+                            const eq = part.indexOf('=');
+                            if (eq < 0) continue;
+                            const name = part.slice(0, eq).trim();
+                            const chunk = part.slice(eq + 1).trim();
+                            if (name === cookieName) value = chunk;
+                            else if (name.startsWith(cookieName + '.')) {
+                                const suffix = name.slice(cookieName.length + 1);
+                                if (!/^[0-9]+$/.test(suffix)) continue;
+                                const index = Number(suffix);
+                                if (chunks.has(index)) throw new Error('Duplicate session chunk');
+                                chunks.set(index, chunk);
+                            }
+                        }
+                        if (!value) {
+                            const indices = [...chunks.keys()].sort((a, b) => a - b);
+                            if (indices.some((index, position) => index !== position)) throw new Error('Incomplete session');
+                            value = indices.map(index => chunks.get(index)).join('');
+                        }
+                        value = decodeURIComponent(value);
+                        if (value.startsWith('base64-') && value.length <= ${JANNY_SESSION_VALUE_LIMIT}) {
+                            const encoded = value.slice(7).replace(/-/g, '+').replace(/_/g, '/');
+                            const session = JSON.parse(atob(encoded));
+                            const token = session?.access_token;
+                            if (typeof token === 'string' && token.length <= ${JANNY_SESSION_TOKEN_LIMIT}
+                                && /^[A-Za-z0-9_.-]+$/.test(token)) init.headers.Authorization = 'Bearer ' + token;
+                        }
+                    } catch { /* Missing/malformed sessions retain the API's normal unauthorized response. */ }
+                }
+                const response = await fetch(${JSON.stringify(`${JANNY_ORIGIN}${request.safePath}`)}, init);
                 return { status: response.status, body: await response.text(), finalUrl: response.url };
             })()`);
             const formPost = request.contentType === 'application/x-www-form-urlencoded';

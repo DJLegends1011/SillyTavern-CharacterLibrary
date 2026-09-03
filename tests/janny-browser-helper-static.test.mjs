@@ -33,7 +33,7 @@ test('registers isolated Janny routes without renaming Janitor routes', () => {
 });
 
 test('bumps and bundles the three-file helper', () => {
-    assert.equal(pkg.version, '1.13.0');
+    assert.equal(pkg.version, '1.13.1');
     assert.match(helper, /\['package\.json', 'index\.js', 'janny-browser-policy\.js'\]/);
     assert.match(library, /\['package\.json', 'index\.js', 'janny-browser-policy\.js'\]/);
 });
