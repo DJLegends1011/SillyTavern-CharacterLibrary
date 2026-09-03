@@ -36,11 +36,27 @@ The `main` branch tracks upstream. Feature work lives on long-running branches. 
 | `extended-bookmarks` | Provider bookmark backups |
 | `codex/jannyai-account-sync` | JannyAI account sync + collections (cookie-based) |
 | `codex/janitorai-favorites-meili-latest` | JanitorAI favorites & Meili latest sort |
+| `codex/fix-chub-tag-exclusions` | Chub tag exclusions beyond the search tag limit |
+
+### Branch state as of 2026-09-03
+
+`main` is at **v7.2.2** (`5c99e79`). The newest AIO branch on origin is **`aio-v7.2.1`**, so the
+next rebuild is `aio-v7.2.2` (delete `aio-v7.2.1` once it lands). **All five feature branches are
+exactly 1 commit behind main** — none has v7.2.2 merged yet, so Step 1 applies to every one of them.
+
+| Branch | Ahead | Behind | Size vs main |
+|--------|-------|--------|--------------|
+| `codex/datacat-account-sync` | 88 | 1 | 30 files, +7328 |
+| `codex/jannyai-account-sync` | 88 | 1 | 51 files, +31385 |
+| `extended-bookmarks` | 28 | 1 | 16 files, +1534 |
+| `codex/janitorai-favorites-meili-latest` | 13 | 1 | 18 files, +3479 |
+| `codex/fix-chub-tag-exclusions` | 1 | 1 | 3 files, +332 |
 
 ## Branches excluded from AIO
 
 - `QOL` — quality-of-life tweaks (separate track)
-- `codex/provider-guide-docs` — documentation only
+- `codex/provider-guide-docs` — documentation only; carries this slash command (`.claude/commands/`)
+- `codex/saucepan-hidden-extraction` — 8 commits ahead / 5 behind main, last touched 2026-08-08. Never listed in this workflow and not in `aio-v7.2.1`. Status undecided — confirm with the user before adding it to AIO or retiring it.
 
 ## Retired branches (do NOT recreate or merge)
 
@@ -82,7 +98,7 @@ The feature branches must match whatever conventions the upstream maintainer cur
 
 ### 1c: Update each feature branch individually
 
-For **each** of the four feature branches, do all of the following:
+For **each** of the five feature branches, do all of the following:
 
 1. **Merge main into the branch:**
    ```
@@ -103,7 +119,7 @@ For **each** of the four feature branches, do all of the following:
 
 6. **Move to the next branch. Do NOT start Step 2.**
 
-Repeat for all three branches. Only after every feature branch is updated, style-aligned, verified, and pushed do you proceed.
+Repeat for all five branches. Only after every feature branch is updated, style-aligned, verified, and pushed do you proceed.
 
 ### 1d: Verifying merges
 
@@ -164,6 +180,7 @@ git push origin --delete aio-v<old-version>
 Merge each updated feature branch with a tagged commit message:
 
 ```
+git merge codex/fix-chub-tag-exclusions --no-ff -m "[fix-chub-tag-exclusions] Integrate Chub tag exclusions"
 git merge codex/datacat-account-sync --no-ff -m "[datacat-account-sync] Integrate DataCat account sync"
 git merge extended-bookmarks --no-ff -m "[extended-bookmarks] Integrate provider bookmark backups"
 git merge codex/janitorai-favorites-meili-latest --no-ff -m "[janitorai-favorites-meili-latest] Integrate JanitorAI favorites & Meili latest"
@@ -176,9 +193,14 @@ bookmark-like filters to `janny-browse.js`). `janitorai-favorites-meili-latest`
 should be merged after `extended-bookmarks` but before `jannyai`, because it
 conflicts with bookmarks over `janitorai-browse.js`. See 2d.
 
+`codex/fix-chub-tag-exclusions` is **order-independent** — it touches only
+`chub-browse.js`, the new `chub-tag-filter.js`, and its own test file, and shares
+no file with any other feature branch. Merging it first keeps the other four in
+their proven relative order. Verified conflict-free 2026-09-03.
+
 ### 2d: Handle the known conflict
 
-There are three recurring inter-branch conflict clusters.
+There are four recurring inter-branch conflict clusters. Clusters A-C are provider files; cluster D is the shared app shell and is the one most often missed.
 
 **A. `modules/providers/datacat/datacat-browse.js` — datacat-account-sync vs extended-bookmarks.** Both add card buttons, handlers, and filter flags.
 
@@ -188,14 +210,32 @@ There are three recurring inter-branch conflict clusters.
 - Keep both filter flag sets. NOTE: the `updateDatacatFiltersButtonState` count array is ONE expression, not two — **merge** the two arrays into a single `const count = [...]` containing every flag (`datacatFilterOnlyYours` from datacat + `datacatBookmarks.filterMyBookmarks` from bookmarks), don't keep both lines (double `const` = redeclaration error).
 - Keep both the `datacatYoursFolderSelect` handler and `datacatBookmarks.attachFilterCheckbox()`.
 
-**B. `modules/providers/janny/janny-browse.js` + `extras/cl-helper/index.js` — extended-bookmarks vs jannyai-account-sync** (only when jannyai is merged after bookmarks). Both add Janny bookmark/account UI. These are **two different features** that look alike: `jannyBookmarks.*` is the local backup module, `jannyFilterOnlyBookmarked` / `jannyBookmarkBtn` is the JannyAI *account's* saved list. Keep both everywhere.
+**B. `modules/providers/janny/janny-browse.js` — extended-bookmarks vs jannyai-account-sync** (only when jannyai is merged after bookmarks). Both add Janny bookmark/account UI. These are **two different features** that look alike: `jannyBookmarks.*` is the local backup module, `jannyFilterOnlyBookmarked` / `jannyBookmarkBtn` is the JannyAI *account's* saved list. Keep both everywhere.
 - `janny-browse.js` (5 blocks): union for the imports, the event-wiring, the modal meta row (both `${jannyBookmarks.renderMetaAction()}` AND the `jannyBookmarkBtn` button) and the filter-UI blocks. One needs real merging, not union: `updateJannyFiltersButton`'s `const count = [...]` array — combine both flags into the single array (`jannyBookmarks.filterMyBookmarks` + `jannyFilterOnlyBookmarked`), never two `const` lines.
 - As of v7.0.0 `init()` no longer issues the initial load (upstream moved it to `activate()`), so the old init() merge note is obsolete: leave upstream's "No initial load here" comment, keep jannyai's `refreshJannyAccountStatus()` in `init()`, and make sure the bookmarks conditional (`if (jannyBookmarks.filterMyBookmarks) renderBookmarksView() else loadCharacters(false)`) sits in `activate()`.
-- `cl-helper/index.js`: a shared `import {` opener splits into two closers (`./datacat-utils.js` vs `./janny-account.js`). Resolve as **two separate import statements** (replace the `=======` marker with a fresh `import {`), not one — otherwise you get a dangling second import body.
+- `cl-helper/index.js`: **no longer conflicts** (verified 2026-09-03). The old split-import note referenced `extras/cl-helper/janny-account.js`, which no longer exists on any branch — jannyai now ships `janny-browser-policy.js` instead, and cl-helper auto-merges cleanly. Ignore any older instruction to hand-resolve two import statements here.
 
 **C. `modules/providers/janitorai/janitorai-browse.js` — janitorai-favorites-meili-latest vs extended-bookmarks** (when favorites is merged after bookmarks). Both add features to janitorai. `janitoraiBookmarks.*` is the local backup module; `jaFilterFavorites` / favorite preview is the JanitorAI *account's* favorites list. Keep both everywhere.
 - `janitorai-browse.js` (3 blocks): union for `openPreviewModal` (keep `janitoraiBookmarks.syncModalState(hit)` AND the favorites token/identity setup), the `updateFiltersButton` count array (merge `janitoraiBookmarks.filterMyBookmarks` + `jaFilterFavorites` into one array), and the modal meta row (keep both `${janitoraiBookmarks.renderMetaAction()}` AND the `janitoraiCharFavoriteBtn` span).
 - Note: 6 janitorai-favorites tests fail in AIO because `bookmark-module.js` calls `window.addEventListener` at import time, which the favorites tests don't mock. This is an expected inter-branch test interaction that doesn't affect the real app.
+
+**D. The shared app shell — `app/library-mobile.js`, `app/library.js`, `app/library.html`, `modules/providers/browse-shared.css`.** These are NOT provider files, and they conflict across several branch pairs. Empirically verified 2026-09-03 by trial-merging each pair onto `main`:
+
+| Pair | Conflicting files |
+|------|-------------------|
+| datacat x bookmarks | `library-mobile.js`, `browse-shared.css`, `datacat-browse.js` |
+| bookmarks x jannyai | `library-mobile.js`, `browse-shared.css`, `janny-browse.js` |
+| datacat x jannyai | `library-mobile.js`, `library.js` |
+| bookmarks x janitorai | `janitorai-browse.js` |
+| janitorai x jannyai | `library.html` |
+| chub x anything | *(none)* |
+
+Resolutions differ per file — do NOT blanket-union this cluster:
+
+- **`app/library-mobile.js` — resolve as OURS.** This is the trap. The incoming branch re-adds a `metaAction` visibility guard that HEAD already has, only reformatted across multiple lines. It is the *same* logic, not an addition. A union duplicates the `if (...) return;` and you get a broken/duplicated conditional. Keep HEAD's version, discard the incoming one. `library-mobile.js` conflicts in 3 of the 5 branch pairs, so you will hit this more than once.
+- **`modules/providers/browse-shared.css` — union.** Plain adjacent addition: one side is empty, the other appends a self-contained rule block (e.g. the `.cl-bookmark-btn` styles). Keep both sides.
+- **`app/library.js` — union.** Plain adjacent addition of independent `const x = document.getElementById(...)` lines. Keep both blocks; no dedup needed.
+- **`app/library.html` — take the HIGHEST version per line, not one side wholesale.** The conflict is cache-buster query strings that both branches bumped independently, e.g. HEAD `library.js?v=199` / `module-loader.js?v=51` / `library-mobile.js?v=27` vs incoming `?v=200` / `?v=54` / `?v=26`. Resolve each `?v=` to the max of the two (here: 200, 54, 27), or bump past both. Taking one side wholesale silently *lowers* a cache-buster, which serves stale JS to the mobile browser the user actually tests on.
 
 If other conflicts appear, they're new — investigate before resolving.
 
@@ -220,9 +260,10 @@ Before considering the update complete:
 - [ ] **Every** feature branch verified (no markers, all `.js` parse, no NEW test failures vs baseline)
 - [ ] **Every** feature branch is pushed
 - [ ] AIO branch is reset to main (not incrementally merged)
-- [ ] All four feature branches are merged into AIO (jannyai last)
+- [ ] All five feature branches are merged into AIO (jannyai last among the conflicting four)
 - [ ] AIO verified (no markers, parses, no new test failures) and pushed to origin
-- [ ] No QOL, provider-guide-docs, or masquerade-provider in AIO
+- [ ] Cluster D checked: `library-mobile.js` resolved OURS, `library.html` `?v=` bumps took the max
+- [ ] No QOL, provider-guide-docs, saucepan-hidden-extraction, or masquerade-provider in AIO
 
 ## When to use this workflow
 
