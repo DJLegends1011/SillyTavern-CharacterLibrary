@@ -1,0 +1,5 @@
+# Only the shared slash commands are tracked; everything else here is local.
+*
+!.gitignore
+!commands/
+!commands/*.md
