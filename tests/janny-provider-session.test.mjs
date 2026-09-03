@@ -59,5 +59,5 @@ test('provider initialization wires all browser-owned session operations without
     assert.equal(bridgeMessages.length, 0);
     assert.equal(typeof window.jannyTestBrowserEndpoint, 'function');
     assert.equal(window.getValidJannyToken, undefined);
-    assert.equal(provider.minClHelperVersion, '1.13.1');
+    assert.equal(provider.minClHelperVersion, '1.13.2');
 });

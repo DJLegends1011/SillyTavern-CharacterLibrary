@@ -141,7 +141,7 @@ class JannyProvider extends ProviderBase {
     get icon() { return 'fa-solid fa-broom'; }
     get iconUrl() { return 'https://tse3.mm.bing.net/th/id/OIP.nb-qi0od9W6zRsskVwL6QAHaHa?rs=1&pid=ImgDetMain&o=7&rm=3'; }
     get browseView() { return jannyBrowseView; }
-    get minClHelperVersion() { return '1.13.1'; }
+    get minClHelperVersion() { return '1.13.2'; }
 
     get linkStatFields() {
         return {

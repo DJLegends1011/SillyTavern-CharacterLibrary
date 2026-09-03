@@ -234,19 +234,25 @@ the account request is retried exactly once. A second 401 becomes
 When a complete session is saved, Character Library calls
 `/jannyai-browser-session` with the access and refresh tokens parsed from the
 masked input.
-`cl-helper` constructs the standard Janny Supabase auth-cookie payload and
-installs it for the Janny origin, replacing stale unchunked or numbered chunks.
-For a complete pair, cookie storage uses a 400-day expiry while the serialized
-session retains the access JWT's true `expires_at`; a bare JWT cookie expires
-with its JWT. The long cookie lifetime preserves the refresh token long enough
-for JannyAI to rotate the short-lived access token.
+`cl-helper` installs JannyAI's native `sb-access-token` and `sb-refresh-token`
+cookies. Live verification on September 3 established that the chunked Supabase
+JSON cookie plus a bearer header returned 401, while the same credentials in
+the native pair returned 200. Chunked Supabase cookies remain supported as input.
+
+Helper 1.13.2 migrates existing chunk-only installations to the native pair before
+fetch, status, or recovery navigation, then removes the old chunks. Any native
+cookie takes precedence, even when incomplete, so old chunks cannot resurrect a
+stale session after rotation or logout. Installation validates encoded native
+values against a 3,800-byte limit and checks writes before deleting the source.
+Complete pairs use a 400-day cookie expiry so the server can renew an expired
+access JWT. Bare access cookies expire with their JWT.
 
 After installation, the browser is authoritative. Cookie/form routes,
 server-rendered pages, and client account APIs all observe the same vanilla
 session. The browser may replace the cookie chunks during renewal without
 requiring Character Library to copy the rotated credentials back into settings.
 
-When only a bare access JWT is supplied, the helper installs a session cookie
+When only a bare access JWT is supplied, the helper installs an access cookie
 with no refresh token and reports it as non-renewable.
 
 ### Logout

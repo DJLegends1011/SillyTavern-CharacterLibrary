@@ -90,14 +90,12 @@ test('complete sessions retain refresh cookies for 400 days without extending ac
     const nowSeconds = 1_900_000_000;
     const accessExp = 2_000_000_000;
     const prefix = `x.${Buffer.from(JSON.stringify({ exp: accessExp })).toString('base64url')}.`;
-    const accessToken = prefix + 's'.repeat(16_384 - prefix.length);
-    const cookies = buildJannySessionCookies(accessToken, 'r'.repeat(16_384), nowSeconds);
-    assert.ok(cookies.length > 8, 'maximum accepted sessions must cover the old fixed cleanup ceiling');
+    const accessToken = prefix + 's'.repeat(3800 - prefix.length);
+    const cookies = buildJannySessionCookies(accessToken, 'r'.repeat(3800), nowSeconds);
+    assert.deepEqual(cookies.map(cookie => cookie.name), ['sb-access-token', 'sb-refresh-token']);
     assert.ok(cookies.every(cookie => cookie.expires === nowSeconds + (400 * 24 * 60 * 60)));
 
-    const serialized = cookies.map(cookie => cookie.value).join('').slice('base64-'.length);
-    assert.ok(serialized.length > 40_000, 'maximum accepted sessions must cover the old reader ceiling');
-    assert.equal(JSON.parse(Buffer.from(serialized, 'base64').toString('utf8')).expires_at, accessExp);
+    assert.equal(cookies[0].value, accessToken);
 
     const bare = buildJannySessionCookies(accessToken, '', nowSeconds);
     assert.ok(bare.every(cookie => cookie.expires === accessExp));
@@ -109,6 +107,8 @@ test('selects only account cookies for logout', () => {
         { name: 'cf_clearance' },
         { name: '__cf_bm' },
         { name: 'sb-eenzcbluoctduymzksoq-auth-token.0' },
+        { name: 'sb-access-token' },
+        { name: 'sb-refresh-token' },
         { name: 'unrelated' },
-    ]), ['sb-eenzcbluoctduymzksoq-auth-token.0']);
+    ]), ['sb-eenzcbluoctduymzksoq-auth-token.0', 'sb-access-token', 'sb-refresh-token']);
 });

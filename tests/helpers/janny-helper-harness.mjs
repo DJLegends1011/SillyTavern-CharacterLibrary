@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
-import { assertJannyPageOrigin } from '../../extras/cl-helper/index.js';
+import { assertJannyPageOrigin, migrateJannyBrowserSession } from '../../extras/cl-helper/index.js';
 import { JANNY_ORIGIN, JANNY_AUTH_COOKIE, JANNY_SESSION_VALUE_LIMIT, JANNY_SESSION_TOKEN_LIMIT, validateJannyBrowserRequest, validateJannyFinalUrl } from '../../extras/cl-helper/janny-browser-policy.js';
 
 // Run the actual helper handler and its injected browser fetch script. Only the
 // browser connection/page and remote response are fake; validation stays real.
-export function createJannyHelperHarness(replies, { document = { cookie: '' }, finalUrl } = {}) {
+export function createJannyHelperHarness(replies, { document = { cookie: '' }, finalUrl, cookies = [] } = {}) {
     const helper = readFileSync(new URL('../../extras/cl-helper/index.js', import.meta.url), 'utf8');
     const source = helper.slice(helper.indexOf('function registerJannyaiBrowserRoutes('),
         helper.indexOf('function registerJanitoraiBrowserRoutes('));
@@ -14,7 +14,15 @@ export function createJannyHelperHarness(replies, { document = { cookie: '' }, f
     const requests = [];
     const navigations = [];
     let currentUrl = 'https://jannyai.com/';
+    const cookieJar = new Map(cookies.map(cookie => [cookie.name, { domain: 'jannyai.com', path: '/', ...cookie }]));
     const page = {
+        cookies: async () => [...cookieJar.values()],
+        allCookies: async () => [...cookieJar.values()],
+        send: async (method, cookie) => {
+            if (method === 'Network.setCookie') { cookieJar.set(cookie.name, cookie); return { success: true }; }
+            if (method === 'Network.deleteCookies') { cookieJar.delete(cookie.name); return {}; }
+            throw new Error(`Unexpected cookie operation: ${method}`);
+        },
         goto: async url => {
             navigations.push(url);
             currentUrl = finalUrl || url;
@@ -24,7 +32,7 @@ export function createJannyHelperHarness(replies, { document = { cookie: '' }, f
             fetch: async (url, init) => {
                 requests.push({ url, init: JSON.parse(JSON.stringify(init)) });
                 const next = replies.shift();
-                const reply = typeof next === 'function' ? next(url, init) : next;
+                const reply = typeof next === 'function' ? next(url, init, init.credentials === 'include' ? [...cookieJar.values()] : []) : next;
                 assert.ok(reply, 'Missing synthetic browser response');
                 return { status: reply.status, url: reply.finalUrl, text: async () => reply.body ?? '' };
             },
@@ -35,14 +43,14 @@ export function createJannyHelperHarness(replies, { document = { cookie: '' }, f
     runInNewContext(extractor + source + '\nregisterJannyaiBrowserRoutes(router);', {
         router: { post: (path, handler) => routes.set(path, handler), get() {} },
         JANNY_ORIGIN, JANNY_AUTH_COOKIE, JANNY_SESSION_VALUE_LIMIT, JANNY_SESSION_TOKEN_LIMIT,
-        validateJannyBrowserRequest, validateJannyFinalUrl, assertJannyPageOrigin,
+        validateJannyBrowserRequest, validateJannyFinalUrl, assertJannyPageOrigin, migrateJannyBrowserSession,
         resolveBrowserEndpoint: async () => 'http://browser.test:9222',
         getJannyWarmPage: async () => ({ page }),
         closeJannyWarmPage: async () => {},
         CDP_NAV_TIMEOUT: 45000, URL,
     });
     return {
-        requests, navigations,
+        requests, navigations, cookies: () => [...cookieJar.values()],
         apiRequest: async (path, method, body) => {
             assert.equal(path, '/plugins/cl-helper/jannyai-browser-fetch');
             assert.equal(method, 'POST');

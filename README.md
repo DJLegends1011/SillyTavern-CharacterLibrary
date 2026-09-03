@@ -622,10 +622,12 @@ If a card's definition stops loading, the browser's Cloudflare pass has probably
 
 JannyAI's bookmark and collection endpoints sit behind Cloudflare too. Account sync transfers your JannyAI session into the configured browser once; that browser profile owns the session from then on, including its own renewal, and Character Library never stores the pasted credentials:
 
-1. Log in at jannyai.com in the configured browser's profile, then open DevTools → Application → Cookies and copy both the `sb-eenzcbluoctduymzksoq-auth-token.0` and `sb-eenzcbluoctduymzksoq-auth-token.1` cookie values, in order. This is the preferred, renewable form; a combined cookie header or raw Supabase session JSON also works
+1. Log in at jannyai.com in the configured browser's profile, then open DevTools → Application → Cookies and copy both the `sb-eenzcbluoctduymzksoq-auth-token.0` and `sb-eenzcbluoctduymzksoq-auth-token.1` cookie values, in order. This is the preferred, renewable form; a combined cookie header, raw Supabase session JSON, or named `sb-access-token`/`sb-refresh-token` cookie pair also works
 2. Open **Settings → Online → JannyAI → Step 2: Account Login**, paste it, and select **Save Login**
 
-A bare access-token JWT (including the old `sb-access-token` value) is accepted as a fallback but cannot renew itself once it expires; prefer the `.0`/`.1` pair. Browsing and importing stay available without an account; sync only adds your saved characters and collections. **Log Out** removes JannyAI's account cookies from the browser while preserving its Cloudflare pass, and reports whether the cleanup succeeded. Bookmark adds remain guarded at JannyAI's current 220-bookmark UI limit.
+Helper 1.13.2 installs JannyAI's native access/refresh cookies and automatically migrates logins installed by earlier helper versions. Existing users do not need to paste their login again.
+
+A bare access-token JWT (without its refresh token) is accepted as a fallback but cannot renew itself once it expires; prefer the `.0`/`.1` pair. Browsing and importing stay available without an account; sync only adds your saved characters and collections. **Log Out** removes JannyAI's account cookies from the browser while preserving its Cloudflare pass, and reports whether the cleanup succeeded. Bookmark adds remain guarded at JannyAI's current 220-bookmark UI limit.
 </details>
 
 <details>

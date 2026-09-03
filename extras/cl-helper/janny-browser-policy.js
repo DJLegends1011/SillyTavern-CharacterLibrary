@@ -1,7 +1,10 @@
 export const JANNY_ORIGIN = 'https://jannyai.com';
 export const JANNY_AUTH_COOKIE = 'sb-eenzcbluoctduymzksoq-auth-token';
+export const JANNY_ACCESS_COOKIE = 'sb-access-token';
+export const JANNY_REFRESH_COOKIE = 'sb-refresh-token';
 export const JANNY_CF_COOKIE_NAMES = new Set(['cf_clearance', '__cf_bm']);
-export const JANNY_COOKIE_CHUNK_LIMIT = 3180;
+// Leave room for the name and attributes below Chrome's per-cookie byte limit.
+export const JANNY_NATIVE_COOKIE_VALUE_LIMIT = 3800;
 export const JANNY_SESSION_TOKEN_LIMIT = 16_384;
 export const JANNY_SESSION_VALUE_LIMIT = 48 * 1024;
 
@@ -66,16 +69,17 @@ export function buildJannySessionCookies(accessToken, refreshToken = '', nowSeco
         const claims = JSON.parse(Buffer.from(accessToken.split('.')[1], 'base64url').toString('utf8'));
         if (Number.isInteger(claims.exp) && claims.exp > 0) expiresAt = claims.exp;
     } catch { /* use the bounded fallback expiry */ }
-    const session = { access_token: accessToken, token_type: 'bearer', expires_in: Math.max(60, expiresAt - nowSeconds), expires_at: expiresAt, refresh_token: refreshToken, user: {} };
-    const value = `base64-${Buffer.from(JSON.stringify(session), 'utf8').toString('base64')}`;
-    if (value.length > JANNY_SESSION_VALUE_LIMIT) blocked('Invalid JannyAI session');
-    const values = value.length <= JANNY_COOKIE_CHUNK_LIMIT ? [value] : Array.from({ length: Math.ceil(value.length / JANNY_COOKIE_CHUNK_LIMIT) }, (_, index) => value.slice(index * JANNY_COOKIE_CHUNK_LIMIT, (index + 1) * JANNY_COOKIE_CHUNK_LIMIT));
+    // Janny's server account routes consume this native pair, not the Supabase
+    // JSON cookie accepted by the paste parser. Let the site rotate the pair.
+    const values = [[JANNY_ACCESS_COOKIE, accessToken], ...(refreshToken ? [[JANNY_REFRESH_COOKIE, refreshToken]] : [])];
+    const encoded = values.map(([name, token]) => ({ name, value: encodeURIComponent(token) }));
+    if (encoded.some(cookie => cookie.value.length > JANNY_NATIVE_COOKIE_VALUE_LIMIT)) blocked('JannyAI login token exceeds the browser cookie size limit');
     const cookieExpiresAt = refreshToken ? nowSeconds + (400 * 24 * 60 * 60) : expiresAt;
-    return values.map((chunk, index) => ({ name: values.length === 1 ? JANNY_AUTH_COOKIE : `${JANNY_AUTH_COOKIE}.${index}`, value: chunk, expires: cookieExpiresAt }));
+    return encoded.map(cookie => ({ ...cookie, expires: cookieExpiresAt }));
 }
 
 export function jannyAccountCookiesToDelete(cookies) {
-    return [...new Set((cookies || []).map(cookie => String(cookie?.name || '')).filter(name => name === JANNY_AUTH_COOKIE || name.startsWith(`${JANNY_AUTH_COOKIE}.`)).filter(name => !JANNY_CF_COOKIE_NAMES.has(name)))];
+    return [...new Set((cookies || []).map(cookie => String(cookie?.name || '')).filter(name => name === JANNY_ACCESS_COOKIE || name === JANNY_REFRESH_COOKIE || name === JANNY_AUTH_COOKIE || name.startsWith(`${JANNY_AUTH_COOKIE}.`)).filter(name => !JANNY_CF_COOKIE_NAMES.has(name)))];
 }
 
 export function validateJannyFinalUrl(finalUrl, formPost = false, status = 200) {

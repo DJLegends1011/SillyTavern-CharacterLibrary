@@ -1,6 +1,5 @@
-// JannyAI Supabase session parsing. The account API accepts the access JWT as
-// `Authorization: Bearer ...`; the userscript only has to carry that request
-// past Cloudflare. This deliberately mirrors the JanitorAI Hampter login flow.
+// Accept copied Supabase sessions or Janny's native access/refresh cookie pair.
+// The helper installs the native cookies; the browser owns subsequent renewal.
 
 const ACCESS_TOKEN_RE = /eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/;
 const JANNY_COOKIE_RE = /^sb-(?:eenzcbluoctduymzksoq-)?auth-token(?:\.(\d+))?$/i;
@@ -19,12 +18,15 @@ function sessionValueFromCookieHeader(raw) {
     let chunkSequenceInvalid = false;
     let unchunked = '';
     let legacyAccess = '';
+    let legacyRefresh = '';
+    let hasNative = false;
     for (const part of input.split(';')) {
         const eq = part.indexOf('=');
         if (eq <= 0) continue;
         const name = part.slice(0, eq).trim();
         const value = part.slice(eq + 1).trim();
-        if (name.toLowerCase() === 'sb-access-token') legacyAccess = value;
+        if (name.toLowerCase() === 'sb-access-token') { legacyAccess = value; hasNative = true; }
+        if (name.toLowerCase() === 'sb-refresh-token') { legacyRefresh = value; hasNative = true; }
         const match = name.match(JANNY_COOKIE_RE);
         if (!match) continue;
         if (match[1] == null) unchunked = value;
@@ -34,12 +36,16 @@ function sessionValueFromCookieHeader(raw) {
             chunks.set(index, value);
         }
     }
+    if (hasNative) {
+        const decode = value => { try { return decodeURIComponent(value); } catch { return value; } };
+        return JSON.stringify({ access_token: decode(legacyAccess), refresh_token: decode(legacyRefresh) });
+    }
     if (chunks.size > 0) {
         const indices = [...chunks.keys()].sort((a, b) => a - b);
         if (chunkSequenceInvalid || indices.some((index, position) => index !== position)) return '';
         return indices.map(index => chunks.get(index)).join('');
     }
-    return unchunked || legacyAccess || input.trim();
+    return unchunked || input.trim();
 }
 
 /**

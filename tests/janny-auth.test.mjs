@@ -52,3 +52,11 @@ test('decodeJannyClaims exposes account and expiry data', () => {
     assert.equal(decoded.expMs, claims.exp * 1000);
     assert.equal(decoded.issuer, claims.iss);
 });
+
+test('native cookie pairs retain refresh credentials and take precedence over stale chunks', () => {
+    const native = `sb-access-token=${jwt}; sb-refresh-token=refresh%2Bnative`;
+    assert.deepEqual(parseJannySession(native), { access_token: jwt, refresh_token: 'refresh+native' });
+    assert.deepEqual(parseJannySession(`${native}; sb-eenzcbluoctduymzksoq-auth-token=${encoded}`),
+        { access_token: jwt, refresh_token: 'refresh+native' });
+    assert.equal(parseJannySession(`sb-refresh-token=refresh-only; sb-eenzcbluoctduymzksoq-auth-token=${encoded}`), null);
+});

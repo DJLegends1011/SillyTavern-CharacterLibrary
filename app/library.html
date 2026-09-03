@@ -2670,7 +2670,7 @@ https://jannyai.com/characters/uuid_slug
                                 <div class="settings-group">
                                     <div class="settings-group-title"><i class="fa-solid fa-user-lock"></i> Step 2: Account Login</div>
                                     <div class="settings-row">
-                                        <span class="settings-hint">Optional, for bookmarks and collections. Log in at jannyai.com and open DevTools &rarr; Application &rarr; Cookies. Prefer the full <code>sb-eenzcbluoctduymzksoq-auth-token.0</code>/<code>sb-eenzcbluoctduymzksoq-auth-token.1</code> cookie pair: paste both named cookies or join their values in order. A complete unsplit cookie or session JSON also works. <strong>Save Login transfers it once into the browser profile, which owns renewal; Character Library settings never store these credentials.</strong> A bare access-token JWT (including the old <code>sb-access-token</code> value) is accepted but cannot renew. The input is cleared after each install attempt.</span>
+                                        <span class="settings-hint">Optional, for bookmarks and collections. Log in at jannyai.com and open DevTools &rarr; Application &rarr; Cookies. Prefer the full <code>sb-eenzcbluoctduymzksoq-auth-token.0</code>/<code>sb-eenzcbluoctduymzksoq-auth-token.1</code> cookie pair: paste both named cookies or join their values in order. A complete unsplit cookie, session JSON, or named <code>sb-access-token</code>/<code>sb-refresh-token</code> pair also works. <strong>Save Login transfers it once into the browser profile, which owns renewal; Character Library settings never store these credentials.</strong> A bare access-token JWT (without its refresh token) is accepted but cannot renew. The input is cleared after each install attempt.</span>
                                     </div>
                                     <div class="settings-row">
                                         <label>Login token:</label>
@@ -3700,7 +3700,7 @@ https://jannyai.com/characters/uuid_slug
 
     <!-- Scripts -->
     <script src="library.js?v=200"></script>
-    <script type="module" src="../modules/module-loader.js?v=52"></script>
+    <script type="module" src="../modules/module-loader.js?v=53"></script>
     <script src="library-mobile.js?v=26"></script>
 </body>
 </html>
