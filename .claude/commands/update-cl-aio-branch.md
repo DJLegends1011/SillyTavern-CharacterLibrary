@@ -35,8 +35,13 @@ The `main` branch tracks upstream. Feature work lives on long-running branches. 
 | `codex/datacat-account-sync` | DataCat "Yours" account sync |
 | `extended-bookmarks` | Provider bookmark backups |
 | `codex/jannyai-account-sync` | JannyAI account sync + collections (cookie-based) |
-| `codex/janitorai-favorites-meili-latest` | JanitorAI favorites & Meili latest sort |
+| `codex/janitorai-ext-account-sync` | JanitorAI ext account sync (account favorites + Meili latest sort) |
 | `codex/fix-chub-tag-exclusions` | Chub tag exclusions beyond the search tag limit |
+
+> **Renamed 2026-09-03:** `codex/janitorai-favorites-meili-latest` is now
+> `codex/janitorai-ext-account-sync` (same commit, `94dbf15`); the old ref was deleted from
+> origin. Merge commits in `aio-v7.2.1` and earlier still carry the old name in their
+> messages — that is expected, do not try to rewrite them.
 
 ### Branch state as of 2026-09-03
 
@@ -49,7 +54,7 @@ exactly 1 commit behind main** — none has v7.2.2 merged yet, so Step 1 applies
 | `codex/datacat-account-sync` | 88 | 1 | 30 files, +7328 |
 | `codex/jannyai-account-sync` | 88 | 1 | 51 files, +31385 |
 | `extended-bookmarks` | 28 | 1 | 16 files, +1534 |
-| `codex/janitorai-favorites-meili-latest` | 13 | 1 | 18 files, +3479 |
+| `codex/janitorai-ext-account-sync` | 13 | 1 | 18 files, +3479 |
 | `codex/fix-chub-tag-exclusions` | 1 | 1 | 3 files, +332 |
 
 ## Branches excluded from AIO
@@ -184,13 +189,13 @@ Merge each updated feature branch with a tagged commit message:
 git merge codex/fix-chub-tag-exclusions --no-ff -m "[fix-chub-tag-exclusions] Integrate Chub tag exclusions"
 git merge codex/datacat-account-sync --no-ff -m "[datacat-account-sync] Integrate DataCat account sync"
 git merge extended-bookmarks --no-ff -m "[extended-bookmarks] Integrate provider bookmark backups"
-git merge codex/janitorai-favorites-meili-latest --no-ff -m "[janitorai-favorites-meili-latest] Integrate JanitorAI favorites & Meili latest"
+git merge codex/janitorai-ext-account-sync --no-ff -m "[janitorai-ext-account-sync] Integrate JanitorAI ext account sync"
 git merge codex/jannyai-account-sync --no-ff -m "[jannyai-account-sync] Integrate JannyAI account sync"
 ```
 
 Merge order matters: **jannyai must be merged last**, because it conflicts with the
 already-merged `extended-bookmarks` over the shared Janny surface (both add
-bookmark-like filters to `janny-browse.js`). `janitorai-favorites-meili-latest`
+bookmark-like filters to `janny-browse.js`). `janitorai-ext-account-sync`
 should be merged after `extended-bookmarks` but before `jannyai`, because it
 conflicts with bookmarks over `janitorai-browse.js`. See 2d.
 
@@ -216,7 +221,7 @@ There are four recurring inter-branch conflict clusters. Clusters A-C are provid
 - As of v7.0.0 `init()` no longer issues the initial load (upstream moved it to `activate()`), so the old init() merge note is obsolete: leave upstream's "No initial load here" comment, keep jannyai's `refreshJannyAccountStatus()` in `init()`, and make sure the bookmarks conditional (`if (jannyBookmarks.filterMyBookmarks) renderBookmarksView() else loadCharacters(false)`) sits in `activate()`.
 - `cl-helper/index.js`: **no longer conflicts** (verified 2026-09-03). The old split-import note referenced `extras/cl-helper/janny-account.js`, which no longer exists on any branch — jannyai now ships `janny-browser-policy.js` instead, and cl-helper auto-merges cleanly. Ignore any older instruction to hand-resolve two import statements here.
 
-**C. `modules/providers/janitorai/janitorai-browse.js` — janitorai-favorites-meili-latest vs extended-bookmarks** (when favorites is merged after bookmarks). Both add features to janitorai. `janitoraiBookmarks.*` is the local backup module; `jaFilterFavorites` / favorite preview is the JanitorAI *account's* favorites list. Keep both everywhere.
+**C. `modules/providers/janitorai/janitorai-browse.js` — janitorai-ext-account-sync vs extended-bookmarks** (when favorites is merged after bookmarks). Both add features to janitorai. `janitoraiBookmarks.*` is the local backup module; `jaFilterFavorites` / favorite preview is the JanitorAI *account's* favorites list. Keep both everywhere.
 - `janitorai-browse.js` (3 blocks): union for `openPreviewModal` (keep `janitoraiBookmarks.syncModalState(hit)` AND the favorites token/identity setup), the `updateFiltersButton` count array (merge `janitoraiBookmarks.filterMyBookmarks` + `jaFilterFavorites` into one array), and the modal meta row (keep both `${janitoraiBookmarks.renderMetaAction()}` AND the `janitoraiCharFavoriteBtn` span).
 - Note: 6 janitorai-favorites tests fail in AIO because `bookmark-module.js` calls `window.addEventListener` at import time, which the favorites tests don't mock. This is an expected inter-branch test interaction that doesn't affect the real app.
 
