@@ -1,0 +1,436 @@
+// DataCat folder picker - "Add to collection" dropdown for the preview modal.
+// Pure model helpers here are unit-tested; the DOM component follows in this file.
+
+/**
+ * Keep only user-created folders. DataCat mixes reserved/system folders
+ * (e.g. the Private Vault) into /api/user-folders; the site's own picker
+ * hides them and so do we.
+ * @param {Array} folders raw folders from fetchDatacatFolders()
+ * @returns {{id: string, title: string}[]}
+ */
+function normalizedFolderName(folderName) {
+    return String(folderName || '').trim() || 'Main';
+}
+
+export function formatDatacatFolderSuccess(folderName) {
+    return `Saved to "${normalizedFolderName(folderName)}"`;
+}
+
+export function formatDatacatFolderRemoval(folderName) {
+    return `Removed from "${normalizedFolderName(folderName)}"`;
+}
+
+/** DataCat's per-collection sort key. Absent/blank means "unordered", which must not
+ *  collapse to 0 the way Number(null) would. */
+function normalizeDisplayOrder(value) {
+    if (value === null || value === undefined || value === '') return null;
+    const order = Number(value);
+    return Number.isFinite(order) ? order : null;
+}
+
+export function filterPickerFolders(folders) {
+    if (!Array.isArray(folders)) return [];
+    return folders
+        .filter(f => f && !f.isReserved && !f.isPrivateVault && !f.systemKey)
+        .map(f => ({ id: String(f.id ?? '').trim(), title: String(f.title ?? ''), displayOrder: normalizeDisplayOrder(f.displayOrder) }))
+        .filter(f => f.id);
+}
+
+/**
+ * Create a single-flight loader for the signed-in account's custom folders.
+ * Empty responses are returned to the current caller but are not retained, so
+ * a transient empty response cannot leave the picker stuck on Main all session.
+ * @param {() => Promise<{ok?: boolean, folders?: Array, error?: string}>} fetchFolders
+ * @returns {{load: () => Promise<{id: string, title: string}[]>, invalidate: () => void}}
+ */
+export function createDatacatFolderLoader(fetchFolders) {
+    let cachedFolders = null;
+    let inFlight = null;
+    let generation = 0;
+
+    return {
+        invalidate() {
+            generation += 1;
+            cachedFolders = null;
+            inFlight = null;
+        },
+
+        load() {
+            if (cachedFolders) return Promise.resolve(cachedFolders);
+            if (inFlight) return inFlight;
+
+            const requestGeneration = generation;
+            const request = (async () => {
+                const res = await fetchFolders();
+                if (!res?.ok) throw new Error(res?.error || 'Could not load folders');
+                const folders = filterPickerFolders(res.folders);
+                if (folders.length > 0 && generation === requestGeneration) {
+                    cachedFolders = folders;
+                }
+                return folders;
+            })();
+            const trackedRequest = request.finally(() => {
+                if (inFlight === trackedRequest) inFlight = null;
+            });
+            inFlight = trackedRequest;
+            return trackedRequest;
+        },
+    };
+}
+
+/**
+ * Build the render model from the folder list + membership status.
+ * @param {{folders?: Array, collected?: boolean, folderIds?: Array}} opts
+ * @returns {{collected: boolean, mainChecked: boolean, rows: {id: string, title: string, checked: boolean}[]}}
+ */
+export function hasDatacatFolderMembership({ collected = false, folderIds = [] } = {}) {
+    return collected === true || (Array.isArray(folderIds) && folderIds.length > 0);
+}
+
+export function buildPickerModel({ folders = [], collected = false, folderIds = [] } = {}) {
+    const memberIds = new Set((Array.isArray(folderIds) ? folderIds : []).map(v => String(v)));
+    return {
+        collected: collected === true,
+        anySaved: hasDatacatFolderMembership({ collected, folderIds }),
+        mainChecked: collected === true && memberIds.size === 0,
+        rows: folders.map(f => ({ id: f.id, title: f.title, checked: memberIds.has(String(f.id)) })),
+    };
+}
+
+/**
+ * Order folders the way DataCat does, using the server-side displayOrder it
+ * persists per collection. Rows without a usable displayOrder sort last in the
+ * order the API returned them.
+ * @param {{id: string, title: string, displayOrder: number|null}[]} folders
+ * @returns {{id: string, title: string, displayOrder: number|null}[]} new array; input not mutated
+ */
+export function sortDatacatFoldersByDisplayOrder(folders) {
+    if (!Array.isArray(folders) || folders.length === 0) return [];
+    return folders
+        .map((folder, index) => ({ folder, index, order: normalizeDisplayOrder(folder?.displayOrder) }))
+        .sort((a, b) => {
+            const aHas = a.order !== null;
+            const bHas = b.order !== null;
+            if (aHas !== bHas) return aHas ? -1 : 1;
+            if (aHas && a.order !== b.order) return a.order - b.order;
+            return a.index - b.index;
+        })
+        .map(entry => entry.folder);
+}
+
+/**
+ * Normalize the Yours sub-filter selection against the currently available
+ * custom folders. Main is always valid; removed/unknown folder ids fall back
+ * to the complete Yours listing.
+ * @param {string|number|null|undefined} selection
+ * @param {{id: string}[]} folders
+ * @returns {string}
+ */
+export function normalizeDatacatYoursFolderSelection(selection, folders = []) {
+    const value = String(selection ?? 'all').trim() || 'all';
+    if (value === 'all' || value === 'main') return value;
+    return Array.isArray(folders) && folders.some(folder => String(folder?.id) === value)
+        ? value
+        : 'all';
+}
+
+/**
+ * Build the account folder-list request for the Yours sub-filter. The complete
+ * Yours selection keeps its dedicated endpoint, so this returns null for it.
+ * @param {string|number|null|undefined} selection
+ * @param {{limit?: number, offset?: number, tagIds?: Array}} common
+ * @returns {{limit?: number, offset?: number, tagIds?: Array, folderId?: string}|null}
+ */
+export function buildDatacatYoursFolderFetchOptions(selection, common = {}) {
+    const value = String(selection ?? 'all').trim() || 'all';
+    if (value === 'all') return null;
+    if (value === 'main') return { ...common, folderId: 'main' };
+    return { ...common, folderId: value };
+}
+
+import CoreAPI from '../../core-api.js';
+import {
+    fetchDatacatFolders,
+    fetchDatacatYoursStatus,
+    setDatacatFolderMembership,
+    createDatacatFolder,
+} from './datacat-api.js';
+
+const { showToast, escapeHtml, getSetting } = CoreAPI;
+
+let _hooks = {
+    getMainSaved: () => false,
+    setMainSaved: async (_characterId, saved) => ({ ok: true, collected: saved === true }),
+    setAnyFolderSaved: () => {},
+};
+const _folderLoader = createDatacatFolderLoader(fetchDatacatFolders);
+let _openEl = null;
+let _backdropEl = null;
+let _openCharId = '';
+let _openCharName = '';
+let _outsideHandler = null;
+
+export function initDatacatFolderPicker(hooks) {
+    _hooks = { ..._hooks, ...hooks };
+}
+
+export function invalidateDatacatFolderCache() {
+    _folderLoader.invalidate();
+}
+
+export function preloadDatacatFolderCache() {
+    return _folderLoader.load().catch(() => null);
+}
+
+export function closeDatacatFolderPicker() {
+    if (_outsideHandler) {
+        document.removeEventListener('pointerdown', _outsideHandler, true);
+        _outsideHandler = null;
+    }
+    _backdropEl?.remove();
+    _backdropEl = null;
+    _openEl?.remove();
+    _openEl = null;
+    _openCharId = '';
+    _openCharName = '';
+}
+
+function rowHtml({ id, title, checked, icon = 'fa-folder' }) {
+    return `<button type="button" class="datacat-folder-row${checked ? ' checked' : ''}" data-folder-id="${escapeHtml(id)}">
+        <i class="fa-solid ${icon} datacat-folder-row-icon"></i>
+        <span class="datacat-folder-row-title">${escapeHtml(title)}</span>
+        <i class="fa-solid fa-check datacat-folder-row-check"></i>
+    </button>`;
+}
+
+function renderPickerBody(el, model, characterId, characterName) {
+    el.dataset.collected = model.collected ? 'true' : 'false';
+    el.innerHTML = `
+        <div class="datacat-folder-picker-sticky">
+            <div class="datacat-folder-picker-heading">Add to collection</div>
+            ${rowHtml({ id: '__main__', title: 'Main', checked: model.mainChecked, icon: 'fa-star' })}
+        </div>
+        ${model.rows.map(r => rowHtml(r)).join('')}
+        <div class="datacat-folder-create-row">
+            <input type="text" class="datacat-folder-create-input" placeholder="New collection name" maxlength="120">
+            <button type="button" class="datacat-folder-create-btn" disabled>Save</button>
+        </div>`;
+    _hooks.setAnyFolderSaved(characterId, model.anySaved);
+    wireRows(el, characterId, characterName);
+}
+
+function renderPickerError(el, message, characterId, characterName, { retry = true } = {}) {
+    el.innerHTML = `
+        <div class="datacat-folder-picker-heading">Add to collection</div>
+        <div class="datacat-folder-picker-error">${escapeHtml(message)}</div>
+        ${retry ? '<button type="button" class="datacat-folder-retry-btn">Retry</button>' : ''}`;
+    el.querySelector('.datacat-folder-retry-btn')?.addEventListener('click', () => loadAndRender(el, characterId, characterName));
+}
+
+async function loadAndRender(el, characterId, characterName) {
+    el.innerHTML = '<div class="datacat-folder-picker-heading">Add to collection</div><div class="datacat-folder-picker-loading"><i class="fa-solid fa-spinner fa-spin"></i></div>';
+    try {
+        const folders = await _folderLoader.load();
+        const status = await fetchDatacatYoursStatus(characterId);
+        const model = buildPickerModel({
+            folders: sortDatacatFoldersByDisplayOrder(folders),
+            collected: status?.ok ? status.collected === true : _hooks.getMainSaved(characterId),
+            folderIds: status?.ok ? status.folderIds : [],
+        });
+        if (_openEl !== el) return; // closed or reopened for another character while loading
+        renderPickerBody(el, model, characterId, characterName);
+    } catch (err) {
+        if (_openEl !== el) return;
+        const msg = /session|auth|account|401/i.test(err.message)
+            ? 'Session expired - check Settings > Online > DataCat'
+            : err.message;
+        renderPickerError(el, msg, characterId, characterName);
+    }
+}
+
+/**
+ * DataCat's server rejects folder membership changes for characters not
+ * already collected to Main/Yours. Ensure the character is collected first,
+ * updating the picker's Main row to match. Returns true when the character
+ * is collected by the end (either already was, or the save succeeded).
+ * @param {HTMLElement} el picker root element
+ * @param {string} characterId
+ * @returns {Promise<boolean>}
+ */
+async function ensureCollected(el, characterId) {
+    if (_hooks.getMainSaved(characterId)) {
+        el.dataset.collected = 'true';
+        return true;
+    }
+
+    const result = await _hooks.setMainSaved(characterId, true);
+    if (!result?.ok) throw new Error(result?.error || 'Could not save to Main');
+    const collected = result.collected === true || _hooks.getMainSaved(characterId);
+    el.dataset.collected = collected ? 'true' : 'false';
+    if (!collected) throw new Error('DataCat did not save the character to Main');
+    return true;
+}
+
+function syncMainRowFromFolders(el, characterId = _openCharId) {
+    const customRows = [...el.querySelectorAll('.datacat-folder-row:not([data-folder-id="__main__"])')];
+    const hasCustomFolder = customRows.some(row => row.classList.contains('checked'));
+    const collected = el.dataset.collected === 'true';
+    const mainRow = el.querySelector('.datacat-folder-row[data-folder-id="__main__"]');
+    mainRow?.classList.toggle('checked', collected && !hasCustomFolder);
+    _hooks.setAnyFolderSaved(characterId, collected || hasCustomFolder);
+}
+
+/**
+ * Sync the open folder picker's Main row checkmark after an external change
+ * to a character's Yours/Main status (e.g. the grid-card star). No-op unless
+ * the picker is currently open for this character.
+ * @param {string|number} characterId
+ * @param {boolean} saved
+ */
+export function syncDatacatFolderPickerMainRow(characterId, saved) {
+    if (!_openEl || _openCharId !== String(characterId)) return;
+    _openEl.dataset.collected = saved === true ? 'true' : 'false';
+    syncMainRowFromFolders(_openEl);
+}
+
+function wireRows(el, characterId, characterName) {
+    el.querySelectorAll('.datacat-folder-row').forEach(row => {
+        row.addEventListener('click', async () => {
+            if (row.classList.contains('busy')) return;
+            const folderId = row.dataset.folderId;
+            const wasChecked = row.classList.contains('checked');
+            const next = !wasChecked;
+            row.classList.add('busy');
+            row.classList.toggle('checked', next); // optimistic
+            try {
+                if (folderId === '__main__') {
+                    const customRows = [...el.querySelectorAll('.datacat-folder-row:not([data-folder-id="__main__"]).checked')];
+                    if (customRows.length > 0) {
+                        for (const customRow of customRows) {
+                            const res = await setDatacatFolderMembership(customRow.dataset.folderId, characterId, false);
+                            if (!res?.ok) throw new Error(res?.error || 'DataCat folder update failed');
+                            customRow.classList.remove('checked');
+                        }
+                        el.dataset.collected = 'true';
+                        syncMainRowFromFolders(el, characterId);
+                        showToast(formatDatacatFolderSuccess('Main'), 'success');
+                    } else {
+                        const result = await _hooks.setMainSaved(characterId, next);
+                        if (!result?.ok) throw new Error(result?.error || 'DataCat Main update failed');
+                        el.dataset.collected = result.collected === true ? 'true' : 'false';
+                        syncMainRowFromFolders(el, characterId);
+                        showToast(
+                            result.collected === true
+                                ? formatDatacatFolderSuccess('Main')
+                                : formatDatacatFolderRemoval('Main'),
+                            'success',
+                        );
+                    }
+                } else {
+                    if (next) {
+                        // DataCat's server rejects folder membership for characters not
+                        // already collected to Main/Yours. Auto-save to Main first.
+                        const collected = await ensureCollected(el, characterId);
+                        if (!collected) {
+                            row.classList.toggle('checked', wasChecked); // revert
+                            syncMainRowFromFolders(el);
+                            return;
+                        }
+                    }
+                    const res = await setDatacatFolderMembership(folderId, characterId, next);
+                    if (!res?.ok) throw new Error(res?.error || 'DataCat folder update failed');
+                    syncMainRowFromFolders(el);
+                    const title = row.querySelector('.datacat-folder-row-title')?.textContent || 'folder';
+                    showToast(
+                        next ? formatDatacatFolderSuccess(title) : formatDatacatFolderRemoval(title),
+                        'success',
+                    );
+                }
+            } catch (err) {
+                row.classList.toggle('checked', wasChecked); // revert
+                syncMainRowFromFolders(el);
+                showToast(`DataCat folder sync failed: ${err.message}`, 'error');
+            } finally {
+                row.classList.remove('busy');
+            }
+        });
+    });
+
+    const input = el.querySelector('.datacat-folder-create-input');
+    const createBtn = el.querySelector('.datacat-folder-create-btn');
+    if (!input || !createBtn) return;
+    input.addEventListener('input', () => { createBtn.disabled = !input.value.trim(); });
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !createBtn.disabled) createBtn.click(); });
+    createBtn.addEventListener('click', async () => {
+        const title = input.value.trim();
+        if (!title || createBtn.disabled) return;
+        createBtn.disabled = true;
+        try {
+            const res = await createDatacatFolder({ title });
+            if (!res?.ok) throw new Error(res?.error || 'DataCat folder create failed');
+            invalidateDatacatFolderCache();
+            const newId = res.folder?.id != null ? String(res.folder.id) : null;
+            if (!newId) throw new Error('DataCat did not return the new folder id');
+            if (!await ensureCollected(el, characterId)) return;
+
+            const addRes = await setDatacatFolderMembership(newId, characterId, true);
+            if (!addRes?.ok) throw new Error(addRes?.error || 'DataCat folder update failed');
+            showToast(formatDatacatFolderSuccess(title), 'success');
+
+            if (_openEl === el) await loadAndRender(el, characterId, characterName);
+        } catch (err) {
+            createBtn.disabled = false; // keep input for retry
+            showToast(`DataCat folder create failed: ${err.message}`, 'error');
+        }
+    });
+}
+
+function positionPicker(el, anchor) {
+    if (document.documentElement.classList.contains('cl-mobile')) return; // CSS bottom sheet
+    const rect = anchor.getBoundingClientRect();
+    const elRect = el.getBoundingClientRect();
+    let top = rect.bottom + 6;
+    if (top + elRect.height > window.innerHeight - 12) {
+        top = Math.max(12, rect.top - elRect.height - 6);
+    }
+    let left = rect.right - elRect.width;
+    if (left < 12) left = 12;
+    el.style.top = `${top}px`;
+    el.style.left = `${left}px`;
+}
+
+export async function openDatacatFolderPicker({ anchor, characterId, characterName }) {
+    const id = String(characterId || '').trim();
+    if (!id || !anchor) return;
+    if (_openEl && _openCharId === id) { closeDatacatFolderPicker(); return; } // toggle
+    closeDatacatFolderPicker();
+
+    const name = String(characterName || 'character');
+    _openCharId = id;
+    _openCharName = name;
+
+    // Transparent tap-catcher behind the picker. CL renders creator notes in a
+    // nested sandboxed iframe inside the preview modal; taps landing there never
+    // bubble to the document, so the pointerdown listener below can't see them.
+    // The backdrop sits in the main document and closes the picker on any tap.
+    const backdrop = document.createElement('div');
+    backdrop.className = 'datacat-folder-picker-backdrop';
+    backdrop.addEventListener('pointerdown', () => closeDatacatFolderPicker());
+    backdrop.addEventListener('click', () => closeDatacatFolderPicker());
+    document.body.appendChild(backdrop);
+    _backdropEl = backdrop;
+
+    const el = document.createElement('div');
+    el.className = 'datacat-folder-picker';
+    document.body.appendChild(el);
+    _openEl = el;
+
+    _outsideHandler = (e) => {
+        if (el.contains(e.target) || anchor.contains(e.target)) return;
+        closeDatacatFolderPicker();
+    };
+    document.addEventListener('pointerdown', _outsideHandler, true);
+
+    await loadAndRender(el, id, name);
+    if (_openEl === el) positionPicker(el, anchor);
+}
