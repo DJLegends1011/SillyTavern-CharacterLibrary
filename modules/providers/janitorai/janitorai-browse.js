@@ -3,6 +3,7 @@ import { BrowseView } from '../browse-view.js';
 import CoreAPI from '../../core-api.js';
 import { janitoraiSessionStatus } from '../janitor-session.js';
 import { IMG_PLACEHOLDER, formatNumber, BROWSE_PURIFY_CONFIG, skeletonLines, deferRender, deferCall, isMobileMode, finishBrowseImport, renderBrowseError, buildProviderNotice } from '../provider-utils.js';
+import { createBookmarkModule } from '../bookmark-module.js';
 import {
     HAMPTER_PAGE_SIZE,
     HAMPTER_SORTS,
@@ -95,6 +96,67 @@ let jaTagCatalogue = [];
 let view;
 
 // ========================================
+// LOCAL BACKUPS
+// ========================================
+
+// The card id lives on the card as data-janitorai-id; the backup control carries its own
+// attribute so markCardAsImported's grid-wide lookup can never land on the button instead.
+const janitoraiBookmarks = createBookmarkModule({
+    prefix: 'janitorai',
+    settingsKey: 'janitoraiBookmarks',
+    logLabel: '[JanitoraiBrowse]',
+    getId: (hit) => {
+        const id = hit?.character_id || hit?.id;
+        return id ? String(id) : '';
+    },
+    dataAttrKey: 'janitoraiBookmarkId',
+    gridId: 'janitoraiGrid',
+    modalBtnId: 'janitoraiCharBookmarkBtn',
+    checkboxId: 'janitoraiFilterMyBookmarks',
+    buildSnapshot: (hit) => ({
+        character_id: String(hit.character_id || hit.id || ''),
+        name: hit.name || '',
+        description: hit.description || '',
+        avatar: hit.avatar || '',
+        creator_id: hit.creator_id || '',
+        creator_name: hit.creator_name || '',
+        tags: Array.isArray(hit.tags) ? hit.tags.slice() : [],
+        is_nsfw: !!hit.is_nsfw,
+        chat_count: hit.chat_count || 0,
+        message_count: hit.message_count || 0,
+        created_at: hit.created_at || '',
+    }),
+    // Only the sorts a local snapshot can honestly reproduce. Trending is a server-side
+    // signal with no stored equivalent, so it falls back to most-recently-saved.
+    sortModes: {
+        popular: (a, b) => (b.chat_count || 0) - (a.chat_count || 0),
+        latest: (a, b) => {
+            const ta = a.created_at ? new Date(a.created_at).getTime() : 0;
+            const tb = b.created_at ? new Date(b.created_at).getTime() : 0;
+            return tb - ta;
+        },
+    },
+    getSortMode: () => jaSortMode,
+    getSelectedChar: () => jaSelectedChar,
+    resetBookmarkState: (sorted) => {
+        jaCharacters = sorted;
+        jaHasMore = false;
+        jaCurrentPage = 1;
+        jaGridRenderedCount = 0;
+    },
+    renderGrid: () => renderGrid(jaCharacters, false),
+    onFilterToggle: (on) => {
+        updateFiltersButton();
+        jaCurrentPage = 1;
+        if (on) janitoraiBookmarks.renderBookmarksView();
+        else {
+            jaCharacters = [];
+            loadCharacters(false);
+        }
+    },
+});
+
+// ========================================
 // LOCAL LIBRARY LOOKUP
 // ========================================
 
@@ -159,6 +221,7 @@ function createCard(hit) {
                 <span class="browse-card-stat" title="Chats"><i class="fa-solid fa-comments"></i> ${formatNumber(hit.chat_count || 0)}</span>
                 <span class="browse-card-stat" title="Messages"><i class="fa-solid fa-envelope"></i> ${formatNumber(hit.message_count || 0)}</span>
                 ${dateInfo}
+                ${janitoraiBookmarks.renderCardBtn(hit)}
             </div>
         </div>
     `;
@@ -526,6 +589,7 @@ function openPreviewModal(hit) {
 
     const modal = document.getElementById('janitoraiCharModal');
     if (!modal) return;
+    janitoraiBookmarks.syncModalState(hit);
     CoreAPI.resetBrowseSectionCollapseState(modal);
 
     const name = hit.name || 'Unknown';
@@ -1396,7 +1460,12 @@ function updateTagsButton() {
 function updateFiltersButton() {
     const btn = document.getElementById('janitoraiFiltersBtn');
     if (!btn) return;
-    const count = [jaFilterHideOwned, jaFilterHidePossible, jaFilterHideNoProxy].filter(Boolean).length;
+    const count = [
+        jaFilterHideOwned,
+        jaFilterHidePossible,
+        janitoraiBookmarks.filterMyBookmarks,
+        jaFilterHideNoProxy,
+    ].filter(Boolean).length;
     btn.classList.toggle('has-filters', count > 0);
     const span = btn.querySelector('span');
     if (span) span.textContent = count > 0 ? `Features (${count})` : 'Features';
@@ -1723,6 +1792,8 @@ function initView() {
         const grid = document.getElementById(gridId);
         if (!grid) continue;
         grid.addEventListener('click', (e) => {
+            if (janitoraiBookmarks.handleGridClick(e, jaCharacters)) return;
+
             const creatorLink = e.target.closest('.browse-card-creator-link');
             if (creatorLink) {
                 e.stopPropagation();
@@ -1868,6 +1939,8 @@ function initView() {
         loadCharacters(false);
     });
 
+    janitoraiBookmarks.attachFilterCheckbox();
+
     view._registerDropdownDismiss([
         { dropdownId: 'janitoraiTagsDropdown', buttonId: 'janitoraiTagsBtn' },
         { dropdownId: 'janitoraiFiltersDropdown', buttonId: 'janitoraiFiltersBtn' },
@@ -1881,6 +1954,7 @@ function initView() {
         BrowseView.wireTitleScroll(document.getElementById('janitoraiCharName'), overlay, overlay?.querySelector('.browse-char-modal'));
 
         on('janitoraiCharClose', 'click', () => closePreviewModal());
+        janitoraiBookmarks.attachModalBtn();
 
         const creatorLink = document.getElementById('janitoraiCharCreator');
         if (creatorLink) {
@@ -2087,6 +2161,7 @@ class JanitoraiBrowseView extends BrowseView {
                     <div class="dropdown-section-title">Library:</div>
                     <label class="filter-checkbox"><input type="checkbox" id="janitoraiFilterHideOwned"> <i class="fa-solid fa-check"></i> Hide Owned Characters</label>
                     <label class="filter-checkbox"><input type="checkbox" id="janitoraiFilterHidePossible"> <i class="fa-solid fa-check" style="color: #f0a500;"></i> Hide Possible Matches</label>
+                    ${janitoraiBookmarks.renderFilterCheckbox()}
                     <div class="dropdown-section-title">Definitions:</div>
                     <label class="filter-checkbox" title="Creators who turn off proxy access make a locked definition unrecoverable by the normal extraction."><input type="checkbox" id="janitoraiFilterHideNoProxy"> <i class="fa-solid fa-lock"></i> Hide No-Proxy Characters</label>
                 </div>
@@ -2197,6 +2272,7 @@ class JanitoraiBrowseView extends BrowseView {
                         <h2 id="janitoraiCharName">Character Name</h2>
                         <p class="browse-char-meta">
                             by <a id="janitoraiCharCreator" href="#" class="creator-link browse-meta-identity" title="Click to see all characters by this creator">Creator</a>
+                            ${janitoraiBookmarks.renderMetaAction()}
                         </p>
                     </div>
                 </div>

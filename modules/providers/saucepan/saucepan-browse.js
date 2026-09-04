@@ -22,6 +22,7 @@ import {
     renderBrowseError,
     buildProviderNotice,
 } from '../provider-utils.js';
+import { createBookmarkModule } from '../bookmark-module.js';
 import {
     searchSaucepan,
     fetchSaucepanCompanionsOfUser,
@@ -88,6 +89,69 @@ let saucepanCreatorSortMode = 'chat_count';
 let saucepanSortMode = 'saucepan_new';
 let saucepanSearchQuery = '';
 let saucepanShowLocked = false;
+
+// ========================================
+// LOCAL BACKUPS
+// ========================================
+
+// The card id lives on the card as data-saucepan-id; the backup control carries its own
+// attribute so the grid-wide card lookup can never land on the button instead.
+const saucepanBookmarks = createBookmarkModule({
+    prefix: 'saucepan',
+    settingsKey: 'saucepanBookmarks',
+    logLabel: '[SaucepanBrowse]',
+    getId: (hit) => {
+        const id = getCharId(hit);
+        return id ? String(id) : '';
+    },
+    dataAttrKey: 'saucepanBookmarkId',
+    gridId: 'saucepanGrid',
+    modalBtnId: 'saucepanCharBookmarkBtn',
+    checkboxId: 'saucepanFilterMyBookmarks',
+    buildSnapshot: (hit) => ({
+        character_id: String(getCharId(hit)),
+        name: hit.name || '',
+        description: hit.description || '',
+        tagline: hit.tagline || '',
+        avatar_url: hit.avatar_url || hit.avatar || '',
+        creator: hit.creator || null,
+        creator_name: hit.creator_name || '',
+        tags: Array.isArray(hit.tags) ? hit.tags.slice() : [],
+        is_nsfw: !!hit.is_nsfw,
+        chat_count: hit.chat_count || 0,
+        favorite_count: hit.favorite_count || 0,
+        open_definition: hit.open_definition !== false,
+        created_at: hit.created_at || '',
+    }),
+    // Trending is a server-side signal with no stored equivalent, so it falls back to
+    // most-recently-saved. New and Popular both map onto fields the snapshot keeps.
+    sortModes: {
+        saucepan_new: (a, b) => {
+            const ta = a.created_at ? new Date(a.created_at).getTime() : 0;
+            const tb = b.created_at ? new Date(b.created_at).getTime() : 0;
+            return tb - ta;
+        },
+        saucepan_popular: (a, b) => (b.chat_count || 0) - (a.chat_count || 0),
+    },
+    getSortMode: () => saucepanSortMode,
+    getSelectedChar: () => saucepanSelectedChar,
+    resetBookmarkState: (sorted) => {
+        saucepanCharacters = sorted;
+        saucepanHasMore = false;
+        saucepanCurrentPage = 1;
+        saucepanGridRenderedCount = 0;
+    },
+    renderGrid: () => renderGrid(saucepanCharacters, false),
+    onFilterToggle: (on) => {
+        updateFiltersButtonState();
+        saucepanCurrentPage = 1;
+        if (on) saucepanBookmarks.renderBookmarksView();
+        else {
+            saucepanCharacters = [];
+            loadCharacters(false);
+        }
+    },
+});
 
 // Tri-state tag filtering
 let saucepanActiveTags = new Set();     // include slugs
@@ -561,6 +625,7 @@ function createSaucepanCard(hit) {
             <div class="browse-card-footer">
                 ${statsHtml}
                 ${dateInfo}
+                ${saucepanBookmarks.renderCardBtn(hit)}
             </div>
         </div>
     `;
@@ -935,7 +1000,7 @@ function updateShowLockedToggle() {
 function updateFiltersButtonState() {
     const btn = document.getElementById('saucepanFiltersBtn');
     if (!btn) return;
-    const count = [saucepanFilterHideOwned, saucepanFilterHidePossible, saucepanShowLocked].filter(Boolean).length;
+    const count = [saucepanFilterHideOwned, saucepanFilterHidePossible, saucepanShowLocked, saucepanBookmarks.filterMyBookmarks].filter(Boolean).length;
     btn.classList.toggle('has-filters', count > 0);
     btn.innerHTML = count > 0
         ? `<i class="fa-solid fa-sliders"></i> Features (${count})`
@@ -1021,6 +1086,7 @@ function openPreviewModal(hit) {
 
     const modal = document.getElementById('saucepanCharModal');
     if (!modal) return;
+    saucepanBookmarks.syncModalState(hit);
     CoreAPI.resetBrowseSectionCollapseState(modal);
 
     const charId = getCharId(hit);
@@ -1618,6 +1684,8 @@ function initSaucepanView() {
     const grid = document.getElementById('saucepanGrid');
     if (grid) {
         grid.addEventListener('click', (e) => {
+            if (saucepanBookmarks.handleGridClick(e, saucepanCharacters)) return;
+
             const authorLink = e.target.closest('.browse-card-creator-link');
             if (authorLink) {
                 e.stopPropagation();
@@ -1727,6 +1795,8 @@ function initSaucepanView() {
         if (saucepanBrowseMode !== 'creator') loadCharacters(false);
     });
     updateShowLockedToggle();
+
+    saucepanBookmarks.attachFilterCheckbox();
 
     // Refresh
     on('saucepanRefreshBtn', 'click', () => {
@@ -1877,6 +1947,7 @@ function ensureModalEventsAttached() {
     BrowseView.wireTitleScroll(document.getElementById('saucepanCharName'), overlay, overlay?.querySelector('.browse-char-modal'));
 
     on('saucepanCharClose', 'click', () => closePreviewModal());
+    saucepanBookmarks.attachModalBtn();
 
     const galleryGrid = document.getElementById('saucepanCharGalleryGrid');
     if (galleryGrid) {
@@ -2070,6 +2141,7 @@ class SaucepanBrowseView extends BrowseView {
                     <div class="dropdown-section-title">Library:</div>
                     <label class="filter-checkbox"><input type="checkbox" id="saucepanFilterHideOwned"> <i class="fa-solid fa-check"></i> Hide Owned Characters</label>
                     <label class="filter-checkbox"><input type="checkbox" id="saucepanFilterHidePossible"> <i class="fa-solid fa-check" style="color: #f0a500;"></i> Hide Possible Matches</label>
+                    ${saucepanBookmarks.renderFilterCheckbox()}
                     <div class="dropdown-section-title">Content:</div>
                     <label class="filter-checkbox" title="Exclude gore, noncon, self-harm and other extreme-content tags (Saucepan's default content-warning list)"><input type="checkbox" id="saucepanHideExtreme"> <i class="fa-solid fa-triangle-exclamation" style="color: var(--cl-error-bright);"></i> Hide Extreme Content</label>
                     <label class="filter-checkbox" title="Also list characters whose definition is locked by the creator; these can only be imported as incomplete cards"><input type="checkbox" id="saucepanShowLocked"> <i class="fa-solid fa-lock"></i> Show Locked Definitions</label>
@@ -2157,6 +2229,7 @@ class SaucepanBrowseView extends BrowseView {
                         <h2 id="saucepanCharName">Character Name</h2>
                         <p class="browse-char-meta">
                             by <a id="saucepanCharCreator" href="#" class="creator-link browse-meta-identity" title="Click to browse this creator's characters">Creator</a>
+                            ${saucepanBookmarks.renderMetaAction()}
                         </p>
                     </div>
                 </div>
