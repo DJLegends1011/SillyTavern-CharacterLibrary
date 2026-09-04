@@ -2082,6 +2082,34 @@ https://jannyai.com/characters/uuid_slug
         </div>
     </div>
 
+    <!-- JannyAI -> JanitorAI batch re-link -->
+    <div id="jannyRelinkModal" class="cl-modal">
+        <div class="cl-modal-content dc-relink-content">
+            <div class="cl-modal-header">
+                <h3><i class="fa-solid fa-link"></i> Migrate JannyAI Links</h3>
+                <button class="cl-modal-close" id="jannyRelinkCloseBtn"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="cl-modal-body">
+                <div id="jannyRelinkSummary" class="dc-relink-summary"></div>
+                <div class="dc-relink-options">
+                    <span class="settings-hint">Every selected card is verified against JanitorAI first. Deleted cards and cards that cannot be verified stay on JannyAI.</span>
+                    <label class="dc-relink-option"><input type="checkbox" id="jannyRelinkRemoveOld"> Remove the JannyAI link after a successful migration</label>
+                </div>
+                <div class="dc-relink-toolbar">
+                    <span id="jannyRelinkSelCount" class="dc-relink-selcount"></span>
+                    <button id="jannyRelinkSelAllBtn" class="cl-btn dc-relink-mini-btn">Select all</button>
+                    <button id="jannyRelinkSelNoneBtn" class="cl-btn dc-relink-mini-btn">None</button>
+                </div>
+                <div id="jannyRelinkList" class="dc-relink-list"></div>
+            </div>
+            <div class="cl-modal-footer">
+                <span id="jannyRelinkProgress" class="dc-relink-progress"></span>
+                <button id="jannyRelinkCancelBtn" class="action-btn secondary"><i class="fa-solid fa-xmark"></i> Close</button>
+                <button id="jannyRelinkRunBtn" class="action-btn primary"><i class="fa-solid fa-play"></i> Verify &amp; Migrate Selected</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Save Confirmation Modal -->
     <div id="confirmSaveModal" class="confirm-modal hidden">
         <div class="confirm-modal-content">
@@ -2843,6 +2871,17 @@ https://jannyai.com/characters/uuid_slug
                                     <div class="settings-row">
                                         <button id="migrateDatacatLinksBtn" class="settings-action-btn primary">
                                             <i class="fa-solid fa-link"></i> Migrate DataCat Links...
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="settings-group">
+                                    <div class="settings-group-title"><i class="fa-solid fa-copy"></i> JannyAI Migration</div>
+                                    <div class="settings-row">
+                                        <span class="settings-hint">Adds first-party JanitorAI links to JannyAI-linked cards using their shared character IDs. Each card is verified first; missing or unreachable cards remain JannyAI-only. JannyAI links are kept by default so its bookmarks, collections and library matching continue to work.</span>
+                                    </div>
+                                    <div class="settings-row">
+                                        <button id="migrateJannyLinksBtn" class="settings-action-btn primary">
+                                            <i class="fa-solid fa-link"></i> Migrate JannyAI Links...
                                         </button>
                                     </div>
                                 </div>
@@ -3699,8 +3738,8 @@ https://jannyai.com/characters/uuid_slug
     <div id="toastContainer" class="toast-container"></div>
 
     <!-- Scripts -->
-    <script src="library.js?v=200"></script>
-    <script type="module" src="../modules/module-loader.js?v=54"></script>
+    <script src="library.js?v=201"></script>
+    <script type="module" src="../modules/module-loader.js?v=55"></script>
     <script src="library-mobile.js?v=26"></script>
 </body>
 </html>

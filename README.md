@@ -603,6 +603,7 @@ A mirror of JanitorAI content. It serves no alternate greetings and has no follo
 - Character linking and card updates
 - Optional account sync: save/remove online JannyAI bookmarks from the preview modal
 - Optional collections panel: browse your JannyAI collections, preview/download cards in a collection, create a collection, and add bookmarked cards to a collection
+- Optional migration under **Settings → Online → JanitorAI** verifies each shared character ID against JanitorAI before adding its first-party link. Deleted or unreachable cards stay JannyAI-only, and the JannyAI link is kept by default so bookmarks and collections continue to match.
 
 No gallery downloads, version history, or alternate greetings.
 

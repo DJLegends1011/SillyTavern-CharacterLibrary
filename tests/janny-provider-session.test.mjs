@@ -15,6 +15,7 @@ globalThis.window = {
 
 await import('../modules/core-api.js');
 const session = await import('../modules/providers/janny/janny-session.js');
+const linkMigration = await import('../modules/providers/janny/janny-link-migration.js');
 const { default: provider } = await import('../modules/providers/janny/janny-provider.js');
 const source = readFileSync(new URL('../modules/providers/janny/janny-session.js', import.meta.url), 'utf8');
 const library = readFileSync(new URL('../app/library.js', import.meta.url), 'utf8');
@@ -58,6 +59,8 @@ test('provider initialization wires all browser-owned session operations without
     assert.deepEqual(settingsWrites, [['jannyToken', null], ['jannyRefreshToken', null], ['jannyToken', null], ['jannyRefreshToken', null]]);
     assert.equal(bridgeMessages.length, 0);
     assert.equal(typeof window.jannyTestBrowserEndpoint, 'function');
+    assert.equal(window.scanJannyMigrationRows, linkMigration.scanJannyMigrationRows);
+    assert.equal(window.migrateJannyRow, linkMigration.migrateJannyRow);
     assert.equal(window.getValidJannyToken, undefined);
     assert.equal(provider.minClHelperVersion, '1.13.3');
 });

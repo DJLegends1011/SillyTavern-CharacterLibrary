@@ -12,6 +12,7 @@ import {
     jannyBrowserSessionStatus, jannyBrowserRefreshSession, jannyBrowserLogout,
 } from './janny-browser.js';
 import { initJannySession, setJannySessionBrowserHooks } from './janny-session.js';
+import { migrateJannyRow, scanJannyMigrationRows } from './janny-link-migration.js';
 import {
     JANNY_IMAGE_BASE,
     meiliMultiSearch,
@@ -164,6 +165,8 @@ class JannyProvider extends ProviderBase {
             logout: jannyBrowserLogout,
         });
         initJannySession();
+        window.scanJannyMigrationRows = scanJannyMigrationRows;
+        window.migrateJannyRow = migrateJannyRow;
     }
 
     // ── View ────────────────────────────────────────────────

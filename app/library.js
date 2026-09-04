@@ -5496,6 +5496,245 @@ function setupSettingsModal() {
         window.registerOverlay?.({ id: 'dcRelinkModal', tier: 4, close: () => closeDcRelinkModal(), visible: (el) => el.classList.contains('visible') });
     }
 
+    // ── JannyAI -> JanitorAI batch re-link ─────────────────
+    const migrateJannyLinksBtn = document.getElementById('migrateJannyLinksBtn');
+    const jannyRelinkModal = document.getElementById('jannyRelinkModal');
+    if (migrateJannyLinksBtn && jannyRelinkModal) {
+        const listEl = document.getElementById('jannyRelinkList');
+        const summaryEl = document.getElementById('jannyRelinkSummary');
+        const progressEl = document.getElementById('jannyRelinkProgress');
+        const runBtn = document.getElementById('jannyRelinkRunBtn');
+        const removeOldCb = document.getElementById('jannyRelinkRemoveOld');
+        const selectAllBtn = document.getElementById('jannyRelinkSelAllBtn');
+        const selectNoneBtn = document.getElementById('jannyRelinkSelNoneBtn');
+        let rows = [];
+        let notChecked = 0;
+        let running = false;
+        let abort = false;
+        let runController = null;
+
+        const labels = {
+            already: 'Already linked - cleanup only',
+            conflict: 'Conflict: different JanitorAI link',
+            unresolvable: 'Invalid JannyAI id',
+        };
+
+        const actionable = row => !row.done && row.selected !== false
+            && (row.bucket === 'ready' || (row.bucket === 'already' && removeOldCb.checked));
+
+        function updateSelectionCount() {
+            const count = rows.filter(actionable).length;
+            const countEl = document.getElementById('jannyRelinkSelCount');
+            if (countEl) countEl.textContent = `${count} selected`;
+            runBtn.innerHTML = `<i class="fa-solid fa-play"></i> Verify &amp; Migrate Selected (${count})`;
+            runBtn.disabled = count === 0 || running;
+        }
+
+        function renderRows() {
+            const counts = {};
+            for (const row of rows) counts[row.bucket] = (counts[row.bucket] || 0) + 1;
+            const pill = (count, label, cls = '') => `<span class="dc-relink-pill ${cls}">${count} ${escapeHtml(label)}</span>`;
+            const pills = [];
+            if (counts.ready) pills.push(pill(counts.ready, 'ready to verify', 'ready'));
+            if (counts.already) pills.push(pill(counts.already, removeOldCb.checked ? 'cleanup only' : 'already linked (hidden)'));
+            if (counts.conflict) pills.push(pill(counts.conflict, 'conflicting', 'conflict'));
+            if (counts.unresolvable) pills.push(pill(counts.unresolvable, 'invalid ids'));
+            if (notChecked) pills.push(pill(notChecked, 'not checked'));
+            summaryEl.innerHTML = pills.length
+                ? pills.join('')
+                : '<span class="dc-relink-pill">No JannyAI-linked characters found</span>';
+
+            const order = { ready: 0, conflict: 1, already: 2, unresolvable: 3 };
+            const visible = rows.filter(row => removeOldCb.checked || row.bucket !== 'already');
+            visible.sort((a, b) => (order[a.bucket] - order[b.bucket]) || a.name.localeCompare(b.name));
+            listEl.innerHTML = visible.map(row => {
+                const selectable = (row.bucket === 'ready' || row.bucket === 'already') && !row.done;
+                const checkbox = selectable
+                    ? `<input type="checkbox" class="dc-relink-cb janny-relink-cb" data-avatar="${escapeHtml(row.avatar)}"${row.selected === false ? '' : ' checked'}>`
+                    : '<span class="dc-relink-cb-spacer"></span>';
+                const lock = row.locked
+                    ? '<i class="fa-solid fa-lock dc-relink-lock" title="Update-locked. The lock governs update checks; the provider link can still change."></i>'
+                    : '';
+                let badge;
+                if (row.bucket === 'ready') {
+                    badge = '<span class="dc-relink-badge ready" title="JannyAI and JanitorAI use the same character UUID">Shared UUID</span>';
+                } else if (row.bucket === 'already') {
+                    badge = `<span class="dc-relink-badge" title="Already linked to this JanitorAI character. It is selectable only when removing the leftover JannyAI namespace.">${escapeHtml(labels.already)}</span>`;
+                } else if (row.bucket === 'conflict') {
+                    badge = `<span class="dc-relink-badge conflict" title="The existing JanitorAI UUID differs from the JannyAI UUID. This tool never touches conflicting cards.">${escapeHtml(labels.conflict)}</span>`;
+                } else {
+                    badge = `<span class="dc-relink-badge">${escapeHtml(labels[row.bucket] || row.bucket)}</span>`;
+                }
+                return `<div class="dc-relink-row" data-avatar="${escapeHtml(row.avatar)}">${checkbox}<img class="dc-relink-avatar" src="${escapeHtml(getCharacterAvatarStThumbUrl(row.avatar))}" loading="lazy" alt=""><span class="dc-relink-row-name" title="${escapeHtml(row.avatar)}">${escapeHtml(row.name)}</span>${lock}${badge}</div>`;
+            }).join('');
+            updateSelectionCount();
+        }
+
+        function markRow(row, ok, message) {
+            if (ok) row.done = true;
+            row.selected = false;
+            const rowEl = listEl.querySelector(`.dc-relink-row[data-avatar="${CSS.escape(row.avatar)}"]`);
+            if (!rowEl) return;
+            const badge = document.createElement('span');
+            badge.className = `dc-relink-badge ${ok ? 'ready' : 'fail'}`;
+            badge.textContent = message;
+            rowEl.appendChild(badge);
+            const checkbox = rowEl.querySelector('.janny-relink-cb');
+            if (checkbox) { checkbox.checked = false; checkbox.disabled = true; }
+        }
+
+        function openModal() {
+            if (window.extensionsRecoveryInProgress) {
+                showToast('Character data is still loading, please wait', 'warning');
+                return;
+            }
+            if (typeof window.scanJannyMigrationRows !== 'function' || typeof window.migrateJannyRow !== 'function') {
+                showToast('JannyAI migration support is unavailable. Reload Character Library and try again.', 'error');
+                return;
+            }
+            const scan = window.scanJannyMigrationRows(allCharacters, { extensionsReady, getName: getCharacterName });
+            rows = scan.rows;
+            notChecked = scan.notChecked;
+            progressEl.textContent = '';
+            renderRows();
+            jannyRelinkModal.classList.add('visible');
+        }
+
+        function closeModal() {
+            abort = true;
+            runController?.abort();
+            jannyRelinkModal.classList.remove('visible');
+        }
+
+        async function runMigration() {
+            if (running) return;
+            const removeSource = removeOldCb.checked;
+            const targets = rows.filter(actionable);
+            if (!targets.length) { showToast('Nothing selected.', 'info'); return; }
+
+            running = true;
+            abort = false;
+            runController = new AbortController();
+            runBtn.disabled = true;
+            removeOldCb.disabled = true;
+            selectAllBtn.disabled = true;
+            selectNoneBtn.disabled = true;
+            let migrated = 0, cleaned = 0, kept = 0, failed = 0;
+
+            try {
+                for (let index = 0; index < targets.length; index++) {
+                    if (abort) break;
+                    const row = targets[index];
+                    progressEl.textContent = `${index + 1}/${targets.length} - Verifying ${row.name}`;
+
+                    if (activeChar?.avatar === row.avatar && isCharModalDirty()) {
+                        failed++;
+                        markRow(row, false, 'Skipped: open with unsaved edits');
+                        continue;
+                    }
+
+                    let result;
+                    try {
+                        result = await window.migrateJannyRow(row, {
+                            verify: async (id, { signal } = {}) => {
+                                if (typeof window.janitoraiFetchCharacter !== 'function') {
+                                    throw new Error('JanitorAI provider is unavailable');
+                                }
+                                return window.janitoraiFetchCharacter(id, { signal });
+                            },
+                            read: avatar => allCharacters.find(character => character.avatar === avatar) || null,
+                            write: (avatar, updates) => window.applyCardFieldUpdates(avatar, updates),
+                            signal: runController.signal,
+                            removeSource,
+                            deleteValue: ST_UNSET_SENTINEL,
+                        });
+                    } catch (error) {
+                        result = { status: 'write-failed', error };
+                    }
+
+                    if (result.status === 'cancelled') {
+                        abort = true;
+                        break;
+                    } else if (result.status === 'migrated') {
+                        migrated++;
+                        markRow(row, true, 'Migrated');
+                    } else if (result.status === 'cleaned') {
+                        cleaned++;
+                        markRow(row, true, 'JannyAI link removed');
+                    } else if (result.status === 'already') {
+                        markRow(row, true, 'Already linked');
+                    } else if (result.status === 'missing') {
+                        kept++;
+                        markRow(row, false, 'Missing on JanitorAI - kept on JannyAI');
+                    } else if (result.status === 'unverified') {
+                        kept++;
+                        markRow(row, false, 'Could not verify - kept on JannyAI');
+                    } else if (result.status === 'identity-mismatch') {
+                        kept++;
+                        markRow(row, false, 'UUID mismatch - kept on JannyAI');
+                    } else if (result.status === 'stale-source') {
+                        kept++;
+                        markRow(row, false, 'JannyAI link changed - kept untouched');
+                    } else if (result.status === 'stale-conflict') {
+                        kept++;
+                        markRow(row, false, 'JanitorAI link changed - kept untouched');
+                    } else {
+                        failed++;
+                        markRow(row, false, result.error?.message || 'Write failed');
+                    }
+
+                    // JanitorAI rate-limits detail bursts; verification is mandatory for this migration.
+                    if (!abort && index + 1 < targets.length) await new Promise(resolve => setTimeout(resolve, 900));
+                }
+            } finally {
+                running = false;
+                runController = null;
+                removeOldCb.disabled = false;
+                selectAllBtn.disabled = false;
+                selectNoneBtn.disabled = false;
+                updateSelectionCount();
+            }
+            const parts = [`${migrated} migrated`];
+            if (cleaned) parts.push(`${cleaned} cleaned`);
+            if (kept) parts.push(`${kept} kept on JannyAI`);
+            if (failed) parts.push(`${failed} failed`);
+            progressEl.textContent = (abort ? 'Stopped. ' : 'Done. ') + parts.join(', ');
+            window.ProviderRegistry?.rebuildAllBrowseLookups?.();
+            window.ProviderRegistry?.refreshActiveBrowseBadges?.();
+            performSearch();
+        }
+
+        migrateJannyLinksBtn.onclick = openModal;
+        runBtn.onclick = runMigration;
+        document.getElementById('jannyRelinkCloseBtn').onclick = closeModal;
+        document.getElementById('jannyRelinkCancelBtn').onclick = () => {
+            if (running) { abort = true; runController?.abort(); return; }
+            closeModal();
+        };
+        listEl.addEventListener('change', event => {
+            const checkbox = event.target?.classList?.contains('janny-relink-cb') ? event.target : null;
+            if (!checkbox) return;
+            const row = rows.find(candidate => candidate.avatar === checkbox.dataset.avatar);
+            if (row) row.selected = checkbox.checked;
+            updateSelectionCount();
+        });
+        removeOldCb.addEventListener('change', renderRows);
+        selectAllBtn.onclick = () => {
+            for (const row of rows) {
+                if (row.bucket === 'ready' || row.bucket === 'already') row.selected = true;
+            }
+            renderRows();
+        };
+        selectNoneBtn.onclick = () => {
+            for (const row of rows) {
+                if (row.bucket === 'ready' || row.bucket === 'already') row.selected = false;
+            }
+            renderRows();
+        };
+        window.registerOverlay?.({ id: 'jannyRelinkModal', tier: 4, close: () => closeModal(), visible: el => el.classList.contains('visible') });
+    }
+    // ── End JannyAI -> JanitorAI batch re-link ─────────────
+
     function updateGalleryMigrationStatus() {
         if (!galleryMigrationStatus || !galleryMigrationStatusText) return;
 

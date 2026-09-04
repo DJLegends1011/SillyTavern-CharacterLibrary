@@ -162,7 +162,7 @@ async function hampterAttempt(path, token, signal, wire = {}) {
     let browserError = '';
     if (hasBrowserEndpoint()) {
         let res = null;
-        try { res = await browserFetch(path, token, undefined, wire); } catch (e) { browserError = e?.message || 'unreachable'; res = null; }
+        try { res = await browserFetch(path, token, undefined, { ...wire, signal }); } catch (e) { browserError = e?.message || 'unreachable'; res = null; }
         if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
         if (res) return { ok: res.status >= 200 && res.status < 300, status: res.status, body: res.body, retryAfter: res.retryAfter || '' };
     }
@@ -636,7 +636,7 @@ export async function browserFetch(path, token, endpoint, opts = {}) {
         token: token || undefined,
         method: opts.method || undefined,
         jsonBody: opts.jsonBody,
-    }, { timeoutMs: 90000 });
+    }, { timeoutMs: 90000, signal: opts.signal });
     return { status: data.status || 0, body: data.body || '', retryAfter: data.retryAfter || '' };
 }
 
