@@ -78,7 +78,8 @@ we are adding a missing feature (`ext`) or standing up account sync for a guest 
 - `QOL` — quality-of-life tweaks (separate track)
 - `codex/provider-guide-docs` — documentation only; carries this slash command (`.claude/commands/`)
 - `codex/saucepan-hidden-extraction` — **not a feature branch.** This was decoding work done *for the upstream maintainer*, who needed to understand Saucepan's hidden extraction path. It was never meant to ship in AIO, which is why it appears in no AIO version. Do not merge it as-is and do not retire it.
-  **Future direction:** this branch is the natural base for a dedicated **Saucepan ext account sync** branch, matching the account-sync pattern already used by DataCat / JannyAI / JanitorAI. If that work starts, cut it from here rather than from `main` — the extraction decoding is the groundwork. Until then it stays out of AIO.
+  **Future direction:** this branch is the natural base for **`codex/saucepan-ext-account-sync`**. If that work starts, cut it from here rather than from `main` — the extraction decoding is the groundwork. Until then it stays out of AIO.
+  **`ext` is the verified-correct classification** (checked against `main` 2026-09-03). Saucepan is credentialed — `settingsSaucepanHandle` + `settingsSaucepanPassword` with a `saucepanLoginBtn`, plus a bearer-token paste path. And it has no user-favorites support: every `favorite`/`favorite_count` reference in `saucepan-api.js`, `saucepan-browse.js` and `saucepan-provider.js` is a **read-only display stat** (the heart count on a card, the `saucepanCharFavorites` span). There is no "my favorites" list, filter, or toggle anywhere. Same shape as JanitorAI: credentials in, favorites missing, so CL extends it.
 
 ## Retired branches (do NOT recreate or merge)
 
