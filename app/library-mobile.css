@@ -2646,7 +2646,8 @@ html.cl-mobile .pre-import-matches { gap: var(--space-sm); max-height: 40vh; }
 
 /* --- DataCat -> JanitorAI re-link modal --- */
 /* Body becomes the flex column and only the list scrolls, so summary/options/toolbar stay pinned. */
-html.cl-mobile #dcRelinkModal .cl-modal-body {
+html.cl-mobile #dcRelinkModal .cl-modal-body,
+html.cl-mobile #jannyRelinkModal .cl-modal-body {
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -2683,7 +2684,8 @@ html.cl-mobile .dc-relink-option input {
 html.cl-mobile .dc-relink-mini-btn {
     min-height: 44px;
 }
-html.cl-mobile #dcRelinkModal .cl-modal-footer {
+html.cl-mobile #dcRelinkModal .cl-modal-footer,
+html.cl-mobile #jannyRelinkModal .cl-modal-footer {
     flex-wrap: wrap;
     gap: var(--space-sm);
     padding-bottom: max(var(--space-sm), env(safe-area-inset-bottom));

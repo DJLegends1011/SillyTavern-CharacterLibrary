@@ -6,6 +6,8 @@ import { migrateJannyRow, scanJannyMigrationRows } from '../modules/providers/ja
 
 const html = readFileSync(new URL('../app/library.html', import.meta.url), 'utf8');
 const js = readFileSync(new URL('../app/library.js', import.meta.url), 'utf8');
+const css = readFileSync(new URL('../app/library.css', import.meta.url), 'utf8');
+const mobileCss = readFileSync(new URL('../app/library-mobile.css', import.meta.url), 'utf8');
 
 class Element {
     constructor(id = '') {
@@ -30,6 +32,12 @@ class Element {
         for (const listener of this.listeners[name] || []) await listener(event);
     }
 }
+
+test('the Janny migration modal mirrors DataCat foreground and mobile layout rules', () => {
+    assert.match(css, /#dcRelinkModal\s*,\s*#jannyRelinkModal\s*\{[^}]*z-index:\s*10001/s);
+    assert.match(mobileCss, /html\.cl-mobile #dcRelinkModal \.cl-modal-body\s*,\s*html\.cl-mobile #jannyRelinkModal \.cl-modal-body\s*\{/s);
+    assert.match(mobileCss, /html\.cl-mobile #dcRelinkModal \.cl-modal-footer\s*,\s*html\.cl-mobile #jannyRelinkModal \.cl-modal-footer\s*\{/s);
+});
 
 function harness({ detail, fetchCharacter, removeSource = false } = {}) {
     const elements = new Map();

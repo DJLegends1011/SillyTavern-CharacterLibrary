@@ -7523,9 +7523,10 @@ html.cl-mobile .char-portrait-container.editing-unlocked .portrait-edit-overlay 
     overflow-y: auto;
 }
 
-/* DataCat -> JanitorAI re-link modal */
-/* Opens over the settings modal (same .cl-modal z tier, later DOM sibling wins otherwise) */
-#dcRelinkModal {
+/* Provider -> JanitorAI re-link modals */
+/* Open over the settings modal; both migration dialogs must share the same foreground layer. */
+#dcRelinkModal,
+#jannyRelinkModal {
     z-index: 10001;
 }
 .cl-modal-content.dc-relink-content {
