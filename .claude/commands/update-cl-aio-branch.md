@@ -57,6 +57,22 @@ exactly 1 commit behind main** — none has v7.2.2 merged yet, so Step 1 applies
 | `codex/janitorai-ext-account-sync` | 13 | 1 | 18 files, +3479 |
 | `codex/fix-chub-tag-exclusions` | 1 | 1 | 3 files, +332 |
 
+## Branch naming convention
+
+Two different kinds of provider work, two different name parts. They can combine.
+
+- **`ext`** — "extend". The provider **asks for your credentials**, but the site itself has
+  **no favorites support**. Character Library adds the feature the site is missing, so we are
+  *extending* the provider beyond what it natively does.
+- **`account-sync`** — the provider is **"guest"-like** (DataCat, JannyAI). Here the work is
+  wiring up account sync in the first place.
+
+So `codex/janitorai-ext-account-sync` carries both parts, while `codex/datacat-account-sync`
+and `codex/jannyai-account-sync` are guest-type and take `account-sync` alone. When naming a
+new provider branch, decide which case the provider is in first — the name should say whether
+we are adding a missing feature (`ext`) or standing up account sync for a guest provider
+(`account-sync`).
+
 ## Branches excluded from AIO
 
 - `QOL` — quality-of-life tweaks (separate track)
