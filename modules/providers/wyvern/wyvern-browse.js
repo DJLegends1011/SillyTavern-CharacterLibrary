@@ -9,6 +9,7 @@ import {
     WYVERN_SITE_BASE,
     getWyvernHeaders,
     getWyvernCharName,
+    getWyvernAltGreetings,
     getAvatarUrl,
     getCharacterPageUrl,
     firebaseSignIn,
@@ -1838,7 +1839,7 @@ async function loadWyvernCharacters(forceRefresh = false) {
                 if (autoFetchExcludeTags.some(et => charTags.includes(et))) return false;
             }
             if (wyvernFilterHasLorebook && !(c.lorebooks?.length > 0)) return false;
-            if (wyvernFilterHasAltGreetings && !(c.alternate_greetings?.length > 0)) return false;
+            if (wyvernFilterHasAltGreetings && getWyvernAltGreetings(c).length === 0) return false;
             return true;
         };
 
@@ -2111,7 +2112,7 @@ function renderWyvernFollowing() {
         filtered = filtered.filter(c => c.lorebooks?.length > 0);
     }
     if (wyvernFilterHasAltGreetings) {
-        filtered = filtered.filter(c => c.alternate_greetings?.length > 0);
+        filtered = filtered.filter(c => getWyvernAltGreetings(c).length > 0);
     }
     const wyvernPersistentExclude = getProviderExcludeTags('wyvern');
     if (wyvernPersistentExclude.length > 0) {
@@ -2352,7 +2353,7 @@ function renderWyvernGrid(appendOnly = false) {
         displayCharacters = displayCharacters.filter(c => c.lorebooks?.length > 0);
     }
     if (wyvernFilterHasAltGreetings) {
-        displayCharacters = displayCharacters.filter(c => c.alternate_greetings?.length > 0);
+        displayCharacters = displayCharacters.filter(c => getWyvernAltGreetings(c).length > 0);
     }
 
     if (displayCharacters.length === 0) {
@@ -2456,7 +2457,7 @@ function createWyvernCard(char) {
     if (char.lorebooks?.length > 0) {
         badges.push('<span class="browse-feature-badge" title="Has Lorebook"><i class="fa-solid fa-book"></i></span>');
     }
-    if (char.alternate_greetings?.length > 0) {
+    if (getWyvernAltGreetings(char).length > 0) {
         badges.push('<span class="browse-feature-badge" title="Alt Greetings"><i class="fa-solid fa-comment-dots"></i></span>');
     }
 
@@ -2624,7 +2625,8 @@ async function openWyvernCharPreview(char) {
     }
 
     // Greetings count
-    const numGreetings = char.alternate_greetings?.length || 0;
+    const charAltGreetings = getWyvernAltGreetings(char);
+    const numGreetings = charAltGreetings.length;
     if (numGreetings > 0) {
         greetingsStat.style.display = 'flex';
         greetingsCount.textContent = numGreetings + 1;
@@ -2715,7 +2717,7 @@ async function openWyvernCharPreview(char) {
         CoreAPI.setBrowseAltGreetings(greetings);
     };
 
-    renderAltGreetings(char.alternate_greetings || []);
+    renderAltGreetings(charAltGreetings);
 
     const applyDetailData = (node, opts = {}) => {
         if (!node) return;
@@ -2812,7 +2814,7 @@ async function openWyvernCharPreview(char) {
             mes_example: char.mes_example,
             first_mes: char.first_mes,
             creator_notes: char.creator_notes,
-            alternate_greetings: char.alternate_greetings,
+            alternate_greetings: charAltGreetings,
             galleryImages,
         };
         // Defer the iframe until cache/fetch settles; avoids destroy+recreate flash.
@@ -2848,7 +2850,7 @@ async function openWyvernCharPreview(char) {
                     mes_example: detailData.mes_example,
                     first_mes: detailData.first_mes,
                     creator_notes: detailData.creator_notes,
-                    alternate_greetings: detailData.alternate_greetings,
+                    alternate_greetings: getWyvernAltGreetings(detailData),
                     galleryImages,
                 };
                 while (wyvernDetailCache.size >= WYVERN_DETAIL_CACHE_MAX) {
