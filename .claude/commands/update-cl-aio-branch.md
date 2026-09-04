@@ -56,7 +56,8 @@ exactly 1 commit behind main** — none has v7.2.2 merged yet, so Step 1 applies
 
 - `QOL` — quality-of-life tweaks (separate track)
 - `codex/provider-guide-docs` — documentation only; carries this slash command (`.claude/commands/`)
-- `codex/saucepan-hidden-extraction` — 8 commits ahead / 5 behind main, last touched 2026-08-08. Never listed in this workflow and not in `aio-v7.2.1`. Status undecided — confirm with the user before adding it to AIO or retiring it.
+- `codex/saucepan-hidden-extraction` — **not a feature branch.** This was decoding work done *for the upstream maintainer*, who needed to understand Saucepan's hidden extraction path. It was never meant to ship in AIO, which is why it appears in no AIO version. Do not merge it as-is and do not retire it.
+  **Future direction:** this branch is the natural base for a dedicated **Saucepan ext account sync** branch, matching the account-sync pattern already used by DataCat / JannyAI / JanitorAI. If that work starts, cut it from here rather than from `main` — the extraction decoding is the groundwork. Until then it stays out of AIO.
 
 ## Retired branches (do NOT recreate or merge)
 
