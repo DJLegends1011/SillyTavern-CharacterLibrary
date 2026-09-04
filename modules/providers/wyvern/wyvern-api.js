@@ -205,6 +205,7 @@ export function getCharacterPageUrl(charId) {
 /**
  * Parse a Wyvern URL and extract the character ID.
  * Matches: app.wyvern.chat/characters/{id}
+ * and the creator-page route: app.wyvern.chat/profiles/{creatorUid}/characters/{id}
  * @param {string} url
  * @returns {string|null} character ID or null
  */
@@ -213,7 +214,7 @@ export function parseCharacterUrl(url) {
     try {
         const u = new URL(url.startsWith('http') ? url : `https://${url}`);
         if (!/^(www\.)?app\.wyvern\.chat$/i.test(u.hostname)) return null;
-        const match = u.pathname.match(/^\/characters\/([^/]+)/);
+        const match = u.pathname.match(/^\/(?:profiles\/[^/]+\/)?characters\/([^/]+)/);
         return match ? match[1] : null;
     } catch {
         return null;
@@ -233,6 +234,22 @@ export function parseCharacterUrl(url) {
  */
 export function getWyvernCharName(apiData) {
     return (apiData?.chat_name || '').trim() || apiData?.name || 'Unknown';
+}
+
+/**
+ * Alt greetings as Wyvern's own card export maps them: advanced greetings
+ * (enable_advanced_greetings + greetings[]) replace the legacy array, dropping the
+ * 'default' entry, empty contents, and per-greeting metadata.
+ * @param {Object} apiData - Wyvern character object (detail or search hit)
+ * @returns {string[]}
+ */
+export function getWyvernAltGreetings(apiData) {
+    if (apiData?.enable_advanced_greetings && Array.isArray(apiData.greetings) && apiData.greetings.length > 0) {
+        return apiData.greetings
+            .filter(g => g?.id !== 'default' && typeof g?.content === 'string' && g.content.trim())
+            .map(g => g.content);
+    }
+    return Array.isArray(apiData?.alternate_greetings) ? apiData.alternate_greetings : [];
 }
 
 /**
@@ -284,7 +301,7 @@ export function buildCharacterCardFromWyvern(apiData) {
             creator_notes: apiData.creator_notes || '',
             system_prompt: apiData.pre_history_instructions || '',
             post_history_instructions: apiData.post_history_instructions || '',
-            alternate_greetings: apiData.alternate_greetings || [],
+            alternate_greetings: getWyvernAltGreetings(apiData),
             tags: tags,
             creator: creatorName,
             character_version: '',
