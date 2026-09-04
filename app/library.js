@@ -553,6 +553,7 @@ const DEFAULT_SETTINGS = {
     saucepanToken: null,
     janitoraiToken: null,
     janitoraiRefreshToken: null,
+    jannyToken: null, // Legacy cleanup slot only; browser-owned session credentials are never written here.
     // Kept so a lapsed session can be renewed without hunting for the password again.
     janitoraiEmail: null,
     janitoraiPassword: null,
@@ -603,6 +604,7 @@ const DEFAULT_SETTINGS = {
 
     // ---- Online / Browse ----
     possibleMatchMinScore: 65,
+    jannyRandomizeCollectionCards: false,
 
     // ---- Gallery & Media ----
     includeProviderGallery: true,
@@ -1792,6 +1794,13 @@ async function refreshClHelperUpdateBanner(available, runningVersion, linkedInst
     banner.classList.remove('cl-hidden');
 }
 
+const CL_HELPER_BUNDLE_FILES = ['package.json', 'index.js', 'janny-browser-policy.js'];
+// /self-update runs inside the RUNNING helper and copies the file list that helper was compiled
+// with, ignoring the payload we send. Helpers before this version only knew package.json and
+// index.js, so letting them self-update would install an index.js whose sibling policy module
+// never lands. Refuse and send the user to the manual copy instead.
+const CL_HELPER_BUNDLE_FILES_SINCE = '1.13.0';
+
 async function performClHelperSelfUpdate(btn) {
     if (!btn) return;
     const origHtml = btn.innerHTML;
@@ -1803,7 +1812,7 @@ async function performClHelperSelfUpdate(btn) {
     let bundledVersion = 'unknown';
     try {
         files = {};
-        for (const name of ['package.json', 'index.js']) {
+        for (const name of CL_HELPER_BUNDLE_FILES) {
             const r = await fetch(`../extras/cl-helper/${name}`, { cache: 'no-cache' });
             if (!r.ok) throw new Error(`could not read bundled ${name} (${r.status})`);
             files[name] = await r.text();
@@ -1825,6 +1834,18 @@ async function performClHelperSelfUpdate(btn) {
     btn.disabled = false;
     btn.innerHTML = origHtml;
 
+    // compareVersions fails OPEN on anything unparseable, so an unknown running version still
+    // gets the in-app path; the helper's own guarded policy import keeps that case recoverable.
+    if (compareVersions(runningVersion, CL_HELPER_BUNDLE_FILES_SINCE) < 0) {
+        const manualCopy = `Copy all ${CL_HELPER_BUNDLE_FILES.length} files from extras/cl-helper/ (${CL_HELPER_BUNDLE_FILES.join(', ')}) into ${installPath}, then restart SillyTavern.`;
+        const bodyEl = document.getElementById('clHelperUpdateBody');
+        const actionsEl = document.getElementById('clHelperUpdateActions');
+        if (bodyEl) bodyEl.textContent = `cl-helper v${runningVersion} can only install package.json and index.js, so the in-app update would leave the rest of the bundle behind and break JannyAI. ${manualCopy}`;
+        if (actionsEl) actionsEl.classList.add('cl-hidden');
+        showToast(`This cl-helper is too old to update itself completely. ${manualCopy}`, 'error', 12000);
+        return;
+    }
+
     const fmtSize = (s) => {
         const bytes = new Blob([s]).size;
         return bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(1)} KB`;
@@ -1839,10 +1860,10 @@ async function performClHelperSelfUpdate(btn) {
                 { key: 'Source:', value: `extras/cl-helper/ (v${bundledVersion})`, mono: true },
                 { key: 'Destination:', value: `${installPath} (currently v${runningVersion})`, mono: true },
             ] },
-            { type: 'list', items: [
-                { text: `package.json (${fmtSize(files['package.json'])})`, mono: true },
-                { text: `index.js (${fmtSize(files['index.js'])})`, mono: true },
-            ] },
+            { type: 'list', items: CL_HELPER_BUNDLE_FILES.map(name => ({
+                text: `${name} (${fmtSize(files[name])})`,
+                mono: true,
+            })) },
             { type: 'note', text: 'The current files are saved as .bak next to the originals. After the update, restart SillyTavern to load the new version.' },
         ],
     });
@@ -1958,6 +1979,12 @@ function setupSettingsModal() {
     const datacatFolderOrderLoadBtn = document.getElementById('datacatFolderOrderLoadBtn');
     const datacatFolderOrderStatus = document.getElementById('datacatFolderOrderStatus');
     const datacatFolderOrderList = document.getElementById('datacatFolderOrderList');
+    const jannySettingsRefreshBtn = document.getElementById('jannySettingsRefreshBtn');
+    const jannyTokenInput = document.getElementById('settingsJannyToken');
+    const toggleJannyTokenVisibility = document.getElementById('toggleJannyTokenVisibility');
+    const saveJannyTokenBtn = document.getElementById('saveJannyTokenBtn');
+    const clearJannyTokenBtn = document.getElementById('clearJannyTokenBtn');
+    const jannyRandomizeCollectionCardsCheckbox = document.getElementById('jannyRandomizeCollectionCards');
     const minScoreSlider = document.getElementById('settingsMinScore');
     const minScoreValue = document.getElementById('minScoreValue');
     const possibleMatchScoreSlider = document.getElementById('settingsPossibleMatchScore');
@@ -2534,6 +2561,258 @@ function setupSettingsModal() {
         });
     }
 
+    // JannyAI has its own controls and routes, but shares JanitorAI's browser configuration.
+    // Credentials are one-time input only; account status comes from the browser profile.
+    const jannyEndpointInput = document.getElementById('settingsJannyBrowserEndpoint');
+    const jannyModeSelect = document.getElementById('settingsJannyBrowserMode');
+    const jannyManagedRow = document.getElementById('jannyManagedRow');
+    const jannyManagedStatusRow = document.getElementById('jannyManagedStatusRow');
+    const jannyEndpointHintRow = document.getElementById('jannyEndpointHintRow');
+    const jannyManagedStatusEl = document.getElementById('jannyManagedStatus');
+    const jannyManagedStartBtn = document.getElementById('jannyManagedStartBtn');
+    const jannyManagedStopBtn = document.getElementById('jannyManagedStopBtn');
+    const jannyChecksEl = document.getElementById('jannyBrowserChecks');
+    const testJannyBrowserBtn = document.getElementById('testJannyBrowserBtn');
+    const jannyBrowserMode = () => getSetting('janitoraiBrowserMode') || 'managed';
+    let jannyAccountStatusRead = 0;
+    let jannyAccountBusy = false;
+
+    async function refreshJannySettingsAccountStatus() {
+        const accountEl = document.getElementById('jannySettingsAccountStatus');
+        const hintEl = document.getElementById('jannySettingsAccountHint');
+        if (!accountEl) return;
+        const read = ++jannyAccountStatusRead;
+        accountEl.className = 'settings-status-badge inactive';
+        accountEl.textContent = 'Checking browser session…';
+        try {
+            const status = await window.jannySessionStatus?.();
+            if (read !== jannyAccountStatusRead) return;
+            if (!status) throw new Error('No browser session status');
+            if (status.active === false) window.jannyInvalidateAccountCache?.();
+            accountEl.className = `settings-status-badge ${status.active ? 'active' : 'inactive'}`;
+            accountEl.textContent = `${status.active ? 'Logged in' : 'Not logged in'}${status.email ? ' as ' + status.email : ''}`;
+            if (hintEl) {
+                const expiry = status.expMs ? new Date(status.expMs).toLocaleString() : '';
+                const renewal = status.hasRefresh
+                    ? 'Refresh credential present; the browser profile owns session renewal.'
+                    : 'No refresh credential: a bare token is non-renewable and cannot renew. Install the full session cookie pair.';
+                hintEl.textContent = `${expiry ? `Session expires ${expiry}. ` : ''}${renewal}${status.active ? '' : ' Install a fresh complete session if login is required.'}`;
+            }
+        } catch {
+            if (read !== jannyAccountStatusRead) return;
+            accountEl.className = 'settings-status-badge inactive';
+            accountEl.textContent = 'Browser session unavailable';
+            if (hintEl) hintEl.textContent = 'Check cl-helper and use the JannyAI browser Test above. Account status could not be read; MeiliSearch browsing still works.';
+        }
+    }
+
+    function clearJannyLoginInput() {
+        if (jannyTokenInput) {
+            jannyTokenInput.value = '';
+            jannyTokenInput.type = 'password';
+        }
+        if (toggleJannyTokenVisibility) toggleJannyTokenVisibility.innerHTML = '<i class="fa-solid fa-eye"></i>';
+    }
+
+    toggleJannyTokenVisibility?.addEventListener('click', (e) => {
+        e.preventDefault();
+        if (!jannyTokenInput) return;
+        const hidden = jannyTokenInput.type === 'password';
+        jannyTokenInput.type = hidden ? 'text' : 'password';
+        toggleJannyTokenVisibility.innerHTML = `<i class="fa-solid fa-eye${hidden ? '-slash' : ''}"></i>`;
+    });
+    saveJannyTokenBtn?.addEventListener('click', async (e) => {
+        e.preventDefault();
+        if (jannyAccountBusy) return;
+        const raw = (jannyTokenInput?.value || '').trim();
+        if (!raw) { showToast('Paste your JannyAI login token first', 'warning'); return; }
+        const original = saveJannyTokenBtn.innerHTML;
+        jannyAccountBusy = true;
+        ++jannyAccountStatusRead;
+        saveJannyTokenBtn.disabled = true;
+        if (clearJannyTokenBtn) clearJannyTokenBtn.disabled = true;
+        saveJannyTokenBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Installing...';
+        try {
+            const result = await window.jannySetSession?.(raw);
+            if (!result?.ok) throw new Error('Browser installation failed');
+            showToast('JannyAI login installed in the browser.', 'success');
+        } catch {
+            // Do not echo transport errors: they may contain the one-time pasted credentials.
+            showToast('Could not install JannyAI login in the browser. Check the browser Test and paste a fresh complete JannyAI session.', 'error');
+        } finally {
+            // A failed transport can still have replaced browser cookies. Never reuse prior-account data.
+            window.jannyInvalidateAccountCache?.();
+            clearJannyLoginInput();
+            jannyAccountBusy = false;
+            if (clearJannyTokenBtn) clearJannyTokenBtn.disabled = false;
+            saveJannyTokenBtn.innerHTML = original;
+            applyJannyBrowserMode();
+            await refreshJannySettingsAccountStatus();
+        }
+    });
+    clearJannyTokenBtn?.addEventListener('click', async (e) => {
+        e.preventDefault();
+        if (jannyAccountBusy) return;
+        jannyAccountBusy = true;
+        ++jannyAccountStatusRead;
+        clearJannyLoginInput();
+        clearJannyTokenBtn.disabled = true;
+        if (saveJannyTokenBtn) saveJannyTokenBtn.disabled = true;
+        try {
+            const result = await window.jannyLogout?.();
+            if (!result?.ok) throw new Error('Browser cleanup failed');
+            showToast('JannyAI login cleared. Browser account-cookie cleanup succeeded; Cloudflare cookies are preserved.', 'info');
+        } catch {
+            showToast('Login input cleared, but browser account-cookie cleanup could not be confirmed. The browser may still be logged in; reconnect and retry Log Out.', 'warning');
+        } finally {
+            window.jannyInvalidateAccountCache?.();
+            jannyAccountBusy = false;
+            clearJannyTokenBtn.disabled = false;
+            applyJannyBrowserMode();
+            await refreshJannySettingsAccountStatus();
+        }
+    });
+    jannySettingsRefreshBtn?.addEventListener('click', async (e) => {
+        e.preventDefault();
+        await refreshJannySettingsAccountStatus();
+    });
+
+    async function refreshJannyManagedStatus() {
+        if (!jannyManagedStatusEl || jannyBrowserMode() !== 'managed') return;
+        try {
+            const resp = await apiRequest('/plugins/cl-helper/jannyai-managed/status', 'GET');
+            const d = await resp.json().catch(() => null);
+            if (!resp.ok || !d) throw new Error('No status');
+            const running = !!d.running;
+            jannyManagedStatusEl.className = `settings-status-badge ${running ? 'active' : 'inactive'}`;
+            const label = running
+                ? `Running (${d.browser || 'browser'}), stops after ${d.idleStopMinutes || 10} min idle`
+                : (d.binary ? 'Not started. It starts by itself when something needs it.' : 'No Chrome, Chromium or Edge found on this machine.');
+            jannyManagedStatusEl.innerHTML = `<i class="fa-solid fa-circle"></i> ${escapeHtml(label)}`;
+            if (jannyManagedStopBtn) jannyManagedStopBtn.disabled = !running;
+        } catch {
+            jannyManagedStatusEl.className = 'settings-status-badge inactive';
+            jannyManagedStatusEl.textContent = 'cl-helper did not answer';
+        }
+    }
+
+    function refreshJannySettingsUi(readAccount = true) {
+        if (jannyEndpointInput) jannyEndpointInput.value = getSetting('janitoraiBrowserEndpoint') || '';
+        if (jannyModeSelect) {
+            jannyModeSelect.value = jannyBrowserMode();
+            jannyModeSelect._customSelect?.update?.();
+        }
+        applyJannyBrowserMode();
+        if (readAccount) refreshJannySettingsAccountStatus();
+    }
+
+    function applyJannyBrowserMode() {
+        const managed = jannyBrowserMode() === 'managed';
+        const endpointRow = jannyEndpointInput?.closest('.settings-row');
+        endpointRow?.querySelector('label')?.classList.toggle('cl-hidden', managed);
+        jannyEndpointInput?.classList.toggle('cl-hidden', managed);
+        jannyManagedRow?.classList.toggle('cl-hidden', !managed);
+        jannyManagedStatusRow?.classList.toggle('cl-hidden', !managed);
+        jannyEndpointHintRow?.classList.toggle('cl-hidden', managed);
+        if (saveJannyTokenBtn) saveJannyTokenBtn.disabled = jannyAccountBusy || (!managed && !(jannyEndpointInput?.value || '').trim());
+        if (managed) refreshJannyManagedStatus();
+    }
+
+    function renderJannyBrowserChecks(checks, fatalError) {
+        if (!jannyChecksEl) return;
+        if (!checks?.length && !fatalError) {
+            jannyChecksEl.classList.add('hidden');
+            jannyChecksEl.innerHTML = '';
+            return;
+        }
+        jannyChecksEl.classList.remove('hidden');
+        const rows = (checks || []).map(c => `
+            <div class="janitorai-check ${c.ok ? 'ok' : (c.optional ? 'warn' : 'fail')}">
+                <i class="fa-solid ${c.ok ? 'fa-circle-check' : (c.optional ? 'fa-circle-info' : 'fa-circle-xmark')}"></i>
+                <span class="janitorai-check-label">${escapeHtml(c.label || c.key || '')}</span>
+                ${c.detail ? `<span class="janitorai-check-detail">${escapeHtml(String(c.detail))}</span>` : ''}
+            </div>`).join('');
+        jannyChecksEl.innerHTML = rows + (fatalError
+            ? `<div class="janitorai-check fail"><i class="fa-solid fa-circle-xmark"></i><span class="janitorai-check-label">${escapeHtml(fatalError)}</span></div>`
+            : '');
+    }
+
+    document.getElementById('settingsJannySection')?.addEventListener('toggle', (e) => {
+        if (!e.target.open) return;
+        // The JanitorAI section edits the same shared browser config, so rows from the last run
+        // can describe a configuration that no longer exists. Drop them like the change handlers do.
+        renderJannyBrowserChecks([], null);
+        refreshJannySettingsUi();
+    });
+    jannyModeSelect?.addEventListener('change', () => {
+        setSetting('janitoraiBrowserMode', jannyModeSelect.value === 'endpoint' ? 'endpoint' : 'managed');
+        renderJannyBrowserChecks([], null);
+        refreshJannySettingsUi();
+    });
+    jannyEndpointInput?.addEventListener('change', () => {
+        setSetting('janitoraiBrowserEndpoint', jannyEndpointInput.value.trim() || null);
+        renderJannyBrowserChecks([], null);
+        refreshJannySettingsUi();
+    });
+    if (jannyManagedStartBtn) {
+        jannyManagedStartBtn.onclick = async () => {
+            const original = jannyManagedStartBtn.innerHTML;
+            jannyManagedStartBtn.disabled = true;
+            jannyManagedStartBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Starting...';
+            try {
+                const resp = await apiRequest('/plugins/cl-helper/jannyai-managed/start', 'POST', {});
+                const d = await resp.json().catch(() => null);
+                if (!resp.ok || !d?.ok) throw new Error('Start failed');
+                showToast('Shared browser started for JannyAI and JanitorAI.', 'success');
+            } catch {
+                showToast('Could not start the shared browser. Check cl-helper and the JannyAI browser Test.', 'error');
+            } finally {
+                jannyManagedStartBtn.disabled = false;
+                jannyManagedStartBtn.innerHTML = original;
+                await refreshJannyManagedStatus();
+            }
+        };
+    }
+    if (jannyManagedStopBtn) {
+        jannyManagedStopBtn.onclick = async () => {
+            try {
+                const resp = await apiRequest('/plugins/cl-helper/jannyai-managed/stop', 'POST', {});
+                const d = await resp.json().catch(() => null);
+                if (!resp.ok || !d?.ok) throw new Error('Stop failed');
+            } catch {
+                showToast('Could not stop the shared browser; check its status below.', 'warning');
+            }
+            await refreshJannyManagedStatus();
+        };
+    }
+    if (testJannyBrowserBtn) {
+        testJannyBrowserBtn.onclick = async () => {
+            const managed = jannyBrowserMode() === 'managed';
+            const endpoint = (jannyEndpointInput?.value || '').trim();
+            if (!managed && !endpoint) { showToast('Enter a browser endpoint first', 'warning'); return; }
+            if (!managed) setSetting('janitoraiBrowserEndpoint', endpoint);
+            const original = testJannyBrowserBtn.innerHTML;
+            testJannyBrowserBtn.disabled = true;
+            testJannyBrowserBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
+            renderJannyBrowserChecks([], null);
+            try {
+                const data = await window.jannyTestBrowserEndpoint?.(managed ? '' : endpoint);
+                renderJannyBrowserChecks(data?.checks, data?.checks?.length ? null : 'JannyAI browser test did not answer. Check cl-helper.');
+                showToast(data?.ok ? 'Browser is ready for JannyAI.' : 'Browser is not ready for JannyAI; check the results above.', data?.ok ? 'success' : 'warning');
+            } catch (err) {
+                renderJannyBrowserChecks([], err.message || 'JannyAI browser test failed.');
+            } finally {
+                testJannyBrowserBtn.disabled = false;
+                testJannyBrowserBtn.innerHTML = original;
+                applyJannyBrowserMode();
+                await refreshJannySettingsAccountStatus();
+            }
+        };
+    }
+    // The session-status endpoint may start a browser to read cookies. Do not call it during
+    // initial gallery setup: MeiliSearch browsing needs no browser. Read it when settings open.
+    refreshJannySettingsUi(false);
+
     // Open modal
     settingsBtn.onclick = () => {
         chubTokenInput.value = getSetting('chubToken') || '';
@@ -2550,6 +2829,8 @@ function setupSettingsModal() {
         if (wyvernPasswordInput) wyvernPasswordInput.value = getSetting('wyvernPassword') || '';
         if (wyvernRememberCredsCheckbox) wyvernRememberCredsCheckbox.checked = getSetting('wyvernRememberCredentials') || false;
         if (datacatTokenInput) datacatTokenInput.value = getSetting('datacatToken') || '';
+        if (jannyRandomizeCollectionCardsCheckbox) jannyRandomizeCollectionCardsCheckbox.checked = getSetting('jannyRandomizeCollectionCards') === true;
+        refreshJannySettingsUi();
         if (saucepanTokenInput) saucepanTokenInput.value = getSetting('saucepanToken') || '';
         // Not just field repopulation: this also re-reads the managed browser's live state, which
         // can have started or idle-stopped since the panel was last built.
@@ -2977,6 +3258,7 @@ function setupSettingsModal() {
             gridThumbsClHelperBanner, settingsGridThumbClHelperFields,
             galleryThumbsClHelperBanner, galleryThumbsClHelperFields,
             document.getElementById('janitoraiBrowserPluginBanner'), document.getElementById('janitoraiBrowserFields'),
+            document.getElementById('jannyBrowserPluginBanner'), document.getElementById('jannyBrowserFields'),
         ).then(available => {
             if (datacatSessionStatus) {
                 if (!available) {
@@ -3577,6 +3859,7 @@ function setupSettingsModal() {
             wyvernRememberCredentials: wyvernRememberCredsCheckbox ? wyvernRememberCredsCheckbox.checked : false,
             duplicateMinScore: parseInt(minScoreSlider.value),
             possibleMatchMinScore: possibleMatchScoreSlider ? parseInt(possibleMatchScoreSlider.value) : 65,
+            jannyRandomizeCollectionCards: jannyRandomizeCollectionCardsCheckbox ? jannyRandomizeCollectionCardsCheckbox.checked : false,
             importDirectDownloads: importDirectDownloadsCheckbox ? importDirectDownloadsCheckbox.checked : false,
             searchInName: searchNameCheckbox.checked,
             searchInListingName: searchListingNameCheckbox ? searchListingNameCheckbox.checked : true,
@@ -3762,6 +4045,9 @@ function setupSettingsModal() {
         if (possibleMatchScoreSlider) {
             possibleMatchScoreSlider.value = DEFAULT_SETTINGS.possibleMatchMinScore;
             if (possibleMatchScoreValue) possibleMatchScoreValue.textContent = String(DEFAULT_SETTINGS.possibleMatchMinScore);
+        }
+        if (jannyRandomizeCollectionCardsCheckbox) {
+            jannyRandomizeCollectionCardsCheckbox.checked = DEFAULT_SETTINGS.jannyRandomizeCollectionCards;
         }
         if (importDirectDownloadsCheckbox) {
             importDirectDownloadsCheckbox.checked = DEFAULT_SETTINGS.importDirectDownloads;

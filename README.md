@@ -493,7 +493,7 @@ Providers with Following support include a **Followed Creators Manager** panel f
 | Remote Version History | ✅ | -- | -- | -- | -- | -- | -- | -- | -- |
 | Following / Timeline | ✅ | ✅ | -- | -- | ✅ | ✅ | ✅ | ✅ | -- |
 | Favorites | ✅ | -- | -- | -- | -- | -- | -- | ✅ | -- |
-| Auth Required | Optional | Browser required | Userscript required (no account) | Optional | Optional | Optional | None | Optional | Required |
+| Auth Required | Optional | Browser required | Browser required for definitions (no account) | Optional | Optional | Optional | None | Optional | Required |
 
 <details>
 <summary><h3>ChubAI</h3></summary>
@@ -593,27 +593,41 @@ No gallery downloads or version history (JanitorAI doesn't expose these APIs).
 <details>
 <summary><h3>JannyAI</h3></summary>
 
-**Auth:** No account required, but the companion userscript effectively is: JannyAI now sits behind Cloudflare and without the userscript you cannot get a character's definition or greeting (see below).
+**Auth:** No account required for browsing. Card definitions and optional account sync need a real browser, the same one configured for the JanitorAI provider below. Requires the [cl-helper plugin](#cl-helper-plugin-not-detected) for the browser operations only.
 
-A mirror of JanitorAI content. It needs no browser endpoint, which makes it lighter to set up than the first-party JanitorAI provider above, but it serves no alternate greetings and has no following.
+A mirror of JanitorAI content. It serves no alternate greetings and has no following.
 
-- Browse and search the JannyAI character catalog
+- Browse and search the JannyAI character catalog via MeiliSearch (no browser or account needed)
 - Filter by tags, token count, NSFW toggle
 - In-app character preview with card details
 - Character linking and card updates
+- Optional account sync: save/remove online JannyAI bookmarks from the preview modal
+- Optional collections panel: browse your JannyAI collections, preview/download cards in a collection, create a collection, and add bookmarked cards to a collection
 
 No gallery downloads, version history, or alternate greetings.
 
-#### Cloudflare and the userscript
+#### Cloudflare and the shared browser
 
-JannyAI Cloudflare-gates its card pages, and the card page is where the character actually lives. Browsing and searching still work without anything extra, but an import without the userscript gets you the name, avatar, tags, and the site blurb as creator's notes, with no description, no greeting, no scenario, and no example dialogue. That is a stub, not a character. Treat the userscript as required:
+JannyAI Cloudflare-gates its card pages, and the card page is where the character actually lives. Browsing and searching JannyAI's MeiliSearch index (`search.jannyai.com`) work anonymously with no browser at all, but an import needs a real browser to reach the card page: without one you get the name, avatar, tags, and the site blurb as creator's notes, with no description, no greeting, no scenario, and no example dialogue. That is a stub, not a character.
 
-1. Install a userscript manager (Tampermonkey or Violentmonkey)
-2. Add `extras/cl-janitor-bridge.user.js` from this repository
-3. Reload the Character Library tab
+JannyAI reuses the same **Browser** setting (managed or your own endpoint) as the JanitorAI provider above — one setup covers both — but has its own **Test** button and its own provider-local section under **Settings → Online → JannyAI**, because passing JanitorAI's test does not prove JannyAI is ready:
 
-The userscript makes the gated request from your own browser and hands back only the result. The DataCat provider uses the same userscript for its Hampter sorts, so one install covers both. It has nothing to do with the JanitorAI provider, which uses a real browser instead. If definitions stop loading even with it installed, your Cloudflare pass has probably expired: open jannyai.com in the same browser, let it load, then reopen the preview.
+1. Open **Settings → Online → JannyAI → Step 1: Browser**
+2. Choose **Run one for me (recommended)** and press **Start now**, or point at your own Chrome DevTools endpoint (see [If the SillyTavern machine cannot clear Cloudflare](#if-the-sillytavern-machine-cannot-clear-cloudflare) above; on Termux/mobile, an endpoint on another machine is the way in — there is no userscript fallback)
+3. Press **Test** to confirm this browser clears JannyAI's Cloudflare challenge
 
+If a card's definition stops loading, the browser's Cloudflare pass has probably expired. The managed browser renews its own pass; an endpoint browser needs you to reload jannyai.com there yourself.
+
+#### JannyAI Account Sync
+
+JannyAI's bookmark and collection endpoints sit behind Cloudflare too. Account sync transfers your JannyAI session into the configured browser once; that browser profile owns the session from then on, including its own renewal, and Character Library never stores the pasted credentials:
+
+1. Log in at jannyai.com in the configured browser's profile, then open DevTools → Application → Cookies and copy both the `sb-eenzcbluoctduymzksoq-auth-token.0` and `sb-eenzcbluoctduymzksoq-auth-token.1` cookie values, in order. This is the preferred, renewable form; a combined cookie header, raw Supabase session JSON, or named `sb-access-token`/`sb-refresh-token` cookie pair also works
+2. Open **Settings → Online → JannyAI → Step 2: Account Login**, paste it, and select **Save Login**
+
+Helper 1.13.2 installs JannyAI's native access/refresh cookies and automatically migrates logins installed by earlier helper versions. Existing users do not need to paste their login again.
+
+A bare access-token JWT (without its refresh token) is accepted as a fallback but cannot renew itself once it expires; prefer the `.0`/`.1` pair. Browsing and importing stay available without an account; sync only adds your saved characters and collections. **Log Out** removes JannyAI's account cookies from the browser while preserving its Cloudflare pass, and reports whether the cleanup succeeded. Bookmark adds remain guarded at JannyAI's current 220-bookmark UI limit.
 </details>
 
 <details>
@@ -870,7 +884,7 @@ The full app is optimized for mobile with:
 
 ### cl-helper plugin not detected
 
-**cl-helper** is Character Library's companion plugin. It runs inside the SillyTavern server and handles the few things a browser tab cannot do on its own (login handshakes, cookie sessions, cached thumbnails). If the app sent you here, the feature you just tried needs it. The plugin ships with Character Library in the `extras/cl-helper/` folder; installing it is one copy plus one config line.
+**cl-helper** is Character Library's companion plugin. It runs inside the SillyTavern server and handles the few things a browser tab cannot do on its own (login handshakes, cookie sessions, cached thumbnails, and running the real browser JanitorAI and JannyAI need). If the app sent you here, the feature you just tried needs it. JannyAI's own MeiliSearch browsing and search are the exception — they work anonymously with no plugin, no browser, and no account (see the JannyAI provider section above). The plugin ships with Character Library in the `extras/cl-helper/` folder; installing it is one copy plus one config line.
 
 **One-command install (Linux, macOS, Termux):** open a terminal (in Termux, the same one you start SillyTavern from), then run:
 
@@ -928,7 +942,9 @@ JanitorAI's Hampter sort orders (Latest, Trending, and the rest, on the DataCat 
 
 The userscript makes the Cloudflare-gated request from your own browser and hands only the results to Character Library. Without it these sorts are unreliable (Cloudflare usually blocks the direct fetch, though it occasionally gets through); every other DataCat and JannyAI sort order works without it. To page past the first page, also add your JanitorAI login under Settings > Online > DataCat. Tested on desktop; on mobile, a userscript-capable browser such as Firefox for Android, or a mobile-specific solution that routes the request through a webview, works too.
 
-The userscript serves exactly two things: these DataCat Hampter sorts, and **JannyAI** card definitions. The **JanitorAI** provider never uses it. That provider needs a real browser, which Character Library runs for you, and no userscript can substitute for it.
+The userscript serves exactly one thing in this scope: these DataCat Hampter sorts. The **JanitorAI** provider never uses it; that provider needs a real browser, which Character Library runs for you, and no userscript can substitute for it.
+
+JannyAI's card definitions and account sync need that same kind of real browser setup, not a script of any kind — see the JannyAI provider section above.
 
 ### Characters load more slowly behind HTTP Basic auth
 

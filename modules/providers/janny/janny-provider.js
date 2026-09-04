@@ -1,266 +1,43 @@
 // JannyAI Provider - implementation for JanitorAI/JannyAI character source
 //
-// Uses MeiliSearch API for character search and HTML scraping for full details.
+// Uses MeiliSearch API for character search and browser hydration for full definitions.
 // No version history (no Git-like API). No gallery support.
 
 import { ProviderBase } from '../provider-interface.js';
 import CoreAPI from '../../core-api.js';
-import { assignGalleryId, importFromPng, proxyEncode } from '../provider-utils.js';
-import { initJanitorBridge, isJanitorBridgeAvailable, janitorBridgeFetch } from '../janitor-bridge.js';
+import { assignGalleryId, importFromPng } from '../provider-utils.js';
 import jannyBrowseView from './janny-browse.js';
 import {
+    initJannyBrowserClient, jannyBrowserFetch, jannyBrowserSetSession,
+    jannyBrowserSessionStatus, jannyBrowserRefreshSession, jannyBrowserLogout,
+} from './janny-browser.js';
+import { initJannySession, setJannySessionBrowserHooks } from './janny-session.js';
+import {
     JANNY_IMAGE_BASE,
-    JANNY_SITE_BASE,
     meiliMultiSearch,
     fetchWithProxy,
     slugify,
     stripHtml,
-    resolveTagNames
+    resolveTagNames,
 } from './janny-api.js';
 
 let api = null;
 
-// ========================================
-// CONSTANTS
-// ========================================
-
-// ========================================
-// PRIVATE UTILITIES
-// ========================================
+// Hosts JannyAI serves character art from. Anything the hydrated page hands us that is not
+// one of these is not fetched: the props are page-supplied, so an arbitrary URL there would
+// otherwise become an outbound request from the user's server on import.
+const JANNY_IMAGE_HOSTS = new Set(['image.jannyai.com', 'jannyai.com', 'www.jannyai.com']);
 
 /**
- * Fetch an HTML page through multiple proxy strategies.
- *
- * Cloudflare protects jannyai.com and blocks automated requests via
- * TLS fingerprinting and JS challenges. Strategy order is based on
- * observed reliability:
- *
- * 0. Userscript bridge - GM_xmlhttpRequest from the user's own browser,
- *    carries their cf_clearance cookie; the only transport that passes
- *    Cloudflare reliably since the 2026-07 challenge tightening
- * 1. corsproxy.io - datacenter IP, usually challenged now
- * 2. Puter.js WISP relay - needs COOP/COEP headers (SharedArrayBuffer);
- *    SillyTavern doesn't set these, so rustls.wasm fails on most setups
- * 3. SillyTavern /proxy/ - node-fetch with Node.js TLS fingerprint,
- *    Cloudflare usually blocks it with 403
+ * @param {unknown} value - candidate avatar URL out of the hydrated island props
+ * @returns {boolean} true when it is an absolute https URL on a JannyAI image host
  */
-async function fetchHtmlPage(url, opts = {}) {
-    const errors = [];
-
-    // Strategy 0: the userscript bridge (same script that unlocks hampter)
-    if (isJanitorBridgeAvailable()) {
-        try {
-            const res = await janitorBridgeFetch(url, '', { allowClearance: !!opts.allowClearance });
-            if (res.ok && isValidCharacterHtml(res.body)) {
-                console.info('[JannyProvider] Page fetched via userscript bridge');
-                return res.body;
-            }
-            errors.push(`bridge: HTTP ${res.status || 0}${res.ok ? ' (unexpected page shape)' : ''}`);
-        } catch (e) {
-            errors.push(`bridge: ${e.message}`);
-        }
-    }
-
-    // Strategy 1: corsproxy.io - datacenter IP, usually challenged now; kept as a fallback
+export function isJannyImageUrl(value) {
+    if (typeof value !== 'string' || !value) return false;
     try {
-        const html = await corsproxyFetchHtml(url);
-        if (html) {
-            console.info('[JannyProvider] Page fetched via corsproxy.io');
-            return html;
-        }
-    } catch (e) {
-        errors.push(`corsproxy.io: ${e.message}`);
-        console.warn('[JannyProvider] corsproxy.io strategy failed:', e.message);
-    }
-
-    // Strategy 2: Puter.js WISP relay (only if not known-broken)
-    if (!_puterBroken) {
-        try {
-            const html = await puterFetchHtml(url);
-            if (html) {
-                console.info('[JannyProvider] Page fetched via Puter.js');
-                return html;
-            }
-        } catch (e) {
-            errors.push(`Puter.js: ${e.message}`);
-            console.warn('[JannyProvider] Puter.js strategy failed:', e.message);
-        }
-    }
-
-    // Strategy 3: SillyTavern server-side proxy (node-fetch from user's IP)
-    try {
-        const html = await stProxyFetchHtml(url);
-        if (html) {
-            console.info('[JannyProvider] Page fetched via ST proxy');
-            return html;
-        }
-    } catch (e) {
-        errors.push(`ST proxy: ${e.message}`);
-        console.warn('[JannyProvider] ST proxy strategy failed:', e.message);
-    }
-
-    console.warn(`[JannyProvider] All page transports failed for ${url}: ${errors.join(' | ')}`);
-    // User-facing Cloudflare copy lives at the browse surface; the throw keeps the real reasons
-    // so callers that log e.message still see what actually failed.
-    throw new Error(`All page transports failed: ${errors.join(' | ')}`);
-}
-
-function isValidCharacterHtml(html) {
-    if (!html || typeof html !== 'string') return false;
-    if (html.length < 1000) return false;
-    return html.includes('CharacterButtons') || html.includes('astro-island');
-}
-
-// ── Puter.js proxy helpers ──────────────────────────────────
-
-const PUTER_FETCH_TIMEOUT = 30000;
-const PUTER_MAX_REDIRECTS = 5;
-
-let _puterBroken = false;
-
-/**
- * Fetch via Puter.js with manual redirect following.
- * Puter.js uses rustls.wasm for TLS which requires SharedArrayBuffer
- * (needs Cross-Origin-Opener-Policy + Cross-Origin-Embedder-Policy headers).
- * SillyTavern doesn't set these, so this will fail on most setups.
- * When it fails with a WASM/DOMException error, we set _puterBroken to
- * skip it on future calls.
- */
-async function puterFetchHtml(url) {
-    // SharedArrayBuffer support depends on COOP/COEP response headers.
-    if (typeof SharedArrayBuffer === 'undefined') {
-        _puterBroken = true;
-        throw new Error('SharedArrayBuffer not available (missing COOP/COEP headers)');
-    }
-
-    if (!isPuterAvailable()) {
-        throw new Error('Puter.js not loaded');
-    }
-
-    const headers = {
-        'Accept': 'text/html,application/xhtml+xml,*/*',
-        'User-Agent': navigator.userAgent
-    };
-
-    let currentUrl = url;
-    for (let i = 0; i <= PUTER_MAX_REDIRECTS; i++) {
-        const timeout = new Promise((_, reject) =>
-            setTimeout(() => reject(new Error(`Puter.js fetch timed out (${PUTER_FETCH_TIMEOUT}ms)`)), PUTER_FETCH_TIMEOUT)
-        );
-
-        let r;
-        try {
-            r = await Promise.race([
-                window.puter.net.fetch(currentUrl, { method: 'GET', headers }),
-                timeout
-            ]);
-        } catch (e) {
-            // Catch WASM/DOMException from rustls.js and permanently disable Puter
-            if (e instanceof DOMException || e.message?.includes('WebAssembly') || e.message?.includes('serialize')) {
-                _puterBroken = true;
-                throw new Error('Puter.js WASM broken (missing COOP/COEP headers); disabled for this session');
-            }
-            throw e;
-        }
-
-        // Follow redirects manually - puter.net.fetch uses raw HTTP/1.1
-        if ([301, 302, 303, 307, 308].includes(r.status)) {
-            const location = r.headers?.get?.('location') || r.headers?.get?.('Location');
-            if (!location) break;
-            currentUrl = location.startsWith('http') ? location : new URL(location, currentUrl).href;
-            continue;
-        }
-
-        if (!r.ok) throw new Error(`Puter HTTP ${r.status}`);
-
-        const html = await r.text();
-        if (isValidCharacterHtml(html)) return html;
-
-        if (html.includes('Just a moment') || html.includes('cf-challenge') || html.includes('challenge-platform')) {
-            throw new Error('Cloudflare challenge page received');
-        }
-
-        throw new Error(`Response does not contain character data (${html.length} bytes)`);
-    }
-
-    throw new Error('Too many redirects');
-}
-
-function isPuterAvailable() {
-    return typeof window !== 'undefined'
-        && window.puter?.net
-        && typeof window.puter.net.fetch === 'function';
-}
-
-// ── SillyTavern proxy helper ────────────────────────────────
-
-async function stProxyFetchHtml(url) {
-    const proxyUrl = `/proxy/${proxyEncode(url)}`;
-    const r = await fetch(proxyUrl, {
-        headers: {
-            'Accept': 'text/html,application/xhtml+xml,*/*',
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        }
-    });
-
-    if (r.status === 404) {
-        const t = await r.text();
-        if (t.includes('CORS proxy is disabled')) {
-            throw new Error('ST CORS proxy is disabled, set enableCorsProxy: true in config.yaml and restart SillyTavern');
-        }
-        throw new Error('ST proxy returned 404');
-    }
-
-    if (!r.ok) throw new Error(`ST proxy HTTP ${r.status}`);
-
-    const html = await r.text();
-    if (isValidCharacterHtml(html)) return html;
-
-    if (html.includes('Just a moment') || html.includes('cf-challenge')) {
-        throw new Error('Cloudflare challenge page via ST proxy');
-    }
-
-    throw new Error(`ST proxy response not valid character page (${html.length} bytes)`);
-}
-
-// ── corsproxy.io helper ─────────────────────────────────────
-
-async function corsproxyFetchHtml(url) {
-    const r = await fetch(`https://corsproxy.io/?url=${encodeURIComponent(url)}`, {
-        headers: {
-            'Accept': 'text/html,application/xhtml+xml,*/*',
-            'Origin': JANNY_SITE_BASE
-        }
-    });
-
-    if (!r.ok) throw new Error(`corsproxy.io HTTP ${r.status}`);
-
-    const html = await r.text();
-    if (isValidCharacterHtml(html)) return html;
-
-    throw new Error(`corsproxy.io response not valid character page (${html.length} bytes)`);
-}
-
-/**
- * Decode Astro's island props serialization format.
- * Values are [type, data] where type 0 = primitive/object, 1 = array.
- */
-function decodeAstroValue(value) {
-    if (!Array.isArray(value)) return value;
-    const [type, data] = value;
-    if (type === 0) {
-        if (typeof data === 'object' && data !== null && !Array.isArray(data)) {
-            const decoded = {};
-            for (const [key, val] of Object.entries(data)) {
-                decoded[key] = decodeAstroValue(val);
-            }
-            return decoded;
-        }
-        return data;
-    } else if (type === 1) {
-        return data.map(item => decodeAstroValue(item));
-    }
-    return data;
+        const url = new URL(value);
+        return url.protocol === 'https:' && JANNY_IMAGE_HOSTS.has(url.hostname.toLowerCase());
+    } catch { return false; }
 }
 
 // ========================================
@@ -291,61 +68,28 @@ async function searchJanny(opts = {}) {
 }
 
 /**
- * Fetch full character data by scraping the JannyAI character page.
- * Extracts Astro island props containing the full definition.
+ * Full definitions come only from the browser's hydrated CharacterButtons island.
+ * Validate again at the helper boundary before preview, diff, or import can use it.
  */
-async function fetchCharacterDetails(characterId, slug, opts = {}) {
-    const url = `${JANNY_SITE_BASE}/characters/${characterId}_${slug || 'character'}`;
-    console.info(`[JannyProvider] Fetching character details: ${url}`);
-
-    const html = await fetchHtmlPage(url, opts);
-    console.info(`[JannyProvider] Got HTML (${html.length} bytes), parsing Astro props...`);
-
-    // Try CharacterButtons first, then fallback to any astro-island with character props
-    let astroMatch = html.match(
-        /astro-island[^>]*component-export="CharacterButtons"[^>]*props="([^"]+)"/
-    );
-    if (!astroMatch) {
-        astroMatch = html.match(/astro-island[^>]*props="([^"]*character[^"]*)"/);
+async function fetchCharacterDetails(characterId, slug) {
+    const path = `/characters/${characterId}_${slug || 'character'}`;
+    const result = await jannyBrowserFetch(path, { method: 'GET', inspectCharacterId: characterId });
+    const hydrated = result.hydratedCharacter;
+    const character = hydrated?.character;
+    const hasText = value => typeof value === 'string' && value.trim().length > 0;
+    if (!character || String(character.id) !== String(characterId)
+        || !hasText(character.firstMessage)
+        || ![character.personality, character.scenario, character.exampleDialogs].every(value => value == null || typeof value === 'string')
+        || ![character.personality, character.scenario, character.exampleDialogs].some(hasText)) {
+        const error = new Error('JannyAI loaded, but its character payload shape changed');
+        error.code = 'JANNY_PAGE_SHAPE_CHANGED';
+        throw error;
     }
-    if (!astroMatch) {
-        const islandCount = (html.match(/astro-island/g) || []).length;
-        console.error(`[JannyProvider] No character Astro island found. ${islandCount} islands total.`);
-        throw new Error(`Could not parse JannyAI character page (${islandCount} astro-islands, none with character data)`);
-    }
-
-    const propsDecoded = astroMatch[1]
-        .replace(/&quot;/g, '"')
-        .replace(/&amp;/g, '&')
-        .replace(/&lt;/g, '<')
-        .replace(/&gt;/g, '>')
-        .replace(/&#39;/g, "'");
-
-    const propsJson = JSON.parse(propsDecoded);
-    const character = decodeAstroValue(propsJson.character);
-    const imageUrl = decodeAstroValue(propsJson.imageUrl);
-
-    // Extract creator username from page HTML (rendered server-side as "Creator: @username")
-    let creatorUsername = null;
-    const creatorMatch = html.match(/Creator:\s*(?:<\/[^>]+>\s*)?<a[^>]*>@?([^<]+)<\/a>/);
-    if (creatorMatch) {
-        creatorUsername = creatorMatch[1].trim();
-    }
-    if (creatorUsername && character) {
-        character.creatorUsername = creatorUsername;
-    }
-
-    if (character?.personality || character?.firstMessage) {
-        console.info(`[JannyProvider] Character "${character.name}" parsed. Personality: ${(character.personality || '').length} chars, firstMsg: ${(character.firstMessage || '').length} chars${creatorUsername ? `, creator: @${creatorUsername}` : ''}`);
-    } else {
-        console.warn(`[JannyProvider] Character parsed but missing definition fields:`, Object.keys(character || {}));
-    }
-
-    return { character, imageUrl };
+    return hydrated;
 }
 
 /**
- * Map a MeiliSearch hit to a V2-compatible flat field object for import/diff.
+ * Map a complete hydrated character to a V2 card for import/diff.
  * JannyAI field mapping:
  *   - "personality" → V2 "description" (main character definition)
  *   - "description" → website blurb → V2 "creator_notes"
@@ -370,7 +114,7 @@ function buildV2FromDetails(charData) {
             system_prompt: '',
             post_history_instructions: '',
             creator_notes: rawDesc,
-            creator: char.creatorUsername || char.creatorId || '',
+            creator: char.creatorUsername || '',
             character_version: '1.0',
             tags: resolveTagNames(char.tagIds),
             alternate_greetings: [],
@@ -397,6 +141,7 @@ class JannyProvider extends ProviderBase {
     get icon() { return 'fa-solid fa-broom'; }
     get iconUrl() { return 'https://tse3.mm.bing.net/th/id/OIP.nb-qi0od9W6zRsskVwL6QAHaHa?rs=1&pid=ImgDetMain&o=7&rm=3'; }
     get browseView() { return jannyBrowseView; }
+    get minClHelperVersion() { return '1.13.3'; }
 
     get linkStatFields() {
         return {
@@ -411,7 +156,14 @@ class JannyProvider extends ProviderBase {
     async init(coreAPI) {
         super.init(coreAPI);
         api = coreAPI;
-        initJanitorBridge();
+        initJannyBrowserClient();
+        setJannySessionBrowserHooks({
+            setSession: jannyBrowserSetSession,
+            status: jannyBrowserSessionStatus,
+            refresh: jannyBrowserRefreshSession,
+            logout: jannyBrowserLogout,
+        });
+        initJannySession();
     }
 
     // ── View ────────────────────────────────────────────────
@@ -502,11 +254,10 @@ class JannyProvider extends ProviderBase {
             const parts = String(fullPath).split('_');
             const charId = parts[0];
             const slug = parts.slice(1).join('_') || 'character';
-            // Browse preview, link search and URL paste all land here, and all three are things
-            // the user just asked for, so a clearance tab is warranted.
-            const data = await fetchCharacterDetails(charId, slug, { allowClearance: true });
+            const data = await fetchCharacterDetails(charId, slug);
             return data?.character || null;
         } catch (e) {
+            if (e?.code?.startsWith('JANNY_')) throw e;
             console.error('[JannyProvider] fetchMetadata failed:', fullPath, e);
             return null;
         }
@@ -524,6 +275,7 @@ class JannyProvider extends ProviderBase {
             }
             return null;
         } catch (e) {
+            if (e?.code?.startsWith('JANNY_')) throw e;
             console.error('[JannyProvider] fetchRemoteCard failed:', linkInfo.id, e);
             return null;
         }
@@ -589,6 +341,7 @@ class JannyProvider extends ProviderBase {
 
         // Fallback to local data if remote fetch failed
         const jannyData = char?.data?.extensions?.jannyai || {};
+        const creatorName = jannyData.creatorUsername || char?.data?.creator || '';
         return {
             id: charId,
             name: char?.name || 'Unknown',
@@ -597,7 +350,8 @@ class JannyProvider extends ProviderBase {
             tagIds: jannyData.tagIds || [],
             totalToken: jannyData.totalToken || char?.data?.extensions?.total_tokens || 0,
             createdAtStamp: jannyData.createdAtStamp || 0,
-            creatorId: jannyData.creatorId || char?.data?.creator || ''
+            creatorId: jannyData.creatorId || '',
+            creatorUsername: creatorName !== jannyData.creatorId ? creatorName : '',
         };
     }
 
@@ -726,9 +480,7 @@ class JannyProvider extends ProviderBase {
     /**
      * Import a character from JannyAI.
      * @param {string} identifier - e.g. "uuid_slug"
-     * @param {Object} [hitData] - Optional pre-fetched character data or MeiliSearch hit.
-     *   If hitData has definition fields (personality, firstMessage), it's used directly
-     *   to avoid a redundant page scrape.
+     * @param {Object} [hitData] - Optional listing metadata; never a definition source.
      */
     async importCharacter(identifier, hitData, options = {}) {
         try {
@@ -736,37 +488,17 @@ class JannyProvider extends ProviderBase {
             const charId = parts[0];
             const slug = parts.slice(1).join('_') || 'character';
 
-            let data;
-
-            // If hitData already has definition fields (e.g., from preview modal fetch),
-            // use it directly - no need to scrape the page a second time
-            const hasDefinitionFields = hitData && (hitData.personality || hitData.firstMessage);
-            if (hasDefinitionFields) {
-                console.info('[JannyProvider] Using pre-fetched character data for import');
-                data = { character: hitData, imageUrl: hitData.avatar ? `${JANNY_IMAGE_BASE}${hitData.avatar}` : null };
-            }
-
-            if (!data?.character) {
-                try {
-                    // An import is an explicit user action (grid button or pasted URL), so this
-                    // may spend a clearance tab; the update check deliberately may not.
-                    data = await fetchCharacterDetails(charId, slug, { allowClearance: true });
-                } catch (e) {
-                    console.warn('[JannyProvider] Page scrape failed, falling back to hit data:', e.message);
-                }
-            }
-
-            // Fall back to raw MeiliSearch hit data if scrape failed (definitions will be empty)
-            if (!data?.character && hitData) {
-                console.warn('[JannyProvider] Using MeiliSearch hit as last resort; definitions will be incomplete');
-                data = { character: hitData, imageUrl: hitData.avatar ? `${JANNY_IMAGE_BASE}${hitData.avatar}` : null };
-            }
-            if (!data?.character) throw new Error('Could not fetch character data from JannyAI');
+            const data = await fetchCharacterDetails(charId, slug);
 
             const char = data.character;
             const characterName = char.name || 'Unnamed';
 
-            // Page scrape often lacks tagIds/creatorId - backfill from MeiliSearch
+            // Listing metadata can only supplement a complete, identity-checked definition.
+            if (hitData && String(hitData.id) === String(charId)) {
+                if (!char.tagIds?.length && hitData.tagIds) char.tagIds = hitData.tagIds;
+                if (!char.creatorId && hitData.creatorId) char.creatorId = hitData.creatorId;
+            }
+            // Hydrated props may lack tagIds/creatorId - backfill from MeiliSearch
             if (!char.tagIds?.length || !char.creatorId) {
                 try {
                     const searchData = await searchJanny({ search: char.name || '', page: 1, limit: 20 });
@@ -798,8 +530,11 @@ class JannyProvider extends ProviderBase {
             // Gallery ID: inherit from replaced character, or generate new
             assignGalleryId(characterCard, options, api);
 
-            // Download avatar
-            const avatarUrl = data.imageUrl || (char.avatar ? `${JANNY_IMAGE_BASE}${char.avatar}` : null);
+            // Download avatar. data.imageUrl is decoded out of the page's hydrated island props,
+            // so it is page-supplied: keep it on JannyAI's own image hosts before fetching it,
+            // and otherwise fall back to the avatar path we build ourselves.
+            const fallbackAvatarUrl = char.avatar ? `${JANNY_IMAGE_BASE}${char.avatar}` : null;
+            const avatarUrl = isJannyImageUrl(data.imageUrl) ? data.imageUrl : fallbackAvatarUrl;
             let imageBuffer = null;
 
             if (avatarUrl) {
@@ -821,6 +556,7 @@ class JannyProvider extends ProviderBase {
                 api
             });
         } catch (error) {
+            if (error?.code?.startsWith('JANNY_')) throw error;
             console.error(`[JannyProvider] importCharacter failed for ${identifier}:`, error);
             return { success: false, error: error.message };
         }

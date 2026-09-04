@@ -29,6 +29,41 @@ import {
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
+// The JannyAI request policy lives in a sibling file. A helper installed before the
+// three-file bundle (<= 1.12.0) copies only package.json + index.js when it self-updates,
+// so this file can legitimately land next to a missing policy module. A static import
+// would throw ERR_MODULE_NOT_FOUND and take the WHOLE plugin down with it (JanitorAI,
+// DataCat, thumbnails, hidden-definition recovery). Resolve it defensively instead and
+// degrade only JannyAI.
+export const JANNY_POLICY_MISSING = 'JannyAI browser support is unavailable: janny-browser-policy.js is missing from the installed cl-helper. Copy package.json, index.js and janny-browser-policy.js from the extension bundle into the plugin folder, then restart SillyTavern.';
+let _jannyPolicy = null;
+let _jannyPolicyError = '';
+try {
+    _jannyPolicy = await import('./janny-browser-policy.js');
+} catch (error) {
+    _jannyPolicyError = String(error?.message || error);
+    console.warn(`[cl-helper] ${JANNY_POLICY_MISSING} (${_jannyPolicyError})`);
+}
+
+function jannyPolicyUnavailable() {
+    throw Object.assign(new Error(JANNY_POLICY_MISSING), { code: 'JANNY_POLICY_MISSING' });
+}
+
+// Every one of these is read only from the JannyAI routes, and those are not registered when
+// the policy is missing. The fallbacks exist so this module still evaluates; they are inert
+// rather than copies of the policy's own constants, which would be free to drift out of sync.
+const JANNY_ORIGIN = _jannyPolicy?.JANNY_ORIGIN ?? '';
+const JANNY_AUTH_COOKIE = _jannyPolicy?.JANNY_AUTH_COOKIE ?? '';
+const JANNY_ACCESS_COOKIE = _jannyPolicy?.JANNY_ACCESS_COOKIE ?? '';
+const JANNY_REFRESH_COOKIE = _jannyPolicy?.JANNY_REFRESH_COOKIE ?? '';
+const JANNY_CF_COOKIE_NAMES = _jannyPolicy?.JANNY_CF_COOKIE_NAMES ?? new Set();
+const JANNY_SESSION_TOKEN_LIMIT = _jannyPolicy?.JANNY_SESSION_TOKEN_LIMIT ?? 0;
+const JANNY_SESSION_VALUE_LIMIT = _jannyPolicy?.JANNY_SESSION_VALUE_LIMIT ?? 0;
+const buildJannySessionCookies = _jannyPolicy?.buildJannySessionCookies ?? jannyPolicyUnavailable;
+const jannyAccountCookiesToDelete = _jannyPolicy?.jannyAccountCookiesToDelete ?? jannyPolicyUnavailable;
+const validateJannyFinalUrl = _jannyPolicy?.validateJannyFinalUrl ?? jannyPolicyUnavailable;
+const validateJannyBrowserRequest = _jannyPolicy?.validateJannyBrowserRequest ?? jannyPolicyUnavailable;
+
 export const info = {
     id: 'cl-helper',
     name: 'Character Library Helper',
@@ -2855,6 +2890,11 @@ class CdpPage {
         return r.cookies || [];
     }
 
+    async allCookies() {
+        const r = await this.send('Storage.getCookies');
+        return r.cookies || [];
+    }
+
     /**
      * Arm a one-shot body capture for the first response matching `re`. Must be armed BEFORE
      * whatever triggers the request. Bodies are only readable once loading finishes, so both
@@ -3240,6 +3280,299 @@ async function getWarmPage(endpoint) {
     return wrapped;
 }
 
+// JannyAI shares the managed browser process, but never JanitorAI's target, cookies, or warm-page
+// lifecycle. A transport failure can therefore discard this tab without disrupting JanitorAI.
+let _jannyWarmPage = null; // { client, page }
+let _jannyWarmEndpoint = '';
+let _jannyWarmLastUsed = 0;
+let _jannyWarmReaper = null;
+let _jannyWarmPending = null;
+let _jannyWarmPendingEndpoint = '';
+const JANNY_WARM_IDLE_MS = 10 * 60 * 1000;
+
+async function closeJannyWarmPage() {
+    const warm = _jannyWarmPage;
+    _jannyWarmPage = null;
+    _jannyWarmEndpoint = '';
+    _jannyWarmLastUsed = 0;
+    if (_jannyWarmReaper) {
+        clearInterval(_jannyWarmReaper);
+        _jannyWarmReaper = null;
+    }
+    if (!warm) return;
+    try { await warm.page.close(); } catch {}
+    try { warm.client.close(); } catch {}
+}
+
+function armJannyWarmReaper() {
+    if (_jannyWarmReaper) return;
+    _jannyWarmReaper = setInterval(() => {
+        if (_jannyWarmPage && Date.now() - _jannyWarmLastUsed > JANNY_WARM_IDLE_MS) {
+            closeJannyWarmPage().catch(() => {});
+        }
+    }, 60000);
+    _jannyWarmReaper.unref?.();
+}
+
+export async function assertJannyPageOrigin(page) {
+    return validateJannyFinalUrl(await page.evaluate('location.href'));
+}
+
+async function getJannyWarmPage(endpoint) {
+    if (_jannyWarmPage && _jannyWarmEndpoint === endpoint && !_jannyWarmPage.client._closed) {
+        _jannyWarmLastUsed = Date.now();
+        return _jannyWarmPage;
+    }
+    while (_jannyWarmPending) {
+        if (_jannyWarmPendingEndpoint === endpoint) return _jannyWarmPending;
+        await _jannyWarmPending.catch(() => {});
+        if (_jannyWarmPage && _jannyWarmEndpoint === endpoint && !_jannyWarmPage.client._closed) {
+            _jannyWarmLastUsed = Date.now();
+            return _jannyWarmPage;
+        }
+    }
+
+    _jannyWarmPendingEndpoint = endpoint;
+    let pending;
+    pending = (async () => {
+        await closeJannyWarmPage();
+        const client = await CdpClient.connect(endpoint);
+        let page = null;
+        try {
+            page = await CdpPage.create(client);
+            await page.goto(`${JANNY_ORIGIN}/`, { timeout: CDP_NAV_TIMEOUT });
+            await assertJannyPageOrigin(page);
+            await waitForCloudflare(page);
+            await assertJannyPageOrigin(page);
+        } catch (error) {
+            try { await page?.close(); } catch {}
+            client.close();
+            throw error;
+        }
+        _jannyWarmPage = { client, page };
+        _jannyWarmEndpoint = endpoint;
+        _jannyWarmLastUsed = Date.now();
+        armJannyWarmReaper();
+        return _jannyWarmPage;
+    })().finally(() => {
+        if (_jannyWarmPending === pending) {
+            _jannyWarmPending = null;
+            _jannyWarmPendingEndpoint = '';
+        }
+    });
+    _jannyWarmPending = pending;
+    return pending;
+}
+
+async function allJannyDomainCookies(page) {
+    return (await page.allCookies()).filter(cookie =>
+        String(cookie?.domain || '').replace(/^\.+/, '').toLowerCase() === 'jannyai.com');
+}
+
+export async function injectJannySession(page, accessToken, refreshToken = '') {
+    const cookies = buildJannySessionCookies(accessToken, refreshToken);
+    const existingCookies = await allJannyDomainCookies(page);
+    const staleNames = new Set(jannyAccountCookiesToDelete(existingCookies));
+    // Keep the migration source until both native cookies have been accepted.
+    try {
+        for (const cookie of cookies) {
+            const result = await page.send('Network.setCookie', {
+                name: cookie.name,
+                value: cookie.value,
+                url: `${JANNY_ORIGIN}/`,
+                path: '/',
+                secure: true,
+                httpOnly: false,
+                sameSite: 'Lax',
+                expires: cookie.expires,
+            });
+            if (result?.success === false) throw new Error('JannyAI session cookie installation failed');
+        }
+    } catch (error) {
+        // A half-written pair must not shadow the retained migration source.
+        for (const cookie of cookies) {
+            await page.send('Network.deleteCookies', { name: cookie.name, domain: 'jannyai.com', path: '/' }).catch(() => {});
+            const previous = existingCookies.find(old => old.name === cookie.name && old.domain === 'jannyai.com' && old.path === '/');
+            if (previous) await page.send('Network.setCookie', {
+                name: previous.name, value: previous.value, url: `${JANNY_ORIGIN}/`, path: '/',
+                secure: previous.secure ?? true, httpOnly: previous.httpOnly ?? false,
+                sameSite: previous.sameSite || 'Lax', ...(previous.expires > 0 ? { expires: previous.expires } : {}),
+            }).catch(() => {});
+        }
+        throw error;
+    }
+    for (const cookie of existingCookies) {
+        if (!staleNames.has(cookie.name)) continue;
+        const replaced = cookies.some(next => next.name === cookie.name)
+            && (cookie.domain || 'jannyai.com') === 'jannyai.com'
+            && (cookie.path || '/') === '/';
+        if (replaced) continue;
+        await page.send('Network.deleteCookies', { name: cookie.name, domain: cookie.domain || 'jannyai.com', path: cookie.path || '/' });
+    }
+}
+
+function parseJannyBrowserSession(cookies) {
+    const access = (cookies || []).find(cookie => cookie.name === JANNY_ACCESS_COOKIE);
+    const refresh = (cookies || []).find(cookie => cookie.name === JANNY_REFRESH_COOKIE);
+    if (access || refresh) {
+        const decode = value => { try { return decodeURIComponent(value || ''); } catch { return ''; } };
+        return { access_token: decode(access?.value), refresh_token: decode(refresh?.value) };
+    }
+    const accountCookies = (cookies || []).filter(cookie => cookie?.name === JANNY_AUTH_COOKIE || cookie?.name?.startsWith(`${JANNY_AUTH_COOKIE}.`));
+    const unchunked = accountCookies.find(cookie => cookie.name === JANNY_AUTH_COOKIE);
+    let value = unchunked?.value || '';
+
+    if (!value) {
+        const chunks = new Map();
+        let invalid = false;
+        for (const cookie of accountCookies) {
+            const match = cookie.name.match(new RegExp(`^${JANNY_AUTH_COOKIE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\.(\\d+)$`));
+            if (!match) continue;
+            const index = Number(match[1]);
+            if (chunks.has(index)) invalid = true;
+            chunks.set(index, String(cookie.value || ''));
+        }
+        const indices = [...chunks.keys()].sort((a, b) => a - b);
+        if (invalid || indices.some((index, position) => index !== position)) return null;
+        value = indices.map(index => chunks.get(index)).join('');
+    }
+
+    try { value = decodeURIComponent(value); } catch { /* cookie already decoded */ }
+    if (!value.startsWith('base64-') || value.length > JANNY_SESSION_VALUE_LIMIT) return null;
+
+    let stored;
+    try {
+        stored = JSON.parse(Buffer.from(value.slice('base64-'.length), 'base64').toString('utf8'));
+    } catch {
+        return null;
+    }
+    return stored;
+}
+
+export async function migrateJannyBrowserSession(page) {
+    const cookies = await page.cookies([JANNY_ORIGIN]);
+    const hasNative = cookies.some(cookie => cookie.name === JANNY_ACCESS_COOKIE || cookie.name === JANNY_REFRESH_COOKIE);
+    if (hasNative) {
+        // The site may have rotated or partially cleared its session. Never
+        // revive an older copied session, even if the native pair is incomplete.
+        const obsolete = (await allJannyDomainCookies(page)).filter(cookie => cookie.name === JANNY_AUTH_COOKIE || cookie.name.startsWith(`${JANNY_AUTH_COOKIE}.`));
+        for (const cookie of obsolete) await page.send('Network.deleteCookies', { name: cookie.name, domain: cookie.domain, path: cookie.path || '/' });
+        return;
+    }
+    const session = parseJannyBrowserSession(cookies);
+    if (session?.access_token) await injectJannySession(page, session.access_token, session.refresh_token || '');
+}
+
+export function readJannyBrowserSession(cookies) {
+    const stored = parseJannyBrowserSession(cookies);
+    const accessToken = typeof stored?.access_token === 'string' && stored.access_token.length <= JANNY_SESSION_TOKEN_LIMIT ? stored.access_token : '';
+    const refreshToken = typeof stored?.refresh_token === 'string' && stored.refresh_token.length <= JANNY_SESSION_TOKEN_LIMIT ? stored.refresh_token : '';
+    let claims = null;
+    try {
+        claims = JSON.parse(Buffer.from(accessToken.split('.')[1], 'base64url').toString('utf8'));
+    } catch { /* malformed access token remains inactive */ }
+    // Same test buildJannySessionCookies applies when writing, so a float exp is ignored on
+    // both sides instead of being honoured on read and dropped on write.
+    const expMs = Number.isInteger(claims?.exp) && claims.exp > 0 ? claims.exp * 1000 : 0;
+    return {
+        active: Boolean(accessToken && claims && typeof claims === 'object' && !Array.isArray(claims) && (!expMs || expMs > Date.now())),
+        email: typeof claims?.email === 'string' ? claims.email : '',
+        expMs,
+        hasRefresh: Boolean(refreshToken),
+        refreshable: Boolean(refreshToken),
+    };
+}
+
+async function waitForJannyDocumentReady(page) {
+    await page.evaluate(`new Promise(resolve => {
+        if (document.readyState === 'complete' || document.readyState === 'interactive') return resolve(true);
+        document.addEventListener('DOMContentLoaded', () => resolve(true), { once: true });
+    })`);
+}
+
+async function extractHydratedJannyCharacter(page, safePath, characterId) {
+    await page.goto(`${JANNY_ORIGIN}${safePath}`, { timeout: CDP_NAV_TIMEOUT });
+    await assertJannyPageOrigin(page);
+    await waitForJannyDocumentReady(page);
+    const finalUrl = new URL(await assertJannyPageOrigin(page));
+    if (/^\/(?:auth\/)?(?:login|log-in|signin|sign-in)\/?$/i.test(finalUrl.pathname)) {
+        throw Object.assign(new Error('JANNY_LOGIN_REQUIRED'), { code: 'JANNY_LOGIN_REQUIRED' });
+    }
+    validateJannyBrowserRequest({ path: finalUrl.pathname + finalUrl.search, method: 'GET', inspectCharacterId: characterId });
+    const result = await page.evaluate(`(() => {
+        // Use page chrome, never body/definition text: authors can write about challenges.
+        const title = String(document.title || '').trim();
+        const challengeTitle = /^(?:just a moment|attention required|verify you are human|security check)(?:\\b|$)/i.test(title);
+        const challengeMarker = document.querySelector('#challenge-form, #cf-challenge-running, #cf-please-wait, .cf-turnstile');
+        if (/^(?:403\\s*)?Forbidden$/i.test(title) || (challengeTitle && challengeMarker)) {
+            return { error: 'JANNY_CF_BLOCKED' };
+        }
+        if (/^(?:sign[ -]?in|log[ -]?in)(?:\\b|$)/i.test(title) && document.querySelector('form input[type="password"]')) {
+            return { error: 'JANNY_LOGIN_REQUIRED' };
+        }
+        const requestedId = ${JSON.stringify(characterId)};
+        const decode = (value) => {
+            if (!Array.isArray(value)) return value;
+            const [type, data] = value;
+            // [0] is Astro's undefined value; other supported tuples have two members.
+            if (value.length !== 2 && !(type === 0 && value.length === 1)) throw new Error('Invalid Astro tuple');
+            if (type === 0) {
+                if (Array.isArray(data)) throw new Error('Invalid Astro primitive payload');
+                if (data && typeof data === 'object') {
+                    const out = {};
+                    for (const [key, child] of Object.entries(data)) out[key] = decode(child);
+                    return out;
+                }
+                return data;
+            }
+            if (type === 1 && Array.isArray(data)) return data.map(decode);
+            throw new Error('Unsupported Astro tuple or payload');
+        };
+        const islands = document.querySelectorAll('astro-island[component-export="CharacterButtons"], astro-island[component-url*="CharacterButtons"]');
+        for (const island of islands) {
+            const raw = island.getAttribute('props');
+            if (!raw) continue;
+            try {
+                const props = JSON.parse(raw);
+                const character = decode(props.character);
+                const hasText = value => typeof value === 'string' && value.trim().length > 0;
+                if (!character || String(character.id) !== String(requestedId)
+                    || !hasText(character.firstMessage)
+                    || ![character.personality, character.scenario, character.exampleDialogs].every(value => value == null || typeof value === 'string')
+                    || ![character.personality, character.scenario, character.exampleDialogs].some(hasText)) continue;
+                if (!hasText(character.creatorUsername) && hasText(character.creatorId)) {
+                    const names = new Set();
+                    for (const link of document.querySelectorAll('h2 > a[href]')) {
+                        const heading = link.parentElement;
+                        // The site's Creator heading shares the character layout with
+                        // this island. Ignore links embedded inside creator notes.
+                        if (!/^Creator\\s*:/i.test(heading?.textContent?.trim() || '')
+                            || !heading?.parentElement?.contains(island)) continue;
+                        try {
+                            const url = new URL(link.getAttribute('href'), location.href);
+                            const match = url.pathname.match(/^\\/creators\\/([^/_]+)(?:_[^/]*)?$/);
+                            if (url.origin !== location.origin || !match
+                                || decodeURIComponent(match[1]) !== character.creatorId) continue;
+                            const username = (link.textContent || '').trim().replace(/^@/, '').trim();
+                            if (username && username.length <= 128 && username !== character.creatorId) names.add(username);
+                        } catch { /* malformed creator link */ }
+                    }
+                    if (names.size === 1) character.creatorUsername = [...names][0];
+                }
+                return { character, imageUrl: decode(props.imageUrl) || null };
+            } catch { /* inspect the next known island */ }
+        }
+        return null;
+    })()`);
+    if (['JANNY_CF_BLOCKED', 'JANNY_LOGIN_REQUIRED'].includes(result?.error)) {
+        throw Object.assign(new Error(result.error), { code: result.error });
+    }
+    if (!result?.character) {
+        throw Object.assign(new Error('JANNY_PAGE_SHAPE_CHANGED'), { code: 'JANNY_PAGE_SHAPE_CHANGED' });
+    }
+    return result;
+}
+
 // ============================================================================================
 // Managed browser
 //
@@ -3572,6 +3905,263 @@ async function probeRenderStack(page) {
 
 function isSoftwareRenderer(renderer) {
     return /swiftshader|llvmpipe|softpipe|software/i.test(String(renderer || ''));
+}
+
+// Stand-ins used when janny-browser-policy.js could not be resolved. Every JannyAI route still
+// answers a well-formed envelope, so JannyAI reports "unavailable" instead of 404-ing or taking
+// the plugin down. `error` carries the code the client already classifies (its own copy supplies
+// the "install or update cl-helper" wording); `detail` carries the specific repair steps.
+const JANNY_ROUTE_PATHS = [
+    '/jannyai-managed/start', '/jannyai-managed/stop',
+    '/jannyai-browser-fetch', '/jannyai-browser-session',
+    '/jannyai-browser-session-status', '/jannyai-browser-refresh-session', '/jannyai-browser-logout',
+];
+
+function registerJannyaiUnavailableRoutes(router) {
+    const unavailable = (req, res) => res.status(503).json({
+        ok: false, error: 'JANNY_HELPER_UNAVAILABLE', detail: JANNY_POLICY_MISSING,
+    });
+    for (const path of JANNY_ROUTE_PATHS) router.post(path, unavailable);
+    // The settings panel renders /jannyai-browser-test as check rows, so answer in that shape:
+    // a failed check carrying the repair steps is more useful than a bare transport error.
+    router.post('/jannyai-browser-test', (req, res) => res.json({
+        ok: false,
+        checks: [{ key: 'plugin', label: 'cl-helper install is complete', ok: false, detail: JANNY_POLICY_MISSING }],
+        error: 'JANNY_HELPER_UNAVAILABLE',
+    }));
+    // Status is a GET and the settings panel reads its shape, so keep the fields it expects.
+    router.get('/jannyai-managed/status', (req, res) => res.status(503).json({
+        ok: false, running: false, endpoint: null, browser: null, binary: null,
+        userAgentOverridden: null, idleStopMinutes: MANAGED_IDLE_MS / 60000,
+        lastError: JANNY_POLICY_MISSING, error: 'JANNY_HELPER_UNAVAILABLE', detail: JANNY_POLICY_MISSING,
+    }));
+}
+
+function registerJannyaiBrowserRoutes(router) {
+    router.post('/jannyai-managed/start', async (req, res) => {
+        try {
+            const endpoint = await getManagedEndpoint(req, true);
+            res.json({ ok: true, endpoint, browser: _managed?.browser || null, binary: _managed?.binary || null });
+        } catch (error) {
+            res.status(503).json({ ok: false, error: error.message, binary: findManagedBrowser() });
+        }
+    });
+
+    router.post('/jannyai-managed/stop', async (req, res) => {
+        await closeJannyWarmPage();
+        await stopManagedBrowser();
+        res.json({ ok: true });
+    });
+
+    router.get('/jannyai-managed/status', (req, res) => {
+        const running = !!(_managed && _managed.proc.exitCode === null && _managed.proc.signalCode === null);
+        res.json({
+            running,
+            endpoint: running ? _managed.endpoint : null,
+            browser: running ? _managed.browser : null,
+            binary: running ? _managed.binary : findManagedBrowser(),
+            userAgentOverridden: running ? !!_managed.ua : null,
+            idleStopMinutes: MANAGED_IDLE_MS / 60000,
+            lastError: _managedLastError,
+        });
+    });
+
+    router.post('/jannyai-browser-test', async (req, res) => {
+        const checks = [];
+        const add = (key, label, ok, detail, optional = false) =>
+            checks.push({ key, label, ok: !!ok, detail: detail || '', ...(optional ? { optional: true } : {}) });
+        let client = null;
+        let page = null;
+        try {
+            const endpoint = await resolveBrowserEndpoint(req, true);
+            client = await CdpClient.connect(endpoint);
+            add('endpoint', 'Endpoint reachable', true, endpoint);
+            add('browser', 'Browser version', !!client.info.Browser, client.info.Browser || 'unknown');
+
+            page = await CdpPage.create(client);
+            add('script', 'Can run injected script', (await page.evaluate('1 + 1')) === 2);
+            const stack = await probeRenderStack(page);
+            const software = isSoftwareRenderer(stack.renderer);
+            add('rendering', 'WebGL rendering available', !!stack.renderer,
+                stack.renderer ? `${String(stack.renderer).slice(0, 90)}${software ? ' (software)' : ''}` : 'No WebGL renderer reported.',
+                true);
+            add('codecs', 'H.264 and AAC available', !!stack.video && !!stack.audio,
+                stack.video && stack.audio ? 'Present.' : 'This browser build is missing H.264 or AAC support.');
+
+            await page.goto(`${JANNY_ORIGIN}/`, { timeout: CDP_NAV_TIMEOUT });
+            const cf = await waitForCloudflare(page);
+            add('cloudflare', 'Cloudflare cleared', !cf.blocked,
+                cf.blocked
+                    ? `Still challenged after ${Math.round(cf.waitedMs / 1000)}s (page title: "${cf.title}"). ${cf.hint}`
+                    : `Cleared in ${Math.round(cf.waitedMs / 1000)}s (page title: "${cf.title}").`);
+
+            const cookies = await page.cookies([JANNY_ORIGIN]);
+            const cloudflareCookies = cookies.filter(cookie => JANNY_CF_COOKIE_NAMES.has(cookie.name));
+            const hasClearance = cloudflareCookies.some(cookie => cookie.name === 'cf_clearance');
+            add('clearance', 'Holds a valid cf_clearance cookie', hasClearance && !cf.blocked,
+                !hasClearance ? 'Absent.' : (cf.blocked ? 'Present but not clearing the current challenge.' : 'Present and working.'));
+
+            const characterProbe = await page.evaluate(`(async () => {
+                try {
+                    const list = await fetch('/collections?sort=latest&page=1', { credentials: 'include' });
+                    const html = await list.text();
+                    const doc = new DOMParser().parseFromString(html, 'text/html');
+                    const link = [...doc.querySelectorAll('a[href*="/characters/"]')]
+                        .map(anchor => anchor.getAttribute('href') || '')
+                        .find(href => /^\\/characters\\/[0-9a-f-]{36}(?:_|$)/i.test(new URL(href, location.origin).pathname));
+                    if (!link) return { ok: false, detail: 'No character link found on the public collections page.' };
+                    const target = new URL(link, location.origin);
+                    if (target.origin !== location.origin) return { ok: false, detail: 'Character link left the JannyAI origin.' };
+                    const character = await fetch(target.pathname, { credentials: 'include' });
+                    const body = await character.text();
+                    return {
+                        ok: character.ok && /astro-island|CharacterButtons/i.test(body),
+                        detail: 'HTTP ' + character.status + ' ' + target.pathname.slice(0, 120),
+                    };
+                } catch (error) {
+                    return { ok: false, detail: String(error?.message || error).slice(0, 160) };
+                }
+            })()`);
+            add('character', 'Can load a JannyAI character page', characterProbe?.ok, characterProbe?.detail || 'Probe failed.');
+
+            const required = checks.filter(check => !check.optional);
+            res.json({ ok: required.every(check => check.ok), checks, browser: client.info.Browser || null });
+        } catch (error) {
+            if (!client) add('endpoint', 'Endpoint reachable', false, error.message);
+            else add('error', 'Test failed', false, error.message);
+            res.json({ ok: false, checks, error: error.message });
+        } finally {
+            if (page) await page.close();
+            if (client) client.close();
+        }
+    });
+
+    router.post('/jannyai-browser-fetch', async (req, res) => {
+        let request;
+        try {
+            request = validateJannyBrowserRequest(req.body ?? {});
+        } catch (error) {
+            const status = error?.code === 'JANNY_REQUEST_BLOCKED' ? 403 : 400;
+            return res.status(status).json({ ok: false, error: error.message });
+        }
+        try {
+            const warm = await getJannyWarmPage(await resolveBrowserEndpoint(req));
+            await assertJannyPageOrigin(warm.page);
+            await migrateJannyBrowserSession(warm.page);
+            if (request.inspectCharacterId) {
+                const hydratedCharacter = await extractHydratedJannyCharacter(warm.page, request.safePath, request.inspectCharacterId);
+                const finalUrl = await assertJannyPageOrigin(warm.page);
+                _jannyWarmLastUsed = Date.now();
+                return res.json({ ok: true, status: 200, body: '', finalUrl, hydratedCharacter });
+            }
+            const headers = { Accept: request.contentType || 'text/html,application/json' };
+            if (request.contentType) headers['Content-Type'] = request.contentType;
+            const init = {
+                credentials: 'include',
+                method: request.method,
+                headers,
+                ...(request.body ? { body: request.body } : {}),
+            };
+            const response = await warm.page.evaluate(`(async () => {
+                const init = ${JSON.stringify(init)};
+                const response = await fetch(${JSON.stringify(`${JANNY_ORIGIN}${request.safePath}`)}, init);
+                return { status: response.status, body: await response.text(), finalUrl: response.url };
+            })()`);
+            const formPost = request.contentType === 'application/x-www-form-urlencoded';
+            const finalUrl = validateJannyFinalUrl(response?.finalUrl, formPost, response?.status ?? 0);
+            _jannyWarmLastUsed = Date.now();
+            res.json({
+                ok: true,
+                status: response?.status ?? 0,
+                body: response?.body ?? '',
+                finalUrl,
+                hydratedCharacter: null,
+            });
+        } catch (error) {
+            await closeJannyWarmPage().catch(() => {});
+            const code = ['JANNY_REQUEST_BLOCKED', 'JANNY_LOGIN_REQUIRED', 'JANNY_CF_BLOCKED', 'JANNY_PAGE_SHAPE_CHANGED'].includes(error?.code)
+                ? error.code : 'JannyAI browser transport failed';
+            res.status(502).json({ ok: false, error: code });
+        }
+    });
+
+    router.post('/jannyai-browser-session', async (req, res) => {
+        const { token, refreshToken = '' } = req.body ?? {};
+        if (typeof token !== 'string' || !token || token.length > JANNY_SESSION_TOKEN_LIMIT
+            || typeof refreshToken !== 'string' || refreshToken.length > JANNY_SESSION_TOKEN_LIMIT) {
+            return res.status(400).json({ ok: false, error: 'Invalid session' });
+        }
+        try {
+            const warm = await getJannyWarmPage(await resolveBrowserEndpoint(req));
+            await injectJannySession(warm.page, token, refreshToken);
+            _jannyWarmLastUsed = Date.now();
+            res.json({ ok: true });
+        } catch {
+            await closeJannyWarmPage().catch(() => {});
+            res.status(502).json({ ok: false, error: 'JannyAI browser session update failed' });
+        }
+    });
+
+    router.post('/jannyai-browser-session-status', async (req, res) => {
+        try {
+            const warm = await getJannyWarmPage(await resolveBrowserEndpoint(req));
+            await assertJannyPageOrigin(warm.page);
+            await migrateJannyBrowserSession(warm.page);
+            const cookies = await warm.page.cookies([JANNY_ORIGIN]);
+            _jannyWarmLastUsed = Date.now();
+            res.json(readJannyBrowserSession(cookies));
+        } catch {
+            await closeJannyWarmPage().catch(() => {});
+            res.status(502).json({ ok: false, error: 'JannyAI browser session status failed' });
+        }
+    });
+
+    router.post('/jannyai-browser-refresh-session', async (req, res) => {
+        try {
+            const warm = await getJannyWarmPage(await resolveBrowserEndpoint(req));
+            await assertJannyPageOrigin(warm.page);
+            await migrateJannyBrowserSession(warm.page);
+            await warm.page.goto(`${JANNY_ORIGIN}/auth/profile`, { timeout: CDP_NAV_TIMEOUT });
+            await assertJannyPageOrigin(warm.page);
+            await waitForJannyDocumentReady(warm.page);
+            await waitForCloudflare(warm.page);
+            await assertJannyPageOrigin(warm.page);
+            const cookies = await warm.page.cookies([JANNY_ORIGIN]);
+            _jannyWarmLastUsed = Date.now();
+            res.json(readJannyBrowserSession(cookies));
+        } catch {
+            await closeJannyWarmPage().catch(() => {});
+            res.status(502).json({ ok: false, error: 'JannyAI browser session recovery failed' });
+        }
+    });
+
+    router.post('/jannyai-browser-logout', async (req, res) => {
+        try {
+            const warm = await getJannyWarmPage(await resolveBrowserEndpoint(req));
+            const cookies = await allJannyDomainCookies(warm.page);
+            const selectedNames = jannyAccountCookiesToDelete(cookies);
+            const cleared = [];
+            for (const name of selectedNames) {
+                let deleted = false;
+                for (const cookie of cookies.filter(candidate => candidate.name === name)) {
+                    try {
+                        await warm.page.send('Network.deleteCookies', {
+                            name,
+                            domain: cookie.domain || 'jannyai.com',
+                            path: cookie.path || '/',
+                        });
+                        deleted = true;
+                    } catch { /* continue clearing the remaining account cookies */ }
+                }
+                if (deleted) cleared.push(name);
+            }
+            _jannyWarmLastUsed = Date.now();
+            res.json({ ok: true, cleared });
+        } catch {
+            await closeJannyWarmPage().catch(() => {});
+            res.status(502).json({ ok: false, error: 'JannyAI browser logout failed' });
+        }
+    });
 }
 
 function registerJanitoraiBrowserRoutes(router) {
@@ -4464,7 +5054,7 @@ async function extractHiddenDefinition(page, token, detail) {
  * @param {import('express').Router} router
  */
 // Files installed by /self-update. Add here if the bundle grows; nothing else lands on disk.
-const _SELF_UPDATE_FILES = ['package.json', 'index.js'];
+const _SELF_UPDATE_FILES = ['package.json', 'index.js', 'janny-browser-policy.js'];
 const _SELF_UPDATE_MAX_BYTES = 2 * 1024 * 1024;
 const _SELF_UPDATE_VERSION_RE = /^[\w.\-+]{1,32}$/;
 let _selfUpdateInFlight = false;
@@ -5069,6 +5659,8 @@ export async function init(router) {
     registerSaucepanRoutes(router);
     registerDropboxRoutes(router);
     registerJanitoraiBrowserRoutes(router);
+    if (_jannyPolicy) registerJannyaiBrowserRoutes(router);
+    else registerJannyaiUnavailableRoutes(router);
 
     console.log('[cl-helper] Character Library helper plugin loaded');
 

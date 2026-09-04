@@ -12,7 +12,7 @@ export const JANNY_IMAGE_BASE = 'https://image.jannyai.com/bot-avatars/';
 export const JANNY_SITE_BASE = 'https://jannyai.com';
 const JANNY_FALLBACK_TOKEN = '88a6463b66e04fb07ba87ee3db06af337f492ce511d93df6e2d2968cb2ff2b30';
 
-// Tag ID → name mapping (JannyAI uses numeric IDs internally)
+// Tag ID -> name mapping (JannyAI uses numeric IDs internally)
 export const TAG_MAP = {
     1: 'Male', 2: 'Female', 3: 'Non-binary', 4: 'Celebrity', 5: 'OC',
     6: 'Fictional', 7: 'Real', 8: 'Game', 9: 'Anime', 10: 'Historical',
@@ -32,62 +32,15 @@ export const TAG_MAP = {
 // TOKEN MANAGEMENT
 // ========================================
 
-let _cachedToken = null;
-let _tokenFetchPromise = null;
+let _cachedToken = JANNY_FALLBACK_TOKEN;
 
 /**
- * Fetch the MeiliSearch API key from JannyAI's client config JS bundle.
- * Falls back to a known hardcoded key if scraping fails.
- * Token is cached across calls (shared between provider and browse view).
+ * Return the known public MeiliSearch token without scraping JannyAI pages on
+ * provider boot. The page scrape is Cloudflare-prone and can make SillyTavern
+ * log noisy 403 binary bodies even though the fallback search token works.
  */
 async function getSearchToken() {
-    if (_cachedToken) return _cachedToken;
-    if (_tokenFetchPromise) return _tokenFetchPromise;
-
-    _tokenFetchPromise = (async () => {
-        try {
-            const pageResp = await fetchWithProxy(`${JANNY_SITE_BASE}/characters/search`);
-            const html = await pageResp.text();
-
-            let configPath = null;
-            const configMatch = html.match(/client-config\.[a-zA-Z0-9_-]+\.js/);
-            if (configMatch) {
-                configPath = '/_astro/' + configMatch[0];
-            } else {
-                const spMatch = html.match(/SearchPage\.[a-zA-Z0-9_-]+\.js/);
-                if (spMatch) {
-                    const spResp = await fetchWithProxy(`${JANNY_SITE_BASE}/_astro/${spMatch[0]}`);
-                    if (spResp.ok) {
-                        const spJs = await spResp.text();
-                        const impMatch = spJs.match(/client-config\.[a-zA-Z0-9_-]+\.js/);
-                        if (impMatch) configPath = '/_astro/' + impMatch[0];
-                    }
-                }
-            }
-
-            if (configPath) {
-                const cfgResp = await fetchWithProxy(`${JANNY_SITE_BASE}${configPath}`);
-                if (cfgResp.ok) {
-                    const cfgJs = await cfgResp.text();
-                    const tokenMatch = cfgJs.match(/"([a-f0-9]{64})"/);
-                    if (tokenMatch) {
-                        _cachedToken = tokenMatch[1];
-                        return _cachedToken;
-                    }
-                }
-            }
-
-            throw new Error('Could not extract MeiliSearch token');
-        } catch (e) {
-            console.warn('[JannyAPI] Token fetch failed, using fallback:', e.message);
-            _cachedToken = JANNY_FALLBACK_TOKEN;
-            return _cachedToken;
-        } finally {
-            _tokenFetchPromise = null;
-        }
-    })();
-
-    return _tokenFetchPromise;
+    return _cachedToken || JANNY_FALLBACK_TOKEN;
 }
 
 // ========================================
@@ -156,4 +109,209 @@ export async function meiliMultiSearch({ search = '', page = 1, limit = 80, filt
 
 export function resolveTagNames(tagIds) {
     return (tagIds || []).map(id => TAG_MAP[id] || `Tag ${id}`);
+}
+
+// ========================================
+// ACCOUNT SYNC (bookmarks + collections via the shared browser)
+// ========================================
+// The persistent browser profile owns authentication and Cloudflare cookies.
+import { jannyBrowserFetch } from './janny-browser.js';
+import { jannyRecoverSession, jannySessionStatus } from './janny-session.js';
+import {
+    parseJannyPublicCollectionsPage,
+    parseJannyPublicCollectionDetailPage,
+    validateJannyPublicCollectionPath,
+    validateJannyCollectorName,
+    detectJannyCloudflareBody,
+} from './janny-html.js';
+
+function createJannyResponseError(code, status = 0) {
+    const error = new Error(code === 'JANNY_CF_BLOCKED'
+        ? 'JannyAI is blocked by a Cloudflare challenge.'
+        : 'JannyAI login is required.');
+    error.code = code;
+    error.status = status;
+    error.cloudflare = code === 'JANNY_CF_BLOCKED';
+    return error;
+}
+
+function finishJannyBrowserResponse(result) {
+    // JSON fields can contain arbitrary character text, including HTML examples.
+    const isHtml = /^\s*</.test(result.body || '');
+    if (isHtml && detectJannyCloudflareBody(result.status, result.body)) {
+        throw createJannyResponseError('JANNY_CF_BLOCKED', result.status);
+    }
+    let finalPath = '';
+    try { finalPath = new URL(result.finalUrl, JANNY_SITE_BASE).pathname; } catch { /* no final URL */ }
+    const loginRedirect = /^\/(?:auth\/)?(?:login|log-in|signin|sign-in)(?:\/|$)/i.test(finalPath);
+    const loginPage = /<title[^>]*>\s*(?:log\s*in|sign\s*in)(?:\s|[|:<-])/i.test(result.body || '');
+    if (loginRedirect || (isHtml && loginPage)) {
+        throw createJannyResponseError('JANNY_LOGIN_REQUIRED', result.status);
+    }
+    return result;
+}
+
+async function jannyBrowserRequest(method, path, { jsonBody, formBody } = {}) {
+    const options = { method, jsonBody, formBody };
+    let result;
+    try {
+        result = await jannyBrowserFetch(path, options);
+    } catch (error) {
+        // The browser client throws classified HTTP errors rather than returning a 401.
+        // Recover only an unauthorized account response, never a transport/policy failure.
+        if (error.code !== 'JANNY_LOGIN_REQUIRED' || error.status !== 401) throw error;
+        const recovered = await jannyRecoverSession();
+        if (!recovered.active) throw error;
+        result = await jannyBrowserFetch(path, options);
+    }
+    // Empty 2xx bodies are valid after browser-followed collection form redirects.
+    return finishJannyBrowserResponse(result);
+}
+
+function parseJsonBody(res) {
+    try { return JSON.parse(res.body); } catch { return null; }
+}
+
+function toIdArray(ids) {
+    return [...new Set((Array.isArray(ids) ? ids : [ids]).map(String).filter(Boolean))];
+}
+
+// /api/bookmark returns [{ characterId, createdAt }], not bare id strings,
+// so pull the id out of each entry (tolerating a plain-string shape too).
+function bookmarkEntryId(entry) {
+    if (typeof entry === 'string') return entry;
+    if (entry && typeof entry === 'object') return entry.characterId || entry.character_id || entry.id || '';
+    return '';
+}
+
+// Reports transport + login state for gating and the Settings panel. Never throws.
+export async function probeJannyAccount() {
+    let browser = false;
+    try {
+        const status = await jannySessionStatus();
+        browser = true;
+        if (!status.active) {
+            return { browser, active: false, cloudflare: false, reason: 'JannyAI login is required.', code: 'JANNY_LOGIN_REQUIRED' };
+        }
+        await jannyBrowserRequest('GET', '/api/bookmark');
+        return { browser, active: true, cloudflare: false, reason: '', code: '' };
+    } catch (error) {
+        const code = error.code || 'JANNY_HTTP_ERROR';
+        if (code === 'JANNY_HELPER_UNAVAILABLE' || code === 'JANNY_BROWSER_UNAVAILABLE') browser = false;
+        return {
+            browser,
+            active: false,
+            cloudflare: code === 'JANNY_CF_BLOCKED',
+            reason: error.message,
+            code,
+        };
+    }
+}
+
+export async function fetchJannyBookmarks() {
+    const data = parseJsonBody(await jannyBrowserRequest('GET', '/api/bookmark'));
+    const bookmarks = data?.bookmarks || [];
+    return Array.isArray(bookmarks) ? bookmarks.map(bookmarkEntryId).filter(Boolean) : [];
+}
+
+export async function addJannyBookmarks(ids) {
+    const characterIDs = toIdArray(ids);
+    if (!characterIDs.length) return [];
+    const data = parseJsonBody(await jannyBrowserRequest('POST', '/api/bookmark', { jsonBody: { characterIDs } }));
+    return data?.bookmarks || [];
+}
+
+export async function removeJannyBookmarks(ids) {
+    const characterIDs = toIdArray(ids);
+    if (!characterIDs.length) return [];
+    const data = parseJsonBody(await jannyBrowserRequest('DELETE', `/api/bookmark?ids=${encodeURIComponent(characterIDs.join(','))}`));
+    return data?.bookmarks || [];
+}
+
+// Keep ?ids= URLs comfortably short regardless of how many ids a caller passes.
+const JANNY_GET_CHARACTERS_CHUNK = 20;
+
+export async function fetchJannyCharactersByIds(ids) {
+    const characterIDs = toIdArray(ids);
+    if (!characterIDs.length) return [];
+    const out = [];
+    for (let i = 0; i < characterIDs.length; i += JANNY_GET_CHARACTERS_CHUNK) {
+        const chunk = characterIDs.slice(i, i + JANNY_GET_CHARACTERS_CHUNK);
+        const data = parseJsonBody(await jannyBrowserRequest('GET', `/api/get-characters?ids=${encodeURIComponent(chunk.join(','))}`));
+        const chars = data?.characters || [];
+        if (Array.isArray(chars)) out.push(...chars);
+    }
+    return out;
+}
+
+// /api/get-characters is public; browser cookies apply without a separate anonymous path.
+export const fetchJannyPublicCharactersByIds = fetchJannyCharactersByIds;
+
+export async function fetchJannyCollections() {
+    const data = parseJsonBody(await jannyBrowserRequest('GET', '/api/collections/mine'));
+    return data?.collections || [];
+}
+
+export async function fetchJannyCollectionCharacters(collectionId) {
+    if (!collectionId) return [];
+    const data = parseJsonBody(await jannyBrowserRequest('GET', `/api/collections/${collectionId}/characters`));
+    return data?.characters || [];
+}
+
+export async function addJannyCharacterToCollection(collectionId, characterId) {
+    const res = await jannyBrowserRequest('POST', `/api/collections/${collectionId}/characters`, { jsonBody: { characterId } });
+    return parseJsonBody(res) || {};
+}
+
+export async function removeJannyCharacterFromCollection(collectionId, characterId) {
+    const res = await jannyBrowserRequest('DELETE', `/api/collections/${collectionId}/characters?characterId=${encodeURIComponent(characterId)}`);
+    return parseJsonBody(res) || {};
+}
+
+// Collection create/edit/delete are server-rendered Astro form POSTs
+// (application/x-www-form-urlencoded). Success answers 302; the browser
+// follows the redirect, so the created collection's id is read from finalUrl.
+export async function createJannyCollection({ name, description = '', isPrivate = true } = {}) {
+    const res = await jannyBrowserRequest('POST', '/collections/form/add-collection', {
+        formBody: { name, description, isPrivate: isPrivate ? 'yes' : 'no' },
+    });
+    const location = res.finalUrl || '';
+    const idMatch = location.match(/\/collections\/([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})/i);
+    return { success: true, id: idMatch ? idMatch[1] : null, location };
+}
+
+export async function updateJannyCollection({ id, name, description = '', isPrivate = true } = {}) {
+    const res = await jannyBrowserRequest('POST', '/collections/form/edit-collection', {
+        formBody: { id, name, description, isPrivate: isPrivate ? 'yes' : 'no' },
+    });
+    return { success: true, location: res.finalUrl || '' };
+}
+
+export async function deleteJannyCollection(id) {
+    const res = await jannyBrowserRequest('POST', '/collections/form/delete-collection', { formBody: { id } });
+    return { success: true, location: res.finalUrl || '' };
+}
+
+// ========================================
+// PUBLIC COLLECTIONS (HTML pages via the shared browser, parsed client-side)
+// ========================================
+
+export async function fetchJannyPublicCollections({ sort = 'latest', page = 1 } = {}) {
+    const params = new URLSearchParams({ sort: String(sort), page: String(page) });
+    const res = await jannyBrowserRequest('GET', `/collections?${params}`);
+    return { ok: true, status: res.status, ...parseJannyPublicCollectionsPage(res.body) };
+}
+
+export async function fetchJannyCollectorCollections(name) {
+    const validation = validateJannyCollectorName(name);
+    if (!validation.ok) throw new Error(validation.error);
+    const res = await jannyBrowserRequest('GET', `/collectors/${encodeURIComponent(validation.name)}`);
+    return { ok: true, status: res.status, ...parseJannyPublicCollectionsPage(res.body) };
+}
+
+export async function fetchJannyPublicCollection(path) {
+    const validation = validateJannyPublicCollectionPath(path);
+    if (!validation.ok) throw new Error(validation.error);
+    const res = await jannyBrowserRequest('GET', validation.path);
+    return { ok: true, status: res.status, ...parseJannyPublicCollectionDetailPage(res.body, validation.path) };
 }
