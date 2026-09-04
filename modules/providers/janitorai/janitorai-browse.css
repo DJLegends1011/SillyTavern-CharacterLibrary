@@ -4,6 +4,36 @@
  * manager, preview modal). Only the few elements with no shared equivalent live here.
  */
 
+/* Keep the header heart compact enough to sit beside long creator names. Mobile hides the
+ * header metadata entirely and exposes this same control through its pancake action menu. */
+.janitorai-fav-btn-inline {
+    cursor: pointer;
+    padding: 2px 8px;
+    border-radius: var(--radius-sm);
+    transition: all 0.2s ease;
+    background: transparent;
+}
+
+.janitorai-fav-btn-inline:hover {
+    background: rgba(255, 100, 100, 0.15);
+}
+
+.janitorai-fav-btn-inline i {
+    color: #ff6b6b;
+    transition: transform 0.2s ease;
+}
+
+.janitorai-fav-btn-inline:hover i { transform: scale(1.15); }
+.janitorai-fav-btn-inline.favorited i { font-weight: 900; }
+.janitorai-fav-btn-inline.favorited { background: rgba(255, 100, 100, 0.1); }
+.janitorai-fav-btn-inline.loading { pointer-events: none; opacity: 0.6; }
+.janitorai-fav-btn-inline.unresolved:not(.loading) { opacity: 0.75; }
+#janitoraiCharFavoriteCount { color: var(--text-primary); }
+
+#janitoraiCharModal .browse-char-meta { overflow-wrap: anywhere; }
+
+html.cl-mobile .janitorai-fav-btn-inline { display: none !important; }
+
 /* Book name + entry count above the entries themselves, which render as the canonical .lb-entry */
 .janitorai-lorebook-head {
     margin-bottom: var(--space-sm);

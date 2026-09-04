@@ -3831,10 +3831,19 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
             const favBtn = modal?.querySelector('.browse-fav-toggle:not(.browse-meta-action)');
             if (favBtn) {
                 const faved = favBtn.classList.contains('favorited');
+                const loading = favBtn.classList.contains('loading');
+                const unresolved = favBtn.classList.contains('unresolved');
+                const unavailable = favBtn.getAttribute('aria-disabled') === 'true';
                 const item = document.createElement('button');
                 item.type = 'button';
                 item.className = 'mobile-more-actions-item';
-                item.innerHTML = `<i class="fa-${faved ? 'solid' : 'regular'} fa-heart"></i> ${faved ? 'Unfavorite' : 'Favorite'}`;
+                const label = loading
+                    ? 'Loading favorite status'
+                    : unresolved
+                        ? (unavailable ? 'Favorite unavailable' : 'Retry favorite status')
+                        : (faved ? 'Unfavorite' : 'Favorite');
+                item.innerHTML = `<i class="fa-${faved ? 'solid' : 'regular'} fa-heart"></i> ${label}`;
+                item.disabled = loading || unavailable;
                 item.addEventListener('click', (ev) => {
                     ev.stopPropagation();
                     closeMenu();
@@ -3900,6 +3909,7 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
         function injectKebabIntoModal(modal) {
             const controls = modal.querySelector('.modal-controls');
             if (!controls) return;
+            controls.classList.toggle('has-browse-favorite-actions', !!modal.querySelector('.browse-fav-toggle'));
 
             if (!controls.querySelector('.mobile-more-actions-btn')) {
                 const btn = document.createElement('button');
