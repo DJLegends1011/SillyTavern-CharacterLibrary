@@ -954,6 +954,10 @@ async function toggleJanitoraiFavorite() {
         }
         if (!isJanitoraiFavoriteSelectionCurrent(id, token, identity)) return;
         applyConfirmedJanitoraiFavorite(hit, state);
+        showToast(
+            state.favorited ? 'Added to JanitorAI favorites!' : 'Removed from JanitorAI favorites',
+            state.favorited ? 'success' : 'info',
+        );
     } catch {
         if (!isJanitoraiFavoriteSelectionCurrent(id, token, identity)) return;
         paintJanitoraiFavoriteButton({ favorited: !desired, count: priorCount, loading: false });
