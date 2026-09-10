@@ -14,6 +14,8 @@ import saucepanBrowseView from './saucepan-browse.js';
 import {
     setApiRequest as setSaucepanApiRequest,
     setSaucepanTokenGetter,
+    setSaucepanBrowserOptionsGetter,
+    clearSaucepanAccountCache,
     hasSaucepanToken,
     searchSaucepan,
     resolveSaucepanImageUrl,
@@ -66,7 +68,7 @@ class SaucepanProvider extends ProviderBase {
     get beta() { return true; }
     get disabledByDefault() { return true; }
     get enableWarning() { return 'Saucepan is an experimental source. Native definition extraction requires a Saucepan account (Bearer token) configured in this provider\'s settings.'; }
-    get minClHelperVersion() { return '1.9.0'; }
+    get minClHelperVersion() { return '1.10.0'; }
     get browseView() { return saucepanBrowseView; }
 
     get linkStatFields() {
@@ -84,6 +86,8 @@ class SaucepanProvider extends ProviderBase {
         api = coreAPI;
         setSaucepanApiRequest(coreAPI.apiRequest);
         setSaucepanTokenGetter(() => coreAPI.getSetting('saucepanToken') || null);
+        setSaucepanBrowserOptionsGetter(() => (coreAPI.getSetting('janitoraiBrowserMode') || 'managed') === 'managed'
+            ? { managed: true } : { endpoint: coreAPI.getSetting('janitoraiBrowserEndpoint') || '' });
 
         // Push any persisted Saucepan token into cl-helper so search and other
         // stateless proxy calls are authenticated without a manual login after
@@ -519,6 +523,8 @@ window.saucepanLogin = async (handle, password) => {
     const data = await saucepanLogin(handle, password);
     if (data?.ok && data.token) {
         CoreAPI.setSetting('saucepanToken', data.token);
+        clearSaucepanAccountCache();
+        window.dispatchEvent(new Event('saucepan-session-changed'));
     }
     return data;
 };
@@ -527,6 +533,8 @@ window.saucepanSetToken = async (token) => {
     const trimmed = (token || '').trim();
     if (!trimmed) return { ok: false, error: 'Token is empty' };
     CoreAPI.setSetting('saucepanToken', trimmed);
+    clearSaucepanAccountCache();
+    window.dispatchEvent(new Event('saucepan-session-changed'));
     if (!await checkClHelperAvailable()) {
         return { ok: false, error: 'Saved locally, but cl-helper plugin not available' };
     }
@@ -546,6 +554,8 @@ window.saucepanValidateSession = async () => {
 window.saucepanClearSession = async () => {
     // Drop the persisted token even when cl-helper is unreachable.
     CoreAPI.setSetting('saucepanToken', null);
+    clearSaucepanAccountCache();
+    window.dispatchEvent(new Event('saucepan-session-changed'));
     if (!await checkClHelperAvailable()) return false;
     return await clearSaucepanToken();
 };

@@ -373,7 +373,8 @@ export async function extractSaucepanHiddenDefinition({
         }
     };
 
-    const companion = await request('GET', `/api/v2/companions/${encodeURIComponent(companionId)}`);
+    const detail = await request('GET', `/api/v2/companions/${encodeURIComponent(companionId)}`);
+    const companion = detail?.companion || detail;
     if (!canUseSaucepanCustomProvider(companion?.providers_profile)) {
         throw new Error('This companion does not allow custom providers');
     }

@@ -140,3 +140,13 @@ html.cl-mobile .saucepan-modal-extract-btn {
     min-width: 0;
     justify-content: center;
 }
+/* Account controls also wrap on narrow mobile screens. */
+.saucepan-followed-creators {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 12px;
+    max-height: 240px;
+    overflow-y: auto;
+}
+#saucepanCharModal .modal-controls { flex-wrap: wrap; }

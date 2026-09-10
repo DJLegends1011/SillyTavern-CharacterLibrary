@@ -15,6 +15,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import * as zlib from 'node:zlib';
 import { promisify } from 'node:util';
 import { createSaucepanHiddenExtractionHandler } from './saucepan-hidden-extraction.js';
+import { validateSaucepanBrowserRequest, saucepanBrowserFetch } from './saucepan-browser.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -1736,6 +1737,8 @@ function sanitizeSaucepanSearchBody(input) {
         posted_at_to: asStringOrNull(input.posted_at_to, SAUCEPAN_MAX_DATE_LEN),
         hide_hidden_content: asBool(input.hide_hidden_content),
         open_definition_only: asBool(input.open_definition_only),
+        ...(['favorites', 'following'].includes(input.special_view?.view)
+            ? { special_view: { view: input.special_view.view } } : {}),
     };
 }
 
@@ -1764,6 +1767,31 @@ async function readSaucepanBody(response) {
 }
 
 function registerSaucepanRoutes(router) {
+    router.post('/saucepan-browser-request', async (req, res) => {
+        let request;
+        try {
+            request = validateSaucepanBrowserRequest(req.body);
+            if (request.path === '/api/v1/search') {
+                request.body = sanitizeSaucepanSearchBody(request.body);
+                if (!request.body) throw new Error('Invalid Saucepan search body');
+            }
+        } catch (error) { return res.status(400).json({ error: error.message }); }
+        const token = req.body?.token;
+        if (typeof token !== 'string' || token.length > 8192) return res.status(400).json({ error: 'Invalid Saucepan token' });
+        if (!token) return res.status(401).json({ error: 'Saucepan login is required' });
+        try {
+            const result = await withJanitoraiPage(await resolveBrowserEndpoint(req), async page => {
+                await page.goto(SAUCEPAN_ORIGIN);
+                await waitForCloudflare(page);
+                return saucepanBrowserFetch(page, request, token);
+            });
+            if (result.retryAfter) res.set('Retry-After', result.retryAfter);
+            res.status(result.status || 502).type('application/json').send(result.body);
+        } catch {
+            // Never include CDP expressions: they contain the account bearer token.
+            res.status(502).json({ error: 'Saucepan browser request failed. Check the browser configuration under JanitorAI.' });
+        }
+    });
     router.post('/saucepan-extract-hidden', createSaucepanHiddenExtractionHandler({
         getToken: () => saucepanToken,
     }));

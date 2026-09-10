@@ -4,7 +4,7 @@
 //   - Creator browsing via companions-of-user (client-side pagination)
 //   - Native definition extraction (Bearer token) in the preview modal
 //
-// All Saucepan network calls go through cl-helper's saucepan-proxy (see
+// Saucepan API calls go through cl-helper's saucepan-browser-request (see
 // saucepan-api.js). A Bearer token is required for search/browse AND native
 // definition extraction (anonymous search 403s).
 
@@ -23,6 +23,10 @@ import {
 } from '../provider-utils.js';
 import {
     searchSaucepan,
+    fetchSaucepanFollowedCreators,
+    setSaucepanFavorite,
+    setSaucepanFollowing,
+    clearSaucepanAccountCache,
     fetchSaucepanCompanionsOfUser,
     fetchSaucepanCompanion,
     fetchSaucepanFandoms,
@@ -72,6 +76,64 @@ let saucepanTopUpVisible = 0; // visible cards accumulated across those chained 
 
 // Browse mode: 'recent' (default search/sort) or 'creator'
 let saucepanBrowseMode = 'recent';
+let saucepanAccountView = 'recent';
+let saucepanFollowedCreators = null;
+let saucepanAccountIdentity = '';
+let saucepanAccountRevision = 0;
+
+function resetSaucepanAccount() {
+    saucepanAccountIdentity = getSetting('saucepanToken') || '';
+    saucepanAccountRevision++;
+    saucepanLoadToken++;
+    saucepanDetailFetchToken++;
+    saucepanCharacters = [];
+    _saucepanCreatorFullList = [];
+    saucepanFollowedCreators = null;
+    saucepanSelectedChar = null;
+    saucepanIsLoading = false;
+    clearSaucepanAccountCache();
+    document.getElementById('saucepanFollowedCreators')?.replaceChildren();
+    closePreviewModal();
+    if (delegatesInitialized) loadCharacters(false);
+}
+window.addEventListener('saucepan-session-changed', resetSaucepanAccount);
+
+async function loadSaucepanCreators() {
+    const revision = saucepanAccountRevision;
+    const panel = document.getElementById('saucepanFollowedCreators');
+    if (!panel) return;
+    panel.classList.remove('hidden');
+    panel.textContent = 'Loading followed creators…';
+    try {
+        const creators = await fetchSaucepanFollowedCreators();
+        if (revision !== saucepanAccountRevision || !delegatesInitialized) return;
+        saucepanFollowedCreators = creators;
+        panel.innerHTML = creators.length ? creators.map(creator => `<button class="glass-btn" data-saucepan-creator="${escapeHtml(creator.handle)}">@${escapeHtml(creator.handle)}</button>`).join(' ') : 'No followed creators on this account.';
+    } catch (error) {
+        if (revision === saucepanAccountRevision) panel.textContent = error.message;
+    }
+}
+
+async function updateSaucepanAccountControls(hit, companion) {
+    const revision = saucepanAccountRevision;
+    const favorite = document.getElementById('saucepanFavoriteBtn');
+    const follow = document.getElementById('saucepanFollowBtn');
+    if (!favorite || !follow || saucepanSelectedChar !== hit) return;
+    hit.is_favorited = companion?.is_favorited ?? hit.is_favorited;
+    favorite.disabled = typeof hit.is_favorited !== 'boolean' || !hasSaucepanToken();
+    favorite.textContent = hit.is_favorited ? 'Unfavorite' : 'Favorite';
+    follow.disabled = true;
+    hit.creator_id = companion?.author_id || hit.creator_id;
+    if (!hit.creator_id || !hasSaucepanToken()) return;
+    try {
+        const creators = saucepanFollowedCreators || await fetchSaucepanFollowedCreators();
+        if (revision !== saucepanAccountRevision || saucepanSelectedChar !== hit) return;
+        saucepanFollowedCreators = creators;
+        hit.is_following = creators.some(creator => creator.id === hit.creator_id);
+        follow.textContent = hit.is_following ? 'Unfollow creator' : 'Follow creator';
+        follow.disabled = false;
+    } catch { /* Keep unknown account state disabled. */ }
+}
 
 // Search-mode pagination (page-based)
 let saucepanCurrentPage = 1;
@@ -653,6 +715,7 @@ async function loadCharacters(append = false) {
                 let full = _saucepanCreatorFullList;
                 if (!full || full.length === 0) {
                     const data = await fetchSaucepanCompanionsOfUser(saucepanCreatorHandle);
+                    if (thisToken !== saucepanLoadToken || !delegatesInitialized) return;
                     full = data?.characters || [];
                 } else {
                     full = full.slice();
@@ -674,6 +737,7 @@ async function loadCharacters(append = false) {
             const mergedExclude = new Set(persistentExclude);
             for (const t of saucepanExcludedTags) mergedExclude.add(t);
             const data = await searchSaucepan({
+                accountView: saucepanAccountView,
                 search: saucepanSearchQuery,
                 page: saucepanCurrentPage,
                 limit: PAGE_SIZE,
@@ -686,6 +750,7 @@ async function loadCharacters(append = false) {
                 fandomTags: [...saucepanActiveFandoms],
                 excludedFandomTags: [...saucepanExcludedFandoms],
             });
+            if (thisToken !== saucepanLoadToken || !delegatesInitialized) return;
             list = data?.characters || [];
             total = data?.totalCount || 0;
             saucepanTotalPages = data?.totalPages || 0;
@@ -889,10 +954,13 @@ function performCreatorSearch() {
 }
 
 async function fetchCompanionAndOpenPreview(companionId) {
+    const revision = saucepanAccountRevision;
+    const lookupToken = ++saucepanDetailFetchToken;
     const grid = document.getElementById('saucepanGrid');
     if (grid) renderLoadingState(grid, 'Looking up companion...', 'browse-loading');
     try {
         const companion = await fetchSaucepanCompanion(companionId);
+        if (revision !== saucepanAccountRevision || lookupToken !== saucepanDetailFetchToken) return;
         if (companion) {
             openPreviewModal(hitFromCompanion(companion, companionId));
             // Restore the grid behind the modal.
@@ -1022,6 +1090,10 @@ function openPreviewModal(hit) {
     // Online tab (e.g. in-app preview from the link modal).
     view.injectModals();
     ensureModalEventsAttached();
+    for (const id of ['saucepanFavoriteBtn', 'saucepanFollowBtn']) {
+        const button = document.getElementById(id);
+        if (button) { button.disabled = true; button.textContent = id === 'saucepanFavoriteBtn' ? 'Favorite' : 'Follow creator'; }
+    }
 
     const modal = document.getElementById('saucepanCharModal');
     if (!modal) return;
@@ -1339,6 +1411,7 @@ async function fetchAndPopulateDetails(hit, token) {
         if (token !== saucepanDetailFetchToken) return;
 
         const lockedDef = !!companion && companion.open_definition === false;
+        void updateSaucepanAccountControls(hit, companion);
 
         // Richer stats from detail
         if (companion) {
@@ -1691,6 +1764,20 @@ function initSaucepanView() {
 
     if (delegatesInitialized) return;
     delegatesInitialized = true;
+    on('saucepanAccountView', 'change', (event) => {
+        saucepanAccountView = event.target.value;
+        saucepanBrowseMode = 'recent';
+        saucepanCreatorHandle = '';
+        _saucepanCreatorFullList = [];
+        document.getElementById('saucepanCreatorBanner')?.classList.add('hidden');
+        updateSortOptions();
+        loadCharacters(false);
+    });
+    on('saucepanCreatorsBtn', 'click', () => { void loadSaucepanCreators(); });
+    on('saucepanFollowedCreators', 'click', (event) => {
+        const button = event.target.closest('[data-saucepan-creator]');
+        if (button) browseCreator(button.dataset.saucepanCreator);
+    });
 
     const sortEl = document.getElementById('saucepanSortSelect');
     if (sortEl) {
@@ -2010,6 +2097,31 @@ function ensureModalEventsAttached() {
         }
         if (saucepanSelectedChar) importSaucepanCharacter(saucepanSelectedChar);
     });
+    for (const [buttonId, kind] of [['saucepanFavoriteBtn', 'favorite'], ['saucepanFollowBtn', 'follow']]) {
+        on(buttonId, 'click', async () => {
+            const hit = saucepanSelectedChar;
+            const button = document.getElementById(buttonId);
+            const revision = saucepanAccountRevision;
+            const key = kind === 'favorite' ? 'is_favorited' : 'is_following';
+            if (!hit || button.disabled || typeof hit[key] !== 'boolean') return;
+            const enabled = !hit[key];
+            button.disabled = true;
+            try {
+                if (kind === 'favorite') await setSaucepanFavorite(getCharId(hit), enabled);
+                else await setSaucepanFollowing(hit.creator_id, enabled);
+                if (revision !== saucepanAccountRevision) return;
+                hit[key] = enabled;
+                if (kind === 'favorite' && hit._fullCompanion) hit._fullCompanion.is_favorited = enabled;
+                if (kind === 'follow') saucepanFollowedCreators = null;
+                showToast(kind === 'favorite' ? (enabled ? 'Favorited on Saucepan' : 'Removed from Saucepan favorites') : (enabled ? 'Following on Saucepan' : 'Unfollowed on Saucepan'), 'success');
+                if (saucepanSelectedChar === hit) await updateSaucepanAccountControls(hit, null);
+                if (saucepanAccountView !== 'recent') loadCharacters(false);
+            } catch (error) {
+                if (revision === saucepanAccountRevision) showToast(error.message, 'error');
+                // Leave uncertain state disabled until the preview is reopened.
+            }
+        });
+    }
 
     if (overlay) {
         overlay.addEventListener('click', (e) => {
@@ -2111,6 +2223,12 @@ class SaucepanBrowseView extends BrowseView {
 
     renderFilterBar() {
         return `
+            <select id="saucepanAccountView" class="glass-select" title="Saucepan account view">
+                <option value="recent" ${saucepanAccountView === 'recent' ? 'selected' : ''}>Browse all</option>
+                <option value="favorites" ${saucepanAccountView === 'favorites' ? 'selected' : ''}>Account favorites</option>
+                <option value="following" ${saucepanAccountView === 'following' ? 'selected' : ''}>Following</option>
+            </select>
+            <button id="saucepanCreatorsBtn" class="glass-btn" title="Refresh creators followed on Saucepan">Followed creators</button>
             <!-- Sort -->
             <div class="browse-sort-container">
                 <select id="saucepanSortSelect" class="glass-select" title="Sort order">
@@ -2221,6 +2339,7 @@ class SaucepanBrowseView extends BrowseView {
                 </div>
 
                 <!-- Results Grid -->
+                <div id="saucepanFollowedCreators" class="saucepan-followed-creators hidden" aria-live="polite"></div>
                 <div id="saucepanGrid" class="browse-grid"></div>
 
                 <!-- Load More -->
@@ -2256,6 +2375,8 @@ class SaucepanBrowseView extends BrowseView {
                     <button id="saucepanImportBtn" class="action-btn primary" title="Import to SillyTavern">
                         <i class="fa-solid fa-download"></i> Import
                     </button>
+                    <button id="saucepanFavoriteBtn" class="action-btn secondary" disabled>Favorite</button>
+                    <button id="saucepanFollowBtn" class="action-btn secondary" disabled>Follow creator</button>
                     <button class="close-btn" id="saucepanCharClose">&times;</button>
                 </div>
             </div>
@@ -2389,8 +2510,10 @@ class SaucepanBrowseView extends BrowseView {
     }
 
     activate(container, options = {}) {
+        if (saucepanAccountIdentity !== (getSetting('saucepanToken') || '')) resetSaucepanAccount();
         if (options.domRecreated) {
             saucepanBrowseMode = 'recent';
+            saucepanAccountView = 'recent';
             saucepanSelectedChar = null;
             saucepanCharacters = [];
             saucepanCurrentPage = 1;
@@ -2427,6 +2550,13 @@ class SaucepanBrowseView extends BrowseView {
     }
 
     deactivate() {
+        if (saucepanIsLoading) {
+            saucepanCharacters = [];
+            saucepanCurrentPage = 1;
+            saucepanCurrentOffset = 0;
+            saucepanIsLoading = false;
+        }
+        saucepanLoadToken++;
         saucepanDetailFetchToken++;
         delegatesInitialized = false;
         super.deactivate();

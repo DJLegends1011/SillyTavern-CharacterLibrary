@@ -1,6 +1,7 @@
 // Shared Saucepan API utilities - used by both saucepan-provider.js and
 // saucepan-browse.js, plus DataCat and the Creator Downloads adapter for
-// creator/companion lookups. All calls go through cl-helper (transport only).
+// creator/companion lookups. API calls use cl-helper's supplied browser;
+// authentication and CDN helpers keep their direct server transport.
 
 import { CL_HELPER_PLUGIN_BASE } from '../provider-utils.js';
 
@@ -8,7 +9,6 @@ import { CL_HELPER_PLUGIN_BASE } from '../provider-utils.js';
 // CONSTANTS
 // ========================================
 
-const SAUCEPAN_PROXY_BASE = `${CL_HELPER_PLUGIN_BASE}/saucepan-proxy`;
 const SAUCEPAN_CUSTOM_PROVIDER_PROFILES = new Set([
     'custom_and_vetted',
     'vetted_only_owner_bypass',
@@ -67,6 +67,9 @@ const SAUCEPAN_CW_EXTREME_TAGS = [
 
 let _apiRequest = null;
 let _getSaucepanToken = null;
+let _getBrowserOptions = () => ({ managed: true });
+export function setSaucepanBrowserOptionsGetter(fn) { _getBrowserOptions = fn; }
+export function clearSaucepanAccountCache() { _saucepanCompanionCache.clear(); }
 
 /**
  * Bind the CoreAPI.apiRequest function for proxied requests. Called from the
@@ -135,13 +138,37 @@ async function tryPushSavedToken() {
 
 async function saucepanFetch(method, apiPath, body) {
     if (!_apiRequest) throw new Error('Saucepan: apiRequest not bound (cl-helper required)');
-    const url = `${SAUCEPAN_PROXY_BASE}${apiPath}`;
-    const send = () => (method === 'POST' ? _apiRequest(url, 'POST', body) : _apiRequest(url));
+    const send = () => _apiRequest(`${CL_HELPER_PLUGIN_BASE}/saucepan-browser-request`, 'POST', {
+        ..._getBrowserOptions(), token: _getSaucepanToken?.() || '', method, path: apiPath, ...(body === undefined ? {} : { body }),
+    });
     let resp = await send();
     if (resp.status === 401 || resp.status === 403) {
         if (await tryPushSavedToken()) resp = await send();
     }
     return resp;
+}
+
+async function saucepanAccountWrite(path, body, enabled) {
+    // Account mutations are never automatically replayed after an uncertain outcome.
+    const response = await _apiRequest(`${CL_HELPER_PLUGIN_BASE}/saucepan-browser-request`, 'POST', {
+        ..._getBrowserOptions(), token: _getSaucepanToken?.() || '', method: enabled ? 'POST' : 'DELETE', path, body,
+    });
+    if (!response.ok) throw new Error(`Saucepan account update failed (HTTP ${response.status}). Refresh before retrying.`);
+    clearSaucepanAccountCache();
+}
+
+export function setSaucepanFavorite(companionId, enabled) {
+    return saucepanAccountWrite('/api/v1/companions/favorite', { companion_id: companionId }, enabled);
+}
+export function setSaucepanFollowing(userId, enabled) {
+    return saucepanAccountWrite('/api/v1/users/follow', { user_id: userId }, enabled);
+}
+export async function fetchSaucepanFollowedCreators() {
+    const response = await saucepanFetch('GET', '/api/v1/users/followed');
+    if (!response.ok) throw new Error(`Saucepan follows failed (HTTP ${response.status})`);
+    const data = await response.json();
+    if (!Array.isArray(data?.users)) throw new Error('Unexpected Saucepan follows response');
+    return data.users;
 }
 
 // ========================================
@@ -271,6 +298,7 @@ export async function searchSaucepan(opts = {}) {
         fandomTags = [],
         excludedFandomTags = [],
         matchAllFandomTags = false,
+        accountView = 'recent',
     } = opts;
     const orderBy = SAUCEPAN_ORDER_MAP[sort] || 'created';
     const offset = Math.max(0, (page - 1) * limit);
@@ -298,6 +326,7 @@ export async function searchSaucepan(opts = {}) {
         match_all_tags: true,
         hide_hidden_content: false,
         open_definition_only: openDefinitionOnly,
+        ...(['favorites', 'following'].includes(accountView) ? { special_view: { view: accountView } } : {}),
     };
 
     let response;
@@ -344,6 +373,7 @@ function normalizeSaucepanHit(hit) {
         chat_count: hit.chat_count || 0,
         message_count: hit.interaction_count || 0,
         favorite_count: hit.favorite_count || 0,
+        is_favorited: typeof hit.is_favorited === 'boolean' ? hit.is_favorited : undefined,
         portrait_count: hit.portrait_count || 0,
         scenario_count: hit.scenario_count || 0,
         lorebook_count: hit.lorebook_count || 0,

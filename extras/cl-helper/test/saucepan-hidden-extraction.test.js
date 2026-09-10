@@ -327,9 +327,11 @@ test('runs one temporary Saucepan provider/chat lifecycle and cleans up every re
     const cleanup = [];
     const responses = [
         jsonResponse({
-            id: 'ade077f0-112c-41c4-bdda-e6027d87b730',
-            providers_profile: 'custom_and_vetted',
-            starting_scenarios: [{ id: 'scenario-1' }],
+            companion: {
+                id: 'ade077f0-112c-41c4-bdda-e6027d87b730',
+                providers_profile: 'custom_and_vetted',
+                starting_scenarios: [{ id: 'scenario-1' }],
+            },
         }),
         jsonResponse({ config_id: 'provider-1' }),
         jsonResponse({ chat_id: 'chat-1' }),
