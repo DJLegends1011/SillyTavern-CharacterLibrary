@@ -14,7 +14,6 @@ import saucepanBrowseView from './saucepan-browse.js';
 import {
     setApiRequest as setSaucepanApiRequest,
     setSaucepanTokenGetter,
-    setSaucepanBrowserOptionsGetter,
     clearSaucepanAccountCache,
     hasSaucepanToken,
     searchSaucepan,
@@ -68,7 +67,7 @@ class SaucepanProvider extends ProviderBase {
     get beta() { return true; }
     get disabledByDefault() { return true; }
     get enableWarning() { return 'Saucepan is an experimental source. Native definition extraction requires a Saucepan account (Bearer token) configured in this provider\'s settings.'; }
-    get minClHelperVersion() { return '1.10.0'; }
+    get minClHelperVersion() { return '1.10.1'; }
     get browseView() { return saucepanBrowseView; }
 
     get linkStatFields() {
@@ -86,8 +85,6 @@ class SaucepanProvider extends ProviderBase {
         api = coreAPI;
         setSaucepanApiRequest(coreAPI.apiRequest);
         setSaucepanTokenGetter(() => coreAPI.getSetting('saucepanToken') || null);
-        setSaucepanBrowserOptionsGetter(() => (coreAPI.getSetting('janitoraiBrowserMode') || 'managed') === 'managed'
-            ? { managed: true } : { endpoint: coreAPI.getSetting('janitoraiBrowserEndpoint') || '' });
 
         // Push any persisted Saucepan token into cl-helper so search and other
         // stateless proxy calls are authenticated without a manual login after

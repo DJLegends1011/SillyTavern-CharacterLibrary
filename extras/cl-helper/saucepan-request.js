@@ -1,14 +1,15 @@
-// Saucepan traffic through the browser supplied for JanitorAI. No public relay.
+// Narrow direct-server transport for Saucepan account and browse requests.
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const READ_PATHS = [
     /^\/api\/v1\/users\/followed$/,
+    /^\/api\/v1\/user-page$/,
     /^\/api\/v1\/fandoms$/,
     /^\/api\/v2\/companions\/[a-f0-9-]{36}$/i,
     /^\/api\/v2\/users\/[A-Za-z0-9_.-]+\/companions$/,
     /^\/api\/v1\/companion\/definition$/,
 ];
 
-export function validateSaucepanBrowserRequest(input = {}) {
+export function validateSaucepanRequest(input = {}) {
     const { path, body } = input;
     const method = String(input.method || 'GET').toUpperCase();
     if (typeof path !== 'string' || path.length > 2048 || !path.startsWith('/api/') || path.includes('\\')) throw new Error('Invalid Saucepan path');
@@ -26,16 +27,14 @@ export function validateSaucepanBrowserRequest(input = {}) {
     throw new Error('Saucepan method or path not allowed');
 }
 
-export async function saucepanBrowserFetch(page, request, token) {
-    const headers = { Accept: 'application/json', Authorization: `Bearer ${token}`, 'x-saucepan-client-version': '1' };
+export async function fetchSaucepanRequest(request, token, { fetchImpl = fetch } = {}) {
+    const headers = {
+        Accept: 'application/json', Authorization: `Bearer ${token}`, 'x-saucepan-client-version': '1',
+        'Accept-Encoding': 'gzip, deflate, br', Origin: 'https://saucepan.ai', Referer: 'https://saucepan.ai/',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+    };
     if (request.body !== undefined) headers['Content-Type'] = 'application/json';
-    const init = { method: request.method, credentials: 'same-origin', redirect: 'error', headers,
+    const init = { method: request.method, redirect: 'error', headers, signal: AbortSignal.timeout(20000),
         ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }) };
-    return page.evaluate(`(async () => {
-        if (location.origin !== 'https://saucepan.ai') throw new Error('Saucepan browser origin changed');
-        const response = await fetch(${JSON.stringify(request.path)}, { ...${JSON.stringify(init)}, signal: AbortSignal.timeout(20000) });
-        const body = await response.text();
-        if (body.length > 10 * 1024 * 1024) throw new Error('Saucepan response too large');
-        return { status: response.status, body, retryAfter: response.headers.get('retry-after') || '' };
-    })()`);
+    return fetchImpl(`https://saucepan.ai${request.path}`, init);
 }

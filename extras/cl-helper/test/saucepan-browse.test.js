@@ -8,7 +8,10 @@ const source = (await readFile(new URL('../../../modules/providers/saucepan/sauc
     .replace('export default saucepanBrowseView;', '');
 function setup(extra = {}) {
     const context = vm.createContext({
-        BrowseView: class { deactivate() {} disconnectImageObserver() {} },
+        BrowseView: class {
+            deactivate() {} disconnectImageObserver() {} closeFollowingManager() {}
+            renderFollowingManagerPanel() { return '<div id="saucepanFollowMgr"></div>'; }
+        },
         CoreAPI: { getSetting: () => '', escapeHtml: x => String(x) },
         window: { addEventListener() {} }, document: { getElementById: () => null },
         ...extra,
@@ -27,7 +30,7 @@ test('leaving mid-pagination permits a fresh load when returning', () => {
 
 test('an older followed-creator request cannot update a newly selected preview', async () => {
     let resolve;
-    const favorite = {}, follow = {};
+    const favorite = { classList: { toggle() {} }, setAttribute() {} }, follow = { classList: { toggle() {} }, setAttribute() {} };
     const run = setup({
         hasSaucepanToken: () => true,
         fetchSaucepanFollowedCreators: () => new Promise(done => { resolve = done; }),
@@ -43,9 +46,47 @@ test('an older followed-creator request cannot update a newly selected preview',
 
 test('account controls and followed creator panel are present in rendered surfaces', () => {
     const run = setup();
-    assert.match(run('saucepanBrowseView.renderFilterBar()'), /Account favorites/);
-    assert.match(run('saucepanBrowseView.renderView()'), /id="saucepanFollowedCreators"/);
+    assert.match(run('saucepanBrowseView.renderFilterBar()'), /data-saucepan-view="following"/);
+    assert.match(run('saucepanBrowseView.renderFilterBar()'), /id="saucepanFilterFavorites"/);
+    assert.match(run('saucepanBrowseView.renderView()'), /id="saucepanFollowMgr"/);
+    assert.equal(run('saucepanBrowseView.supportsFollowingManager'), true);
     assert.match(run('saucepanBrowseView.renderModals()'), /id="saucepanFollowBtn"/);
+});
+
+test('manager results from a previous account are discarded', async () => {
+    let resolve;
+    const run = setup({ fetchSaucepanFollowedCreators: () => new Promise(done => { resolve = done; }) });
+    const pending = run('saucepanBrowseView._mgrCreators = []; saucepanBrowseView._loadManagerCreators();');
+    run('saucepanAccountRevision++;');
+    resolve([{ id: 'old-account', handle: 'old' }]);
+    await pending;
+    assert.equal(run('saucepanBrowseView._mgrCreators.length'), 0);
+});
+
+test('a delayed manager refresh cannot overwrite a newer refresh', async () => {
+    const resolves = [];
+    const run = setup({ fetchSaucepanFollowedCreators: () => new Promise(done => resolves.push(done)) });
+    const old = run('saucepanBrowseView._loadManagerCreators();');
+    const current = run('saucepanBrowseView._loadManagerCreators();');
+    resolves[1]([{ id: 'current', handle: 'Current' }]);
+    await current;
+    resolves[0]([{ id: 'old', handle: 'Old' }]);
+    await old;
+    assert.equal(run('saucepanBrowseView._mgrCreators[0].id'), 'current');
+});
+
+test('an account change during creator lookup prevents a follow on the new account', async () => {
+    let resolve;
+    let writes = 0;
+    const run = setup({
+        resolveSaucepanCreator: () => new Promise(done => { resolve = done; }),
+        setSaucepanFollowing: () => { writes++; },
+    });
+    const pending = run("saucepanBrowseView.followCreator('Creator');");
+    run('saucepanAccountRevision++;');
+    resolve({ id: 'creator', name: 'Creator' });
+    assert.equal(await pending, null);
+    assert.equal(writes, 0);
 });
 
 test('old creator requests cannot repopulate the account cache after invalidation', async () => {

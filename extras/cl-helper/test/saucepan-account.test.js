@@ -7,17 +7,19 @@ const source = (await readFile(new URL('../../../modules/providers/saucepan/sauc
     .replace(/import \{ CL_HELPER_PLUGIN_BASE \} from '[^']+';/, "const CL_HELPER_PLUGIN_BASE = '/plugins/cl-helper';");
 const api = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 
-test('favorites and following search retain pagination and content filters in browser transport', async () => {
+test('favorites and following use direct helper transport without browser configuration', async () => {
     let sent;
-    api.setSaucepanBrowserOptionsGetter(() => ({ endpoint: 'http://localhost:9222' }));
+    api.setSaucepanTokenGetter(() => 'saved-account-token');
     api.setApiRequest(async (url, method, body) => {
         sent = { url, method, body };
         return Response.json({ companions: [{ id: 'one', is_favorited: true }], total_count: 201 });
     });
     for (const accountView of ['favorites', 'following']) {
         const result = await api.searchSaucepan({ accountView, page: 2, limit: 96, nsfw: false, excludedTags: ['gore'] });
-        assert.equal(sent.url, '/plugins/cl-helper/saucepan-browser-request');
-        assert.equal(sent.body.endpoint, 'http://localhost:9222');
+        assert.equal(sent.url, '/plugins/cl-helper/saucepan-request');
+        assert.equal(sent.body.endpoint, undefined);
+        assert.equal(sent.body.managed, undefined);
+        assert.equal(sent.body.token, 'saved-account-token');
         assert.deepEqual(sent.body.body.special_view, { view: accountView });
         assert.equal(sent.body.body.offset, 96);
         assert.equal(sent.body.body.sus, false);
@@ -25,6 +27,22 @@ test('favorites and following search retain pagination and content filters in br
         assert.equal(result.totalPages, 3);
         assert.equal(result.characters[0].is_favorited, true);
     }
+});
+
+test('creator lookup resolves supported profile URLs and refuses unrelated hosts', async () => {
+    const calls = [];
+    api.setApiRequest(async (_url, _method, body) => {
+        calls.push(body);
+        return Response.json({ kind: 'profile', user: { id: 'creator-id', handle: 'Creator' } });
+    });
+    for (const query of ['@Creator', 'https://saucepan.ai/u/Creator', 'https://saucepan.ai/user/Creator']) {
+        const creator = await api.resolveSaucepanCreator(query);
+        assert.equal(creator.id, 'creator-id');
+        assert.equal(creator.username, 'Creator');
+        assert.equal(calls.at(-1).path, '/api/v1/user-page?handle=Creator&force_generic=true');
+    }
+    assert.equal(await api.resolveSaucepanCreator('https://example.com/Creator'), null);
+    assert.equal(calls.length, 3);
 });
 
 test('favorite/follow removal uses DELETE with exact account identifiers and no retry', async () => {

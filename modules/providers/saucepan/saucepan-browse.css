@@ -140,13 +140,27 @@ html.cl-mobile .saucepan-modal-extract-btn {
     min-width: 0;
     justify-content: center;
 }
-/* Account controls also wrap on narrow mobile screens. */
-.saucepan-followed-creators {
+.saucepan-following-header {
     display: flex;
+    align-items: center;
+    justify-content: space-between;
     flex-wrap: wrap;
-    gap: 8px;
-    padding: 12px;
-    max-height: 240px;
-    overflow-y: auto;
+    gap: var(--space-md);
+    padding: var(--space-md);
+    margin-bottom: var(--space-md);
 }
-#saucepanCharModal .modal-controls { flex-wrap: wrap; }
+.saucepan-following-header h3 { margin: 0 0 var(--space-xs); }
+.saucepan-following-header p { margin: 0; color: var(--text-secondary); }
+#saucepanFavoriteBtn {
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    padding: 2px 8px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+}
+#saucepanFavoriteBtn i { color: #ff6b6b; font-weight: 400; }
+#saucepanFavoriteBtn.favorited i { font-weight: 900; }
+#saucepanFavoriteBtn:hover, #saucepanFavoriteBtn.favorited { background: rgba(255, 100, 100, 0.1); }
+#saucepanFavoriteBtn:disabled { opacity: 0.6; cursor: default; }

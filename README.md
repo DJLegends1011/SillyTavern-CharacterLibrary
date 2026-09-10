@@ -755,13 +755,13 @@ Extraction is handled entirely by DataCat's servers. The `appearOnPublicFeed` op
 <details>
 <summary><h3>Saucepan</h3></summary>
 
-**Auth:** Browsing and importing require a Saucepan account. Requires [cl-helper](#cl-helper-plugin-not-detected) **1.10.0+** and the browser configured under **Settings → Online → JanitorAI** (managed browser or Browser Endpoint). Saucepan uses a separate page and its own account token in that browser. Beta, and off by default.
+**Auth:** Browsing and importing require a Saucepan account and [cl-helper](#cl-helper-plugin-not-detected) **1.10.1+**. Log in under Saucepan settings; account sync uses the helper's direct transport and does not require a browser endpoint. Beta, and off by default.
 
 - Browse and search saucepan.ai, sorted by New, Trending, or Popular
 - Filter by tags, NSFW toggle, and by **fandom**, a separate dimension from tags covering source material and franchise
 - **Creator mode** for browsing one creator's companions, sorted by message count or age
-- **Account favorites** and **Following** views, with the same search, tag, fandom and content filters as browsing
-- **Followed creators** refreshes your Saucepan follows and opens a creator's catalogue
+- **My Favorites** under Features filters your Saucepan account favorites. **Browse / Following** uses the same mode controls as other providers, with search, tag, fandom and content filters.
+- **Manage** in Following opens the shared creator manager: search and sort followed creators, follow by handle or profile URL, unfollow, and open a creator's catalogue.
 - **Favorite / Unfavorite** and **Follow / Unfollow creator** in the preview update your Saucepan account. These are separate from local library favorites. Account changes clear cached account results; uncertain writes are not automatically repeated.
 - In-app character preview with card details
 - Character linking and card updates
@@ -770,10 +770,10 @@ Definitions are extracted natively rather than downloaded as a card file. For a 
 
 Locked-definition extraction requires [`cloudflared`](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/) on the SillyTavern host. Install it on `PATH`, or set `CLOUDFLARED_PATH` to the executable before starting SillyTavern. This flow is limited to the one companion selected by the signed-in user; it does not provide bulk extraction or redistribution tooling.
 
-**Browser migration limit:** Search, companion details, open definitions, favorites and follows now travel through the supplied browser, without a public tunnel. Password login/token validation and image downloads still use the helper's direct transport. Closed-definition capture still needs its callback tunnel: Saucepan generates custom-provider requests on its server, so capturing browser traffic alone cannot replace that callback. The browser migration does not claim otherwise.
+**Extraction investigation:** This implementation still uses cloudflared for closed-definition capture. A browser-only replacement has not been verified. The public frontend queues generation and polls its result, which suggests a server callback is involved; that evidence alone does not prove a public tunnel is unavoidable. See [the account sync notes](docs/saucepan-account-sync.md) for the live test and its limits.
 
 #### Login
-1. Update the [cl-helper plugin](#cl-helper-plugin-not-detected) to 1.10.0 or later, restart SillyTavern, and configure/test the browser under JanitorAI. That browser is shared infrastructure; a JanitorAI account is not required for Saucepan.
+1. Update the [cl-helper plugin](#cl-helper-plugin-not-detected) folder to 1.10.1 or later and restart SillyTavern.
 2. Go to **Settings → Online → Saucepan** and log in, or paste a bearer token from your own Saucepan session
 
 Opening a character that needs authentication turns the preview's import button into **Configure Token**, which takes you to the same place.

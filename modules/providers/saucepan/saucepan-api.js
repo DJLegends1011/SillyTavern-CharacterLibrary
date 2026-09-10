@@ -1,7 +1,6 @@
 // Shared Saucepan API utilities - used by both saucepan-provider.js and
 // saucepan-browse.js, plus DataCat and the Creator Downloads adapter for
-// creator/companion lookups. API calls use cl-helper's supplied browser;
-// authentication and CDN helpers keep their direct server transport.
+// creator/companion lookups. All traffic uses cl-helper's direct server transport.
 
 import { CL_HELPER_PLUGIN_BASE } from '../provider-utils.js';
 
@@ -67,8 +66,6 @@ const SAUCEPAN_CW_EXTREME_TAGS = [
 
 let _apiRequest = null;
 let _getSaucepanToken = null;
-let _getBrowserOptions = () => ({ managed: true });
-export function setSaucepanBrowserOptionsGetter(fn) { _getBrowserOptions = fn; }
 export function clearSaucepanAccountCache() { _saucepanCompanionCache.clear(); }
 
 /**
@@ -112,46 +109,18 @@ export async function checkClHelperAvailable() {
     }
 }
 
-let _tokenPushInFlight = null;
-
-// cl-helper holds the token in RAM only, so it is empty after every ST restart while
-// the client still has one persisted. Provider init pushes it fire-and-forget, so a
-// call made before that lands would 403; re-push once and retry rather than fail.
-async function tryPushSavedToken() {
-    if (_tokenPushInFlight) return _tokenPushInFlight;
-    // Bail BEFORE storing anything: a path that returns without awaiting would finish
-    // before the assignment lands, so clearing from inside would be overwritten and the
-    // stale resolved promise would suppress every later retry for the whole session.
-    const saved = _getSaucepanToken?.() ?? null;
-    if (!saved) return false;
-    const attempt = (async () => {
-        try {
-            return !!(await pushSaucepanToken(saved))?.ok;
-        } catch {
-            return false;
-        }
-    })();
-    _tokenPushInFlight = attempt;
-    attempt.finally(() => { if (_tokenPushInFlight === attempt) _tokenPushInFlight = null; });
-    return attempt;
-}
-
 async function saucepanFetch(method, apiPath, body) {
     if (!_apiRequest) throw new Error('Saucepan: apiRequest not bound (cl-helper required)');
-    const send = () => _apiRequest(`${CL_HELPER_PLUGIN_BASE}/saucepan-browser-request`, 'POST', {
-        ..._getBrowserOptions(), token: _getSaucepanToken?.() || '', method, path: apiPath, ...(body === undefined ? {} : { body }),
+    // Pass this account's token with each request, including after a helper restart.
+    return _apiRequest(`${CL_HELPER_PLUGIN_BASE}/saucepan-request`, 'POST', {
+        token: _getSaucepanToken?.() || '', method, path: apiPath, ...(body === undefined ? {} : { body }),
     });
-    let resp = await send();
-    if (resp.status === 401 || resp.status === 403) {
-        if (await tryPushSavedToken()) resp = await send();
-    }
-    return resp;
 }
 
 async function saucepanAccountWrite(path, body, enabled) {
     // Account mutations are never automatically replayed after an uncertain outcome.
-    const response = await _apiRequest(`${CL_HELPER_PLUGIN_BASE}/saucepan-browser-request`, 'POST', {
-        ..._getBrowserOptions(), token: _getSaucepanToken?.() || '', method: enabled ? 'POST' : 'DELETE', path, body,
+    const response = await _apiRequest(`${CL_HELPER_PLUGIN_BASE}/saucepan-request`, 'POST', {
+        token: _getSaucepanToken?.() || '', method: enabled ? 'POST' : 'DELETE', path, body,
     });
     if (!response.ok) throw new Error(`Saucepan account update failed (HTTP ${response.status}). Refresh before retrying.`);
     clearSaucepanAccountCache();
@@ -169,6 +138,26 @@ export async function fetchSaucepanFollowedCreators() {
     const data = await response.json();
     if (!Array.isArray(data?.users)) throw new Error('Unexpected Saucepan follows response');
     return data.users;
+}
+
+export async function resolveSaucepanCreator(query) {
+    let handle = String(query || '').trim().replace(/^@/, '');
+    if (/^https?:\/\//i.test(handle)) {
+        const url = new URL(handle);
+        if (!/^(www\.)?saucepan\.ai$/i.test(url.hostname)) return null;
+        handle = decodeURIComponent(url.pathname.match(/^\/(?:user\/|u\/|@)?([^/]+)\/?$/)?.[1] || '');
+    }
+    if (!/^[A-Za-z0-9_.-]{1,64}$/.test(handle)) return null;
+    const response = await saucepanFetch('GET', `/api/v1/user-page?handle=${encodeURIComponent(handle)}&force_generic=true`);
+    if (response.status === 404) return null;
+    if (!response.ok) throw new Error(`Saucepan creator lookup failed (HTTP ${response.status})`);
+    const data = await response.json();
+    const user = data?.user;
+    const id = user?.user_id || user?.id;
+    if (!id || !user?.handle) throw new Error('Unexpected Saucepan creator response');
+    return { id, name: user.handle, username: user.handle,
+        avatar: user.avatar?.id ? resolveSaucepanImageUrl(saucepanCdnUrl(user.avatar.id)) : '',
+        characterCount: user.companion_count };
 }
 
 // ========================================
@@ -417,6 +406,7 @@ export function hitFromCompanion(companion, fallbackId) {
         chat_count: companion?.chat_count || 0,
         message_count: companion?.interaction_count || 0,
         favorite_count: companion?.favorite_count || 0,
+        is_favorited: typeof companion?.is_favorited === 'boolean' ? companion.is_favorited : undefined,
         portrait_count: Array.isArray(companion?.portraits) ? companion.portraits.length : 0,
         primary_content_source_kind: 'saucepan',
         _source: 'saucepan',
