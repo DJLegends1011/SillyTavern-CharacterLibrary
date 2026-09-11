@@ -4,13 +4,15 @@ Branch: `codex/saucepan-account-sync`, based on `codex/saucepan-hidden-extractio
 
 ## Account behavior
 
-- Browse / Following uses the existing mode controls. Following includes the shared `BrowseView` creator manager, with search, sorting, follow by handle or profile URL, unfollow, and creator browsing.
+- Browse / Following uses Chub's separate Browse and Timeline sections and mode controls. Following includes the shared `BrowseView` creator manager, with search, sorting, follow by handle or profile URL, unfollow, and creator browsing.
 - My Favorites appears under Features. In Browse it requests the server's favorites search; in Following or creator browsing it filters returned cards by their favorite state.
-- The preview's inline heart and creator follow control update the Saucepan account. They are separate from local library favorites.
+- The preview's inline heart and the creator browsing banner's follow control update the Saucepan account. They are separate from local library favorites.
 - Requests use the existing saved Saucepan token and direct helper fetch. No Janitor account, managed browser, browser endpoint, or tunnel is required for account sync.
 - Account changes invalidate cached results. Pending requests cannot repopulate the previous account's manager or preview. Account writes are not automatically replayed after uncertain outcomes.
 
 Install the complete `extras/cl-helper` folder, version 1.10.1, including `saucepan-request.js`, and restart SillyTavern. Log in under Settings → Online → Saucepan.
+
+Eligible hidden cards mirror JanitorAI's compact notice and Extract now button. Import extracts first, shares any in-flight preview extraction, and reuses the recovered card. The preview header contains Open and Import; it has no follow control.
 
 ## API contracts
 

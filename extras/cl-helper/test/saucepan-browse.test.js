@@ -28,29 +28,15 @@ test('leaving mid-pagination permits a fresh load when returning', () => {
     assert.equal(run('saucepanCurrentPage'), 1);
 });
 
-test('an older followed-creator request cannot update a newly selected preview', async () => {
-    let resolve;
-    const favorite = { classList: { toggle() {} }, setAttribute() {} }, follow = { classList: { toggle() {} }, setAttribute() {} };
-    const run = setup({
-        hasSaucepanToken: () => true,
-        fetchSaucepanFollowedCreators: () => new Promise(done => { resolve = done; }),
-        document: { getElementById: id => id === 'saucepanFavoriteBtn' ? favorite : follow },
-    });
-    const pending = run("saucepanSelectedChar = {creator_id: 'old', is_favorited: false}; updateSaucepanAccountControls(saucepanSelectedChar, null);");
-    run("saucepanSelectedChar = {creator_id: 'new'};");
-    resolve([{ id: 'old' }]);
-    await pending;
-    assert.equal(follow.disabled, true);
-    assert.equal(run('saucepanFollowedCreators'), null);
-});
-
 test('account controls and followed creator panel are present in rendered surfaces', () => {
     const run = setup();
     assert.match(run('saucepanBrowseView.renderFilterBar()'), /data-saucepan-view="following"/);
     assert.match(run('saucepanBrowseView.renderFilterBar()'), /id="saucepanFilterFavorites"/);
     assert.match(run('saucepanBrowseView.renderView()'), /id="saucepanFollowMgr"/);
     assert.equal(run('saucepanBrowseView.supportsFollowingManager'), true);
-    assert.match(run('saucepanBrowseView.renderModals()'), /id="saucepanFollowBtn"/);
+    assert.doesNotMatch(run('saucepanBrowseView.renderModals()'), /Follow creator|saucepanFollowBtn/);
+    assert.match(run('saucepanBrowseView.renderModals()'), /id="saucepanHiddenNotice"/);
+    assert.match(run('saucepanBrowseView.renderView()'), /id="saucepanTimelineSection"/);
 });
 
 test('manager results from a previous account are discarded', async () => {
@@ -100,4 +86,94 @@ test('old creator requests cannot repopulate the account cache after invalidatio
     resolve({ characters: [{ id: 'stale', is_favorited: true }] });
     await pending;
     assert.equal(run('_saucepanCreatorFullList.length'), 0);
+});
+
+function element() {
+    const classes = new Set();
+    return { innerHTML: '', disabled: false, dataset: {}, style: {},
+        classList: { add: (...xs) => xs.forEach(x => classes.add(x)), remove: (...xs) => xs.forEach(x => classes.delete(x)),
+            toggle: (x, enabled) => enabled ? classes.add(x) : classes.delete(x), contains: x => classes.has(x) },
+        querySelector: () => null };
+}
+
+test('Browse and Following show separate sections, and a creator opens Browse', () => {
+    const elements = Object.fromEntries(['saucepanBrowseSection', 'saucepanTimelineSection', 'saucepanModeBrowse', 'saucepanModeFollowing'].map(id => [id, element()]));
+    const run = setup({ document: { getElementById: id => elements[id] } });
+    run("saucepanAccountView = 'recent'; syncSaucepanModeControls();");
+    assert.equal(elements.saucepanTimelineSection.classList.contains('hidden'), true);
+    run("saucepanAccountView = 'following'; syncSaucepanModeControls();");
+    assert.equal(elements.saucepanBrowseSection.classList.contains('hidden'), true);
+    assert.equal(elements.saucepanTimelineSection.classList.contains('hidden'), false);
+    run("saucepanBrowseMode = 'creator'; syncSaucepanModeControls();");
+    assert.equal(elements.saucepanBrowseSection.classList.contains('hidden'), false);
+    assert.equal(elements.saucepanTimelineSection.classList.contains('hidden'), true);
+});
+
+test('eligible hidden cards keep Import available and use the compact extraction notice', () => {
+    const elements = Object.fromEntries(['saucepanHiddenNotice', 'saucepanImportBtn', 'saucepanCharDescriptionSection'].map(id => [id, element()]));
+    const run = setup({ document: { getElementById: id => elements[id] }, formatNumber: String });
+    run("saucepanBrowseView.isCharPossibleMatch = () => false; renderHiddenCaptureCTA({name: 'Card', totalTokens: 1000}, 'Card');");
+    assert.equal(elements.saucepanImportBtn.disabled, false);
+    assert.match(elements.saucepanImportBtn.innerHTML, /Import/);
+    assert.match(elements.saucepanHiddenNotice.innerHTML, /Importing extracts it first/);
+    assert.match(elements.saucepanHiddenNotice.innerHTML, /Extract now/);
+    assert.doesNotMatch(elements.saucepanHiddenNotice.innerHTML, /Cloudflare|temporary|published/);
+    assert.equal(elements.saucepanCharDescriptionSection.style.display, 'none');
+});
+
+function extractionSetup(fetchCard) {
+    const elements = Object.fromEntries(['saucepanHiddenNotice', 'saucepanImportBtn', 'saucepanHiddenCaptureBtn', 'saucepanCharDescriptionSection'].map(id => [id, element()]));
+    const imports = [], notices = [];
+    const run = setup({
+        document: { getElementById: id => elements[id] }, formatNumber: String,
+        fetchSaucepanV2Card: fetchCard, finishBrowseImport: async () => {},
+        CoreAPI: { getSetting: () => '', escapeHtml: String, showToast: message => notices.push(message),
+            checkCharacterForDuplicatesAsync: async () => [],
+            getProvider: () => ({ importCharacter: async (id, hit, options) => {
+                imports.push({ id, options }); return { success: true };
+            } }),
+        },
+    });
+    run("saucepanBrowseView.isCharPossibleMatch = () => false; saucepanSelectedChar = {character_id: 'card', name: 'Card', _needsHiddenCapture: true}; paintSaucepanV2Card = (hit, card) => { hit._v2Card = card; };");
+    return { run, elements, imports, notices };
+}
+
+test('Import waits for an in-flight preview extraction and reuses that card exactly once', async () => {
+    let resolve, calls = 0;
+    const { run, imports } = extractionSetup((_hit, options) => {
+        calls++;
+        assert.equal(options.allowHiddenCapture, true);
+        return new Promise(done => { resolve = done; });
+    });
+    const preview = run('recoverSaucepanDefinition(saucepanSelectedChar);');
+    const importing = run('importSaucepanCharacter(saucepanSelectedChar);');
+    assert.equal(imports.length, 0);
+    const card = { data: { name: 'Card', description: 'Recovered definition' } };
+    resolve(card);
+    await Promise.all([preview, importing]);
+    assert.equal(calls, 1);
+    assert.equal(imports.length, 1);
+    assert.equal(imports[0].options.prebuiltCard, card);
+});
+
+test('failed extraction restores Import and Extract now instead of an incomplete import', async () => {
+    const { run, elements, imports, notices } = extractionSetup(async () => { throw new Error('Connection failed'); });
+    await run('importSaucepanCharacter(saucepanSelectedChar);');
+    assert.equal(imports.length, 0);
+    assert.equal(elements.saucepanImportBtn.disabled, false);
+    assert.match(elements.saucepanImportBtn.innerHTML, /Import/);
+    assert.match(elements.saucepanHiddenNotice.innerHTML, /Extract now/);
+    assert.match(notices[0], /Connection failed/);
+    assert.equal(run('saucepanSelectedChar._hiddenCapturePromise'), undefined);
+});
+
+test('switching accounts during extraction prevents import and stale preview updates', async () => {
+    let resolve;
+    const { run, imports } = extractionSetup(() => new Promise(done => { resolve = done; }));
+    const pending = run('importSaucepanCharacter(saucepanSelectedChar);');
+    run('saucepanAccountRevision++;');
+    resolve({ data: { description: 'Old account result' } });
+    await pending;
+    assert.equal(imports.length, 0);
+    assert.equal(run('saucepanSelectedChar._v2Card'), undefined);
 });

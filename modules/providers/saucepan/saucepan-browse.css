@@ -140,17 +140,44 @@ html.cl-mobile .saucepan-modal-extract-btn {
     min-width: 0;
     justify-content: center;
 }
-.saucepan-following-header {
+.saucepan-timeline-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 20px 24px;
+    background: rgba(255, 255, 255, 0.03);
+    border-radius: var(--radius-2xl);
+    border: 1px solid var(--glass-border);
+    margin-bottom: 16px;
+}
+
+.saucepan-timeline-header-left {
+    text-align: left;
+}
+
+.saucepan-timeline-header-right {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    flex-wrap: wrap;
-    gap: var(--space-md);
-    padding: var(--space-md);
-    margin-bottom: var(--space-md);
+    gap: var(--space-sm-md);
 }
-.saucepan-following-header h3 { margin: 0 0 var(--space-xs); }
-.saucepan-following-header p { margin: 0; color: var(--text-secondary); }
+
+.saucepan-timeline-header h3 {
+    font-size: var(--font-xl);
+    margin: 0 0 4px 0;
+    color: var(--text-primary);
+}
+
+.saucepan-timeline-header h3 i {
+    color: var(--accent);
+    margin-right: 8px;
+}
+
+.saucepan-timeline-header p {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: var(--font-md);
+}
+
 #saucepanFavoriteBtn {
     border: 0;
     background: transparent;
@@ -164,3 +191,37 @@ html.cl-mobile .saucepan-modal-extract-btn {
 #saucepanFavoriteBtn.favorited i { font-weight: 900; }
 #saucepanFavoriteBtn:hover, #saucepanFavoriteBtn.favorited { background: rgba(255, 100, 100, 0.1); }
 #saucepanFavoriteBtn:disabled { opacity: 0.6; cursor: default; }
+
+html.cl-mobile .saucepan-timeline-header { padding: 12px 14px; border-radius: var(--radius-xl); margin-bottom: 10px; }
+html.cl-mobile .saucepan-timeline-header h3 { font-size: var(--font-base); }
+html.cl-mobile .saucepan-timeline-header p { font-size: var(--font-sm); }
+.saucepan-hidden-notice {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-sm);
+    margin: var(--space-sm) 0;
+    padding: var(--space-sm) var(--space-md);
+    border-radius: var(--radius-lg);
+    background: rgba(var(--cl-warning-rgb), 0.12);
+    border: 1px solid rgba(var(--cl-warning-rgb), 0.3);
+    color: var(--cl-warning-pale);
+    font-size: var(--font-sm);
+    line-height: 1.5;
+}
+
+.saucepan-hidden-notice i {
+    margin-top: 2px;
+    color: var(--cl-warning);
+    flex-shrink: 0;
+}
+
+.saucepan-hidden-notice .glass-btn {
+    margin-left: auto;
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+
+html.cl-mobile .saucepan-hidden-notice {
+    font-size: var(--font-xs);
+    padding: var(--space-xs) var(--space-sm);
+}
