@@ -14,6 +14,7 @@ import {
     extractCharacterBookFromScripts,
     resolveJanitoraiAvatarUrl,
     janitoraiCharacterUrl,
+    parseJanitoraiCharacterUrl,
     hasHiddenDefinition,
     isLockedNoProxy,
     hasBrowserEndpoint,
@@ -254,15 +255,7 @@ class JanitoraiProvider extends ProviderBase {
     }
 
     parseUrl(url) {
-        if (!url) return null;
-        try {
-            const u = new URL(url.startsWith('http') ? url : `https://${url}`);
-            if (!/^(www\.)?janitorai\.com$/i.test(u.hostname)) return null;
-            const match = u.pathname.match(/\/characters?\/([a-f0-9-]{36})/i);
-            return match ? match[1] : null;
-        } catch {
-            return null;
-        }
+        return parseJanitoraiCharacterUrl(url);
     }
 
 
