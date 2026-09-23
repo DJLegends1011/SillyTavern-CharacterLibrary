@@ -51,7 +51,6 @@ const {
     debounce,
     getProviderExcludeTags,
     renderSkeletonGrid,
-    renderLoadingState,
 } = CoreAPI;
 
 // ========================================
@@ -1665,74 +1664,10 @@ function clearCreatorFilter(reload = true) {
     }
 }
 
-// Same URL shapes the DataCat search box accepts: jannyai.com mirrors JanitorAI under the
-// same character UUIDs, and the slug suffix (`<uuid>_character-...`) is ignored.
-function parseCharacterUrl(val) {
-    try {
-        const url = new URL(val.startsWith('http') ? val : `https://${val}`);
-        if (/^(www\.)?janitorai\.com$/i.test(url.hostname) || /^(www\.)?jannyai\.com$/i.test(url.hostname)) {
-            const charMatch = url.pathname.match(/\/characters\/([a-f0-9-]{36})/i);
-            if (charMatch) return charMatch[1];
-        }
-    } catch { /* not a URL */ }
-    return null;
-}
-
-async function fetchCharacterAndOpenPreview(characterId) {
-    const input = document.getElementById('janitoraiSearchInput');
-    if (input) input.value = '';
-    document.getElementById('janitoraiClearSearchBtn')?.classList.add('hidden');
-    jaCurrentSearch = '';
-    if (jaCreatorFilter) clearCreatorFilter(false);
-
-    const grid = document.getElementById('janitoraiGrid');
-    if (grid) {
-        renderLoadingState(grid, 'Looking up character...', 'browse-loading');
-    }
-
-    try {
-        const detail = await fetchJanitoraiCharacter(characterId);
-        if (detail) {
-            // Header fields paint from the hit, so map the detail onto the listing-row shape
-            // (same mapping as the provider's buildPreviewObject).
-            openPreviewModal({
-                character_id: detail.id || characterId,
-                name: detail.chat_name || detail.name,
-                listing_name: detail.name,
-                description: decodeHtmlEntities(detail.description || ''),
-                avatar: detail.avatar,
-                tags: detail.tags || [],
-                custom_tags: detail.custom_tags || [],
-                is_nsfw: detail.is_nsfw,
-                creator_id: detail.creator_id,
-                creator_name: detail.creator_name,
-                created_at: detail.created_at,
-                chat_count: detail.stats?.chat || 0,
-                message_count: detail.stats?.message || 0,
-                total_tokens: detail.token_counts?.total_tokens || 0,
-                is_proxy_enabled: detail.is_proxy_enabled,
-                _detail: detail,
-            });
-        } else {
-            showToast('Character not found on JanitorAI', 'error');
-        }
-    } catch (e) {
-        showToast(`Failed to look up character: ${e.message}`, 'error');
-    }
-    loadCharacters(false);
-}
-
 function doSearch() {
     const input = document.getElementById('janitoraiSearchInput');
     const clearBtn = document.getElementById('janitoraiClearSearchBtn');
     const val = (input?.value || '').trim();
-
-    // JanitorAI URL -> open that character's preview
-    const urlCharId = val ? parseCharacterUrl(val) : null;
-    if (urlCharId) {
-        fetchCharacterAndOpenPreview(urlCharId);
-        return;
-    }
 
     if (jaCreatorFilter) clearCreatorFilter(false);
 
@@ -2175,7 +2110,7 @@ class JanitoraiBrowseView extends BrowseView {
                 <div class="browse-search-bar">
                     <div class="browse-search-input-wrapper">
                         <i class="fa-solid fa-search"></i>
-                        <input type="search" id="janitoraiSearchInput" placeholder="Search characters or paste a URL..." autocomplete="one-time-code">
+                        <input type="search" id="janitoraiSearchInput" placeholder="Search JanitorAI characters..." autocomplete="one-time-code">
                         <button id="janitoraiClearSearchBtn" class="browse-search-clear hidden" title="Clear search">
                             <i class="fa-solid fa-xmark"></i>
                         </button>
@@ -2383,7 +2318,7 @@ class JanitoraiBrowseView extends BrowseView {
     }
 
     getSearchPlaceholder(mode) {
-        return mode === 'creator' ? 'Creator name or profile URL...' : 'Search characters or paste a URL...';
+        return mode === 'creator' ? 'Creator name or profile URL...' : 'Search JanitorAI characters...';
     }
 
     applyDefaults(defaults) {
