@@ -20,6 +20,9 @@ import {
     fetchDatacatDownload,
     fetchDatacatCreator,
     fetchDatacatCreatorCharacters,
+    fetchDatacatCommunityCollections,
+    fetchDatacatCommunityCollection,
+    fetchDatacatCommunityCollectionItems,
     fetchDatacatYoursCharacters,
     fetchDatacatFolderCharacters,
     fetchRecentPublic,
@@ -50,6 +53,12 @@ import {
     buildDatacatYoursFolderFetchOptions,
     preloadDatacatFolderCache,
 } from './datacat-folder-picker.js';
+import {
+    buildCommunitySortOptionsHtml,
+    sortCommunityCollections,
+    filterCommunityCollections,
+    mergeCommunityCharacters,
+} from './datacat-community.js';
 // Saucepan lives in its own provider now; DataCat only needs these two for its
 // saucepan-SOURCED rows (creator listing + open_definition lock state).
 import { fetchSaucepanCompanion, fetchSaucepanCompanionsOfUser } from '../saucepan/saucepan-api.js';
@@ -138,8 +147,21 @@ let datacatTags = [];
 let datacatTagsLoaded = false;
 let datacatTagsLoading = false;
 
-// View mode: 'browse' or 'following'
+// View mode: 'browse', 'following' or 'community'
 let datacatViewMode = 'browse';
+
+// Community Collections state. The directory is one feed response, sorted and
+// filtered client-side; a slug means a collection's detail view is open.
+let datacatCommunityCollections = [];
+let datacatCommunityLoaded = false;
+let datacatCommunityLoadToken = 0;
+let datacatCommunitySort = 'featured';
+let datacatCommunityQuery = '';
+let datacatCommunitySlug = null;
+let datacatCommunityCuration = null;
+let datacatCommunityCharacters = [];
+let datacatCommunityFiltered = [];
+let datacatCommunityDisplayLimit = 60;
 
 // Following state
 let datacatFollowedCreators = [];
@@ -284,6 +306,7 @@ function findDatacatHitById(characterId) {
     if (!id) return null;
     return datacatCharacters.find(c => String(getCharId(c)) === id)
         || datacatFollowingCharacters.find(c => String(getCharId(c)) === id)
+        || datacatCommunityCharacters.find(c => String(getCharId(c)) === id)
         || null;
 }
 
@@ -329,6 +352,8 @@ function refreshDatacatOnlyYoursFilterIfActive() {
     if (!datacatFilterOnlyYours) return;
     if (datacatViewMode === 'following') {
         renderFollowing();
+    } else if (datacatViewMode === 'community') {
+        renderCommunity();
     } else {
         renderGrid(datacatCharacters, false);
     }
@@ -354,6 +379,7 @@ function syncDatacatCollectableCharacter(characterId, character) {
 
     datacatCharacters.forEach(apply);
     datacatFollowingCharacters.forEach(apply);
+    datacatCommunityCharacters.forEach(apply);
 }
 
 let _folderControlFetchId = null;
@@ -556,15 +582,8 @@ function advanceDatacatPage() {
     return loadCharacters(true);
 }
 
-function renderGrid(characters, append = false) {
-    const grid = document.getElementById('datacatGrid');
-    if (!grid) return;
-
-    if (!append) {
-        grid.innerHTML = '';
-        datacatGridRenderedCount = 0;
-    }
-
+// Client-side filter chain shared by the Browse, Following and Community grids.
+function applyDatacatHitFilters(characters, { yoursCheck = true } = {}) {
     let filtered = datacatNsfwEnabled
         ? characters
         : characters.filter(c => !isNsfw(c));
@@ -575,16 +594,8 @@ function renderGrid(characters, append = false) {
     if (datacatFilterHidePossible) {
         filtered = filtered.filter(c => !isCharPossibleMatchObj(c));
     }
-    if (datacatFilterOnlyYours) {
-        // isDatacatYoursFilteredHit relies on the "saved" flags (isCollected etc.)
-        // that fetchDatacatYoursCharacters forcibly stamps on every hit ('all').
-        // fetchDatacatFolderCharacters (the 'main'/folder routes) proxies DataCat's
-        // raw /api/characters?mainOnly=1|folderId=X response and does NOT stamp
-        // those flags, so re-checking them here would wrongly drop results the
-        // server already scoped correctly. Skip the client-side re-check in that case.
-        if (datacatYoursFolderSel === 'all') {
-            filtered = filtered.filter(c => isDatacatYoursFilteredHit(c));
-        }
+    if (datacatFilterOnlyYours && yoursCheck) {
+        filtered = filtered.filter(c => isDatacatYoursFilteredHit(c));
     }
     if (datacatFilterHideJanitor) {
         filtered = filtered.filter(c => getSourceKind(c) !== 'janitor');
@@ -593,7 +604,7 @@ function renderGrid(characters, append = false) {
         filtered = filtered.filter(c => getSourceKind(c) !== 'saucepan');
     }
 
-    // Client-side: persistent exclude tags from settings
+    // Persistent exclude tags from settings
     const dcPersistentExclude = getProviderExcludeTags('datacat');
     if (dcPersistentExclude.length > 0) {
         const lowerExclude = dcPersistentExclude.map(t => t.toLowerCase());
@@ -602,8 +613,25 @@ function renderGrid(characters, append = false) {
             return !lowerExclude.some(et => names.includes(et));
         });
     }
+    return filtered;
+}
 
+function renderGrid(characters, append = false) {
+    const grid = document.getElementById('datacatGrid');
+    if (!grid) return;
 
+    if (!append) {
+        grid.innerHTML = '';
+        datacatGridRenderedCount = 0;
+    }
+
+    // isDatacatYoursFilteredHit relies on the "saved" flags (isCollected etc.)
+    // that fetchDatacatYoursCharacters forcibly stamps on every hit ('all').
+    // fetchDatacatFolderCharacters (the 'main'/folder routes) proxies DataCat's
+    // raw /api/characters?mainOnly=1|folderId=X response and does NOT stamp
+    // those flags, so re-checking them here would wrongly drop results the
+    // server already scoped correctly. Skip the client-side re-check in that case.
+    const filtered = applyDatacatHitFilters(characters, { yoursCheck: datacatYoursFolderSel === 'all' });
 
     const startIdx = append ? datacatGridRenderedCount : 0;
     const html = filtered.slice(startIdx).map(c => createDatacatCard(c)).join('');
@@ -1144,8 +1172,11 @@ function updateTagsVisibility() {
     if (!btn) return;
     // Hampter does have tag params (the janitorai provider sends them), but datacat's hampter
     // mode never wired a picker for them, so it stays hidden here.
-    const hide = isHampterSortMode(datacatSortMode);
+    // Tag facets drive the browse feed; community collections are not tag-queried.
+    const hide = isHampterSortMode(datacatSortMode) || datacatViewMode === 'community';
     btn.style.display = hide ? 'none' : '';
+    // The mobile settings sheet reads this marker to hide its proxy Tags chip
+    btn.closest('.browse-tags-dropdown-container')?.classList.toggle('browse-filter-hidden', hide);
     if (hide) {
         const dropdown = document.getElementById('datacatTagsDropdown');
         if (dropdown) dropdown.classList.add('hidden');
@@ -1158,7 +1189,7 @@ function updateSourceFilterVisibility() {
     // Source filters only meaningful in DataCat-native sort modes (mixed sources).
     // Single-source modes (janny_*, hampter_*) make these filters useless.
     // Following view always mixes sources from followed creators, so always show.
-    if (datacatViewMode === 'following') {
+    if (datacatViewMode === 'following' || datacatViewMode === 'community') {
         section.style.display = '';
         return;
     }
@@ -2222,35 +2253,36 @@ async function switchDatacatViewMode(mode) {
 
     const browseSection = document.getElementById('datacatBrowseSection');
     const followingSection = document.getElementById('datacatFollowingSection');
+    const communitySection = document.getElementById('datacatCommunitySection');
 
     const browseSortEl = document.getElementById('datacatSortSelect');
     const followingSortEl = document.getElementById('datacatFollowingSortSelect');
     const bsTarget = browseSortEl?._customSelect?.container || browseSortEl;
     const fsTarget = followingSortEl?._customSelect?.container || followingSortEl;
 
+    browseSection?.classList.toggle('hidden', mode !== 'browse');
+    followingSection?.classList.toggle('hidden', mode !== 'following');
+    communitySection?.classList.toggle('hidden', mode !== 'community');
+    if (bsTarget) bsTarget.classList.toggle('hidden', mode !== 'browse');
+    if (fsTarget) fsTarget.classList.toggle('hidden', mode !== 'following');
+    updateCommunityChrome();
+    updateTagsVisibility();
+
     if (mode === 'browse') {
-        browseSection?.classList.remove('hidden');
-        followingSection?.classList.add('hidden');
-
-        if (bsTarget) bsTarget.classList.remove('hidden');
-        if (fsTarget) fsTarget.classList.add('hidden');
-
         if (datacatCharacters.length === 0) {
             loadCharacters(false);
         }
 
     } else if (mode === 'following') {
-        browseSection?.classList.add('hidden');
-        followingSection?.classList.remove('hidden');
-
-        if (bsTarget) bsTarget.classList.add('hidden');
-        if (fsTarget) fsTarget.classList.remove('hidden');
-
         if (datacatFollowingCharacters.length === 0) {
             loadFollowingCharacters();
         } else {
             renderFollowing();
         }
+
+    } else if (mode === 'community') {
+        if (datacatCommunitySlug) openCommunityCollection(datacatCommunitySlug);
+        else loadCommunityCollections();
     }
 }
 
@@ -2512,36 +2544,7 @@ function renderFollowing(append = false) {
     const grid = document.getElementById('datacatFollowingGrid');
     if (!grid) return;
 
-    let source = datacatFollowingCharacters;
-
-    let filtered = datacatNsfwEnabled
-        ? source
-        : source.filter(c => !isNsfw(c));
-
-    if (datacatFilterHideOwned) {
-        filtered = filtered.filter(c => !isCharInLocalLibrary(c));
-    }
-    if (datacatFilterHidePossible) {
-        filtered = filtered.filter(c => !isCharPossibleMatchObj(c));
-    }
-    if (datacatFilterOnlyYours) {
-        filtered = filtered.filter(c => isDatacatYoursFilteredHit(c));
-    }
-    if (datacatFilterHideJanitor) {
-        filtered = filtered.filter(c => getSourceKind(c) !== 'janitor');
-    }
-    if (datacatFilterHideSaucepan) {
-        filtered = filtered.filter(c => getSourceKind(c) !== 'saucepan');
-    }
-
-    const dcPersistentExclude = getProviderExcludeTags('datacat');
-    if (dcPersistentExclude.length > 0) {
-        const lowerExclude = dcPersistentExclude.map(t => t.toLowerCase());
-        filtered = filtered.filter(c => {
-            const names = resolveTagNames(c.tags || []).map(n => n.toLowerCase());
-            return !lowerExclude.some(et => names.includes(et));
-        });
-    }
+    const filtered = applyDatacatHitFilters(datacatFollowingCharacters);
 
     const sorted = sortFollowingCharacters(filtered);
     datacatFollowingFiltered = sorted;
@@ -2573,6 +2576,283 @@ function renderFollowing(append = false) {
 
     const hasMore = datacatFollowingDisplayLimit < sorted.length;
     datacatBrowseView.updateLoadMoreVisibility('datacatFollowingLoadMore', hasMore, sorted.length > 0);
+}
+
+// ========================================
+// COMMUNITY COLLECTIONS
+// ========================================
+
+const COMMUNITY_PAGE_SIZE = 60;
+
+function renderCommunityMessage(el, icon, title, text) {
+    if (!el) return;
+    el.innerHTML = `
+        <div class="chub-timeline-empty">
+            <i class="${icon}"></i>
+            <h3>${escapeHtml(title)}</h3>
+            <p>${escapeHtml(text)}</p>
+        </div>
+    `;
+}
+
+function renderCommunityError(el, err, retry) {
+    if (!el) return;
+    if (err?.helperOutdated) {
+        renderCommunityMessage(el, 'fa-solid fa-plug-circle-exclamation', 'cl-helper update needed', err.message);
+        return;
+    }
+    renderBrowseError(el, {
+        provider: 'datacat',
+        error: err,
+        title: 'Error loading community collections',
+        flags: { nsfw: datacatNsfwEnabled },
+        retry,
+    });
+}
+
+function createCommunityCollectionCard(c) {
+    const title = c.title || 'Untitled collection';
+    const count = Number(c.characterCount) || 0;
+    // SFW mode keeps mixed collections, so skip mature covers rather than showing them
+    const covers = (Array.isArray(c.covers) ? c.covers : [])
+        .filter(cover => datacatNsfwEnabled || !isNsfw(cover))
+        .slice(0, 4);
+    const tiles = [0, 1, 2, 3].map(i => {
+        const url = covers[i] ? resolveDatacatAvatarUrl(covers[i], { width: 400 }) : null;
+        return url
+            ? `<span class="datacat-community-tile"><img src="${escapeHtml(url)}" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer" onerror="this.remove()"></span>`
+            : '<span class="datacat-community-tile datacat-community-tile-empty"></span>';
+    }).join('');
+    const curator = c.curator?.username || c.curator?.displayName || '';
+    const tags = (Array.isArray(c.tags) ? c.tags : [])
+        .map(t => t?.name)
+        .filter(name => name && (datacatNsfwEnabled || name.toLowerCase() !== 'nsfw'))
+        .slice(0, 3);
+    const updated = getCreatedDate({ createdAt: c.updatedAt || c.createdAt });
+    return `
+        <div class="datacat-community-card" data-community-slug="${escapeHtml(c.slug || '')}" data-accent="${escapeHtml(c.accent || 'signal')}" tabindex="0" role="button" aria-label="Open ${escapeHtml(title)}">
+            <div class="datacat-community-mosaic">
+                ${tiles}
+                ${c.containsMatureContent ? '<span class="browse-nsfw-badge">NSFW</span>' : ''}
+                <span class="datacat-community-count"><strong>${formatNumber(count)}</strong> bots</span>
+            </div>
+            <div class="datacat-community-card-body">
+                <div class="datacat-community-card-title">${escapeHtml(title)}</div>
+                ${curator ? `<div class="datacat-community-card-curator">by @${escapeHtml(curator)}</div>` : ''}
+                ${tags.length ? `<div class="browse-card-tags">${tags.map(t => `<span class="browse-card-tag" title="${escapeHtml(t)}">${escapeHtml(t)}</span>`).join('')}</div>` : ''}
+                ${updated ? `<div class="datacat-community-card-updated"><i class="fa-solid fa-clock"></i> Updated ${escapeHtml(updated)}</div>` : ''}
+            </div>
+        </div>
+    `;
+}
+
+function updateCommunityChrome() {
+    const inDetail = !!datacatCommunitySlug;
+    document.getElementById('datacatCommunityDirectory')?.classList.toggle('hidden', inDetail);
+    document.getElementById('datacatCommunityDetail')?.classList.toggle('hidden', !inDetail);
+    // The sort applies to the directory; a collection keeps its curator's order
+    const sortEl = document.getElementById('datacatCommunitySortSelect');
+    const target = sortEl?._customSelect?.container || sortEl;
+    if (target) target.classList.toggle('hidden', datacatViewMode !== 'community' || inDetail);
+}
+
+function renderCommunityDirectory() {
+    const grid = document.getElementById('datacatCommunityGrid');
+    if (!grid || !datacatCommunityLoaded) return;
+    const visible = sortCommunityCollections(
+        filterCommunityCollections(datacatCommunityCollections, { nsfwEnabled: datacatNsfwEnabled, query: datacatCommunityQuery }),
+        datacatCommunitySort,
+    );
+    if (visible.length === 0) {
+        if (datacatCommunityQuery.trim()) {
+            renderCommunityMessage(grid, 'fa-solid fa-magnifying-glass', 'No Matching Collections', 'No published collection matches that search.');
+        } else if (datacatCommunityCollections.length > 0) {
+            renderCommunityMessage(grid, 'fa-solid fa-shield-halved', 'Nothing SFW Here', 'Every published collection is NSFW-only. Turn off SFW Only to see them.');
+        } else {
+            renderCommunityMessage(grid, 'fa-solid fa-layer-group', 'No Collections Yet', 'Nobody has published a collection on DataCat yet.');
+        }
+        return;
+    }
+    grid.innerHTML = visible.map(createCommunityCollectionCard).join('');
+}
+
+async function loadCommunityCollections(force = false) {
+    const grid = document.getElementById('datacatCommunityGrid');
+    if (!grid) return;
+    if (datacatCommunityLoaded && !force) {
+        renderCommunityDirectory();
+        return;
+    }
+    const token = ++datacatCommunityLoadToken;
+    renderSkeletonGrid(grid);
+    try {
+        const collections = await fetchDatacatCommunityCollections();
+        if (token !== datacatCommunityLoadToken) return;
+        datacatCommunityCollections = collections;
+        datacatCommunityLoaded = true;
+        renderCommunityDirectory();
+    } catch (err) {
+        if (token !== datacatCommunityLoadToken) return;
+        console.error('[DatacatCommunity] feed load failed:', err);
+        renderCommunityError(grid, err, () => loadCommunityCollections(true));
+    }
+}
+
+function renderCommunityBanner() {
+    const c = datacatCommunityCuration || datacatCommunityCollections.find(x => x.slug === datacatCommunitySlug) || {};
+    const titleEl = document.getElementById('datacatCommunityTitle');
+    const metaEl = document.getElementById('datacatCommunityMeta');
+    const descEl = document.getElementById('datacatCommunityDescription');
+    const openEl = document.getElementById('datacatCommunityOpenLink');
+    if (titleEl) titleEl.textContent = c.title || 'Collection';
+    if (metaEl) {
+        const parts = [];
+        const curator = c.curator?.username || c.curator?.displayName;
+        if (curator) parts.push(`by @${curator}`);
+        const count = Number(c.characterCount) || datacatCommunityCharacters.length;
+        if (count) parts.push(`${formatNumber(count)} characters`);
+        const creators = Number(c.creatorCount) || 0;
+        if (creators) parts.push(`${formatNumber(creators)} creator${creators === 1 ? '' : 's'}`);
+        metaEl.textContent = parts.join(' • ');
+    }
+    if (descEl) {
+        // descriptionSource 'fallback' is DataCat's generated filler, not the curator's words
+        const desc = c.descriptionSource === 'fallback' ? '' : String(c.description || '').trim();
+        descEl.textContent = desc;
+        descEl.classList.toggle('hidden', !desc);
+        descEl.classList.remove('expanded');
+    }
+    if (openEl && datacatCommunitySlug) {
+        openEl.href = `https://datacat.run/community/curations/${encodeURIComponent(datacatCommunitySlug)}`;
+    }
+}
+
+function renderCommunityCharacters(append = false) {
+    const grid = document.getElementById('datacatCommunityCharGrid');
+    if (!grid) return;
+
+    const filtered = applyDatacatHitFilters(datacatCommunityCharacters);
+    datacatCommunityFiltered = filtered;
+
+    if (filtered.length === 0) {
+        if (datacatCommunityCharacters.length > 0) {
+            renderCommunityMessage(grid, 'fa-solid fa-filter', 'No Matching Characters', 'No characters in this collection match your current DataCat filters.');
+        } else {
+            renderCommunityMessage(grid, 'fa-solid fa-inbox', 'Empty Collection', 'This collection has no public characters right now.');
+        }
+        datacatBrowseView.updateLoadMoreVisibility('datacatCommunityLoadMore', false, false);
+        return;
+    }
+
+    if (append) {
+        const existingCount = grid.querySelectorAll('.browse-card').length;
+        const newSlice = filtered.slice(existingCount, datacatCommunityDisplayLimit);
+        if (newSlice.length > 0) grid.insertAdjacentHTML('beforeend', newSlice.map(c => createDatacatCard(c)).join(''));
+    } else {
+        grid.innerHTML = filtered.slice(0, datacatCommunityDisplayLimit).map(c => createDatacatCard(c)).join('');
+    }
+    datacatBrowseView.observeImages(grid);
+
+    const hasMore = datacatCommunityDisplayLimit < filtered.length;
+    datacatBrowseView.updateLoadMoreVisibility('datacatCommunityLoadMore', hasMore, filtered.length > 0);
+}
+
+async function openCommunityCollection(slug, { force = false } = {}) {
+    if (!slug) return;
+    const sameCollection = slug === datacatCommunitySlug;
+    datacatCommunitySlug = slug;
+    datacatCommunityDisplayLimit = COMMUNITY_PAGE_SIZE;
+    if (!sameCollection) {
+        datacatCommunityCuration = null;
+        datacatCommunityCharacters = [];
+    }
+    updateCommunityChrome();
+    renderCommunityBanner();
+
+    const grid = document.getElementById('datacatCommunityCharGrid');
+    if (!grid) return;
+    if (sameCollection && !force && datacatCommunityCharacters.length > 0) {
+        renderCommunityCharacters();
+        return;
+    }
+
+    datacatBrowseView.updateLoadMoreVisibility('datacatCommunityLoadMore', false, false);
+    renderSkeletonGrid(grid);
+    const token = ++datacatCommunityLoadToken;
+    try {
+        const detail = await fetchDatacatCommunityCollection(slug);
+        if (token !== datacatCommunityLoadToken) return;
+        datacatCommunityCuration = detail.curation;
+        let characters = detail.characters;
+        const total = Number(detail.curation?.characterCount) || 0;
+        // The detail payload caps rich rows at 240; cart-items lists the rest (without avatars)
+        if (total > characters.length) {
+            try {
+                const items = await fetchDatacatCommunityCollectionItems(slug, Math.max(total, 1000));
+                if (token !== datacatCommunityLoadToken) return;
+                characters = mergeCommunityCharacters(characters, items.list);
+            } catch (e) {
+                debugLog('[DatacatCommunity] cart-items failed; showing the first', characters.length, e?.message);
+            }
+        }
+        datacatCommunityCharacters = mergeCommunityCharacters(characters, []);
+        renderCommunityBanner();
+        renderCommunityCharacters();
+    } catch (err) {
+        if (token !== datacatCommunityLoadToken) return;
+        console.error('[DatacatCommunity] collection load failed:', slug, err);
+        renderCommunityError(grid, err, () => openCommunityCollection(slug, { force: true }));
+    }
+}
+
+function closeCommunityCollection() {
+    datacatCommunityLoadToken++;
+    datacatCommunitySlug = null;
+    datacatCommunityCuration = null;
+    datacatCommunityCharacters = [];
+    datacatCommunityFiltered = [];
+    updateCommunityChrome();
+    datacatBrowseView.updateLoadMoreVisibility('datacatCommunityLoadMore', false, false);
+    loadCommunityCollections();
+}
+
+function renderCommunity() {
+    if (datacatCommunitySlug) renderCommunityCharacters();
+    else renderCommunityDirectory();
+}
+
+function refreshCommunity() {
+    if (datacatCommunitySlug) openCommunityCollection(datacatCommunitySlug, { force: true });
+    else loadCommunityCollections(true);
+}
+
+function _handleCommunityGridClick(e) {
+    const card = e.target.closest('.datacat-community-card');
+    if (card?.dataset.communitySlug) openCommunityCollection(card.dataset.communitySlug);
+}
+
+function _handleCommunityCharGridClick(e) {
+    const authorLink = e.target.closest('.browse-card-creator-link');
+    if (authorLink) {
+        e.stopPropagation();
+        const creatorId = authorLink.dataset.creatorId;
+        if (!creatorId) return;
+        const card = authorLink.closest('.browse-card');
+        const charId = card?.dataset?.datacatId;
+        const hit = charId ? datacatCommunityCharacters.find(c => String(getCharId(c)) === charId) : null;
+        switchDatacatViewMode('browse');
+        if (hit && getSourceKind(hit) === 'saucepan') {
+            browseCreator(creatorId, { source: 'saucepan', handle: getCreatorName(hit), name: getCreatorName(hit) });
+        } else {
+            browseCreator(creatorId);
+        }
+        return;
+    }
+    const card = e.target.closest('.browse-card');
+    const charId = card?.dataset.datacatId;
+    if (!charId) return;
+    const hit = datacatCommunityCharacters.find(c => String(getCharId(c)) === charId);
+    if (hit) openPreviewModal(hit);
 }
 
 // ========================================
@@ -2842,6 +3122,21 @@ async function fetchAndPopulateDetails(hit, token) {
         if (detailAvatarImg) {
             const fullRes = resolveDatacatAvatarUrl(character, { preferOriginal: true });
             if (fullRes) detailAvatarImg.dataset.full = fullRes;
+            // Community rows past the 240 detail cap come from cart-items without an avatar
+            if (datacatSelectedChar?._communitySlim && getCharId(datacatSelectedChar) === charId && character.avatar) {
+                datacatSelectedChar.avatar = character.avatar;
+                delete datacatSelectedChar._communitySlim;
+                const shown = resolveDatacatAvatarUrl(datacatSelectedChar);
+                if (shown) {
+                    detailAvatarImg.src = shown;
+                    const cardImg = document.querySelector(`#datacatCommunityCharGrid [data-datacat-id="${CSS.escape(String(charId))}"] .browse-card-image img`);
+                    if (cardImg) {
+                        cardImg.dataset.src = resolveDatacatAvatarUrl(datacatSelectedChar, { width: 400 }) || shown;
+                        delete cardImg.dataset.failed;
+                        cardImg.src = cardImg.dataset.src;
+                    }
+                }
+            }
         }
 
         // Update creator name if available (MeiliSearch hits lack it)
@@ -3398,7 +3693,7 @@ async function importCharacter(charData) {
 }
 
 function markCardAsImported(charId) {
-    for (const gridId of ['datacatGrid', 'datacatFollowingGrid']) {
+    for (const gridId of ['datacatGrid', 'datacatFollowingGrid', 'datacatCommunityCharGrid']) {
         const grid = document.getElementById(gridId);
         if (!grid) continue;
         const card = grid.querySelector(`[data-datacat-id="${CSS.escape(String(charId))}"]`);
@@ -3611,6 +3906,8 @@ function initDatacatView() {
         updateNsfwToggle();
         if (datacatViewMode === 'following') {
             renderFollowing();
+        } else if (datacatViewMode === 'community') {
+            renderCommunity();
         } else {
             renderGrid(datacatCharacters, false);
         }
@@ -3654,6 +3951,7 @@ function initDatacatView() {
                 updateDatacatYoursFolderBar();
             }
             if (datacatViewMode === 'following') renderFollowing();
+            else if (datacatViewMode === 'community') renderCommunity();
             else if (id === 'datacatFilterOnlyYours') {
                 resetDatacatYoursPagination();
                 loadCharacters(false);
@@ -3716,6 +4014,8 @@ function initDatacatView() {
             datacatFollowingCharacters = [];
             datacatFollowingDisplayLimit = 60;
             loadFollowingCharacters(true);
+        } else if (datacatViewMode === 'community') {
+            refreshCommunity();
         } else {
             datacatCurrentOffset = 0;
             datacatFreshLimit24 = 80;
@@ -3820,6 +4120,38 @@ function initDatacatView() {
         followingGrid.addEventListener('click', _handleFollowingCardClick);
     }
 
+    // Community Collections
+    const communitySortEl = document.getElementById('datacatCommunitySortSelect');
+    if (communitySortEl) CoreAPI.initCustomSelect?.(communitySortEl);
+    updateCommunityChrome();
+    on('datacatCommunitySortSelect', 'change', () => {
+        const el = document.getElementById('datacatCommunitySortSelect');
+        if (!el) return;
+        datacatCommunitySort = el.value;
+        renderCommunityDirectory();
+    });
+    on('datacatCommunitySearchInput', 'input', (e) => {
+        datacatCommunityQuery = e.target.value || '';
+        renderCommunityDirectory();
+    });
+    const communityGrid = document.getElementById('datacatCommunityGrid');
+    if (communityGrid) {
+        communityGrid.addEventListener('click', _handleCommunityGridClick);
+        communityGrid.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                _handleCommunityGridClick(e);
+            }
+        });
+    }
+    document.getElementById('datacatCommunityCharGrid')?.addEventListener('click', _handleCommunityCharGridClick);
+    on('datacatCommunityBackBtn', 'click', () => closeCommunityCollection());
+    on('datacatCommunityDescription', 'click', (e) => e.currentTarget.classList.toggle('expanded'));
+    on('datacatCommunityLoadMoreBtn', 'click', () => {
+        datacatCommunityDisplayLimit += COMMUNITY_PAGE_SIZE;
+        renderCommunityCharacters(true);
+    });
+
 
     // ---- Preview modal events (only attach once) ----
     ensureModalEventsAttached();
@@ -3854,6 +4186,8 @@ function ensureModalEventsAttached() {
             const creatorId = getCreatorId(datacatSelectedChar);
             if (creatorId) {
                 closePreviewModal();
+                // Creator results render in the Browse section; from Following/Community it is hidden
+                if (datacatViewMode !== 'browse') switchDatacatViewMode('browse');
                 if (datacatSelectedChar && getSourceKind(datacatSelectedChar) === 'saucepan') {
                     const handle = getCreatorName(datacatSelectedChar);
                     browseCreator(creatorId, { source: 'saucepan', handle, name: handle });
@@ -4121,6 +4455,7 @@ const datacatBrowseView = new (class DatacatBrowseView extends BrowseView {
             viewModes: [
                 { value: 'browse', label: 'Browse' },
                 { value: 'following', label: 'Following' },
+                { value: 'community', label: 'Community' },
             ],
         };
     }
@@ -4141,6 +4476,11 @@ const datacatBrowseView = new (class DatacatBrowseView extends BrowseView {
             refresh: 'datacatRefreshBtn',
             modeBrowseSelector: '.datacat-view-btn[data-datacat-view="browse"]',
             modeFollowSelector: '.datacat-view-btn[data-datacat-view="following"]',
+            extraModes: [{
+                selector: '.datacat-view-btn[data-datacat-view="community"]',
+                html: '<i class="fa-solid fa-layer-group"></i> Community',
+                sort: 'datacatCommunitySortSelect',
+            }],
         };
     }
 
@@ -4156,6 +4496,9 @@ const datacatBrowseView = new (class DatacatBrowseView extends BrowseView {
                 <button class="datacat-view-btn" data-datacat-view="following" title="Characters from creators you follow">
                     <i class="fa-solid fa-users"></i> <span>Following</span>
                 </button>
+                <button class="datacat-view-btn" data-datacat-view="community" title="Collections published by the DataCat community">
+                    <i class="fa-solid fa-layer-group"></i> <span>Community</span>
+                </button>
             </div>
 
             <!-- Sort -->
@@ -4169,6 +4512,9 @@ const datacatBrowseView = new (class DatacatBrowseView extends BrowseView {
                     <option value="name_asc">📝 Name A-Z</option>
                     <option value="name_desc">📝 Name Z-A</option>
                     <option value="chat_count">💬 Most Messages</option>
+                </select>
+                <select id="datacatCommunitySortSelect" class="glass-select hidden" title="Sort community collections">
+                    ${buildCommunitySortOptionsHtml(datacatCommunitySort)}
                 </select>
             </div>
 
@@ -4305,6 +4651,50 @@ const datacatBrowseView = new (class DatacatBrowseView extends BrowseView {
                     <button id="datacatFollowingLoadMoreBtn" class="glass-btn">
                         <i class="fa-solid fa-plus"></i> Load More
                     </button>
+                </div>
+            </div>
+
+            <!-- Community Collections Section -->
+            <div id="datacatCommunitySection" class="browse-section hidden">
+                <div id="datacatCommunityDirectory">
+                    <div class="chub-timeline-header">
+                        <div class="chub-timeline-header-left">
+                            <h3><i class="fa-solid fa-layer-group"></i> Community Collections</h3>
+                            <p>Collections published by DataCat users</p>
+                        </div>
+                    </div>
+                    <div class="browse-search-bar">
+                        <div class="browse-search-input-wrapper">
+                            <i class="fa-solid fa-search"></i>
+                            <input type="search" id="datacatCommunitySearchInput" placeholder="Filter by title, curator or tag..." autocomplete="one-time-code">
+                        </div>
+                    </div>
+                    <div id="datacatCommunityGrid" class="datacat-community-grid"></div>
+                </div>
+                <div id="datacatCommunityDetail" class="hidden">
+                    <div class="browse-author-banner datacat-community-banner">
+                        <div class="browse-author-banner-content">
+                            <button id="datacatCommunityBackBtn" class="glass-btn icon-only" title="Back to all collections" aria-label="Back to all collections">
+                                <i class="fa-solid fa-arrow-left"></i>
+                            </button>
+                            <div class="datacat-community-banner-text">
+                                <strong id="datacatCommunityTitle">Collection</strong>
+                                <span id="datacatCommunityMeta" class="datacat-community-banner-meta"></span>
+                            </div>
+                        </div>
+                        <div class="browse-author-banner-actions">
+                            <a id="datacatCommunityOpenLink" href="#" target="_blank" rel="noopener" class="glass-btn icon-only" title="Open on DataCat">
+                                <i class="fa-solid fa-external-link"></i>
+                            </a>
+                        </div>
+                    </div>
+                    <p id="datacatCommunityDescription" class="datacat-community-description hidden" title="Click to expand"></p>
+                    <div id="datacatCommunityCharGrid" class="browse-grid"></div>
+                    <div class="browse-load-more" id="datacatCommunityLoadMore" style="display: none;">
+                        <button id="datacatCommunityLoadMoreBtn" class="glass-btn">
+                            <i class="fa-solid fa-plus"></i> Load More
+                        </button>
+                    </div>
                 </div>
             </div>
         `;
@@ -4458,11 +4848,14 @@ const datacatBrowseView = new (class DatacatBrowseView extends BrowseView {
 
     // -- Lifecycle --
 
-    _getImageGridIds() { return ['datacatGrid', 'datacatFollowingGrid']; }
+    _getImageGridIds() { return ['datacatGrid', 'datacatFollowingGrid', 'datacatCommunityCharGrid']; }
 
     canLoadMore() {
         if (datacatViewMode === 'following') {
             return datacatFollowingDisplayLimit < datacatFollowingFiltered.length;
+        }
+        if (datacatViewMode === 'community') {
+            return !!datacatCommunitySlug && datacatCommunityDisplayLimit < datacatCommunityFiltered.length;
         }
         return datacatHasMore && !datacatIsLoading && datacatViewMode === 'browse';
     }
@@ -4471,6 +4864,12 @@ const datacatBrowseView = new (class DatacatBrowseView extends BrowseView {
         if (datacatViewMode === 'following') {
             datacatFollowingDisplayLimit += 60;
             renderFollowing(true);
+            return;
+        }
+        if (datacatViewMode === 'community') {
+            if (!datacatCommunitySlug) return;
+            datacatCommunityDisplayLimit += COMMUNITY_PAGE_SIZE;
+            renderCommunityCharacters(true);
             return;
         }
         datacatAutoTopUps = 0;
@@ -4546,16 +4945,34 @@ const datacatBrowseView = new (class DatacatBrowseView extends BrowseView {
         });
     }
 
-    getSearchModes() { return ['character', 'creator']; }
+    // In Community mode the mobile search overlay filters the collection directory instead.
+    getSearchModes() {
+        return datacatViewMode === 'community' ? ['character'] : ['character', 'creator'];
+    }
     getSearchInputId(mode) {
+        if (datacatViewMode === 'community') return 'datacatCommunitySearchInput';
         return mode === 'creator' ? 'datacatCreatorSearchInput' : 'datacatSearchInput';
+    }
+    getSearchPlaceholder(mode) {
+        return datacatViewMode === 'community' ? 'Collection, curator or tag...' : super.getSearchPlaceholder(mode);
+    }
+    getSearchModeLabel(mode) {
+        return datacatViewMode === 'community' ? 'Collections' : super.getSearchModeLabel(mode);
+    }
+    performSearch(mode, query) {
+        if (datacatViewMode !== 'community') return super.performSearch(mode, query);
+        const input = document.getElementById('datacatCommunitySearchInput');
+        if (input) input.value = query;
+        datacatCommunityQuery = query || '';
+        if (datacatCommunitySlug) closeCommunityCollection();
+        else renderCommunityDirectory();
     }
 
     applyDefaults(defaults) {
-        if (defaults.view === 'following') {
-            switchDatacatViewMode('following');
+        if (defaults.view === 'following' || defaults.view === 'community') {
+            switchDatacatViewMode(defaults.view);
         }
-        if (defaults.sort) {
+        if (defaults.sort && datacatViewMode !== 'community') {
             if (datacatViewMode === 'browse') {
                 // A default saved before a sort was retired would otherwise be written back here
                 // unchecked and then sent upstream verbatim as sortBy.
@@ -4603,6 +5020,15 @@ const datacatBrowseView = new (class DatacatBrowseView extends BrowseView {
             datacatViewMode = 'browse';
             datacatFollowingCharacters = [];
             datacatFollowingDisplayLimit = 60;
+            datacatCommunityLoadToken++;
+            datacatCommunityCollections = [];
+            datacatCommunityLoaded = false;
+            datacatCommunityQuery = '';
+            datacatCommunitySlug = null;
+            datacatCommunityCuration = null;
+            datacatCommunityCharacters = [];
+            datacatCommunityFiltered = [];
+            datacatCommunityDisplayLimit = 60;
         }
         const wasInitialized = this._initialized;
         super.activate(container, options);

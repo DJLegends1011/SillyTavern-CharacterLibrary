@@ -1771,6 +1771,26 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
             return window.ProviderRegistry?.getActiveMobileFilterIds?.();
         }
 
+        // Optional third+ modes (eg. DataCat Community) come from the provider's extraModes.
+        let extraModeChips = [];
+        function rebuildExtraModes() {
+            extraModeChips.forEach(({ chip }) => chip.remove());
+            extraModeChips = (getIds()?.extraModes || []).map(mode => {
+                const chip = createChip(mode.html);
+                chip.addEventListener('click', () => {
+                    const realBtn = document.querySelector(mode.selector);
+                    if (realBtn) { realBtn.click(); setTimeout(() => { syncMode(); syncSort(); syncMtTags(); }, 100); }
+                    close();
+                });
+                modeRow.appendChild(chip);
+                return { chip, mode };
+            });
+        }
+
+        function getActiveExtraMode() {
+            return extraModeChips.find(({ chip }) => chip.classList.contains('active'))?.mode || null;
+        }
+
         function syncMode() {
             const ids = getIds();
             if (!ids?.modeBrowseSelector) return;
@@ -1778,9 +1798,26 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
             const followBtn = document.querySelector(ids.modeFollowSelector);
             if (browseBtn) browseChip.classList.toggle('active', browseBtn.classList.contains('active'));
             if (followBtn) followChip.classList.toggle('active', followBtn.classList.contains('active'));
+            extraModeChips.forEach(({ chip, mode }) => {
+                chip.classList.toggle('active', !!document.querySelector(mode.selector)?.classList.contains('active'));
+            });
         }
 
         function syncSort() {
+            const extraMode = getActiveExtraMode();
+            if (extraMode) {
+                // The provider hides its extra-mode sort when it does not apply (eg. inside a collection)
+                const real = extraMode.sort ? document.getElementById(extraMode.sort) : null;
+                const realTarget = real ? (real._customSelect?.container || real) : null;
+                const show = !!realTarget && !realTarget.classList.contains('hidden');
+                if (show) mtExtraSortChip._syncLabel();
+                mtBrowseSortChip.style.display = 'none';
+                mtFollowSortChip.style.display = 'none';
+                mtExtraSortChip.style.display = show ? '' : 'none';
+                mtSortSection.style.display = show ? '' : 'none';
+                return;
+            }
+            mtExtraSortChip.style.display = 'none';
             const isFollowing = followChip.classList.contains('active');
             // Wyvern has no Following-mode sort; gate the whole Sort By section so it doesnt show empty.
             const hasFollowSort = !!getIds()?.timelineSort;
@@ -1841,6 +1878,13 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
         );
         mtFollowSortChip.style.display = 'none';
         mtSortSection.appendChild(mtFollowSortChip);
+
+        const mtExtraSortChip = createSettingsSelectChip(
+            () => { const sortId = getActiveExtraMode()?.sort; return sortId ? document.getElementById(sortId) : null; },
+            'Sort By',
+        );
+        mtExtraSortChip.style.display = 'none';
+        mtSortSection.appendChild(mtExtraSortChip);
         modeToggleSection.appendChild(mtSortSection);
 
         // Filters row (Tags, Features, NSFW)
@@ -2100,6 +2144,7 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
                     // Chips read options live from the real selects at open time; only labels + per-mode visibility refresh here.
                     mtBrowseSortChip._syncLabel();
                     mtFollowSortChip._syncLabel();
+                    rebuildExtraModes();
                     syncMode();
                     syncMtNsfwState();
                     syncSort();

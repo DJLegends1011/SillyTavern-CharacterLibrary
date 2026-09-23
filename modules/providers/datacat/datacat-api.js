@@ -6,6 +6,7 @@ import CoreAPI from '../../core-api.js';
 import { CL_HELPER_PLUGIN_BASE, slugify, stripHtml, readJsonClassified, classifyErrorPage } from '../provider-utils.js';
 import { meiliMultiSearch, TAG_MAP as JANNY_TAG_MAP } from '../janny/janny-api.js';
 import { isJanitorBridgeAvailable, janitorBridgeFetch } from '../janitor-bridge.js';
+import { isCommunityProxyBlocked } from './datacat-community.js';
 
 export { slugify, stripHtml, JANNY_TAG_MAP };
 
@@ -894,6 +895,53 @@ export async function fetchDatacatCreatorCharacters(creatorId, opts = {}) {
     const response = await dcFetch(`/api/creators/${creatorId}/characters?limit=${limit}&offset=${offset}&sortBy=${sortBy}`);
     const data = await readJsonClassified(response);
     return { total: data.total || 0, list: data.list || [] };
+}
+
+// Community Collections read through the dc-proxy allowlist; a cl-helper older than
+// 1.12.0+community rejects the paths there, which gets its own actionable error.
+async function readCommunityJson(response) {
+    if (response.status === 403) {
+        const body = await response.clone().json().catch(() => null);
+        if (isCommunityProxyBlocked(response.status, body)) {
+            const err = new Error('Community Collections need a newer cl-helper. Update cl-helper from the banner in Settings, then restart SillyTavern.');
+            err.helperOutdated = true;
+            throw err;
+        }
+    }
+    return readJsonClassified(response);
+}
+
+/**
+ * Every published community collection, in one response (DataCat ignores paging here).
+ * @returns {Promise<Object[]>} feed rows; failures throw classified errors
+ */
+export async function fetchDatacatCommunityCollections() {
+    const data = await readCommunityJson(await dcFetch('/api/community/curations'));
+    return Array.isArray(data?.curations) ? data.curations : [];
+}
+
+/**
+ * One collection plus its first 240 characters as full browse rows.
+ * @param {string} slug
+ * @returns {Promise<{curation: Object|null, characters: Object[]}>}
+ */
+export async function fetchDatacatCommunityCollection(slug) {
+    const data = await readCommunityJson(await dcFetch(`/api/community/curations/${encodeURIComponent(slug)}`));
+    return {
+        curation: data?.curation || null,
+        characters: Array.isArray(data?.characters) ? data.characters : [],
+    };
+}
+
+/**
+ * Every member of a collection in DataCat's slim cart shape (no avatars).
+ * @param {string} slug
+ * @param {number} [limit=1000]
+ * @returns {Promise<{total: number, list: Object[]}>}
+ */
+export async function fetchDatacatCommunityCollectionItems(slug, limit = 1000) {
+    const data = await readCommunityJson(await dcFetch(`/api/community/curations/${encodeURIComponent(slug)}/cart-items?limit=${limit}`));
+    return { total: Number(data?.total) || 0, list: Array.isArray(data?.list) ? data.list : [] };
 }
 
 /**

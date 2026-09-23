@@ -1042,6 +1042,9 @@ const DC_ALLOWED_PATHS = [
     /^\/api\/creators\/[a-f0-9-]+\/characters\b/,
     /^\/api\/tags\/faceted\b/,
     /^\/api\/extraction\/status-projection$/,
+    /^\/api\/community\/curations$/,
+    /^\/api\/community\/curations\/[A-Za-z0-9_.-]+$/,
+    /^\/api\/community\/curations\/[A-Za-z0-9_.-]+\/cart-items$/,
 ];
 
 // Resolve a usable public session ID for the extraction endpoint.
