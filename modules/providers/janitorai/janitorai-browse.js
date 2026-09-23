@@ -19,8 +19,6 @@ import {
     resolveJanitoraiTagIds,
     resolveJanitoraiAvatarUrl,
     janitoraiCharacterUrl,
-    parseJanitoraiCharacterUrl,
-    JANITORAI_CHARACTER_ID_RE,
     hasHiddenDefinition,
     isLockedNoProxy,
     hydrateJanitoraiScripts,
@@ -68,7 +66,6 @@ const {
     debounce,
     getProviderExcludeTags,
     renderSkeletonGrid,
-    renderLoadingState,
 } = CoreAPI;
 
 // ========================================
@@ -968,12 +965,7 @@ async function toggleJanitoraiFavorite() {
     }
 }
 
-/**
- * @param {Object} hit - listing row shape; the header paints from it
- * @param {Object|null} [preloadedDetail] - a detail payload the caller already fetched, so a
- *   lookup that had to read it (a pasted link) does not pay for the same request twice
- */
-function openPreviewModal(hit, preloadedDetail = null) {
+function openPreviewModal(hit) {
     jaSelectedChar = hit;
 
     const modal = document.getElementById('janitoraiCharModal');
@@ -1060,7 +1052,7 @@ function openPreviewModal(hit, preloadedDetail = null) {
     const body = modal.querySelector('.browse-char-body');
     if (body) body.scrollTop = 0;
 
-    jaDetailPromise = fetchAndPopulateDetails(hit, token, preloadedDetail);
+    jaDetailPromise = fetchAndPopulateDetails(hit, token);
 }
 
 function setImportButtonState(inLibrary, possibleMatch, state = 'ready') {
@@ -1298,7 +1290,7 @@ async function recoverLockedIntoPreview() {
     }
 }
 
-async function fetchAndPopulateDetails(hit, token, preloadedDetail = null) {
+async function fetchAndPopulateDetails(hit, token) {
     const charId = hit.character_id || hit.id || '';
     const name = hit.name || 'Unknown';
 
@@ -1308,7 +1300,7 @@ async function fetchAndPopulateDetails(hit, token, preloadedDetail = null) {
         let failBrowserError = '';
         let failClassified = '';
         try {
-            detail = preloadedDetail || await fetchJanitoraiCharacter(charId);
+            detail = await fetchJanitoraiCharacter(charId);
         } catch (e) {
             failCode = e?.code || '';
             failBrowserError = e?.browserError || '';
@@ -2131,88 +2123,10 @@ function clearCreatorFilter(reload = true) {
     }
 }
 
-/**
- * A pasted link is a lookup, not a query: hampter's search matches names and text, never ids,
- * so routing a URL down the text path returns nothing. Opens the card over the current grid,
- * which stays as it was — the paste is a detour, not a new search.
- * @param {string} charId
- */
-async function fetchCharacterAndOpenPreview(charId) {
-    const grid = document.getElementById(activeGridId());
-    // Restores whatever the grid was showing; the modal opens on top of it either way.
-    const restoreGrid = () => renderGrid(jaCharacters, false);
-    if (grid) renderLoadingState(grid, 'Looking up character...', 'browse-loading');
-
-    let detail = null;
-    let error = null;
-    try {
-        detail = await fetchJanitoraiCharacter(charId);
-    } catch (e) {
-        error = e;
-    }
-
-    // A gated detail read can outlive the view; a modal for a provider the user has
-    // already left is worse than no modal. deactivate() clears the flag.
-    if (!delegatesInitialized) return;
-    restoreGrid();
-
-    if (error) {
-        const msg = error.code === 'HAMPTER_LOGIN_REQUIRED' ? 'Sign in to JanitorAI to open this character.'
-            : error.code === 'HAMPTER_TOKEN_EXPIRED' ? 'Your JanitorAI session expired. Sign in again in Settings.'
-            : error.code === 'HAMPTER_RATE_LIMITED' ? 'JanitorAI is rate limiting; try the link again in a moment.'
-            : (error.message || 'Could not look up that character.');
-        showToast(msg, 'error', 8000);
-        return;
-    }
-    if (!detail) {
-        showToast('That character is not on JanitorAI any more.', 'warning', 6000);
-        return;
-    }
-    openPreviewModal(hitFromDetail(detail, charId), detail);
-}
-
-/**
- * The preview modal paints its header from a listing row, so a detail-only lookup has to
- * take that shape first. Mirrors the provider's buildPreviewObject for a linked card.
- */
-function hitFromDetail(detail, charId) {
-    return {
-        character_id: detail.id || charId,
-        name: detail.chat_name || detail.name || 'Unknown',
-        listing_name: detail.name || '',
-        // Decoded so it matches the state listing rows arrive in.
-        description: decodeHtmlEntities(detail.description || ''),
-        avatar: detail.avatar || '',
-        tags: detail.tags || [],
-        custom_tags: detail.custom_tags || [],
-        is_nsfw: detail.is_nsfw,
-        creator_id: detail.creator_id || '',
-        creator_name: detail.creator_name || '',
-        created_at: detail.created_at || '',
-        chat_count: detail.stats?.chat || 0,
-        message_count: detail.stats?.message || 0,
-        total_tokens: detail.token_counts?.total_tokens || 0,
-        // Absent must stay distinguishable from false: the locked-and-no-proxy notice reads it.
-        is_proxy_enabled: detail.is_proxy_enabled,
-    };
-}
-
 function doSearch() {
     const input = document.getElementById('janitoraiSearchInput');
     const clearBtn = document.getElementById('janitoraiClearSearchBtn');
     const val = (input?.value || '').trim();
-
-    // A character link (or the bare id it carries) opens that card instead of searching for it.
-    const linkedId = parseJanitoraiCharacterUrl(val) || val.match(JANITORAI_CHARACTER_ID_RE)?.[1] || null;
-    if (linkedId) {
-        // The paste is consumed, so put the box back to the query the grid is actually
-        // showing: the sort select re-reads this input, and a URL left behind would be
-        // re-sent as search text on the next sort change.
-        if (input) input.value = jaCurrentSearch;
-        clearBtn?.classList.toggle('hidden', !jaCurrentSearch);
-        void fetchCharacterAndOpenPreview(linkedId);
-        return;
-    }
 
     if (jaCreatorFilter) clearCreatorFilter(false);
 
@@ -2705,7 +2619,7 @@ class JanitoraiBrowseView extends BrowseView {
                 <div class="browse-search-bar">
                     <div class="browse-search-input-wrapper">
                         <i class="fa-solid fa-search"></i>
-                        <input type="search" id="janitoraiSearchInput" placeholder="Search JanitorAI or paste a character URL..." autocomplete="one-time-code">
+                        <input type="search" id="janitoraiSearchInput" placeholder="Search JanitorAI characters..." autocomplete="one-time-code">
                         <button id="janitoraiClearSearchBtn" class="browse-search-clear hidden" title="Clear search">
                             <i class="fa-solid fa-xmark"></i>
                         </button>
@@ -2915,7 +2829,7 @@ class JanitoraiBrowseView extends BrowseView {
     }
 
     getSearchPlaceholder(mode) {
-        return mode === 'creator' ? 'Creator name or profile URL...' : 'Search JanitorAI or paste a URL...';
+        return mode === 'creator' ? 'Creator name or profile URL...' : 'Search JanitorAI characters...';
     }
 
     applyDefaults(defaults) {

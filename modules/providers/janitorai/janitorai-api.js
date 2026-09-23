@@ -45,27 +45,6 @@ export function janitoraiCharacterUrl(id, name) {
     return `${JANITORAI_SITE_BASE}/characters/${id}_${slug}`;
 }
 
-/** A character id pasted on its own, with or without the slug a site link appends to it. */
-export const JANITORAI_CHARACTER_ID_RE = /^([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})(?:_|$)/i;
-
-/**
- * The inverse of janitoraiCharacterUrl: site links are `/characters/{uuid}_{slug}`,
- * and the slug is decoration the id does not need.
- * @param {string} url - full or scheme-less janitorai.com URL
- * @returns {string|null} character uuid, or null when the URL is not one
- */
-export function parseJanitoraiCharacterUrl(url) {
-    if (!url) return null;
-    try {
-        const u = new URL(url.startsWith('http') ? url : `https://${url}`);
-        if (!/^(www\.)?janitorai\.com$/i.test(u.hostname)) return null;
-        const match = u.pathname.match(/\/characters?\/([a-f0-9-]{36})/i);
-        return match ? match[1] : null;
-    } catch {
-        return null;
-    }
-}
-
 // ========================================
 // TRANSPORT
 // ========================================
