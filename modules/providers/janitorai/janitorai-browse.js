@@ -1342,6 +1342,20 @@ async function fetchAndPopulateDetails(hit, token) {
             jaSelectedChar._detail = detail;
         }
 
+        // Update creator name if available (MeiliSearch hits lack it)
+        const detailCreatorName = detail.creator_name || '';
+        if (detailCreatorName) {
+            const creatorEl = document.getElementById('janitoraiCharCreator');
+            if (creatorEl) {
+                creatorEl.textContent = detailCreatorName;
+                if (detail.creator_id) creatorEl.dataset.creatorId = detail.creator_id;
+            }
+            if (jaSelectedChar && (jaSelectedChar.character_id || jaSelectedChar.id) === charId) {
+                jaSelectedChar.creator_name = detailCreatorName;
+                if (detail.creator_id) jaSelectedChar.creator_id = detail.creator_id;
+            }
+        }
+
         setTokenStat(detail.token_counts?.total_tokens || hit.total_tokens || 0);
         setHiddenNotice(hasHiddenDefinition(detail)
             ? (detail.token_counts?.personality_tokens || 0)
