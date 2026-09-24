@@ -43,6 +43,14 @@ test('example dialogs and the throwaway user persona are taken out of the remain
     assert.equal(parts.injectedLore, 'lore entry');
 });
 
+test('example dialogs are recognised under any <Example...> spelling', () => {
+    for (const tag of ['example_dialogs', 'Example dialogs', 'Example Dialogue', 'example_dialog']) {
+        const parts = splitAssembledPrompt(`<Bob's Persona>def</Bob's Persona>\n<${tag}>ex</${tag}>`);
+        assert.equal(parts.exampleDialogs, 'ex', tag);
+        assert.equal(parts.injectedLore, '', tag);
+    }
+});
+
 test('the user persona is never mistaken for the character wrapper', () => {
     const parts = splitAssembledPrompt("<UserPersona>me</UserPersona>\n<Bob's Persona>def</Bob's Persona>");
     assert.equal(parts.definition, 'def');

@@ -3997,7 +3997,9 @@ export function splitAssembledPrompt(system) {
         return m[2].trim();
     };
     const scenario = take(/<(scenario)>([\s\S]*?)<\/\1>/i);
-    const exampleDialogs = take(/<(example_dialogs?|example dialogs?)>([\s\S]*?)<\/\1>/i);
+    // Any <Example...> spelling (hydall/JAR matches it this loosely): an unmatched block would fall
+    // into the remainder, which is discarded.
+    const exampleDialogs = take(/<(example[^<>\n]*)>([\s\S]*?)<\/\1>/i);
     // Our throwaway persona, never the card's; normally absent because it is created blank.
     take(/<(UserPersona)>([\s\S]*?)<\/\1>/i);
     return {
