@@ -4146,6 +4146,14 @@ function initDatacatView() {
     }
     document.getElementById('datacatCommunityCharGrid')?.addEventListener('click', _handleCommunityCharGridClick);
     on('datacatCommunityBackBtn', 'click', () => closeCommunityCollection());
+    // Tap a truncated collection title to scroll the rest into view (same gesture as preview titles).
+    // The detail section gains .hidden on Back, which cancels a running scroll.
+    BrowseView.wireTitleScroll(
+        document.getElementById('datacatCommunityTitle'),
+        document.getElementById('datacatCommunityDetail'),
+        null,
+        { mobile: true },
+    );
     on('datacatCommunityDescription', 'click', (e) => e.currentTarget.classList.toggle('expanded'));
     on('datacatCommunityLoadMoreBtn', 'click', () => {
         datacatCommunityDisplayLimit += COMMUNITY_PAGE_SIZE;

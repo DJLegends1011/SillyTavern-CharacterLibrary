@@ -812,6 +812,22 @@ html.cl-mobile .datacat-restore-name { font-size: var(--font-sm); }
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    min-width: 0;
+    cursor: pointer;
+}
+/* Tap-to-reveal fade edges; the shared browse-title-scrolling rules only target h2 titles */
+.datacat-community-banner-text strong.browse-title-scrolling {
+    text-overflow: clip;
+    -webkit-mask-image: linear-gradient(to right, transparent, black 20px, black calc(100% - 12px), transparent);
+    mask-image: linear-gradient(to right, transparent, black 20px, black calc(100% - 12px), transparent);
+}
+.datacat-community-banner-text strong.browse-title-scroll-start {
+    -webkit-mask-image: linear-gradient(to right, black calc(100% - 12px), transparent);
+    mask-image: linear-gradient(to right, black calc(100% - 12px), transparent);
+}
+.datacat-community-banner-text strong.browse-title-scroll-end {
+    -webkit-mask-image: linear-gradient(to right, transparent, black 20px);
+    mask-image: linear-gradient(to right, transparent, black 20px);
 }
 .datacat-community-banner-meta {
     font-size: var(--font-sm);
@@ -875,10 +891,10 @@ html.cl-mobile .datacat-community-banner .browse-author-banner-content {
 html.cl-mobile .browse-author-banner.datacat-community-banner .browse-author-banner-actions {
     width: auto;
 }
+/* One line + tap-to-reveal (not a 2-line clamp); the meta line wraps instead of cutting off */
 html.cl-mobile .datacat-community-banner-text strong {
     font-size: var(--font-md);
+}
+html.cl-mobile .datacat-community-banner .datacat-community-banner-meta {
     white-space: normal;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
 }

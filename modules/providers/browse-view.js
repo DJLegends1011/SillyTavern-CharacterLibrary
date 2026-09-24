@@ -2218,7 +2218,9 @@ export class BrowseView {
 
     // ── Title scroll-reveal on click ─────────────────────────
 
-    static wireTitleScroll(titleEl, overlayEl, glassEl) {
+    // `mobile: true` opts an element mobile does not wire itself (library-mobile.js only wires
+    // modal titles) into this handler on mobile too.
+    static wireTitleScroll(titleEl, overlayEl, glassEl, { mobile = false } = {}) {
         if (!titleEl) return;
         let _anim = null;
         let _inner = null;
@@ -2240,7 +2242,7 @@ export class BrowseView {
         }
 
         titleEl.addEventListener('click', async () => {
-            if (isMobileMode()) return; // mobile reveals long titles via its own tap handler
+            if (isMobileMode() && !mobile) return; // mobile reveals modal titles via its own tap handler
             if (_anim) { cancel(); return; }
 
             const distance = titleEl.scrollWidth - titleEl.clientWidth;
