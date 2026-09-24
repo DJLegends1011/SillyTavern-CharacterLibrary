@@ -594,9 +594,9 @@ export async function browserLogout(endpoint) {
 
 /**
  * Public definitions land on `detail` (extracted:false); withheld ones on `definition` (extracted:true),
- * with the rest of the captured prompt split into `scenario`, `exampleDialogs` and `injectedLore`
- * (lorebook entries janitorai inlined). Helpers before that split return only `definition`.
- * @returns {Promise<{detail: Object, definition: string, scenario?: string, exampleDialogs?: string, injectedLore?: string, firstMessage: string, extracted: boolean}>}
+ * with the scenario and example dialogs split out of the same captured prompt. Helpers before that
+ * split return only `definition`.
+ * @returns {Promise<{detail: Object, definition: string, scenario?: string, exampleDialogs?: string, firstMessage: string, extracted: boolean}>}
  */
 export async function extractViaBrowser(characterId, endpoint, { signal } = {}) {
     // Refresh token rides along so cl-helper can rebuild a session cookie for the chat UI.
@@ -816,45 +816,6 @@ export function extractCharacterBookFromScripts(character) {
 }
 
 /**
- * A private lorebook never hydrates, so the entries janitorai inlined into the captured prompt are
- * the only copy. Content only: the prompt carries no keys, order or settings, and only the entries
- * that fired for the throwaway chat. Every entry is therefore constant, which is how janitorai
- * injected them, and the book says it is partial.
- * @param {string} text - `injectedLore` from extractViaBrowser
- * @param {Object} [detail] - names the book after the attached lorebook when one is listed
- * @returns {Object|null}
- */
-export function buildInjectedLorebook(text, detail) {
-    const blocks = String(text || '').split(/\n\s*\n/).map(b => b.trim()).filter(Boolean);
-    if (!blocks.length) return null;
-    const title = (detail?.scripts || []).find(s => s?.type === 'lorebook' && s.title)?.title;
-    return {
-        name: `${title ? decodeHtmlEntities(title) : 'Recovered lorebook'} (partial)`,
-        description: 'Recovered from the prompt JanitorAI assembled. Trigger keys and settings were not in it, so every entry is always on, and entries that did not fire may be missing.',
-        scan_depth: 4,
-        token_budget: 0,
-        recursive_scanning: false,
-        extensions: {},
-        entries: blocks.map((content, i) => ({
-            keys: [],
-            secondary_keys: [],
-            content,
-            extensions: {},
-            enabled: true,
-            insertion_order: 100,
-            case_sensitive: false,
-            name: content.split('\n')[0].slice(0, 60),
-            priority: 10,
-            id: i,
-            comment: '',
-            selective: false,
-            constant: true,
-            position: 'before_char',
-        })),
-    };
-}
-
-/**
  * JanitorAI mislabels fields: `personality` is the definition body, `description` the public
  * blurb, so they map to V2 description and creator_notes.
  * @param {Object} detail - /hampter/characters/{id} payload
@@ -862,7 +823,6 @@ export function buildInjectedLorebook(text, detail) {
  * @param {string} [opts.firstMessage] - likewise; a withheld definition withholds this too
  * @param {string} [opts.scenario] - likewise, split out of the same captured prompt
  * @param {string} [opts.exampleDialogs] - likewise
- * @param {string} [opts.injectedLore] - inlined lorebook text; see buildInjectedLorebook
  * @returns {Object|null} V2-wrapped card
  */
 export function buildV2FromJanitorai(detail, opts = {}) {
@@ -920,8 +880,7 @@ export function buildV2FromJanitorai(detail, opts = {}) {
                     recoveredAt: rec ? new Date().toISOString() : undefined,
                 },
             },
-            character_book: extractCharacterBookFromScripts(detail)
-                || buildInjectedLorebook(opts.injectedLore, detail) || undefined,
+            character_book: extractCharacterBookFromScripts(detail) || undefined,
         },
     };
 }

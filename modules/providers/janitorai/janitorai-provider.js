@@ -39,7 +39,6 @@ function promptPartsOf(rec) {
     return {
         scenario: rec?.scenario || '',
         exampleDialogs: rec?.exampleDialogs || '',
-        injectedLore: rec?.injectedLore || '',
     };
 }
 
@@ -180,7 +179,6 @@ class JanitoraiProvider extends ProviderBase {
                     firstMessage: rec.firstMessage || '',
                     scenario: rec.scenario || '',
                     exampleDialogs: rec.exampleDialogs || '',
-                    injectedLore: rec.injectedLore || '',
                 });
                 report?.(rec.extracted ? 'Hidden definition recovered' : 'Definition is public');
             }

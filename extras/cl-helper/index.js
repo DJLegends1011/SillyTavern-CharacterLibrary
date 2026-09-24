@@ -3741,7 +3741,6 @@ async function extractHiddenDefinition(page, token, detail) {
                 definition: macro(parts.definition),
                 scenario: macro(parts.scenario),
                 exampleDialogs: macro(parts.exampleDialogs),
-                injectedLore: macro(parts.injectedLore),
                 firstMessage: macro(firstMessage),
                 extracted: true,
             };
@@ -3979,7 +3978,9 @@ function stripPromptScaffolding(text) {
 // shapes stripPromptScaffolding handles on the no-proxy path:
 //   <Name's Persona>definition</Name's Persona>
 //   <Scenario>...</Scenario>, <example_dialogs>...</example_dialogs>, <UserPersona>...</UserPersona>
-//   then, untagged, any lorebook entries that fired for the throwaway chat
+//   then, untagged, any lorebook entries that fired for the throwaway chat. Those are split off
+//   only so they stay out of the definition: without keys or settings they are not a usable
+//   lorebook, so the route does not return them.
 // Here the sections are verbatim and have no other source (a withheld definition nulls them on
 // the API too), so they are split out rather than stripped. Without the Persona wrapper the shape
 // is unknown, and the whole message stays the definition so nothing can be lost.

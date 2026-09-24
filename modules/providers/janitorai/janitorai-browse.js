@@ -1229,7 +1229,6 @@ async function recoverDefinitionIntoPreview() {
             jaSelectedChar._recoveredPromptParts = {
                 scenario: rec.scenario || '',
                 exampleDialogs: rec.exampleDialogs || '',
-                injectedLore: rec.injectedLore || '',
             };
         }
         const name = hit.name || 'Unknown';
