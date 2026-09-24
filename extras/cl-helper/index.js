@@ -3710,7 +3710,7 @@ async function extractHiddenDefinition(page, token, detail) {
             if (!body) throw new Error('JanitorAI never assembled the prompt. It may be rate limiting; try again shortly.');
 
             // The payload is the whole chat request, not just the definition:
-            //   system    = the definition
+            //   system    = the assembled prompt; see splitAssembledPrompt
             //   user "."  = a dummy turn janitorai injects
             //   assistant = the character's opening line, ie. the first message
             //   user      = our priming message
@@ -3732,10 +3732,17 @@ async function extractHiddenDefinition(page, token, detail) {
                 throw new Error(`JanitorAI did not return a prompt for this character: ${promptErrorSnippet(body)}`);
             }
             if (!system) throw new Error('Captured prompt carried no system message.');
+            const parts = splitAssembledPrompt(system);
+            const macro = (t) => (t ? restoreJanitoraiMacros(t, { userSentinel, detail }) : '');
+            step(`prompt split definition=${parts.definition.length} scenario=${parts.scenario.length} `
+                + `examples=${parts.exampleDialogs.length} lore=${parts.injectedLore.length}`);
             return {
                 detail,
-                definition: restoreJanitoraiMacros(system, { userSentinel, detail }),
-                firstMessage: firstMessage ? restoreJanitoraiMacros(firstMessage, { userSentinel, detail }) : '',
+                definition: macro(parts.definition),
+                scenario: macro(parts.scenario),
+                exampleDialogs: macro(parts.exampleDialogs),
+                injectedLore: macro(parts.injectedLore),
+                firstMessage: macro(firstMessage),
                 extracted: true,
             };
         } finally {
@@ -3966,6 +3973,38 @@ function stripPromptScaffolding(text) {
         .replace(/[ \t]+\n/g, '\n')
         .replace(/\n{3,}/g, '\n\n')
         .trim();
+}
+
+// The proxy capture's system message is janitorai's whole assembled prompt, in the same tag
+// shapes stripPromptScaffolding handles on the no-proxy path:
+//   <Name's Persona>definition</Name's Persona>
+//   <Scenario>...</Scenario>, <example_dialogs>...</example_dialogs>, <UserPersona>...</UserPersona>
+//   then, untagged, any lorebook entries that fired for the throwaway chat
+// Here the sections are verbatim and have no other source (a withheld definition nulls them on
+// the API too), so they are split out rather than stripped. Without the Persona wrapper the shape
+// is unknown, and the whole message stays the definition so nothing can be lost.
+export function splitAssembledPrompt(system) {
+    const text = String(system || '');
+    const persona = /<(?!\/)(?!UserPersona>)([^<>\n]*Persona)>([\s\S]*?)<\/\1>/i.exec(text);
+    if (!persona) return { definition: text.trim(), scenario: '', exampleDialogs: '', injectedLore: '' };
+
+    let rest = `${text.slice(0, persona.index)}\n${text.slice(persona.index + persona[0].length)}`;
+    const take = (re) => {
+        const m = re.exec(rest);
+        if (!m) return '';
+        rest = `${rest.slice(0, m.index)}\n${rest.slice(m.index + m[0].length)}`;
+        return m[2].trim();
+    };
+    const scenario = take(/<(scenario)>([\s\S]*?)<\/\1>/i);
+    const exampleDialogs = take(/<(example_dialogs?|example dialogs?)>([\s\S]*?)<\/\1>/i);
+    // Our throwaway persona, never the card's; normally absent because it is created blank.
+    take(/<(UserPersona)>([\s\S]*?)<\/\1>/i);
+    return {
+        definition: persona[2].trim(),
+        scenario,
+        exampleDialogs,
+        injectedLore: rest.replace(/\n{3,}/g, '\n\n').trim(),
+    };
 }
 
 /** Pull the last matching tag out of the reply text; the model may repeat the tag. */

@@ -34,6 +34,15 @@ let api = null;
 const _refreshedRemotes = new Map();
 
 // Fields a hidden-definition card can't report; update check treats them as unknown.
+/** The sections of a proxy capture besides the definition and greeting; builder option names. */
+function promptPartsOf(rec) {
+    return {
+        scenario: rec?.scenario || '',
+        exampleDialogs: rec?.exampleDialogs || '',
+        injectedLore: rec?.injectedLore || '',
+    };
+}
+
 function hiddenDefinitionFields(detail) {
     const fields = new Set(['description']);
     if (!detail?.first_message) fields.add('first_mes');
@@ -169,6 +178,9 @@ class JanitoraiProvider extends ProviderBase {
                     detail: rec.detail,
                     definition: rec.definition || '',
                     firstMessage: rec.firstMessage || '',
+                    scenario: rec.scenario || '',
+                    exampleDialogs: rec.exampleDialogs || '',
+                    injectedLore: rec.injectedLore || '',
                 });
                 report?.(rec.extracted ? 'Hidden definition recovered' : 'Definition is public');
             }
@@ -195,6 +207,9 @@ class JanitoraiProvider extends ProviderBase {
                 const fields = hiddenDefinitionFields(detail);
                 if (refreshed?.definition) fields.delete('description');
                 if (refreshed?.firstMessage) fields.delete('first_mes');
+                // Only a split capture knows these; an old helper's whole-prompt definition does not.
+                if (refreshed?.scenario) fields.delete('scenario');
+                if (refreshed?.exampleDialogs) fields.delete('mes_example');
                 if (fields.size) card._unavailableFields = fields;
             }
         }
@@ -361,6 +376,8 @@ class JanitoraiProvider extends ProviderBase {
             // A withheld definition withholds the opening line too; both come from one recovery.
             let definition = options?.definition || '';
             let firstMessage = options?.firstMessage || '';
+            // The rest of the same captured prompt, split out helper-side.
+            let promptParts = options?.promptParts || null;
             let recoveryError = '';
             // Model output from the no-proxy path, already paid for in the preview. It stands in
             // for the definition, so the proxy capture below must not run and fail on top of it.
@@ -381,6 +398,7 @@ class JanitoraiProvider extends ProviderBase {
                         const rec = await extractViaBrowser(charId, undefined, { signal: options?.signal });
                         if (rec?.definition) definition = rec.definition;
                         if (rec?.firstMessage) firstMessage = rec.firstMessage;
+                        promptParts = promptPartsOf(rec);
                     }
                 } catch (e) {
                     recoveryError = e?.message || 'extraction failed';
@@ -398,7 +416,7 @@ class JanitoraiProvider extends ProviderBase {
             }
 
             await hydrateJanitoraiScripts(detail);
-            const characterCard = buildV2FromJanitorai(detail, { definition, firstMessage, recovered });
+            const characterCard = buildV2FromJanitorai(detail, { ...promptParts, definition, firstMessage, recovered });
             if (!characterCard?.data) throw new Error('Failed to build character card');
 
             characterCard.data.extensions.janitorai = {
