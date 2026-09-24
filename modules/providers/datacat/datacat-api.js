@@ -66,7 +66,14 @@ export function resolveDatacatAvatarUrl(hit, opts = {}) {
         : [hit?.avatar];
     for (const avatar of candidates) {
         if (!avatar || typeof avatar !== 'string') continue;
-        let url = /^https?:\/\//i.test(avatar) ? avatar : `${DATACAT_JANITOR_IMAGE_BASE}${avatar}`;
+        // A root-relative path is DataCat-hosted (v0.98 direct uploads: /api/media/direct_upload/..,
+        // a signed link that 302s to storage); a bare name is a janitorai filename. `//host` is
+        // protocol-relative, so it falls through to the filename branch instead of another origin.
+        let url = /^https?:\/\//i.test(avatar)
+            ? avatar
+            : /^\/(?!\/)/.test(avatar)
+                ? `${DATACAT_API_BASE}${avatar}`
+                : `${DATACAT_JANITOR_IMAGE_BASE}${avatar}`;
         const safety = CoreAPI.isUrlSafeForDownload(url);
         if (!safety.ok) continue;
         // Grid cards pass a width to pull a thumbnail: janitorai's raw bot-avatars are full-size
