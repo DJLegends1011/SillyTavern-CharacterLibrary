@@ -58,7 +58,9 @@ import {
     sortCommunityCollections,
     filterCommunityCollections,
     mergeCommunityCharacters,
+    communityAccentColor,
 } from './datacat-community.js';
+import { renderCollectionCard, wireCollectionGrid } from '../browse-collection-card.js';
 // Saucepan lives in its own provider now; DataCat only needs these two for its
 // saucepan-SOURCED rows (creator listing + open_definition lock state).
 import { fetchSaucepanCompanion, fetchSaucepanCompanionsOfUser } from '../saucepan/saucepan-api.js';
@@ -2610,40 +2612,29 @@ function renderCommunityError(el, err, retry) {
     });
 }
 
+// Maps a feed row onto the shared collection card (browse-collection-card.js).
 function createCommunityCollectionCard(c) {
-    const title = c.title || 'Untitled collection';
-    const count = Number(c.characterCount) || 0;
     // SFW mode keeps mixed collections, so skip mature covers rather than showing them
-    const covers = (Array.isArray(c.covers) ? c.covers : [])
+    const coverUrls = (Array.isArray(c.covers) ? c.covers : [])
         .filter(cover => datacatNsfwEnabled || !isNsfw(cover))
-        .slice(0, 4);
-    const tiles = [0, 1, 2, 3].map(i => {
-        const url = covers[i] ? resolveDatacatAvatarUrl(covers[i], { width: 400 }) : null;
-        return url
-            ? `<span class="datacat-community-tile"><img src="${escapeHtml(url)}" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer" onerror="this.remove()"></span>`
-            : '<span class="datacat-community-tile datacat-community-tile-empty"></span>';
-    }).join('');
+        .map(cover => resolveDatacatAvatarUrl(cover, { width: 400 }));
     const curator = c.curator?.username || c.curator?.displayName || '';
     const tags = (Array.isArray(c.tags) ? c.tags : [])
         .map(t => t?.name)
-        .filter(name => name && (datacatNsfwEnabled || name.toLowerCase() !== 'nsfw'))
-        .slice(0, 3);
+        .filter(name => name && (datacatNsfwEnabled || name.toLowerCase() !== 'nsfw'));
     const updated = getCreatedDate({ createdAt: c.updatedAt || c.createdAt });
-    return `
-        <div class="datacat-community-card" data-community-slug="${escapeHtml(c.slug || '')}" data-accent="${escapeHtml(c.accent || 'signal')}" tabindex="0" role="button" aria-label="Open ${escapeHtml(title)}">
-            <div class="datacat-community-mosaic">
-                ${tiles}
-                ${c.containsMatureContent ? '<span class="browse-nsfw-badge">NSFW</span>' : ''}
-                <span class="datacat-community-count"><strong>${formatNumber(count)}</strong> bots</span>
-            </div>
-            <div class="datacat-community-card-body">
-                <div class="datacat-community-card-title">${escapeHtml(title)}</div>
-                ${curator ? `<div class="datacat-community-card-curator">by @${escapeHtml(curator)}</div>` : ''}
-                ${tags.length ? `<div class="browse-card-tags">${tags.map(t => `<span class="browse-card-tag" title="${escapeHtml(t)}">${escapeHtml(t)}</span>`).join('')}</div>` : ''}
-                ${updated ? `<div class="datacat-community-card-updated"><i class="fa-solid fa-clock"></i> Updated ${escapeHtml(updated)}</div>` : ''}
-            </div>
-        </div>
-    `;
+    return renderCollectionCard({
+        id: c.slug || '',
+        title: c.title,
+        byline: curator ? `by @${curator}` : '',
+        count: Number(c.characterCount) || 0,
+        countLabel: 'bots',
+        coverUrls,
+        nsfw: !!c.containsMatureContent,
+        tags,
+        footer: updated ? `Updated ${updated}` : '',
+        accent: communityAccentColor(c.accent),
+    });
 }
 
 function updateCommunityChrome() {
@@ -2674,6 +2665,7 @@ function renderCommunityDirectory() {
         return;
     }
     grid.innerHTML = visible.map(createCommunityCollectionCard).join('');
+    datacatBrowseView.observeImages(grid);
 }
 
 async function loadCommunityCollections(force = false) {
@@ -2824,11 +2816,6 @@ function renderCommunity() {
 function refreshCommunity() {
     if (datacatCommunitySlug) openCommunityCollection(datacatCommunitySlug, { force: true });
     else loadCommunityCollections(true);
-}
-
-function _handleCommunityGridClick(e) {
-    const card = e.target.closest('.datacat-community-card');
-    if (card?.dataset.communitySlug) openCommunityCollection(card.dataset.communitySlug);
 }
 
 function _handleCommunityCharGridClick(e) {
@@ -4134,16 +4121,7 @@ function initDatacatView() {
         datacatCommunityQuery = e.target.value || '';
         renderCommunityDirectory();
     });
-    const communityGrid = document.getElementById('datacatCommunityGrid');
-    if (communityGrid) {
-        communityGrid.addEventListener('click', _handleCommunityGridClick);
-        communityGrid.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-                _handleCommunityGridClick(e);
-            }
-        });
-    }
+    wireCollectionGrid(document.getElementById('datacatCommunityGrid'), (slug) => openCommunityCollection(slug));
     document.getElementById('datacatCommunityCharGrid')?.addEventListener('click', _handleCommunityCharGridClick);
     on('datacatCommunityBackBtn', 'click', () => closeCommunityCollection());
     // Tap a truncated collection title to scroll the rest into view (same gesture as preview titles).
@@ -4677,7 +4655,7 @@ const datacatBrowseView = new (class DatacatBrowseView extends BrowseView {
                             <input type="search" id="datacatCommunitySearchInput" placeholder="Filter by title, curator or tag..." autocomplete="one-time-code">
                         </div>
                     </div>
-                    <div id="datacatCommunityGrid" class="datacat-community-grid"></div>
+                    <div id="datacatCommunityGrid" class="browse-collection-grid"></div>
                 </div>
                 <div id="datacatCommunityDetail" class="hidden">
                     <div class="browse-author-banner datacat-community-banner">
@@ -4856,7 +4834,7 @@ const datacatBrowseView = new (class DatacatBrowseView extends BrowseView {
 
     // -- Lifecycle --
 
-    _getImageGridIds() { return ['datacatGrid', 'datacatFollowingGrid', 'datacatCommunityCharGrid']; }
+    _getImageGridIds() { return ['datacatGrid', 'datacatFollowingGrid', 'datacatCommunityGrid', 'datacatCommunityCharGrid']; }
 
     canLoadMore() {
         if (datacatViewMode === 'following') {

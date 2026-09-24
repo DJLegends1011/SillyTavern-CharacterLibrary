@@ -2644,3 +2644,137 @@ html.cl-mobile .browse-char-body { padding: 8px; gap: var(--space-sm); }
     pointer-events: none;
     opacity: 0.6;
 }
+/* ============================================
+   COLLECTION CARDS (browse-collection-card.js)
+   A titled group of characters as a 2x2 cover mosaic. Tiles are .browse-card-image
+   wrappers, so they share the card shimmer / fade-in and the BrowseView loader.
+   ============================================ */
+
+.browse-collection-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: var(--space-lg);
+}
+
+.browse-collection-card {
+    --collection-accent: var(--accent);
+    background: var(--card-bg);
+    border: 1px solid var(--glass-border);
+    border-top: 3px solid var(--collection-accent);
+    border-radius: var(--radius-2xl);
+    overflow: hidden;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    transition: transform 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
+}
+.browse-collection-card:hover,
+.browse-collection-card:focus-visible {
+    transform: translateY(-4px);
+    border-color: var(--collection-accent);
+    box-shadow: 0 8px 25px rgba(0, 0, 0, 0.3), 0 0 15px var(--accent-glow);
+    outline: none;
+}
+
+.browse-collection-mosaic {
+    position: relative;
+    display: grid;
+    /* minmax(0, ...): a bare 1fr track has an auto minimum, so a tall portrait cover would
+       grow its row and break the fixed shape */
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-rows: repeat(2, minmax(0, 1fr));
+    gap: 2px;
+    aspect-ratio: 16 / 10;
+    overflow: hidden;
+    background: rgba(0, 0, 0, 0.3);
+}
+.browse-collection-tile {
+    position: relative;
+    min-height: 0;
+    overflow: hidden;
+    background: rgba(255, 255, 255, 0.04);
+}
+/* Tiles reuse .browse-card-image for the loader; undo its square card shape */
+.browse-collection-tile.browse-card-image {
+    aspect-ratio: auto;
+}
+/* Out of flow, so the image never contributes its intrinsic size to the tile */
+.browse-collection-tile img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+.browse-collection-tile-empty {
+    background: linear-gradient(135deg, rgba(var(--accent-rgb), 0.08), rgba(255, 255, 255, 0.02));
+}
+.browse-collection-mosaic .browse-nsfw-badge {
+    z-index: 2;
+}
+.browse-collection-count {
+    position: absolute;
+    right: 8px;
+    bottom: 8px;
+    z-index: 2;
+    padding: 2px 8px;
+    border-radius: var(--radius-pill);
+    background: rgba(0, 0, 0, 0.7);
+    color: var(--text-primary);
+    font-size: var(--font-xs);
+}
+.browse-collection-count strong {
+    color: var(--accent);
+}
+
+.browse-collection-body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+    padding: var(--space-sm-md);
+    flex: 1;
+}
+.browse-collection-title {
+    font-size: var(--font-md);
+    font-weight: 600;
+    color: var(--text-primary);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    word-break: break-word;
+}
+.browse-collection-byline {
+    font-size: var(--font-sm);
+    color: var(--accent);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.browse-collection-footer {
+    margin-top: auto;
+    font-size: var(--font-xs);
+    color: var(--text-muted);
+}
+
+html.cl-mobile .browse-collection-grid {
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: var(--space-sm);
+}
+html.cl-mobile .browse-collection-card {
+    border-radius: var(--radius-xl);
+    transition: none;
+}
+html.cl-mobile .browse-collection-card:hover {
+    transform: none;
+}
+html.cl-mobile .browse-collection-mosaic {
+    aspect-ratio: 1;
+}
+html.cl-mobile .browse-collection-body {
+    padding: var(--space-xs-sm);
+}
+html.cl-mobile .browse-collection-title {
+    font-size: var(--font-sm);
+}

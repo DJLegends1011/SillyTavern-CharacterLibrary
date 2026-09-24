@@ -113,3 +113,18 @@ describe('isCommunityProxyBlocked', () => {
         assert.equal(isCommunityProxyBlocked(403, null), false);
     });
 });
+
+describe('communityAccentColor', () => {
+    it('maps every DataCat accent name to a hex colour', async () => {
+        const { communityAccentColor } = await import('../modules/providers/datacat/datacat-community.js');
+        for (const name of ['orchid', 'ember', 'tide', 'parchment', 'arcade', 'volt', 'candy']) {
+            assert.match(communityAccentColor(name), /^#[0-9a-f]{6}$/i, name);
+        }
+    });
+    it('falls back to null (theme accent) for signal, unknown or missing names', async () => {
+        const { communityAccentColor } = await import('../modules/providers/datacat/datacat-community.js');
+        assert.equal(communityAccentColor('signal'), null);
+        assert.equal(communityAccentColor('nope'), null);
+        assert.equal(communityAccentColor(undefined), null);
+    });
+});

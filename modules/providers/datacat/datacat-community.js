@@ -27,6 +27,22 @@ export function buildCommunitySortOptionsHtml(selected) {
     ).join('');
 }
 
+// DataCat's per-collection accent names, as the shared collection card's stripe colour.
+// 'signal' (and anything unknown) keeps the theme accent.
+const COMMUNITY_ACCENTS = {
+    orchid: '#c77dff',
+    ember: '#ff7a45',
+    tide: '#3fb6d9',
+    parchment: '#d8b779',
+    arcade: '#5b7cfa',
+    volt: '#c6e54a',
+    candy: '#ff6fae',
+};
+
+export function communityAccentColor(name) {
+    return Object.hasOwn(COMMUNITY_ACCENTS, name) ? COMMUNITY_ACCENTS[name] : null;
+}
+
 const timeOf = (raw) => {
     const t = raw ? Date.parse(raw) : NaN;
     return Number.isFinite(t) ? t : 0;

@@ -14,7 +14,8 @@ import CoreAPI from './core-api.js';
 // CSS LOADER
 // ========================================
 
-const MODULE_CSS_VERSION = 82;
+// 82.1: branch bump (collection-card CSS moved into browse-shared.css); take upstream's next integer on merge
+const MODULE_CSS_VERSION = 82.1;
 
 function loadModuleCSS(path) {
     return new Promise((resolve) => {
