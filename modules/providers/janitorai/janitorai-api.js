@@ -593,8 +593,10 @@ export async function browserLogout(endpoint) {
 }
 
 /**
- * Public definitions land on `detail` (extracted:false); withheld ones on `definition` (extracted:true).
- * @returns {Promise<{detail: Object, definition: string, extracted: boolean}>}
+ * Public definitions land on `detail` (extracted:false); withheld ones on `definition` (extracted:true),
+ * with the scenario and example dialogs split out of the same captured prompt. Helpers before that
+ * split return only `definition`.
+ * @returns {Promise<{detail: Object, definition: string, scenario?: string, exampleDialogs?: string, firstMessage: string, extracted: boolean}>}
  */
 export async function extractViaBrowser(characterId, endpoint, { signal } = {}) {
     // Refresh token rides along so cl-helper can rebuild a session cookie for the chat UI.
@@ -819,6 +821,8 @@ export function extractCharacterBookFromScripts(character) {
  * @param {Object} detail - /hampter/characters/{id} payload
  * @param {string} [opts.definition] - recovered by extraction, overrides an empty `personality`
  * @param {string} [opts.firstMessage] - likewise; a withheld definition withholds this too
+ * @param {string} [opts.scenario] - likewise, split out of the same captured prompt
+ * @param {string} [opts.exampleDialogs] - likewise
  * @returns {Object|null} V2-wrapped card
  */
 export function buildV2FromJanitorai(detail, opts = {}) {
@@ -852,9 +856,9 @@ export function buildV2FromJanitorai(detail, opts = {}) {
             name: decodeHtmlEntities(detail.chat_name || detail.name || 'Unknown'),
             description,
             personality: '',
-            scenario: detail.scenario || rec?.scenario || '',
+            scenario: detail.scenario || opts.scenario || rec?.scenario || '',
             first_mes: firstMes,
-            mes_example: detail.example_dialogs || rec?.exampleDialogs || '',
+            mes_example: detail.example_dialogs || opts.exampleDialogs || rec?.exampleDialogs || '',
             system_prompt: '',
             post_history_instructions: '',
             creator_notes: decodeHtmlEntities(detail.description || ''),

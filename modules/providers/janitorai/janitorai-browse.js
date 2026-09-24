@@ -1290,9 +1290,15 @@ async function recoverDefinitionIntoPreview() {
         if (jaSelectedChar && (jaSelectedChar.character_id || jaSelectedChar.id) === charId) {
             jaSelectedChar._recoveredDefinition = rec.definition;
             jaSelectedChar._recoveredFirstMessage = rec.firstMessage || '';
+            jaSelectedChar._recoveredPromptParts = {
+                scenario: rec.scenario || '',
+                exampleDialogs: rec.exampleDialogs || '',
+            };
         }
         const name = hit.name || 'Unknown';
         populateSectionSecure('janitoraiCharDescriptionSection', 'janitoraiCharDescription', rec.definition, name);
+        if (rec.scenario) populateSection('janitoraiCharScenarioSection', 'janitoraiCharScenario', rec.scenario, name);
+        if (rec.exampleDialogs) populateSection('janitoraiCharExamplesSection', 'janitoraiCharExamples', rec.exampleDialogs, name);
         // The opening line is withheld alongside the definition, so it only appears now.
         if (rec.firstMessage) {
             populateSection('janitoraiCharFirstMsgSection', 'janitoraiCharFirstMsg', rec.firstMessage, name,
@@ -1783,6 +1789,7 @@ async function importCharacter(hit) {
             // Already extracted in the preview: reuse it rather than paying for a second run.
             definition: hit._recoveredDefinition || '',
             firstMessage: hit._recoveredFirstMessage || '',
+            promptParts: hit._recoveredPromptParts || null,
             // Model output from the no-proxy path; the builder stamps it so the card says so.
             recovered: hit._recoveredNoProxy || null,
         });
