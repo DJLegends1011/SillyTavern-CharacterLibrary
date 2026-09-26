@@ -2,9 +2,10 @@
 
 import { BrowseView } from '../browse-view.js';
 import CoreAPI from '../../core-api.js';
-import { IMG_PLACEHOLDER, formatNumber } from '../provider-utils.js';
+import { IMG_PLACEHOLDER, formatNumber, isMobileMode } from '../provider-utils.js';
 import {
-    cvThumbUrl,
+    cvThumbImgUrl,
+    cvFullImgUrl,
     cvFullPath,
     fetchCvCards,
     fetchCvCardDetail,
@@ -148,9 +149,7 @@ class CharaVaultBrowseView extends BrowseView {
     _getImageGridIds() { return ['cvGrid']; }
 
     closePreview() {
-        const notesEl = document.getElementById('cvCharCreatorNotes');
-        if (notesEl) cleanupCreatorNotesContainer?.(notesEl);
-        hideModal('cvCharModal');
+        closeCvCharPreview();
     }
 
     canLoadMore() { return cvHasMore && !cvIsLoading; }
@@ -602,7 +601,7 @@ function renderCvGrid(append = false) {
 function buildCvCard(char) {
     const inLib = cvIsInLibrary(char);
     const possible = !inLib && cvIsPossibleMatch(char);
-    const thumbUrl = cvThumbUrl(char.folder, char.file);
+    const thumbUrl = cvThumbImgUrl(char.folder, char.file);
     const name = escapeHtml(char.name || 'Unknown');
     const creator = escapeHtml(char.creator || '');
     const tokens = char.token_count ? formatNumber(char.token_count) : '';
@@ -883,10 +882,15 @@ async function openCvPreview(char) {
     const altGreetingsEl = document.getElementById('cvCharAltGreetings');
     const altGreetingsCountEl = document.getElementById('cvCharAltGreetingsCount');
 
-    const thumbUrl = cvThumbUrl(char.folder, char.file);
+    const thumbUrl = cvThumbImgUrl(char.folder, char.file);
     const fullPath = char.fullPath;
 
-    if (avatar) { avatar.src = thumbUrl; avatar.alt = char.name || ''; }
+    if (avatar) {
+        avatar.src = thumbUrl;
+        avatar.alt = char.name || '';
+        // Full card PNG for the avatar viewer (desktop click + mobile delegated tap)
+        avatar.dataset.full = char.folder && char.file ? cvFullImgUrl(char.folder, char.file) : '';
+    }
     if (nameEl) nameEl.textContent = char.name || 'Unknown';
     if (creatorEl) {
         creatorEl.textContent = char.creator || 'Unknown';
@@ -1163,7 +1167,7 @@ async function loadCvSimilar(diskPath) {
             const folder = s.folder || '';
             const file = s.file || '';
             const fp = cvFullPath(folder, file);
-            const thumb = cvThumbUrl(folder, file);
+            const thumb = cvThumbImgUrl(folder, file);
             const name = escapeHtml(s.name || file || 'Unknown');
             const creator = s.creator && s.creator !== 'Unknown'
                 ? `<div class="cv-similar-card-creator">${escapeHtml(s.creator)}</div>`
@@ -1198,6 +1202,17 @@ async function loadCvSimilar(diskPath) {
 // ========================================
 // INIT EVENT HANDLERS
 // ========================================
+
+function closeCvCharPreview() {
+    const notesEl = document.getElementById('cvCharCreatorNotes');
+    if (notesEl) cleanupCreatorNotesContainer?.(notesEl);
+    hideModal('cvCharModal');
+    cvSelectedChar = null;
+}
+
+// The modal lives in document.body and survives provider switches, while init() reruns on each
+// activation - attach its listeners once or every switch stacks another copy.
+let cvModalEventsAttached = false;
 
 function initCvView() {
     const sortEl = document.getElementById('cvSortSelect');
@@ -1311,20 +1326,37 @@ function initCvView() {
         });
     }
 
-    // Modal events
-    on('cvCharClose', 'click', () => {
-        const notesEl = document.getElementById('cvCharCreatorNotes');
-        if (notesEl) cleanupCreatorNotesContainer?.(notesEl);
-        hideModal('cvCharModal');
-        cvSelectedChar = null;
+    // Modal events - once only (see cvModalEventsAttached)
+    if (cvModalEventsAttached) return;
+    cvModalEventsAttached = true;
+
+    on('cvCharClose', 'click', closeCvCharPreview);
+    on('cvCharModal', 'click', (e) => {
+        if (e.target.id === 'cvCharModal') closeCvCharPreview();
     });
+    window.registerOverlay?.({ id: 'cvCharModal', tier: 7, close: closeCvCharPreview });
+    {
+        const overlay = document.getElementById('cvCharModal');
+        BrowseView.wireTitleScroll(document.getElementById('cvCharName'), overlay, overlay?.querySelector('.browse-char-modal'));
+    }
+
+    // Avatar click -> full-size viewer. Desktop only at event time; on mobile bail before
+    // stopPropagation so library-mobile's delegated tap handler runs instead.
+    const cvAvatar = document.getElementById('cvCharAvatar');
+    if (cvAvatar) {
+        cvAvatar.addEventListener('click', (e) => {
+            if (isMobileMode()) return;
+            e.stopPropagation();
+            if (!cvAvatar.src) return;
+            BrowseView.openAvatarViewer(cvAvatar.dataset.full || cvAvatar.src, cvAvatar.src);
+        });
+    }
 
     on('cvCharCreator', 'click', (e) => {
         e.preventDefault();
         const creator = e.target.dataset.creator || '';
         if (creator) {
-            hideModal('cvCharModal');
-            cvSelectedChar = null;
+            closeCvCharPreview();
             filterByCreator(creator);
         }
     });

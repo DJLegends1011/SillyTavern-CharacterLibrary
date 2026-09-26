@@ -9,6 +9,7 @@ import {
     getCvCdnBase,
     cvFetch,
     cvThumbUrl,
+    cvThumbImgUrl,
     cvDownloadUrl,
     cvFullPath,
     splitCvPath,
@@ -17,6 +18,8 @@ import {
     buildCvCharacterCard,
     cvMetadataCache,
 } from './charavault-api.js';
+
+const CV_ICON_DATA_URI = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32"><rect width="32" height="32" rx="6" fill="#0c0c0f"/><rect x="0.5" y="0.5" width="31" height="31" rx="5.5" fill="none" stroke="#d4a54a" stroke-opacity="0.3" stroke-width="1"/><text x="14" y="19.5" font-family="Arial,Helvetica,sans-serif" font-weight="800" font-size="15" fill="#d4a54a" text-anchor="middle" letter-spacing="-0.5">CV</text><rect x="22" y="22" width="8" height="7" rx="1.5" fill="#d4a54a"/><path d="M24 22v-2.5a2 2 0 0 1 4 0V22" fill="none" stroke="#d4a54a" stroke-width="1.8" stroke-linecap="round"/><circle cx="26" cy="25.5" r="1" fill="#0c0c0f"/></svg>');
 
 let api = null;
 
@@ -29,7 +32,9 @@ class CharaVaultProvider extends ProviderBase {
     get id() { return 'charavault'; }
     get name() { return 'CharaVault'; }
     get icon() { return 'fa-solid fa-vault'; }
-    get iconUrl() { return `${getCvCdnBase()}/favicon.ico`; }
+    // charavault.net/favicon.ico inlined: CORP same-site blocks it cross-origin, and ST /proxy/
+    // drops the svg content-type so the proxied copy will not render either.
+    get iconUrl() { return CV_ICON_DATA_URI; }
     get browseView() { return charavaultBrowseView; }
 
     // ── Lifecycle ───────────────────────────────────────────
@@ -252,7 +257,7 @@ class CharaVaultProvider extends ProviderBase {
         if (slash < 0) return '';
         const folder = fp.slice(0, slash);
         const file = fp.slice(slash + 1);
-        return cvThumbUrl(folder, file);
+        return cvThumbImgUrl(folder, file);
     }
 
     // ── Import Pipeline ─────────────────────────────────────
@@ -351,7 +356,7 @@ class CharaVaultProvider extends ProviderBase {
             id: r.fullPath,
             fullPath: r.fullPath,
             name: r.name || r.file || '',
-            avatarUrl: cvThumbUrl(r.folder || r.fullPath.split('/')[0], r.file || r.fullPath.split('/').pop()),
+            avatarUrl: cvThumbImgUrl(r.folder || r.fullPath.split('/')[0], r.file || r.fullPath.split('/').pop()),
             rating: r.avg_rating || 0,
             starCount: r.rating_count || 0,
             description: r.description_preview || '',

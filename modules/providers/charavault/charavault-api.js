@@ -1,6 +1,6 @@
 // CharaVault API utilities
 
-import { fetchWithProxy } from '../provider-utils.js';
+import { fetchWithProxy, proxyEncode } from '../provider-utils.js';
 
 // ========================================
 // CONSTANTS & RUNTIME HELPERS
@@ -71,6 +71,23 @@ export function cvFetch(url) {
  */
 export function cvThumbUrl(folder, file) {
     return `${getCvCdnBase()}/cards/thumb/${encodeURIComponent(folder)}/${encodeURIComponent(file)}`;
+}
+
+// charavault.net serves images with Cross-Origin-Resource-Policy: same-site, so an <img> on the
+// ST origin is blocked outright; display URLs ride ST /proxy/ (same-origin). A custom CDN/gateway
+// is assumed embeddable and stays direct. Never feed these to cvFetch (it would double-proxy).
+function cvDisplayUrl(url) {
+    return url.startsWith(CV_DEFAULT_CDN + '/') ? `/proxy/${proxyEncode(url)}` : url;
+}
+
+/** Thumbnail URL safe for <img src>. @param {string} folder @param {string} file @returns {string} */
+export function cvThumbImgUrl(folder, file) {
+    return cvDisplayUrl(cvThumbUrl(folder, file));
+}
+
+/** Full card PNG URL safe for <img src> (avatar viewer). @param {string} folder @param {string} file @returns {string} */
+export function cvFullImgUrl(folder, file) {
+    return cvDisplayUrl(cvDownloadUrl(folder, file));
 }
 
 /**
