@@ -2,7 +2,7 @@
 
 import { BrowseView } from '../browse-view.js';
 import CoreAPI from '../../core-api.js';
-import { IMG_PLACEHOLDER, formatNumber, isMobileMode } from '../provider-utils.js';
+import { IMG_PLACEHOLDER, formatNumber, isMobileMode, finishBrowseImport } from '../provider-utils.js';
 import {
     cvThumbImgUrl,
     cvFullImgUrl,
@@ -933,10 +933,7 @@ async function openCvPreview(char) {
     }
 
     if (openBtn) openBtn.href = `https://charavault.net/cards/preview/${encodeURIComponent(char.folder)}/${encodeURIComponent(char.file)}`;
-    if (downloadBtn) {
-        downloadBtn.disabled = false;
-        downloadBtn.innerHTML = '<i class="fa-solid fa-download"></i> Import';
-    }
+    updateCvImportButton(char);
 
     // Placeholder while the detail loads. Not description_preview: that is the card's
     // description, which would then show twice (here and under Character Definition).
@@ -1216,6 +1213,127 @@ async function loadCvSimilar(diskPath) {
 // INIT EVENT HANDLERS
 // ========================================
 
+// Import button: In Library / Possible Match / Import, same states as the other providers.
+function updateCvImportButton(char) {
+    const btn = document.getElementById('cvDownloadBtn');
+    if (!btn) return;
+    btn.disabled = false;
+    if (cvIsInLibrary(char)) {
+        btn.innerHTML = '<i class="fa-solid fa-check"></i> In Library';
+        btn.classList.add('secondary');
+        btn.classList.remove('primary', 'warning');
+    } else if (cvIsPossibleMatch(char)) {
+        btn.innerHTML = '<i class="fa-solid fa-download"></i> Import (Possible Match)';
+        btn.classList.add('warning');
+        btn.classList.remove('primary', 'secondary');
+    } else {
+        btn.innerHTML = '<i class="fa-solid fa-download"></i> Import';
+        btn.classList.add('primary');
+        btn.classList.remove('secondary', 'warning');
+    }
+}
+
+let cvImportInFlight = false;
+
+// Shared browse import pipeline: duplicate check (skip / replace / keep both), provider
+// import, then finishBrowseImport (closes the preview, media summary, library add, badge).
+async function importCvCharacter() {
+    const char = cvSelectedChar;
+    if (!char?.fullPath || cvImportInFlight) return;
+    cvImportInFlight = true;
+
+    const downloadBtn = document.getElementById('cvDownloadBtn');
+    const originalHtml = downloadBtn?.innerHTML;
+    if (downloadBtn) {
+        downloadBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Checking...';
+        downloadBtn.disabled = true;
+    }
+
+    let inheritedGalleryId = null;
+    try {
+        const detail = await fetchCvCardDetail(char.fullPath); // cached from the preview
+        const meta = cvCardFields(detail?.fullMetadata);
+        const characterName = meta.name || char.name || char.file || 'CharaVault character';
+
+        // === PRE-IMPORT DUPLICATE CHECK ===
+        const duplicateMatches = await checkCharacterForDuplicatesAsync({
+            name: characterName,
+            creator: meta.creator || char.creator || '',
+            fullPath: char.fullPath,
+            description: meta.description || '',
+            first_mes: meta.first_mes || '',
+            personality: meta.personality || '',
+            scenario: meta.scenario || '',
+        });
+
+        if (duplicateMatches.length > 0) {
+            if (downloadBtn) downloadBtn.innerHTML = '<i class="fa-solid fa-exclamation-triangle"></i> Duplicate found...';
+            const result = await showPreImportDuplicateWarning({
+                name: characterName,
+                creator: meta.creator || char.creator || '',
+                fullPath: char.fullPath,
+                avatarUrl: cvThumbImgUrl(char.folder, char.file),
+            }, duplicateMatches);
+
+            if (result.choice === 'skip') {
+                showToast('Import cancelled', 'info');
+                return;
+            }
+            if (result.choice === 'replace') {
+                const toReplace = duplicateMatches[0].char;
+                inheritedGalleryId = CoreAPI.getCharacterGalleryId(toReplace);
+                if (downloadBtn) downloadBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Replacing...';
+                const deleteSuccess = await deleteCharacter(toReplace, false);
+                if (!deleteSuccess) console.warn('[CharaVault] Could not delete existing character, importing anyway');
+            }
+        }
+        // === END DUPLICATE CHECK ===
+
+        if (downloadBtn) downloadBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Downloading...';
+
+        const provider = CoreAPI.getProvider('charavault');
+        if (!provider?.importCharacter) throw new Error('CharaVault provider not available');
+        const result = await provider.importCharacter(char.fullPath, char, { inheritedGalleryId });
+        if (!result?.success) throw new Error(result?.error || 'Import failed');
+
+        const mediaUrls = result.embeddedMediaUrls || [];
+        const galleryPageUrls = result.galleryPageUrls || [];
+        const showSummary = (mediaUrls.length > 0 || galleryPageUrls.length > 0)
+            && getSetting('importMediaAction') !== 'none';
+
+        await finishBrowseImport({
+            view,
+            summaryArgs: {
+                galleryCharacters: [],
+                mediaCharacters: showSummary ? [{
+                    name: result.characterName,
+                    avatar: result.fileName,
+                    avatarUrl: result.avatarUrl,
+                    mediaUrls,
+                    galleryPageUrls,
+                    galleryId: result.galleryId,
+                    cardData: result.cardData,
+                }] : [],
+            },
+            showSummary,
+            closePreview: closeCvCharPreview,
+            importBtn: downloadBtn,
+            characterName: result.characterName,
+            avatarFileName: result.fileName,
+            markImported: () => markCvCardImported(char.fullPath),
+        });
+    } catch (e) {
+        console.error('[CharaVault] Import error:', e);
+        showToast('Import failed: ' + e.message, 'error');
+    } finally {
+        cvImportInFlight = false;
+        if (downloadBtn) {
+            downloadBtn.innerHTML = originalHtml;
+            downloadBtn.disabled = false;
+        }
+    }
+}
+
 function closeCvCharPreview() {
     const notesEl = document.getElementById('cvCharCreatorNotes');
     if (notesEl) cleanupCreatorNotesContainer?.(notesEl);
@@ -1446,38 +1564,9 @@ function initCvView() {
             }
 
             // Import button (also fires when icon inside is clicked)
-            const importBtn = e.target.closest('#cvDownloadBtn');
-            if (importBtn) {
+            if (e.target.closest('#cvDownloadBtn')) {
                 e.preventDefault();
-                const char = cvSelectedChar;
-                if (!char) {
-                    return;
-                }
-                if (typeof window.cvImportCharacter !== 'function') {
-                    debugLog('[CharaVault] window.cvImportCharacter is not registered. Provider init() may have failed.');
-                    showToast?.('CharaVault provider not initialized', 'error');
-                    return;
-                }
-                importBtn.disabled = true;
-                const origHtml = importBtn.innerHTML;
-                importBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Importing...';
-                try {
-                    const result = await window.cvImportCharacter(char.fullPath, char);
-                    if (result?.success) {
-                        markCvCardImported(char.fullPath);
-                        showToast?.(`Imported "${result.characterName}"`, 'success');
-                    } else {
-                        showToast?.(`Import failed: ${result?.error || 'unknown'}`, 'error');
-                    }
-                } catch (err) {
-                    debugLog('[CharaVault] Import threw:', err);
-                    showToast?.(`Import failed: ${err.message || err}`, 'error');
-                } finally {
-                    if (document.contains(importBtn)) {
-                        importBtn.disabled = false;
-                        importBtn.innerHTML = origHtml;
-                    }
-                }
+                await importCvCharacter();
                 return;
             }
         });

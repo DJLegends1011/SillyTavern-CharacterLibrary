@@ -45,9 +45,6 @@ class CharaVaultProvider extends ProviderBase {
         super.init(coreAPI);
         api = coreAPI;
         initCvApi({ getSetting: coreAPI.getSetting, debugLog: coreAPI.debugLog });
-        // Expose import function for the browse modal download button
-        window.cvImportCharacter = (fullPath, hitData, options) =>
-            this.importCharacter(fullPath, hitData, options);
     }
 
     async activate(container, options = {}) {
