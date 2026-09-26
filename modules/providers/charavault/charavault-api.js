@@ -1,5 +1,6 @@
 // CharaVault API utilities
 
+import CoreAPI from '../../core-api.js';
 import { fetchWithProxy, proxyEncode, CL_HELPER_PLUGIN_BASE } from '../provider-utils.js';
 
 // ========================================
@@ -59,7 +60,8 @@ export async function cvFetch(url) {
     const session = getCvSession();
     if (session && url.startsWith(CV_DEFAULT_CDN + '/')) {
         const u = new URL(url);
-        const resp = await fetch(`${CL_HELPER_PLUGIN_BASE}/cv-proxy${u.pathname}${u.search}`, {
+        // apiRequest adds ST's /api prefix (plugin routes live under /api/plugins/)
+        const resp = await CoreAPI.apiRequest(`${CL_HELPER_PLUGIN_BASE}/cv-proxy${u.pathname}${u.search}`, 'GET', null, {
             headers: { ...getCvHeaders(), 'X-CV-Session': session },
         });
         const isJson = (resp.headers.get('content-type') || '').includes('application/json');
@@ -119,7 +121,7 @@ export function cvFullImgUrl(folder, file) {
     // the session it last saw since an <img> cannot send X-CV-Session.
     if (getCvSession() && url.startsWith(CV_DEFAULT_CDN + '/')) {
         const u = new URL(url);
-        return `${CL_HELPER_PLUGIN_BASE}/cv-proxy${u.pathname}`;
+        return `/api${CL_HELPER_PLUGIN_BASE}/cv-proxy${u.pathname}`;
     }
     return cvDisplayUrl(url);
 }
