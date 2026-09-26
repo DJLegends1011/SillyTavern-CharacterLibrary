@@ -341,24 +341,65 @@ class CharaVaultProvider extends ProviderBase {
         }
     }
 
-    // ── Import Duplicate Detection ──────────────────────────
+    // ── In-App Preview ──────────────────────────────────────
 
-    async searchForImportMatch(name, creator) {
-        if (!name) return null;
-        try {
-            const results = await this.searchForBulkLink(name, creator || '');
-            if (results.length === 0) return null;
-            const norm = name.toLowerCase().trim();
-            for (const r of results) {
-                if ((r.name || '').toLowerCase().trim() === norm) {
-                    return { id: r.fullPath, fullPath: r.fullPath, hasGallery: false };
-                }
-            }
-            return { id: results[0].fullPath, fullPath: results[0].fullPath, hasGallery: false };
-        } catch (e) {
-            api?.debugLog?.('[CharaVaultProvider] searchForImportMatch:', e.message);
-            return null;
+    get supportsInAppPreview() { return true; }
+
+    /**
+     * Preview object for "View on CharaVault" from a linked library character: the live detail
+     * entry (same shape as a browse row), else the local card so the preview still opens when
+     * the card is gone, the network is down, or it is an NSFW card and the session is missing.
+     */
+    async buildPreviewObject(char, linkInfo) {
+        const fullPath = linkInfo?.fullPath || linkInfo?.id;
+        if (!fullPath) return null;
+        const { folder, file } = splitCvPath(fullPath);
+        const detail = await fetchCvCardDetail(fullPath);
+        if (detail?.entry) {
+            return { ...detail.entry, folder: detail.entry.folder || folder, file: detail.entry.file || file, fullPath };
         }
+        const data = char?.data || {};
+        const cv = data.extensions?.charavault || {};
+        return {
+            fullPath,
+            folder,
+            file,
+            name: char?.name || data.name || file.replace(/\.png$/i, ''),
+            creator: data.creator || '',
+            tags: Array.isArray(data.tags) ? data.tags : [],
+            nsfw: false,
+            avg_rating: cv.avg_rating || 0,
+            rating_count: cv.rating_count || 0,
+            download_count: cv.download_count || 0,
+            has_lorebook: !!cv.has_lorebook,
+        };
+    }
+
+    openPreview(previewChar) {
+        charavaultBrowseView.openPreview?.(previewChar);
+    }
+
+    // ── Local Import Enrichment ─────────────────────────────
+
+    /**
+     * A PNG exported from CL after a CharaVault import carries extensions.charavault.full_path;
+     * re-importing it from disk re-links it. (A PNG downloaded straight from charavault.net is the
+     * creator's original upload and carries no CharaVault id, so there is nothing to match.)
+     */
+    async enrichLocalImport(cardData, _fileName) {
+        const fullPath = cardData?.data?.extensions?.charavault?.full_path;
+        if (!fullPath) return null;
+        const { folder, file } = splitCvPath(fullPath);
+        return {
+            cardData,
+            providerInfo: {
+                providerId: 'charavault',
+                charId: fullPath,
+                fullPath,
+                hasGallery: false,
+                avatarUrl: cvThumbUrl(folder, file),
+            },
+        };
     }
 
     // ── Private ─────────────────────────────────────────────

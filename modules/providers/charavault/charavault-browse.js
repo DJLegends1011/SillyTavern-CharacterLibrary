@@ -159,6 +159,13 @@ class CharaVaultBrowseView extends BrowseView {
         closeCvCharPreview();
     }
 
+    /** In-app preview from the library ("View on CharaVault"). */
+    openPreview(previewChar) {
+        if (!previewChar?.fullPath) return;
+        this.injectModals();
+        openCvPreview(previewChar);
+    }
+
     canLoadMore() { return cvHasMore && !cvIsLoading; }
 
     async loadMore() {
