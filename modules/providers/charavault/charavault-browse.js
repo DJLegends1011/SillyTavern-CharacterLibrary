@@ -340,7 +340,7 @@ class CharaVaultBrowseView extends BrowseView {
                 <div class="browse-char-tags" id="cvCharTags"></div>
 
                 <!-- Creator Notes -->
-                <div class="browse-char-section">
+                <div class="browse-char-section" id="cvCharCreatorNotesSection">
                     <h3 class="browse-section-title" data-section="cvCharCreatorNotes" data-label="Creator's Notes" data-icon="fa-solid fa-feather-pointed" title="Click to expand">
                         <i class="fa-solid fa-feather-pointed"></i> Creator's Notes
                     </h3>
@@ -934,11 +934,11 @@ async function openCvPreview(char) {
         downloadBtn.innerHTML = '<i class="fa-solid fa-download"></i> Import';
     }
 
-    // Show preview text from browse list data while we fetch full data
-    if (notesEl) {
-        const preview = char.description_preview || '';
-        notesEl.textContent = preview || 'Loading...';
-    }
+    // Placeholder while the detail loads. Not description_preview: that is the card's
+    // description, which would then show twice (here and under Character Definition).
+    const notesSection = document.getElementById('cvCharCreatorNotesSection');
+    if (notesSection) notesSection.style.display = '';
+    if (notesEl) notesEl.textContent = 'Loading...';
     // Reset all dynamic sections to hidden; populated below from full metadata.
     for (const s of [descSection, personalitySection, scenarioSection,
                      firstMsgSection, examplesSection, systemPromptSection,
@@ -987,7 +987,10 @@ async function openCvPreview(char) {
     }
 
     // Bail out of detail-dependent UI if detail fetch failed.
-    if (!detail) return;
+    if (!detail) {
+        if (notesEl) notesEl.textContent = 'Could not load the full card from CharaVault.';
+        return;
+    }
 
     try {
         const meta = detail.fullMetadata?.data || {};
@@ -1013,8 +1016,12 @@ async function openCvPreview(char) {
 
         if (notesEl) {
             cleanupCreatorNotesContainer?.(notesEl);
-            const notes = meta.creator_notes || char.description_preview || 'No description available.';
-            if (renderCreatorNotesSecure) {
+            const notes = (meta.creator_notes || '').trim();
+            if (!notes) {
+                // No creator notes on the card: hide the section like the other providers
+                if (notesSection) notesSection.style.display = 'none';
+                notesEl.textContent = '';
+            } else if (renderCreatorNotesSecure) {
                 renderCreatorNotesSecure(notes, char.name || '', notesEl);
             } else {
                 notesEl.textContent = notes;
