@@ -7,6 +7,7 @@ import {
     cvThumbImgUrl,
     cvFullImgUrl,
     getCvSession,
+    probeCvHelper,
     cvCardFields,
     isCvNsfwVerified,
     cvFullPath,
@@ -525,6 +526,7 @@ async function loadCvCharacters(reset = false) {
     if (cvCurrentPage === 0 && grid) {
         renderLoadingState?.(grid, 'Loading CharaVault characters...', 'browse-loading');
     }
+    await probeCvHelper();
 
     try {
         const tagStr = cvTagFilters.size > 0 ? [...cvTagFilters].join(',') : '';
@@ -561,7 +563,8 @@ async function loadCvCharacters(reset = false) {
         }
 
         cvHasMore = cvCharacters.length < total && results.length === PAGE_SIZE;
-        renderCvGrid();
+        // Load-more appends the new page; only a fresh load rebuilds the grid
+        renderCvGrid(cvCurrentPage > 0 && cvGridRenderedCount > 0);
     } catch (e) {
         if (token !== cvLoadToken) return;
         debugLog('[CharaVault] loadCvCharacters error:', e.message);

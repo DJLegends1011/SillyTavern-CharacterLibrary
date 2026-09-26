@@ -1065,6 +1065,9 @@ function registerCharaVaultRoutes(router) {
             res.status(response.status);
             const contentType = response.headers.get('content-type') || '';
             if (contentType) res.set('Content-Type', contentType);
+            // Let the browser cache card images: without it every grid re-render (refresh, filter,
+            // provider switch) re-downloads each thumbnail and the cards flash in blank first.
+            if (response.ok && contentType.startsWith('image/')) res.set('Cache-Control', 'private, max-age=604800');
             if (contentType.includes('application/json') || contentType.startsWith('text/')) {
                 res.send(await response.text());
             } else {

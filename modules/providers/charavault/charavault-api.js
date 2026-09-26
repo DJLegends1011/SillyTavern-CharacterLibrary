@@ -106,7 +106,30 @@ export function cvThumbUrl(folder, file) {
 // ST origin is blocked outright; display URLs ride ST /proxy/ (same-origin). A custom CDN/gateway
 // is assumed embeddable and stays direct. Never feed these to cvFetch (it would double-proxy).
 function cvDisplayUrl(url) {
-    return url.startsWith(CV_DEFAULT_CDN + '/') ? `/proxy/${proxyEncode(url)}` : url;
+    if (!url.startsWith(CV_DEFAULT_CDN + '/')) return url;
+    // cl-helper 1.13.1+ serves these with Cache-Control; ST /proxy/ sends none, so re-renders refetch.
+    if (_cvHelperImages) return `/api${CL_HELPER_PLUGIN_BASE}/cv-proxy${new URL(url).pathname}`;
+    return `/proxy/${proxyEncode(url)}`;
+}
+
+let _cvHelperImages = false;
+let _cvHelperProbe = null;
+
+/**
+ * One-time cl-helper probe (deduped). Resolves once known; callers await it before the first
+ * grid render so thumbnail URLs are stable (a URL switch mid-session is a cache miss).
+ * @returns {Promise<void>}
+ */
+export function probeCvHelper() {
+    _cvHelperProbe ??= (async () => {
+        try {
+            const resp = await CoreAPI.apiRequest(`${CL_HELPER_PLUGIN_BASE}/health`);
+            const data = resp?.ok ? await resp.json().catch(() => ({})) : {};
+            const [ma, mi, pa] = String(data.version || '').split('.').map(n => parseInt(n, 10) || 0);
+            _cvHelperImages = !!data.ok && (ma > 1 || (ma === 1 && (mi > 13 || (mi === 13 && pa >= 1))));
+        } catch { /* no helper: stay on /proxy/ */ }
+    })();
+    return _cvHelperProbe;
 }
 
 /** Thumbnail URL safe for <img src>. @param {string} folder @param {string} file @returns {string} */
