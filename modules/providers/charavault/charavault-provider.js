@@ -132,9 +132,11 @@ class CharaVaultProvider extends ProviderBase {
             const entry = detail?.entry;
             if (!entry) return null;
             _cachedLinkNode = entry;
+            // Same row as the other providers (downloads / popularity / tokens). CharaVault has no
+            // favorites; its rating is usually unrated (0), so it goes in the middle slot.
             return {
-                stat1: entry.avg_rating ? parseFloat(entry.avg_rating.toFixed(1)) : 0,
-                stat2: entry.rating_count || 0,
+                stat1: entry.download_count || 0,
+                stat2: entry.avg_rating ? parseFloat(entry.avg_rating.toFixed(1)) : 0,
                 stat3: entry.token_count || 0,
             };
         } catch (e) {
@@ -145,9 +147,9 @@ class CharaVaultProvider extends ProviderBase {
 
     get linkStatFields() {
         return {
-            stat1: { icon: 'fa-solid fa-star', label: 'Avg Rating' },
-            stat2: { icon: 'fa-solid fa-users', label: 'Ratings' },
-            stat3: { icon: 'fa-solid fa-message', label: 'Tokens' },
+            stat1: { icon: 'fa-solid fa-download', label: 'Downloads' },
+            stat2: { icon: 'fa-solid fa-star', label: 'Rating' },
+            stat3: { icon: 'fa-solid fa-coins', label: 'Tokens' },
         };
     }
 
