@@ -35,6 +35,7 @@ class CharaVaultProvider extends ProviderBase {
     // charavault.net/favicon.ico inlined: CORP same-site blocks it cross-origin, and ST /proxy/
     // drops the svg content-type so the proxied copy will not render either.
     get iconUrl() { return CV_ICON_DATA_URI; }
+    get clHelperFeatures() { return { login: { minVersion: '1.13.0', label: 'Logging in (NSFW)' } }; }
     get browseView() { return charavaultBrowseView; }
 
     // ── Lifecycle ───────────────────────────────────────────
@@ -199,11 +200,19 @@ class CharaVaultProvider extends ProviderBase {
                 section: 'CharaVault',
             },
             {
+                key: 'charavaultEmail',
+                label: 'Email',
+                type: 'text',
+                defaultValue: null,
+                hint: 'CharaVault account email, used with the app password to log in.',
+                section: 'CharaVault',
+            },
+            {
                 key: 'charavaultAppPassword',
                 label: 'App Password',
                 type: 'password',
                 defaultValue: null,
-                hint: 'CharaVault app password (cv_...). Optional - required only for higher rate limits and downloads.',
+                hint: 'CharaVault app password (cv_...). Logging in unlocks NSFW (18+ verified accounts) and higher rate limits.',
                 section: 'CharaVault',
             },
         ];

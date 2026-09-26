@@ -1,6 +1,6 @@
 // CharaVault API utilities
 
-import { fetchWithProxy, proxyEncode } from '../provider-utils.js';
+import { fetchWithProxy, proxyEncode, CL_HELPER_PLUGIN_BASE } from '../provider-utils.js';
 
 // ========================================
 // CONSTANTS & RUNTIME HELPERS
@@ -47,15 +47,42 @@ export function getCvHeaders() {
     const headers = { 'Accept': 'application/json' };
     const gwKey = _getSetting?.('charavaultGatewayKey');
     if (gwKey) headers['Authorization'] = `Bearer ${gwKey}`;
-    const appPw = _getSetting?.('charavaultAppPassword');
-    if (appPw) headers['X-App-Password'] = appPw;
     return headers;
 }
 
 // charavault.net only sends CORS for its own origin, so a direct browser fetch fails;
 // fetchWithProxy falls back to ST /proxy/ (a gateway with CORS still goes direct).
-export function cvFetch(url) {
+// Logged in: charavault.net requests ride cl-helper /cv-proxy/, which carries the session cookie
+// (NSFW results, detail and downloads are 18+-gated server-side). A helper without the route
+// (404 non-JSON) falls back to the anonymous path.
+export async function cvFetch(url) {
+    const session = getCvSession();
+    if (session && url.startsWith(CV_DEFAULT_CDN + '/')) {
+        const u = new URL(url);
+        const resp = await fetch(`${CL_HELPER_PLUGIN_BASE}/cv-proxy${u.pathname}${u.search}`, {
+            headers: { ...getCvHeaders(), 'X-CV-Session': session },
+        });
+        const isJson = (resp.headers.get('content-type') || '').includes('application/json');
+        if (!(resp.status === 404 && !isJson)) {
+            if (!resp.ok) {
+                const body = isJson ? await resp.json().catch(() => ({})) : {};
+                throw new Error(body.detail || body.error || `CharaVault HTTP ${resp.status}`);
+            }
+            return resp;
+        }
+        debugLog('[CharaVault] cl-helper /cv-proxy missing, using anonymous path');
+    }
     return fetchWithProxy(url, { headers: getCvHeaders() });
+}
+
+/** Stored CharaVault session cookie (set by the Settings login), or null. */
+export function getCvSession() {
+    return _getSetting?.('charavaultSession') || null;
+}
+
+/** Whether the logged-in account can see NSFW (18+ verified on charavault.net). */
+export function isCvNsfwVerified() {
+    return !!getCvSession() && !!_getSetting?.('charavaultNsfwVerified');
 }
 
 // ========================================
@@ -87,7 +114,14 @@ export function cvThumbImgUrl(folder, file) {
 
 /** Full card PNG URL safe for <img src> (avatar viewer). @param {string} folder @param {string} file @returns {string} */
 export function cvFullImgUrl(folder, file) {
-    return cvDisplayUrl(cvDownloadUrl(folder, file));
+    const url = cvDownloadUrl(folder, file);
+    // NSFW downloads are 18+-gated: when logged in, load through cl-helper, which falls back to
+    // the session it last saw since an <img> cannot send X-CV-Session.
+    if (getCvSession() && url.startsWith(CV_DEFAULT_CDN + '/')) {
+        const u = new URL(url);
+        return `${CL_HELPER_PLUGIN_BASE}/cv-proxy${u.pathname}`;
+    }
+    return cvDisplayUrl(url);
 }
 
 /**

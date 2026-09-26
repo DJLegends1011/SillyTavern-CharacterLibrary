@@ -6,6 +6,8 @@ import { IMG_PLACEHOLDER, formatNumber, isMobileMode } from '../provider-utils.j
 import {
     cvThumbImgUrl,
     cvFullImgUrl,
+    getCvSession,
+    isCvNsfwVerified,
     cvFullPath,
     fetchCvCards,
     fetchCvCardDetail,
@@ -1264,6 +1266,12 @@ function initCvView() {
     on('cvNsfwToggle', 'click', () => {
         cycleCvNsfwMode();
         updateCvNsfwToggle();
+        // CharaVault silently returns SFW-only results to anonymous / unverified callers.
+        if (cvNsfwMode !== 'sfw' && !isCvNsfwVerified()) {
+            showToast(getCvSession()
+                ? 'Your CharaVault account is not 18+ verified. Verify your age on charavault.net, then log in again in Settings > Online > CharaVault.'
+                : 'CharaVault only shows NSFW to a logged-in, 18+ verified account. Log in under Settings > Online > CharaVault.', 'warning');
+        }
         loadCvCharacters(true);
     });
 

@@ -3209,7 +3209,13 @@ https://jannyai.com/characters/uuid_slug
                                     </div>
                                 </div>
                                 <div class="settings-group">
-                                    <div class="settings-group-title"><i class="fa-solid fa-key"></i> Authentication</div>
+                                    <div class="settings-group-title"><i class="fa-solid fa-sign-in-alt"></i> Login</div>
+                                    <div class="settings-row">
+                                        <label for="settingsCharavaultEmail">Email:</label>
+                                        <div class="settings-input-group">
+                                            <input type="text" id="settingsCharavaultEmail" placeholder="CharaVault account email" autocomplete="username">
+                                        </div>
+                                    </div>
                                     <div class="settings-row">
                                         <label for="settingsCharavaultAppPassword">App Password:</label>
                                         <div class="settings-input-group">
@@ -3217,10 +3223,16 @@ https://jannyai.com/characters/uuid_slug
                                             <button id="toggleCharavaultAppPasswordVisibility" class="glass-btn icon-only" title="Show/Hide">
                                                 <i class="fa-solid fa-eye"></i>
                                             </button>
+                                            <button id="validateCharavaultBtn" class="settings-verify-btn" title="Log in and store the session">
+                                                <i class="fa-solid fa-check"></i>
+                                            </button>
                                         </div>
                                     </div>
                                     <div class="settings-row">
-                                        <span class="settings-hint">Optional. CharaVault app password (cv_...) for higher rate limits and downloads. Generate one at <a href="https://charavault.net/account/app-passwords" target="_blank" rel="noopener">charavault.net</a>.</span>
+                                        <span class="settings-hint" id="charavaultLoginState"></span>
+                                    </div>
+                                    <div class="settings-row">
+                                        <span class="settings-hint">Needed for NSFW: CharaVault only shows it to a logged-in account that has passed 18+ verification on the site. Create an app password (cv_...) under Account Settings &gt; App Passwords on <a href="https://charavault.net" target="_blank" rel="noopener">charavault.net</a>; it skips 2FA and never expires. Requires the cl-helper plugin (1.13.0+).</span>
                                     </div>
                                 </div>
                                 <div class="settings-group">

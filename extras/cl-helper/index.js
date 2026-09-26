@@ -933,6 +933,151 @@ function registerCharacterTavernRoutes(router) {
 }
 
 // =============================================================================
+// CharaVault: app-password login + session-cookie read-only proxy
+// =============================================================================
+
+// CharaVault gates NSFW (search results, card detail, PNG download) behind a logged-in,
+// 18+-verified cookie session. Its documented integration path is POST /api/auth/login with
+// email + a cv_ app password as the password (skips 2FA, never expires). The browser cannot
+// hold that cookie (CORS only allows charavault.net, and ST /proxy/ drops Cookie/Set-Cookie),
+// so login and authed reads run here.
+const CV_BASE = 'https://charavault.net';
+const CV_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36';
+
+// Last session seen (login or an X-CV-Session request). Only a fallback for <img> loads, which
+// cannot send the header; the client's header always wins, so a restart never loses the session.
+let cvLastSession = null;
+
+// Read-only CharaVault paths the proxy forwards.
+const CV_ALLOWED_PATHS = [
+    /^\/api\/cards(\/.*)?$/,
+    /^\/api\/tags$/,
+    /^\/api\/auth\/me$/,
+    /^\/cards\/thumb\/.+/,
+];
+
+function cvCookieHeaderFrom(response) {
+    const raw = typeof response.headers.getSetCookie === 'function'
+        ? response.headers.getSetCookie()
+        : (response.headers.get('set-cookie') || '').split(/,(?=\s*[^;,\s]+=)/);
+    const pairs = [];
+    for (const line of raw) {
+        const pair = String(line).split(';')[0].trim();
+        const eq = pair.indexOf('=');
+        if (eq <= 0) continue;
+        if (!pair.slice(eq + 1) || /max-age=0/i.test(line)) continue; // deletion cookie
+        pairs.push(pair);
+    }
+    return pairs.join('; ');
+}
+
+function cvValidSession(value) {
+    return typeof value === 'string' && value.length > 0 && value.length <= 8192 && !/[\r\n]/.test(value);
+}
+
+async function cvFetchMe(cookie) {
+    const r = await fetch(`${CV_BASE}/api/auth/me`, { headers: { 'User-Agent': CV_UA, Accept: 'application/json', Cookie: cookie } });
+    if (!r.ok) return null;
+    const me = await r.json().catch(() => null);
+    const u = me?.user || me;
+    if (!u || typeof u !== 'object') return null;
+    return {
+        name: u.display_name || u.username || u.name || null,
+        nsfwVerified: !!(u.nsfw_verified || u.role === 'admin' || u.role === 'mod'),
+    };
+}
+
+function registerCharaVaultRoutes(router) {
+    /**
+     * POST /cv-login
+     * Body: { email, password }  (password should be a cv_ app password)
+     * Returns { ok, session, user: { name, nsfwVerified } }. The client stores the session and
+     * sends it back as X-CV-Session.
+     */
+    router.post('/cv-login', async (req, res) => {
+        const { email, password } = req.body ?? {};
+        if (typeof email !== 'string' || typeof password !== 'string' || !email || !password
+            || email.length > 320 || password.length > 512) {
+            return res.status(400).json({ error: 'email and password are required' });
+        }
+        try {
+            const response = await fetch(`${CV_BASE}/api/auth/login`, {
+                method: 'POST',
+                headers: { 'User-Agent': CV_UA, Accept: 'application/json', 'Content-Type': 'application/json', Origin: CV_BASE, Referer: CV_BASE + '/' },
+                body: JSON.stringify({ email, password, remember_me: true }),
+            });
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok) {
+                return res.status(response.status).json({ error: typeof data.detail === 'string' ? data.detail : `CharaVault login failed (${response.status})` });
+            }
+            if (data.requires_2fa) {
+                return res.status(409).json({ error: 'This account uses 2FA. Log in with an app password (cv_...) instead of your account password.' });
+            }
+            const session = cvCookieHeaderFrom(response);
+            if (!session) return res.status(502).json({ error: 'CharaVault login returned no session cookie' });
+            const user = await cvFetchMe(session);
+            if (!user) return res.status(502).json({ error: 'Logged in, but CharaVault did not accept the session' });
+            cvLastSession = session;
+            console.log('[cl-helper] CharaVault login ok');
+            res.json({ ok: true, session, user });
+        } catch (err) {
+            console.error('[cl-helper] CharaVault login error:', err.message);
+            res.status(502).json({ error: 'Failed to reach CharaVault' });
+        }
+    });
+
+    /**
+     * POST /cv-logout
+     * Forgets the remembered session (the client drops its copy separately).
+     */
+    router.post('/cv-logout', (_req, res) => {
+        cvLastSession = null;
+        res.json({ ok: true });
+    });
+
+    /**
+     * GET /cv-proxy/*
+     * Read-only proxy to charavault.net carrying the session cookie (X-CV-Session header, else
+     * the remembered one). Path-allowlisted so it is not an open relay.
+     */
+    router.get('/cv-proxy/*', async (req, res) => {
+        // Raw (still percent-encoded) path: card filenames can hold '?', '#', '&'.
+        const rawPath = req.url.replace(/^\/cv-proxy/, '') || '/';
+        let targetUrl;
+        try { targetUrl = new URL(rawPath, CV_BASE); } catch { return res.status(400).json({ error: 'Bad path' }); }
+        if (targetUrl.hostname !== 'charavault.net') {
+            return res.status(403).json({ error: 'Proxy target must be charavault.net' });
+        }
+        if (!CV_ALLOWED_PATHS.some(re => re.test(targetUrl.pathname))) {
+            console.warn(`[cl-helper] CharaVault proxy blocked: ${targetUrl.pathname}`);
+            return res.status(403).json({ error: 'Proxy path not allowed' });
+        }
+
+        const headerSession = req.headers['x-cv-session'];
+        if (cvValidSession(headerSession)) cvLastSession = headerSession;
+        const session = cvValidSession(headerSession) ? headerSession : cvLastSession;
+
+        const headers = { 'User-Agent': CV_UA, Accept: req.headers.accept || 'application/json' };
+        if (session) headers['Cookie'] = session;
+
+        try {
+            const response = await fetch(targetUrl.toString(), { method: 'GET', headers, redirect: 'follow' });
+            res.status(response.status);
+            const contentType = response.headers.get('content-type') || '';
+            if (contentType) res.set('Content-Type', contentType);
+            if (contentType.includes('application/json') || contentType.startsWith('text/')) {
+                res.send(await response.text());
+            } else {
+                res.send(Buffer.from(await response.arrayBuffer()));
+            }
+        } catch (err) {
+            console.error('[cl-helper] CharaVault proxy error:', err.message);
+            res.status(502).json({ error: 'Failed to reach CharaVault' });
+        }
+    });
+}
+
+// =============================================================================
 // DataCat: token session + extraction + read-only API proxy
 // =============================================================================
 
@@ -4408,6 +4553,7 @@ export async function init(router) {
     registerPygmalionRoutes(router);
     registerBotbooruRoutes(router);
     registerCharacterTavernRoutes(router);
+    registerCharaVaultRoutes(router);
     registerDataCatRoutes(router);
     registerImgchestRoutes(router);
     registerCivitaiRoutes(router);

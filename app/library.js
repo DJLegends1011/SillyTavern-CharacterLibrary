@@ -563,7 +563,11 @@ const DEFAULT_SETTINGS = {
     botbooruNsfwAccountSynced: false,
     botbooruUseTagWeights: false,
     ctCookie: null,
+    charavaultEmail: null,
     charavaultAppPassword: null,
+    charavaultSession: null,
+    charavaultUserName: null,
+    charavaultNsfwVerified: false,
     charavaultGatewayUrl: null,
     charavaultGatewayKey: null,
     ctAutoKeepAlive: true,
@@ -1922,6 +1926,7 @@ function setupSettingsModal() {
     const botbooruPluginBanner = document.getElementById('botbooruPluginBanner');
     const botbooruSettingsFields = document.getElementById('botbooruSettingsFields');
     const ctCookieInput = document.getElementById('settingsCtCookie');
+    const charavaultEmailInput = document.getElementById('settingsCharavaultEmail');
     const charavaultAppPasswordInput = document.getElementById('settingsCharavaultAppPassword');
     const toggleCharavaultAppPasswordVisibility = document.getElementById('toggleCharavaultAppPasswordVisibility');
     const charavaultGatewayUrlInput = document.getElementById('settingsCharavaultGatewayUrl');
@@ -2532,7 +2537,9 @@ function setupSettingsModal() {
         if (pygmalionPasswordInput) pygmalionPasswordInput.value = getSetting('pygmalionPassword') || '';
         if (pygmalionRememberCredsCheckbox) pygmalionRememberCredsCheckbox.checked = getSetting('pygmalionRememberCredentials') || false;
         if (ctCookieInput) ctCookieInput.value = getSetting('ctCookie') || '';
+        if (charavaultEmailInput) charavaultEmailInput.value = getSetting('charavaultEmail') || '';
         if (charavaultAppPasswordInput) charavaultAppPasswordInput.value = getSetting('charavaultAppPassword') || '';
+        window.refreshCharavaultLoginState?.();
         if (charavaultGatewayUrlInput) charavaultGatewayUrlInput.value = getSetting('charavaultGatewayUrl') || '';
         if (charavaultGatewayKeyInput) charavaultGatewayKeyInput.value = getSetting('charavaultGatewayKey') || '';
         if (ctAutoKeepAliveCheckbox) ctAutoKeepAliveCheckbox.checked = getSetting('ctAutoKeepAlive') !== false;
@@ -3555,6 +3562,7 @@ function setupSettingsModal() {
             botbooruUsername: botbooruUsernameInput ? (botbooruUsernameInput.value || null) : null,
             botbooruPassword: botbooruPasswordInput ? (botbooruPasswordInput.value || null) : null,
             ctCookie: ctCookieInput ? (ctCookieInput.value?.trim() || null) : null,
+            charavaultEmail: charavaultEmailInput ? (charavaultEmailInput.value?.trim() || null) : null,
             charavaultAppPassword: charavaultAppPasswordInput ? (charavaultAppPasswordInput.value?.trim() || null) : null,
             charavaultGatewayUrl: charavaultGatewayUrlInput ? (charavaultGatewayUrlInput.value?.trim() || null) : null,
             charavaultGatewayKey: charavaultGatewayKeyInput ? (charavaultGatewayKeyInput.value?.trim() || null) : null,
@@ -3736,6 +3744,7 @@ function setupSettingsModal() {
         if (pygmalionPasswordInput) pygmalionPasswordInput.value = '';
         if (pygmalionRememberCredsCheckbox) pygmalionRememberCredsCheckbox.checked = false;
         if (ctCookieInput) ctCookieInput.value = '';
+        if (charavaultEmailInput) charavaultEmailInput.value = '';
         if (charavaultAppPasswordInput) charavaultAppPasswordInput.value = '';
         if (charavaultGatewayUrlInput) charavaultGatewayUrlInput.value = '';
         if (charavaultGatewayKeyInput) charavaultGatewayKeyInput.value = '';
@@ -3866,7 +3875,11 @@ function setupSettingsModal() {
             datacatJanitoraiRefreshToken: getSetting('datacatJanitoraiRefreshToken') || null,
             saucepanToken: getSetting('saucepanToken') || null,
             ctCookie: getSetting('ctCookie') || null,
+            charavaultEmail: getSetting('charavaultEmail') || null,
             charavaultAppPassword: getSetting('charavaultAppPassword') || null,
+            charavaultSession: getSetting('charavaultSession') || null,
+            charavaultUserName: getSetting('charavaultUserName') || null,
+            charavaultNsfwVerified: !!getSetting('charavaultNsfwVerified'),
             charavaultGatewayUrl: getSetting('charavaultGatewayUrl') || null,
             charavaultGatewayKey: getSetting('charavaultGatewayKey') || null,
             janitoraiToken: getSetting('janitoraiToken') || null,
@@ -3906,6 +3919,79 @@ function setupSettingsModal() {
             const isPassword = charavaultAppPasswordInput.type === 'password';
             charavaultAppPasswordInput.type = isPassword ? 'text' : 'password';
             toggleCharavaultAppPasswordVisibility.innerHTML = `<i class="fa-solid fa-eye${isPassword ? '-slash' : ''}"></i>`;
+        };
+    }
+    const charavaultLoginState = document.getElementById('charavaultLoginState');
+    window.refreshCharavaultLoginState = () => {
+        if (!charavaultLoginState) return;
+        if (!getSetting('charavaultSession')) {
+            charavaultLoginState.innerHTML = '<i class="fa-solid fa-circle-xmark" style="color: var(--text-faint);"></i> Not logged in (SFW only)';
+            return;
+        }
+        const who = escapeHtml(getSetting('charavaultUserName') || getSetting('charavaultEmail') || 'account');
+        charavaultLoginState.innerHTML = (getSetting('charavaultNsfwVerified')
+            ? `<i class="fa-solid fa-circle-check" style="color: var(--cl-success-bright);"></i> Logged in as ${who}, 18+ verified`
+            : `<i class="fa-solid fa-triangle-exclamation" style="color: var(--cl-warning-bright);"></i> Logged in as ${who}, not 18+ verified (verify on charavault.net, then log in again)`)
+            + ' <a href="#" id="charavaultLogoutLink">Log out</a>';
+        const logout = document.getElementById('charavaultLogoutLink');
+        if (logout) logout.onclick = (e) => {
+            e.preventDefault();
+            setSettings({ charavaultSession: null, charavaultUserName: null, charavaultNsfwVerified: false });
+            apiRequest('/plugins/cl-helper/cv-logout', 'POST', {}).catch(() => {});
+            window.refreshCharavaultLoginState();
+            showToast('Logged out of CharaVault', 'info');
+        };
+    };
+    window.refreshCharavaultLoginState();
+    const validateCharavaultBtn = document.getElementById('validateCharavaultBtn');
+    if (validateCharavaultBtn && charavaultEmailInput && charavaultAppPasswordInput) {
+        validateCharavaultBtn.onclick = async (e) => {
+            e.preventDefault();
+            const email = charavaultEmailInput.value.trim();
+            const password = charavaultAppPasswordInput.value.trim();
+            if (!email || !password) {
+                showToast('Enter your CharaVault email and app password', 'warning');
+                return;
+            }
+            if (!(await ensureFeatureClHelper('charavault', 'login'))) return;
+            const originalHtml = validateCharavaultBtn.innerHTML;
+            validateCharavaultBtn.classList.remove('success', 'error');
+            validateCharavaultBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
+            validateCharavaultBtn.disabled = true;
+            try {
+                const resp = await apiRequest('/plugins/cl-helper/cv-login', 'POST', { email, password });
+                const data = await resp.json().catch(() => ({}));
+                if (resp.ok && data.session) {
+                    setSettings({
+                        charavaultEmail: email,
+                        charavaultAppPassword: password,
+                        charavaultSession: data.session,
+                        charavaultUserName: data.user?.name || null,
+                        charavaultNsfwVerified: !!data.user?.nsfwVerified,
+                    });
+                    window.refreshCharavaultLoginState();
+                    validateCharavaultBtn.classList.add('success');
+                    showToast(data.user?.nsfwVerified
+                        ? 'Logged in to CharaVault (18+ verified, NSFW available)'
+                        : 'Logged in to CharaVault, but the account is not 18+ verified; NSFW stays hidden', data.user?.nsfwVerified ? 'success' : 'warning');
+                } else {
+                    validateCharavaultBtn.classList.add('error');
+                    showToast(resp.status === 404
+                        ? 'cl-helper plugin not found or too old (needs 1.13.0+)'
+                        : (data.error || `CharaVault login failed (${resp.status})`), 'error');
+                }
+            } catch (err) {
+                validateCharavaultBtn.classList.add('error');
+                showToast(`CharaVault login failed: ${err.message}`, 'error');
+            } finally {
+                validateCharavaultBtn.disabled = false;
+                const ok = validateCharavaultBtn.classList.contains('success');
+                validateCharavaultBtn.innerHTML = ok ? '<i class="fa-solid fa-check"></i>' : '<i class="fa-solid fa-times"></i>';
+                setTimeout(() => {
+                    validateCharavaultBtn.classList.remove('success', 'error');
+                    validateCharavaultBtn.innerHTML = originalHtml;
+                }, 2500);
+            }
         };
     }
     if (toggleCharavaultGatewayKeyVisibility && charavaultGatewayKeyInput) {
