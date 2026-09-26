@@ -1,5 +1,8 @@
-# Only the shared slash commands are tracked; everything else here is local.
+# Only the shared slash commands and skills are tracked; everything else here is local.
 *
 !.gitignore
 !commands/
 !commands/*.md
+!skills/
+!skills/*/
+!skills/*/SKILL.md
