@@ -77,6 +77,8 @@ let cvCurrentCreator = '';   // creator filter (author banner)
 let cvSortMode = 'most_downloaded';
 let cvNsfwMode = 'sfw';      // 'sfw' | 'nsfw' | 'any'
 let cvLorebookMode = 'any';  // 'any' | 'with' | 'without'
+let cvFilterHideOwned = false;
+let cvFilterHidePossible = false;
 let cvSelectedChar = null;
 let cvTagFilters = new Set();  // Set of tag names to include
 let cvGridRenderedCount = 0;
@@ -204,8 +206,11 @@ class CharaVaultBrowseView extends BrowseView {
                 <button id="cvFiltersBtn" class="glass-btn" title="Feature filters">
                     <i class="fa-solid fa-sliders"></i> <span>Features</span>
                 </button>
-                <div id="cvFiltersDropdown" class="dropdown-menu browse-features-dropdown hidden">
-                    <div class="dropdown-section-title">Lorebook</div>
+                <div id="cvFiltersDropdown" class="dropdown-menu browse-features-dropdown hidden" style="width: 260px;">
+                    <div class="dropdown-section-title">Library:</div>
+                    <label class="filter-checkbox"><input type="checkbox" id="cvFilterHideOwned"> <i class="fa-solid fa-check"></i> Hide Owned Characters</label>
+                    <label class="filter-checkbox"><input type="checkbox" id="cvFilterHidePossible"> <i class="fa-solid fa-check" style="color: #f0a500;"></i> Hide Possible Matches</label>
+                    <div class="dropdown-section-title">Lorebook:</div>
                     <label class="filter-checkbox"><input type="radio" name="cvLorebookMode" value="any" checked> Any</label>
                     <label class="filter-checkbox"><input type="radio" name="cvLorebookMode" value="with"> <i class="fa-solid fa-book"></i> Has lorebook</label>
                     <label class="filter-checkbox"><input type="radio" name="cvLorebookMode" value="without"> <i class="fa-solid fa-book-skull"></i> No lorebook</label>
@@ -454,11 +459,61 @@ class CharaVaultBrowseView extends BrowseView {
     }
 
     applyDefaults(defaults) {
-        if (defaults.sort) {
+        if (defaults?.sort) {
             cvSortMode = defaults.sort;
             const el = document.getElementById('cvSortSelect');
-            if (el) el.value = defaults.sort;
+            if (el) { el.value = defaults.sort; el._customSelect?.refresh?.(); }
         }
+        if (defaults?.hideOwned) {
+            cvFilterHideOwned = true;
+            const el = document.getElementById('cvFilterHideOwned');
+            if (el) el.checked = true;
+        }
+        if (defaults?.hidePossible) {
+            cvFilterHidePossible = true;
+            const el = document.getElementById('cvFilterHidePossible');
+            if (el) el.checked = true;
+        }
+        updateCvFiltersBtn();
+    }
+
+    // ── Settings / mobile contracts ─────────────────────────
+
+    getSettingsConfig() {
+        return {
+            browseSortOptions: [
+                { value: 'most_downloaded', label: 'Most Downloaded' },
+                { value: 'top_rated', label: 'Top Rated' },
+                { value: 'newest', label: 'Newest' },
+                { value: 'oldest', label: 'Oldest' },
+                { value: 'name_asc', label: 'Name A-Z' },
+                { value: 'name_desc', label: 'Name Z-A' },
+                { value: 'token_count_desc', label: 'Most Tokens' },
+                { value: 'token_count_asc', label: 'Fewest Tokens' },
+            ],
+            followingSortOptions: [],
+            viewModes: [],
+        };
+    }
+
+    get mobileFilterIds() {
+        return {
+            sort: 'cvSortSelect',
+            tags: 'cvTagsBtn',
+            filters: 'cvFiltersBtn',
+            nsfw: 'cvNsfwToggle',
+            refresh: 'refreshCvBtn',
+        };
+    }
+
+    getSearchModes() { return ['character', 'creator']; }
+
+    getSearchInputId(mode) {
+        return mode === 'creator' ? 'cvCreatorSearchInput' : 'cvSearchInput';
+    }
+
+    getSearchPlaceholder(mode) {
+        return mode === 'creator' ? 'CharaVault creator name...' : 'Search CharaVault characters...';
     }
 
     activate(container, options = {}) {
@@ -542,6 +597,7 @@ async function loadCvCharacters(reset = false) {
             tags: tagStr,
             nsfw: nsfwParam,
             has_book: hasBookParam,
+            exclude_tags: getProviderExcludeTags?.('charavault')?.join(',') || '',
             sort: cvSortMode,
             limit: PAGE_SIZE,
             offset: cvCurrentPage * PAGE_SIZE,
@@ -594,6 +650,8 @@ function renderCvGrid(append = false) {
     const fragment = document.createDocumentFragment();
     for (let i = startIdx; i < cvCharacters.length; i++) {
         const char = cvCharacters[i];
+        if (cvFilterHideOwned && cvIsInLibrary(char)) continue;
+        if (cvFilterHidePossible && cvIsPossibleMatch(char)) continue;
         const card = buildCvCard(char);
         fragment.appendChild(card);
     }
@@ -835,7 +893,11 @@ function updateCvTagsBtn() {
 function updateCvFiltersBtn() {
     const btn = document.getElementById('cvFiltersBtn');
     if (!btn) return;
-    btn.classList.toggle('active', cvLorebookMode !== 'any');
+    const count = [cvFilterHideOwned, cvFilterHidePossible, cvLorebookMode !== 'any'].filter(Boolean).length;
+    btn.classList.toggle('has-filters', count > 0);
+    btn.innerHTML = count > 0
+        ? `<i class="fa-solid fa-sliders"></i> Features (${count})`
+        : '<i class="fa-solid fa-sliders"></i> <span>Features</span>';
 }
 
 // ========================================
@@ -925,7 +987,7 @@ async function openCvPreview(char) {
     if (greetingsStat) greetingsStat.style.display = 'none';
 
     if (tagsEl) {
-        const excludeTags = getProviderExcludeTags?.() || [];
+        const excludeTags = getProviderExcludeTags?.('charavault') || [];
         const filtered = (char.tags || []).filter(t => !excludeTags.includes(t));
         tagsEl.innerHTML = filtered.map(t =>
             `<span class="browse-tag">${escapeHtml(t)}</span>`
@@ -1426,6 +1488,22 @@ function initCvView() {
         document.getElementById('cvFiltersDropdown')?.classList.toggle('hidden');
     });
     // Lorebook 3-state radio
+    const filterCheckboxes = [
+        { id: 'cvFilterHideOwned', setter: (v) => cvFilterHideOwned = v, getter: () => cvFilterHideOwned },
+        { id: 'cvFilterHidePossible', setter: (v) => cvFilterHidePossible = v, getter: () => cvFilterHidePossible },
+    ];
+    for (const { id, setter, getter } of filterCheckboxes) {
+        const cb = document.getElementById(id);
+        if (!cb) continue;
+        cb.checked = getter();
+        cb.addEventListener('change', (e) => {
+            setter(e.target.checked);
+            updateCvFiltersBtn();
+            renderCvGrid(false);
+        });
+    }
+    updateCvFiltersBtn();
+
     document.querySelectorAll('input[name="cvLorebookMode"]').forEach(input => {
         input.addEventListener('change', (e) => {
             if (!e.target.checked) return;

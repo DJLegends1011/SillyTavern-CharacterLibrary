@@ -211,7 +211,8 @@ export async function fetchCvCards({
     tags = '',
     creator = '',
     nsfw = false,
-    has_book = false,
+    has_book = null,
+    exclude_tags = '',
     sort = 'most_downloaded',
     limit = 48,
     offset = 0,
@@ -221,7 +222,10 @@ export async function fetchCvCards({
     if (tags) p.set('tags', tags);
     if (creator) p.set('creator', creator);
     if (nsfw !== null && nsfw !== undefined) p.set('nsfw', String(nsfw));
-    if (has_book) p.set('has_book', 'true');
+    // true = with lorebook, false = without; null/undefined = either (a bare truthy check
+    // dropped false, so "No lorebook" silently returned everything)
+    if (has_book !== null && has_book !== undefined) p.set('has_book', String(has_book));
+    if (exclude_tags) p.set('exclude_tags', exclude_tags);
     p.set('sort', sort);
     p.set('limit', String(limit));
     p.set('offset', String(offset));
