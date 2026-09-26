@@ -379,6 +379,18 @@ export async function fetchCvTags() {
 // ========================================
 
 /**
+ * Card fields from a CharaVault card object. full_metadata (and a PNG's embedded card) is either
+ * V2/V3-shaped ({ spec, data: {...} }) or a flat V1 card with the fields at the top level.
+ * @param {Object|null} card
+ * @returns {Object}
+ */
+export function cvCardFields(card) {
+    if (!card || typeof card !== 'object') return {};
+    if (card.data && typeof card.data === 'object') return card.data;
+    return card;
+}
+
+/**
  * Build a V2 character card from a CharaVault card detail response.
  *
  * CharaVault's full_metadata.data is already V2-compatible:
@@ -400,11 +412,13 @@ export async function fetchCvTags() {
  * @param {Object} detail  - Object returned by fetchCvCardDetail()
  * @param {string} fullPath - provider fullPath for the card
  * @param {Object} [searchEntry] - the original search-list row, if available
+ * @param {Object} [embeddedCard] - card parsed from the downloaded PNG; its fields win over
+ *   full_metadata since the PNG is the original upload (lorebook, extensions intact)
  * @returns {Object} V2-spec character card { spec, spec_version, data }
  */
-export function buildCvCharacterCard(detail, fullPath, searchEntry = null) {
+export function buildCvCharacterCard(detail, fullPath, searchEntry = null, embeddedCard = null) {
     const entry = detail?.entry || {};
-    const metaData = detail?.fullMetadata?.data || {};
+    const metaData = { ...cvCardFields(detail?.fullMetadata), ...cvCardFields(embeddedCard) };
 
     const tags = metaData.tags?.length ? metaData.tags : (entry.tags || []);
     const name = metaData.name || entry.name || fullPath.split('/').pop().replace(/\.png$/i, '');
@@ -431,6 +445,8 @@ export function buildCvCharacterCard(detail, fullPath, searchEntry = null) {
             tags,
             creator,
             character_version: metaData.character_version || '',
+            ...(metaData.character_book ? { character_book: metaData.character_book } : {}),
+            ...(Array.isArray(metaData.group_only_greetings) ? { group_only_greetings: metaData.group_only_greetings } : {}),
             extensions: {
                 ...(metaData.extensions || {}),
                 charavault: {

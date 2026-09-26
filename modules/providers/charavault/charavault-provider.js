@@ -16,6 +16,7 @@ import {
     fetchCvCards,
     fetchCvCardDetail,
     buildCvCharacterCard,
+    cvCardFields,
     cvMetadataCache,
 } from './charavault-api.js';
 
@@ -284,24 +285,29 @@ class CharaVaultProvider extends ProviderBase {
             const detail = await fetchCvCardDetail(fullPath);
             if (!detail) throw new Error('Could not fetch character metadata');
 
-            // hitData is the search-list row passed from the browse modal -
-            // it carries `has_lorebook` which is missing from the detail entry.
-            const characterCard = buildCvCharacterCard(detail, fullPath, hitData);
-            const characterName = characterCard.data.name || fullPath.split('/').pop().replace(/\.png$/i, '');
-
-            assignGalleryId(characterCard, options, api);
-
             const { folder, file } = splitCvPath(fullPath);
             const pngUrl = cvDownloadUrl(folder, file);
             let imageBuffer = null;
+            let embeddedCard = null;
             try {
                 const resp = await cvFetch(pngUrl);
                 if (resp.ok) {
                     imageBuffer = await resp.arrayBuffer();
+                    // The original upload's card: importFromPng re-embeds characterCard, so
+                    // anything not copied from here (lorebook etc.) would be lost.
+                    embeddedCard = api?.extractCharacterDataFromPng?.(imageBuffer) || null;
+                    if (!cvCardFields(embeddedCard).name && !cvCardFields(embeddedCard).description) embeddedCard = null;
                 }
             } catch (e) {
                 api?.debugLog?.('[CharaVaultProvider] PNG download:', e.message);
             }
+
+            // hitData is the search-list row passed from the browse modal -
+            // it carries `has_lorebook` which is missing from the detail entry.
+            const characterCard = buildCvCharacterCard(detail, fullPath, hitData, embeddedCard);
+            const characterName = characterCard.data.name || fullPath.split('/').pop().replace(/\.png$/i, '');
+
+            assignGalleryId(characterCard, options, api);
 
             // Fall back to thumbnail if PNG download failed
             if (!imageBuffer) {

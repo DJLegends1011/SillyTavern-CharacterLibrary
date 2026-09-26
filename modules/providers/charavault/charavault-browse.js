@@ -7,6 +7,7 @@ import {
     cvThumbImgUrl,
     cvFullImgUrl,
     getCvSession,
+    cvCardFields,
     isCvNsfwVerified,
     cvFullPath,
     fetchCvCards,
@@ -993,7 +994,7 @@ async function openCvPreview(char) {
     }
 
     try {
-        const meta = detail.fullMetadata?.data || {};
+        const meta = cvCardFields(detail.fullMetadata);
         const entry = detail.entry || {};
         const recs = detail.recommendations || null;
 
