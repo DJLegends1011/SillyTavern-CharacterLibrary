@@ -582,6 +582,7 @@ const DEFAULT_SETTINGS = {
     ctNsfw: false,
     datacatNsfw: false,
     saucepanNsfw: false,
+    charavaultNsfw: 'sfw', // tri-state: 'sfw' | 'nsfw' (only) | 'any'
     saucepanHideExtreme: false,
 
     // ---- Search & Sort ----

@@ -1233,6 +1233,9 @@ function initCvView() {
         sortEl.value = cvSortMode;
         CoreAPI.initCustomSelect?.(sortEl);
     }
+    // Default SFW: NSFW is an explicit opt-in; the last chosen mode is remembered.
+    const savedNsfw = getSetting('charavaultNsfw');
+    cvNsfwMode = ['sfw', 'nsfw', 'any'].includes(savedNsfw) ? savedNsfw : 'sfw';
     updateCvNsfwToggle();
     setupCvGridDelegates();
 
@@ -1276,6 +1279,7 @@ function initCvView() {
     // NSFW toggle (3-state cycle)
     on('cvNsfwToggle', 'click', () => {
         cycleCvNsfwMode();
+        CoreAPI.setSetting('charavaultNsfw', cvNsfwMode);
         updateCvNsfwToggle();
         // CharaVault silently returns SFW-only results to anonymous / unverified callers.
         if (cvNsfwMode !== 'sfw' && !isCvNsfwVerified()) {
