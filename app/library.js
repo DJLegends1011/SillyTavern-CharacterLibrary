@@ -563,6 +563,9 @@ const DEFAULT_SETTINGS = {
     botbooruNsfwAccountSynced: false,
     botbooruUseTagWeights: false,
     ctCookie: null,
+    charavaultAppPassword: null,
+    charavaultGatewayUrl: null,
+    charavaultGatewayKey: null,
     ctAutoKeepAlive: true,
     civitaiApiKey: null,
     pixivCookie: null,
@@ -1919,6 +1922,11 @@ function setupSettingsModal() {
     const botbooruPluginBanner = document.getElementById('botbooruPluginBanner');
     const botbooruSettingsFields = document.getElementById('botbooruSettingsFields');
     const ctCookieInput = document.getElementById('settingsCtCookie');
+    const charavaultAppPasswordInput = document.getElementById('settingsCharavaultAppPassword');
+    const toggleCharavaultAppPasswordVisibility = document.getElementById('toggleCharavaultAppPasswordVisibility');
+    const charavaultGatewayUrlInput = document.getElementById('settingsCharavaultGatewayUrl');
+    const charavaultGatewayKeyInput = document.getElementById('settingsCharavaultGatewayKey');
+    const toggleCharavaultGatewayKeyVisibility = document.getElementById('toggleCharavaultGatewayKeyVisibility');
     const ctPluginBanner = document.getElementById('ctPluginBanner');
     const ctSettingsFields = document.getElementById('ctSettingsFields');
     const ctAutoKeepAliveCheckbox = document.getElementById('settingsCtAutoKeepAlive');
@@ -2459,6 +2467,7 @@ function setupSettingsModal() {
         { id: 'datacat', inputId: 'datacatExcludeTagsInput', pillsId: 'datacatExcludeTagsPills' },
         { id: 'saucepan', inputId: 'saucepanExcludeTagsInput', pillsId: 'saucepanExcludeTagsPills' },
         { id: 'botbooru', inputId: 'botbooruExcludeTagsInput', pillsId: 'botbooruExcludeTagsPills' },
+        { id: 'charavault', inputId: 'charavaultExcludeTagsInput', pillsId: 'charavaultExcludeTagsPills' },
         { id: 'janitorai', inputId: 'janitoraiExcludeTagsInput', pillsId: 'janitoraiExcludeTagsPills' },
     ];
 
@@ -2523,6 +2532,9 @@ function setupSettingsModal() {
         if (pygmalionPasswordInput) pygmalionPasswordInput.value = getSetting('pygmalionPassword') || '';
         if (pygmalionRememberCredsCheckbox) pygmalionRememberCredsCheckbox.checked = getSetting('pygmalionRememberCredentials') || false;
         if (ctCookieInput) ctCookieInput.value = getSetting('ctCookie') || '';
+        if (charavaultAppPasswordInput) charavaultAppPasswordInput.value = getSetting('charavaultAppPassword') || '';
+        if (charavaultGatewayUrlInput) charavaultGatewayUrlInput.value = getSetting('charavaultGatewayUrl') || '';
+        if (charavaultGatewayKeyInput) charavaultGatewayKeyInput.value = getSetting('charavaultGatewayKey') || '';
         if (ctAutoKeepAliveCheckbox) ctAutoKeepAliveCheckbox.checked = getSetting('ctAutoKeepAlive') !== false;
         renderCtSessionTimer();
         if (wyvernEmailInput) wyvernEmailInput.value = getSetting('wyvernEmail') || '';
@@ -3543,6 +3555,9 @@ function setupSettingsModal() {
             botbooruUsername: botbooruUsernameInput ? (botbooruUsernameInput.value || null) : null,
             botbooruPassword: botbooruPasswordInput ? (botbooruPasswordInput.value || null) : null,
             ctCookie: ctCookieInput ? (ctCookieInput.value?.trim() || null) : null,
+            charavaultAppPassword: charavaultAppPasswordInput ? (charavaultAppPasswordInput.value?.trim() || null) : null,
+            charavaultGatewayUrl: charavaultGatewayUrlInput ? (charavaultGatewayUrlInput.value?.trim() || null) : null,
+            charavaultGatewayKey: charavaultGatewayKeyInput ? (charavaultGatewayKeyInput.value?.trim() || null) : null,
             ctAutoKeepAlive: ctAutoKeepAliveCheckbox ? ctAutoKeepAliveCheckbox.checked : true,
             wyvernEmail: wyvernEmailInput ? (wyvernEmailInput.value || null) : null,
             wyvernPassword: wyvernPasswordInput ? (wyvernPasswordInput.value || null) : null,
@@ -3721,6 +3736,9 @@ function setupSettingsModal() {
         if (pygmalionPasswordInput) pygmalionPasswordInput.value = '';
         if (pygmalionRememberCredsCheckbox) pygmalionRememberCredsCheckbox.checked = false;
         if (ctCookieInput) ctCookieInput.value = '';
+        if (charavaultAppPasswordInput) charavaultAppPasswordInput.value = '';
+        if (charavaultGatewayUrlInput) charavaultGatewayUrlInput.value = '';
+        if (charavaultGatewayKeyInput) charavaultGatewayKeyInput.value = '';
         if (wyvernEmailInput) wyvernEmailInput.value = '';
         if (wyvernPasswordInput) wyvernPasswordInput.value = '';
         if (wyvernRememberCredsCheckbox) wyvernRememberCredsCheckbox.checked = false;
@@ -3848,6 +3866,9 @@ function setupSettingsModal() {
             datacatJanitoraiRefreshToken: getSetting('datacatJanitoraiRefreshToken') || null,
             saucepanToken: getSetting('saucepanToken') || null,
             ctCookie: getSetting('ctCookie') || null,
+            charavaultAppPassword: getSetting('charavaultAppPassword') || null,
+            charavaultGatewayUrl: getSetting('charavaultGatewayUrl') || null,
+            charavaultGatewayKey: getSetting('charavaultGatewayKey') || null,
             janitoraiToken: getSetting('janitoraiToken') || null,
             janitoraiRefreshToken: getSetting('janitoraiRefreshToken') || null,
             janitoraiEmail: getSetting('janitoraiEmail') || null,
@@ -3880,6 +3901,21 @@ function setupSettingsModal() {
     // Session Validation - CharacterTavern
     // A textarea cannot be type="password", so this credential masks via .cl-masked-field.
     const toggleCtCookieBtn = document.getElementById('toggleCtCookieVisibility');
+    if (toggleCharavaultAppPasswordVisibility && charavaultAppPasswordInput) {
+        toggleCharavaultAppPasswordVisibility.onclick = () => {
+            const isPassword = charavaultAppPasswordInput.type === 'password';
+            charavaultAppPasswordInput.type = isPassword ? 'text' : 'password';
+            toggleCharavaultAppPasswordVisibility.innerHTML = `<i class="fa-solid fa-eye${isPassword ? '-slash' : ''}"></i>`;
+        };
+    }
+    if (toggleCharavaultGatewayKeyVisibility && charavaultGatewayKeyInput) {
+        toggleCharavaultGatewayKeyVisibility.onclick = () => {
+            const isPassword = charavaultGatewayKeyInput.type === 'password';
+            charavaultGatewayKeyInput.type = isPassword ? 'text' : 'password';
+            toggleCharavaultGatewayKeyVisibility.innerHTML = `<i class="fa-solid fa-eye${isPassword ? '-slash' : ''}"></i>`;
+        };
+    }
+
     if (toggleCtCookieBtn && ctCookieInput) {
         toggleCtCookieBtn.onclick = () => {
             const revealed = ctCookieInput.classList.toggle('revealed');
@@ -16098,6 +16134,7 @@ const ADV_FILTER_PROVIDERS = [
     { value: 'datacat', label: 'DataCat' },
     { value: 'saucepan', label: 'Saucepan' },
     { value: 'botbooru', label: 'Botbooru' },
+    { value: 'charavault', label: 'CharaVault' },
 ];
 
 // ========== FILTER PRESETS ==========
@@ -16662,7 +16699,7 @@ function performSearch() {
     // ========================================================================
     
     // favorite before fav: alternation is first-match, so a token that prefixes another must come second.
-    const prefixPattern = /(?:^|\s)((?:creator|version|gallery|uid|favorite|fav|linked|chub|janitorai|jai|janny|charactertavern|ct|pygmalion|wyvern|datacat|dc|saucepan|botbooru|bb|playlist):(?:[^\s]+))/gi;
+    const prefixPattern = /(?:^|\s)((?:creator|version|gallery|uid|favorite|fav|linked|chub|janitorai|jai|janny|charactertavern|ct|pygmalion|wyvern|datacat|dc|saucepan|botbooru|bb|charavault|cv|playlist):(?:[^\s]+))/gi;
     
     let creatorFilter = null;
     let versionFilter = null;
@@ -16699,7 +16736,7 @@ function performSearch() {
             favoriteFilter = value;
             filterFavoriteYes = value === 'yes' || value === 'true';
             filterFavoriteNo = value === 'no' || value === 'false';
-        } else if (['linked', 'chub', 'janitorai', 'jai', 'janny', 'charactertavern', 'ct', 'pygmalion', 'wyvern', 'datacat', 'dc', 'saucepan', 'botbooru', 'bb'].includes(prefix)) {
+        } else if (['linked', 'chub', 'janitorai', 'jai', 'janny', 'charactertavern', 'ct', 'pygmalion', 'wyvern', 'datacat', 'dc', 'saucepan', 'botbooru', 'bb', 'charavault', 'cv'].includes(prefix)) {
             linkFilterPrefix = prefix;
             linkFilterWantLinked = value === 'yes' || value === 'true' || value === 'linked';
         } else if (prefix === 'playlist') {
@@ -16780,6 +16817,7 @@ function performSearch() {
                     : (linkFilterPrefix === 'datacat' || linkFilterPrefix === 'dc') ? 'datacat'
                     : linkFilterPrefix === 'saucepan' ? 'saucepan'
                     : (linkFilterPrefix === 'botbooru' || linkFilterPrefix === 'bb') ? 'botbooru'
+                    : (linkFilterPrefix === 'charavault' || linkFilterPrefix === 'cv') ? 'charavault'
                     : null;
                 const prov = provId ? window.ProviderRegistry?.getProvider(provId) : null;
                 isLinked = prov ? !!prov.getLinkInfo(c) : false;
@@ -17995,7 +18033,7 @@ function getCharacterBookFromEditor() {
 // Utility Functions
 // ==============================================
 
-const PROVIDER_EXT_KEYS = ['chub', 'janitorai', 'jannyai', 'pygmalion', 'wyvern', 'chartavern', 'datacat', 'saucepan', 'botbooru'];
+const PROVIDER_EXT_KEYS = ['chub', 'janitorai', 'jannyai', 'pygmalion', 'wyvern', 'chartavern', 'datacat', 'saucepan', 'botbooru', 'charavault'];
 
 function getListingNameFromExtensions(char) {
     const ext = char?.data?.extensions;

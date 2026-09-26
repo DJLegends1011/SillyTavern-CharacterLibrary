@@ -2817,6 +2817,10 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
                 if (target.src.endsWith('/img/ai4.png')) return;
                 e.stopPropagation();
                 openAvatarViewer(target.dataset.full || target.src, target.src);
+            } else if (target.id === 'cvCharAvatar') {
+                if (target.src.endsWith('/img/ai4.png')) return;
+                e.stopPropagation();
+                openAvatarViewer(target.dataset.full || target.src, target.src);
             } else if (target.id === 'janitoraiCharAvatar') {
                 if (target.src.endsWith('/img/ai4.png')) return;
                 e.stopPropagation();

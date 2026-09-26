@@ -14,7 +14,7 @@ import CoreAPI from './core-api.js';
 // CSS LOADER
 // ========================================
 
-const MODULE_CSS_VERSION = 82;
+const MODULE_CSS_VERSION = 82.1;
 
 function loadModuleCSS(path) {
     return new Promise((resolve) => {
@@ -361,6 +361,7 @@ async function initModuleSystem() {
     loadModuleCSS('./providers/datacat/datacat-browse.css');
     loadModuleCSS('./providers/saucepan/saucepan-browse.css');
     loadModuleCSS('./providers/botbooru/botbooru-browse.css');
+    loadModuleCSS('./providers/charavault/charavault-browse.css');
     loadModuleCSS('./providers/janitorai/janitorai-browse.css');
     {
         const providerImports = [
@@ -377,6 +378,7 @@ async function initModuleSystem() {
             { name: 'datacat', load: () => import('./providers/datacat/datacat-provider.js') },
             { name: 'saucepan', load: () => import('./providers/saucepan/saucepan-provider.js') },
             { name: 'botbooru', load: () => import('./providers/botbooru/botbooru-provider.js') },
+            { name: 'charavault', load: () => import('./providers/charavault/charavault-provider.js') },
         ];
         const results = await Promise.allSettled(providerImports.map(p => p.load()));
         for (let i = 0; i < results.length; i++) {

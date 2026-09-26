@@ -996,6 +996,7 @@ const PROVIDER_SOURCE_MAP = [
     ['datacat', 'DataCat'],
     ['saucepan', 'Saucepan'],
     ['botbooru', 'Botbooru'],
+    ['charavault', 'CharaVault'],
 ];
 
 
