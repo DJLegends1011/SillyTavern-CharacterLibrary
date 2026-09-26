@@ -4,102 +4,12 @@
    Grid layout and card base styles live in browse-shared.css.
    ============================================ */
 
-/* NSFW 3-state toggle: SFW only (default), NSFW only, Any */
-#cvNsfwToggle.nsfw-active {
-    background: rgba(231, 76, 60, 0.25);
-    border-color: rgba(231, 76, 60, 0.5);
-    color: #e74c3c;
-}
+/* NSFW toggle, tag list, Features dropdown, creator banner, preview stats bar: all use the
+   shared browse-shared.css components (.nsfw-toggle.active, .browse-tag-filter-item,
+   .browse-features-dropdown, .browse-author-banner, .browse-char-stats). Only
+   CharaVault-only UI lives below. */
 
-#cvNsfwToggle.nsfw-any {
-    background: rgba(155, 89, 182, 0.22);
-    border-color: rgba(155, 89, 182, 0.5);
-    color: #c39bd3;
-}
-
-/* Lorebook badge on cards */
-.cv-badge-lorebook {
-    font-size: 0.7rem;
-    padding: 1px 4px;
-    border-radius: 3px;
-    background: rgba(52, 152, 219, 0.3);
-    color: #5dade2;
-    border: 1px solid rgba(52, 152, 219, 0.4);
-}
-
-/* Tags dropdown filter layout */
-#cvTagsDropdown .browse-tags-list {
-    max-height: 220px;
-    overflow-y: auto;
-}
-
-/* Feature filters */
-#cvFiltersDropdown {
-    width: 240px;
-}
-
-/* Creator banner */
-.cv-creator-banner {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 8px 14px;
-    background: rgba(var(--accent-rgb, 74, 144, 226), 0.08);
-    border: 1px solid rgba(var(--accent-rgb, 74, 144, 226), 0.2);
-    border-radius: 8px;
-    margin-bottom: 10px;
-    gap: 10px;
-}
-
-.cv-creator-banner.hidden {
-    display: none;
-}
-
-.cv-creator-banner-content {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: var(--font-md);
-    color: var(--text-primary, #e0e0e0);
-}
-
-.cv-creator-banner-content i {
-    color: var(--accent, #4a90e2);
-}
-
-.cv-creator-banner-actions {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-}
-
-/* Modal stat grid */
-.cv-modal-stats {
-    display: flex;
-    gap: 16px;
-    flex-wrap: wrap;
-    margin-bottom: 10px;
-}
-
-.cv-modal-stat {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: var(--font-md);
-    color: var(--text-secondary, #aaa);
-}
-
-.cv-modal-stat i {
-    width: 14px;
-    text-align: center;
-    color: var(--accent, #4a90e2);
-}
-
-/* Token count display */
-.cv-token-count {
-    font-variant-numeric: tabular-nums;
-}
-
+/* Vote count after the rating in the preview stats bar */
 .cv-modal-stat-sub {
     margin-left: 4px;
     font-size: 0.85em;

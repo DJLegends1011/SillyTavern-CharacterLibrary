@@ -14,7 +14,7 @@ import CoreAPI from './core-api.js';
 // CSS LOADER
 // ========================================
 
-const MODULE_CSS_VERSION = 82.1;
+const MODULE_CSS_VERSION = 82.2;
 
 function loadModuleCSS(path) {
     return new Promise((resolve) => {

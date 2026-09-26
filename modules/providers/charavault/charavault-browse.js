@@ -81,6 +81,7 @@ let cvFilterHideOwned = false;
 let cvFilterHidePossible = false;
 let cvSelectedChar = null;
 let cvTagFilters = new Set();  // Set of tag names to include
+let cvTagExcludes = new Set(); // Set of tag names to exclude (sent with the Settings excludes)
 let cvGridRenderedCount = 0;
 
 const PAGE_SIZE = 48;
@@ -218,7 +219,7 @@ class CharaVaultBrowseView extends BrowseView {
             </div>
 
             <!-- NSFW 3-state toggle -->
-            <button id="cvNsfwToggle" class="glass-btn nsfw-toggle" title="Cycle NSFW filter (SFW only / NSFW only / Any)">
+            <button id="cvNsfwToggle" class="glass-btn nsfw-toggle" title="Showing SFW only - click to include NSFW">
                 <i class="fa-solid fa-shield-halved"></i> <span>SFW Only</span>
             </button>
 
@@ -257,12 +258,12 @@ class CharaVaultBrowseView extends BrowseView {
                 </div>
 
                 <!-- Creator banner (shown when filtering by creator) -->
-                <div id="cvCreatorBanner" class="cv-creator-banner hidden">
-                    <div class="cv-creator-banner-content">
+                <div id="cvCreatorBanner" class="browse-author-banner hidden">
+                    <div class="browse-author-banner-content">
                         <i class="fa-solid fa-user"></i>
                         <span>Showing characters by <strong id="cvCreatorBannerName"></strong></span>
                     </div>
-                    <div class="cv-creator-banner-actions">
+                    <div class="browse-author-banner-actions">
                         <button id="cvClearCreatorBtn" class="glass-btn icon-only" title="Clear creator filter">
                             <i class="fa-solid fa-times"></i>
                         </button>
@@ -309,32 +310,35 @@ class CharaVaultBrowseView extends BrowseView {
                 </div>
             </div>
             <div class="browse-char-body">
-                <div class="cv-modal-stats">
-                    <div class="cv-modal-stat" title="Average rating / vote count">
-                        <i class="fa-solid fa-star"></i>
-                        <span id="cvCharRating">0.0</span>
-                        <span id="cvCharRatingCount" class="cv-modal-stat-sub"></span>
+                <div class="browse-char-meta-grid">
+                    <div class="browse-char-stats">
+                        <div class="browse-stat" title="Average rating / vote count">
+                            <i class="fa-solid fa-star"></i>
+                            <span id="cvCharRating">0.0</span>
+                            <span id="cvCharRatingCount" class="cv-modal-stat-sub"></span>
+                        </div>
+                        <div class="browse-stat" title="Token count">
+                            <i class="fa-solid fa-text-width"></i>
+                            <span id="cvCharTokens">0</span> tokens
+                        </div>
+                        <div class="browse-stat" id="cvCharDownloadsStat" style="display: none;" title="Total downloads on CharaVault">
+                            <i class="fa-solid fa-download"></i>
+                            <span id="cvCharDownloads">0</span> downloads
+                        </div>
+                        <div class="browse-stat" id="cvCharLorebookStat" style="display: none;" title="Linked lorebook(s)">
+                            <i class="fa-solid fa-book"></i>
+                            <span id="cvCharLorebookText">Lorebook</span>
+                        </div>
+                        <div class="browse-stat" id="cvCharGreetingsStat" style="display: none;" title="Alternate greetings">
+                            <i class="fa-solid fa-comment-dots"></i>
+                            <span id="cvCharGreetingsCount">0</span> greetings
+                        </div>
+                        <div class="browse-stat" id="cvCharNsfwStat" style="display: none;" title="NSFW reasons">
+                            <i class="fa-solid fa-triangle-exclamation"></i>
+                            <span id="cvCharNsfwReasons"></span>
+                        </div>
                     </div>
-                    <div class="cv-modal-stat" title="Token count">
-                        <i class="fa-solid fa-message"></i>
-                        <span id="cvCharTokens" class="cv-token-count">0</span> tokens
-                    </div>
-                    <div class="cv-modal-stat" id="cvCharDownloadsStat" style="display: none;" title="Total downloads on CharaVault">
-                        <i class="fa-solid fa-cloud-arrow-down"></i>
-                        <span id="cvCharDownloads">0</span>
-                    </div>
-                    <div class="cv-modal-stat" id="cvCharLorebookStat" style="display: none;" title="Linked lorebook(s)">
-                        <i class="fa-solid fa-book"></i>
-                        <span id="cvCharLorebookText">Lorebook</span>
-                    </div>
-                    <div class="cv-modal-stat" id="cvCharGreetingsStat" style="display: none;" title="Alternate greetings">
-                        <i class="fa-solid fa-comment-dots"></i>
-                        <span id="cvCharGreetingsCount">0</span> greetings
-                    </div>
-                    <div class="cv-modal-stat" id="cvCharNsfwStat" style="display: none;" title="NSFW reasons">
-                        <i class="fa-solid fa-triangle-exclamation"></i>
-                        <span id="cvCharNsfwReasons"></span>
-                    </div>
+                    <div class="browse-char-tags" id="cvCharTags"></div>
                 </div>
                 <div class="cv-modal-tier" id="cvCharTierBox" style="display: none;">
                     <i class="fa-solid fa-microchip"></i>
@@ -344,7 +348,6 @@ class CharaVaultBrowseView extends BrowseView {
                         <span id="cvCharTierPreset" class="cv-modal-tier-preset"></span>
                     </div>
                 </div>
-                <div class="browse-char-tags" id="cvCharTags"></div>
 
                 <!-- Creator Notes -->
                 <div class="browse-char-section" id="cvCharCreatorNotesSection">
@@ -597,7 +600,7 @@ async function loadCvCharacters(reset = false) {
             tags: tagStr,
             nsfw: nsfwParam,
             has_book: hasBookParam,
-            exclude_tags: getProviderExcludeTags?.('charavault')?.join(',') || '',
+            exclude_tags: [...new Set([...(getProviderExcludeTags?.('charavault') || []), ...cvTagExcludes])].join(','),
             sort: cvSortMode,
             limit: PAGE_SIZE,
             offset: cvCurrentPage * PAGE_SIZE,
@@ -798,25 +801,24 @@ function performCvSearch() {
 // NSFW TOGGLE
 // ========================================
 
+// Shared .nsfw-toggle.active styling (the mobile sheet chip mirrors .active + the <span> label).
+// 'any' reads "NSFW On" like the other providers' two-state toggle; 'nsfw' is the extra
+// NSFW-only step CharaVault's API offers.
 function updateCvNsfwToggle() {
     const btn = document.getElementById('cvNsfwToggle');
     if (!btn) return;
-    btn.classList.remove('nsfw-active', 'nsfw-any');
-    const span = btn.querySelector('span');
-    if (cvNsfwMode === 'nsfw') {
-        btn.classList.add('nsfw-active');
-        if (span) span.textContent = 'NSFW Only';
-    } else if (cvNsfwMode === 'any') {
-        btn.classList.add('nsfw-any');
-        if (span) span.textContent = 'NSFW + SFW';
-    } else {
-        if (span) span.textContent = 'SFW Only';
-    }
+    const on = cvNsfwMode !== 'sfw';
+    btn.classList.toggle('active', on);
+    const label = cvNsfwMode === 'nsfw' ? 'NSFW Only' : on ? 'NSFW On' : 'SFW Only';
+    btn.innerHTML = `<i class="fa-solid ${on ? 'fa-fire' : 'fa-shield-halved'}"></i> <span>${label}</span>`;
+    btn.title = cvNsfwMode === 'sfw' ? 'Showing SFW only - click to include NSFW'
+        : cvNsfwMode === 'any' ? 'Showing SFW + NSFW - click for NSFW only'
+            : 'Showing NSFW only - click for SFW only';
 }
 
 function cycleCvNsfwMode() {
-    // sfw -> nsfw -> any -> sfw
-    cvNsfwMode = cvNsfwMode === 'sfw' ? 'nsfw' : cvNsfwMode === 'nsfw' ? 'any' : 'sfw';
+    // sfw -> any -> nsfw -> sfw: the first click matches the other providers' "NSFW On"
+    cvNsfwMode = cvNsfwMode === 'sfw' ? 'any' : cvNsfwMode === 'any' ? 'nsfw' : 'sfw';
 }
 
 // ========================================
@@ -852,23 +854,28 @@ function renderCvTagsList(filter) {
         return;
     }
 
-    const fragment = document.createDocumentFragment();
-    for (const [tag, count] of top) {
-        const active = cvTagFilters.has(tag);
-        const el = document.createElement('button');
-        el.className = `browse-tag-pill${active ? ' active' : ''}`;
-        el.dataset.tag = tag;
-        el.title = `${tag} (${formatNumber(count)})`;
-        el.textContent = tag;
-        fragment.appendChild(el);
-    }
-    list.innerHTML = '';
-    list.appendChild(fragment);
+    list.innerHTML = top.map(([tag, count]) => {
+        const [stateClass, stateIcon, stateTitle] = cvTagFilters.has(tag)
+            ? ['state-include', '<i class="fa-solid fa-plus"></i>', 'Included - click to exclude']
+            : cvTagExcludes.has(tag)
+                ? ['state-exclude', '<i class="fa-solid fa-minus"></i>', 'Excluded - click to clear']
+                : ['state-neutral', '', 'Click to include'];
+        return `
+            <div class="browse-tag-filter-item" data-tag="${escapeHtml(tag)}">
+                <button class="browse-tag-state-btn ${stateClass}" title="${stateTitle}">${stateIcon}</button>
+                <span class="tag-label">${escapeHtml(tag)}</span>
+                <span class="tag-count">${formatNumber(count)}</span>
+            </div>`;
+    }).join('');
 }
 
 function toggleCvTag(tag) {
+    // Cycle: neutral -> include -> exclude -> neutral (same as the other providers)
     if (cvTagFilters.has(tag)) {
         cvTagFilters.delete(tag);
+        cvTagExcludes.add(tag);
+    } else if (cvTagExcludes.has(tag)) {
+        cvTagExcludes.delete(tag);
     } else {
         cvTagFilters.add(tag);
     }
@@ -881,8 +888,9 @@ function updateCvTagsBtn() {
     const label = document.getElementById('cvTagsBtnLabel');
     const btn = document.getElementById('cvTagsBtn');
     if (!label || !btn) return;
-    if (cvTagFilters.size > 0) {
-        label.textContent = `Tags (${cvTagFilters.size})`;
+    const count = cvTagFilters.size + cvTagExcludes.size;
+    if (count > 0) {
+        label.textContent = `Tags (${count})`;
         btn.classList.add('active');
     } else {
         label.textContent = 'Tags';
@@ -1530,6 +1538,7 @@ function initCvView() {
 
     on('cvTagsClearBtn', 'click', () => {
         cvTagFilters.clear();
+        cvTagExcludes.clear();
         updateCvTagsBtn();
         const searchInput = document.getElementById('cvTagsSearchInput');
         if (searchInput) searchInput.value = '';
@@ -1540,8 +1549,8 @@ function initCvView() {
     const tagsList = document.getElementById('cvTagsList');
     if (tagsList) {
         tagsList.addEventListener('click', (e) => {
-            const pill = e.target.closest('.browse-tag-pill');
-            if (pill) toggleCvTag(pill.dataset.tag);
+            const item = e.target.closest('.browse-tag-filter-item');
+            if (item) toggleCvTag(item.dataset.tag);
         });
     }
 
