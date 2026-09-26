@@ -307,7 +307,7 @@ class CharaVaultBrowseView extends BrowseView {
                     </div>
                 </div>
                 <div class="modal-controls">
-                    <a id="cvOpenInBrowserBtn" href="#" target="_blank" class="action-btn secondary" title="Open on CharaVault">
+                    <a id="cvOpenInBrowserBtn" href="#" target="_blank" class="action-btn secondary" title="Open the card PNG on CharaVault (the site has no per-card page)">
                         <i class="fa-solid fa-external-link"></i> Open
                     </a>
                     <button id="cvDownloadBtn" class="action-btn primary" title="Import to SillyTavern">

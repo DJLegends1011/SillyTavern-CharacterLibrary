@@ -93,6 +93,8 @@ class CharaVaultProvider extends ProviderBase {
         }
     }
 
+    // charavault.net has no per-card page (its card view is a modal with no URL, and it reads no
+    // query params), so the closest external link is the card PNG itself.
     getCharacterUrl(linkInfo) {
         if (!linkInfo?.fullPath) return null;
         const { folder, file } = splitCvPath(linkInfo.fullPath);
