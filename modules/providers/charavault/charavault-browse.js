@@ -333,7 +333,7 @@ class CharaVaultBrowseView extends BrowseView {
                             <i class="fa-solid fa-comment-dots"></i>
                             <span id="cvCharGreetingsCount">0</span> greetings
                         </div>
-                        <div class="browse-stat" id="cvCharNsfwStat" style="display: none;" title="NSFW reasons">
+                        <div class="browse-stat cv-nsfw-reasons" id="cvCharNsfwStat" style="display: none;" title="NSFW reasons - tap to expand">
                             <i class="fa-solid fa-triangle-exclamation"></i>
                             <span id="cvCharNsfwReasons"></span>
                         </div>
@@ -986,6 +986,7 @@ async function openCvPreview(char) {
         const reasons = (char.nsfw_reasons || []).filter(Boolean);
         if (char.nsfw && reasons.length > 0) {
             nsfwStat.style.display = '';
+            nsfwStat.classList.remove('expanded');
             if (nsfwReasonsEl) nsfwReasonsEl.textContent = reasons.join(', ');
         } else {
             nsfwStat.style.display = 'none';
@@ -1000,6 +1001,8 @@ async function openCvPreview(char) {
         tagsEl.innerHTML = filtered.map(t =>
             `<span class="browse-tag">${escapeHtml(t)}</span>`
         ).join('');
+        // Measures layout, so run after the modal is shown below
+        requestAnimationFrame(() => applyCvTagsClamp(tagsEl));
     }
 
     if (openBtn) openBtn.href = `https://charavault.net/cards/preview/${encodeURIComponent(char.folder)}/${encodeURIComponent(char.file)}`;
@@ -1283,6 +1286,50 @@ async function loadCvSimilar(diskPath) {
 // INIT EVENT HANDLERS
 // ========================================
 
+// Collapse the preview tag cloud to --browse-tags-max-height with a "..." expander
+// (shared browse-tags-collapsed CSS; same mechanism as the other providers)
+function applyCvTagsClamp(tagsEl) {
+    if (!tagsEl) return;
+
+    tagsEl.querySelector('.browse-tags-more')?.remove();
+    tagsEl.querySelectorAll('.browse-tag-hidden').forEach(tag => tag.classList.remove('browse-tag-hidden'));
+    tagsEl.classList.remove('browse-tags-collapsed', 'browse-tags-expanded');
+
+    const tags = Array.from(tagsEl.querySelectorAll('.browse-tag'));
+    if (!tags.length) return;
+
+    tagsEl.classList.add('browse-tags-collapsed');
+    const maxHeightValue = getComputedStyle(tagsEl).getPropertyValue('--browse-tags-max-height').trim();
+    const maxHeight = parseFloat(maxHeightValue) || tagsEl.clientHeight || 64;
+
+    const overflowIndex = tags.findIndex(tag => tag.offsetTop + tag.offsetHeight > maxHeight + 2);
+    if (overflowIndex === -1) {
+        tagsEl.classList.remove('browse-tags-collapsed');
+        return;
+    }
+
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'browse-tag browse-tags-more';
+    toggle.textContent = '...';
+    toggle.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (tagsEl.classList.contains('browse-tags-collapsed')) {
+            tagsEl.classList.remove('browse-tags-collapsed');
+            tagsEl.classList.add('browse-tags-expanded');
+            tagsEl.querySelectorAll('.browse-tag-hidden').forEach(tag => tag.classList.remove('browse-tag-hidden'));
+            tagsEl.appendChild(toggle);
+        } else {
+            applyCvTagsClamp(tagsEl);
+        }
+    });
+
+    const insertIndex = Math.max(overflowIndex - 1, 0);
+    tagsEl.insertBefore(toggle, tags[insertIndex]);
+    for (let i = insertIndex; i < tags.length; i++) tags[i].classList.add('browse-tag-hidden');
+}
+
 // Import button: In Library / Possible Match / Import, same states as the other providers.
 function updateCvImportButton(char) {
     const btn = document.getElementById('cvDownloadBtn');
@@ -1559,6 +1606,7 @@ function initCvView() {
     cvModalEventsAttached = true;
 
     on('cvCharClose', 'click', closeCvCharPreview);
+    on('cvCharNsfwStat', 'click', (e) => e.currentTarget.classList.toggle('expanded'));
     on('cvCharModal', 'click', (e) => {
         if (e.target.id === 'cvCharModal') closeCvCharPreview();
     });

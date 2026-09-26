@@ -9,6 +9,33 @@
    .browse-features-dropdown, .browse-author-banner, .browse-char-stats). Only
    CharaVault-only UI lives below. */
 
+/* NSFW reasons can be a long list: its own full-width row in the stats bar (the shared
+   .browse-stat is nowrap on mobile, which ran it off-screen), clamped to two lines, tap to expand */
+.browse-char-stats .browse-stat.cv-nsfw-reasons {
+    flex-basis: 100%;
+    min-width: 0;
+    align-items: flex-start;
+    white-space: normal;
+    cursor: pointer;
+}
+
+.browse-char-stats .browse-stat.cv-nsfw-reasons i {
+    margin-top: 0.2em;
+    color: var(--cl-warning-bright);
+}
+
+.browse-char-stats .browse-stat.cv-nsfw-reasons span {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+}
+
+.browse-char-stats .browse-stat.cv-nsfw-reasons.expanded span {
+    -webkit-line-clamp: unset;
+}
+
 /* Vote count after the rating in the preview stats bar */
 .cv-modal-stat-sub {
     margin-left: 4px;
