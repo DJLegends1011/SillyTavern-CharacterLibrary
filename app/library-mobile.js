@@ -1928,8 +1928,28 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
         const genericSortChip = createSettingsSelectChip(
             () => { const ids = window.ProviderRegistry?.getActiveMobileFilterIds?.(); return ids?.sort ? document.getElementById(ids.sort) : null; },
             'Sort By',
+            () => syncGenericSubSort(),
         );
         genericSortSection.appendChild(genericSortChip);
+
+        // Optional sub-sort (eg. Harpy's publish window): same gating as the mode-toggle layout,
+        // mirrored from the real select's browse-filter-hidden. Titled by the real select.
+        const genericSubSortChip = createSettingsSelectChip(
+            () => { const ids = window.ProviderRegistry?.getActiveMobileFilterIds?.(); return ids?.subSort ? document.getElementById(ids.subSort) : null; },
+            (real) => real?.title || 'Sort By',
+        );
+        genericSubSortChip.style.display = 'none';
+        genericSubSortChip.style.marginTop = 'var(--space-sm)';
+        genericSortSection.appendChild(genericSubSortChip);
+
+        function syncGenericSubSort() {
+            const ids = window.ProviderRegistry?.getActiveMobileFilterIds?.();
+            const real = ids?.subSort ? document.getElementById(ids.subSort) : null;
+            const realTarget = real ? (real._customSelect?.container || real) : null;
+            const show = !!realTarget && !realTarget.classList.contains('browse-filter-hidden');
+            if (show) genericSubSortChip._syncLabel();
+            genericSubSortChip.style.display = show ? '' : 'none';
+        }
         genericSection.appendChild(genericProviderLabel);
         genericSection.appendChild(genericSortSection);
 
@@ -2092,6 +2112,7 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
                     const prov = reg?.getActiveProvider?.();
                     genericProviderLabel.textContent = prov ? prov.name : 'Online';
                     genericSortChip._syncLabel();
+                    syncGenericSubSort();
                     syncGenericNsfwState();
                     genericFandomsChip.style.display = ids?.fandoms ? '' : 'none';
                 }
@@ -2149,7 +2170,7 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
             const real = getRealSelect();
             if (!real) return;
             window.openSelectorSheetFromSelect?.(real, {
-                title,
+                title: typeof title === 'function' ? title(real) : title,
                 onSelect: () => { chip._syncLabel(); afterSelect?.(); },
             });
         });
