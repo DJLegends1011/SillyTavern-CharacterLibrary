@@ -576,6 +576,7 @@ const DEFAULT_SETTINGS = {
     datacatNsfw: false,
     saucepanNsfw: false,
     saucepanHideExtreme: false,
+    harpyNsfw: false,
 
     // ---- Search & Sort ----
     defaultSort: 'name_asc',
@@ -654,7 +655,7 @@ const DEFAULT_SETTINGS = {
     providerOrder: null,
     providerDefaults: {},
     infiniteScroll: {},
-    disabledProviders: ['datacat', 'saucepan', 'janitorai'],
+    disabledProviders: ['datacat', 'saucepan', 'janitorai', 'harpy'],
     datacatFollowedCreators: [],
     providerExcludeTags: {},
     tagAliasRules: [],
@@ -2460,6 +2461,7 @@ function setupSettingsModal() {
         { id: 'saucepan', inputId: 'saucepanExcludeTagsInput', pillsId: 'saucepanExcludeTagsPills' },
         { id: 'botbooru', inputId: 'botbooruExcludeTagsInput', pillsId: 'botbooruExcludeTagsPills' },
         { id: 'janitorai', inputId: 'janitoraiExcludeTagsInput', pillsId: 'janitoraiExcludeTagsPills' },
+        { id: 'harpy', inputId: 'harpyExcludeTagsInput', pillsId: 'harpyExcludeTagsPills' },
     ];
 
     function renderExcludeTagPills(providerId, pillsId) {
@@ -16098,6 +16100,7 @@ const ADV_FILTER_PROVIDERS = [
     { value: 'datacat', label: 'DataCat' },
     { value: 'saucepan', label: 'Saucepan' },
     { value: 'botbooru', label: 'Botbooru' },
+    { value: 'harpy', label: 'Harpy' },
 ];
 
 // ========== FILTER PRESETS ==========
@@ -16662,7 +16665,7 @@ function performSearch() {
     // ========================================================================
     
     // favorite before fav: alternation is first-match, so a token that prefixes another must come second.
-    const prefixPattern = /(?:^|\s)((?:creator|version|gallery|uid|favorite|fav|linked|chub|janitorai|jai|janny|charactertavern|ct|pygmalion|wyvern|datacat|dc|saucepan|botbooru|bb|playlist):(?:[^\s]+))/gi;
+    const prefixPattern = /(?:^|\s)((?:creator|version|gallery|uid|favorite|fav|linked|chub|janitorai|jai|janny|charactertavern|ct|pygmalion|wyvern|datacat|dc|saucepan|botbooru|bb|harpy|playlist):(?:[^\s]+))/gi;
     
     let creatorFilter = null;
     let versionFilter = null;
@@ -16699,7 +16702,7 @@ function performSearch() {
             favoriteFilter = value;
             filterFavoriteYes = value === 'yes' || value === 'true';
             filterFavoriteNo = value === 'no' || value === 'false';
-        } else if (['linked', 'chub', 'janitorai', 'jai', 'janny', 'charactertavern', 'ct', 'pygmalion', 'wyvern', 'datacat', 'dc', 'saucepan', 'botbooru', 'bb'].includes(prefix)) {
+        } else if (['linked', 'chub', 'janitorai', 'jai', 'janny', 'charactertavern', 'ct', 'pygmalion', 'wyvern', 'datacat', 'dc', 'saucepan', 'botbooru', 'bb', 'harpy'].includes(prefix)) {
             linkFilterPrefix = prefix;
             linkFilterWantLinked = value === 'yes' || value === 'true' || value === 'linked';
         } else if (prefix === 'playlist') {
@@ -16780,6 +16783,7 @@ function performSearch() {
                     : (linkFilterPrefix === 'datacat' || linkFilterPrefix === 'dc') ? 'datacat'
                     : linkFilterPrefix === 'saucepan' ? 'saucepan'
                     : (linkFilterPrefix === 'botbooru' || linkFilterPrefix === 'bb') ? 'botbooru'
+                    : linkFilterPrefix === 'harpy' ? 'harpy'
                     : null;
                 const prov = provId ? window.ProviderRegistry?.getProvider(provId) : null;
                 isLinked = prov ? !!prov.getLinkInfo(c) : false;
@@ -17995,7 +17999,7 @@ function getCharacterBookFromEditor() {
 // Utility Functions
 // ==============================================
 
-const PROVIDER_EXT_KEYS = ['chub', 'janitorai', 'jannyai', 'pygmalion', 'wyvern', 'chartavern', 'datacat', 'saucepan', 'botbooru'];
+const PROVIDER_EXT_KEYS = ['chub', 'janitorai', 'jannyai', 'pygmalion', 'wyvern', 'chartavern', 'datacat', 'saucepan', 'botbooru', 'harpy'];
 
 function getListingNameFromExtensions(char) {
     const ext = char?.data?.extensions;

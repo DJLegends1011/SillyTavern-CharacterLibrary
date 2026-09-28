@@ -1430,6 +1430,10 @@ https://jannyai.com/characters/uuid_slug
                                     <span>Filter by Botbooru link status</span>
                                 </div>
                                 <div class="info-code-item">
+                                    <code>harpy:yes</code> / <code>harpy:no</code>
+                                    <span>Filter by Harpy link status</span>
+                                </div>
+                                <div class="info-code-item">
                                     <code>janitorai:yes</code> / <code>jai:no</code>
                                     <span>Filter by JanitorAI link status</span>
                                 </div>
@@ -1650,6 +1654,18 @@ https://jannyai.com/characters/uuid_slug
                             </ul>
                             <p>Definitions are extracted natively rather than downloaded as a card file, and that extraction is what needs the token. Some companions have a <strong>locked definition</strong> that is not publicly available; the preview says so, and extraction may return an incomplete body for those.</p>
                             <p><strong>Everything goes through the cl-helper plugin, browsing included</strong>, because saucepan.ai sends no CORS headers at all. Log in under <strong>Settings &rarr; Online &rarr; Saucepan</strong>, or paste a bearer token from your own session. Opening a character that needs authentication turns the preview's import button into <strong>Configure Token</strong>, which takes you to the same place. The token lives in cl-helper's memory and is pushed back automatically after a SillyTavern restart, so you should not need to log in again.</p>
+                        </div>
+                        <div class="info-section" id="helpHarpy">
+                            <h4><i class="fa-solid fa-feather-pointed"></i> Harpy</h4>
+                            <p>Browse harpy.chat with no account. Beta, and off by default.</p>
+                            <ul>
+                                <li>Sort by popularity, recommendations, date, likes, or chats; filter by tags (with exclusions), token count, and NSFW</li>
+                                <li><strong>Creator mode</strong>: search a creator's name, click it on any card, or paste their harpy.chat/u/ profile link</li>
+                                <li>Full imports with every greeting, the showcase as creator's notes, and the character's gallery</li>
+                                <li>Character linking and card updates</li>
+                            </ul>
+                            <p>Harpy's search API leaves definitions out, so they are read from each character's public page. That page sends no CORS headers: it goes through the <strong>cl-helper plugin</strong> (1.13.0+) when installed, otherwise through SillyTavern's CORS proxy. Browsing needs neither.</p>
+                            <p>A creator can <strong>lock</strong> a definition. Locked characters are hidden by default (<strong>Features &rarr; Show Locked Definitions</strong>) and import as incomplete cards: portrait, every greeting, tags and showcase, but no description or scenario. Harpy's pronoun macros such as <code>{{poss}}</code> have no SillyTavern equivalent; they are kept as written and listed in the creator's notes.</p>
                         </div>
                     </div>
 
@@ -3061,6 +3077,32 @@ https://jannyai.com/characters/uuid_slug
                                         <div class="provider-exclude-tags-container">
                                             <div class="provider-exclude-tags-pills" id="saucepanExcludeTagsPills"></div>
                                             <input type="text" class="glass-input provider-exclude-tags-input" id="saucepanExcludeTagsInput" placeholder="Type a tag and press Enter" autocomplete="off">
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </details>
+
+                        <!-- Harpy provider settings -->
+                        <details class="settings-provider-section" id="settingsHarpySection">
+                            <summary>
+                                <i class="fa-solid fa-feather-pointed provider-icon"></i> Harpy
+                                <span class="settings-provider-badge">Beta</span>
+                                <i class="fa-solid fa-chevron-right provider-chevron"></i>
+                            </summary>
+                            <div class="settings-provider-body">
+                                <div class="settings-group">
+                                    <div class="settings-group-title"><i class="fa-solid fa-circle-info"></i> Definitions</div>
+                                    <div class="settings-row">
+                                        <span class="settings-hint">No account needed. Browsing talks to harpy.chat directly; full definitions come from each character's public page, fetched through the cl-helper plugin (1.13.0+) or SillyTavern's CORS proxy when cl-helper is not installed. Characters whose creator locked the definition import as incomplete cards: portrait, every greeting, tags and showcase, no description or scenario.</span>
+                                    </div>
+                                </div>
+                                <div class="settings-group">
+                                    <div class="settings-group-title"><i class="fa-solid fa-ban"></i> Exclude Tags</div>
+                                    <div class="settings-row">
+                                        <div class="provider-exclude-tags-container">
+                                            <div class="provider-exclude-tags-pills" id="harpyExcludeTagsPills"></div>
+                                            <input type="text" class="glass-input provider-exclude-tags-input" id="harpyExcludeTagsInput" placeholder="Type a tag and press Enter" autocomplete="off">
                                         </div>
                                     </div>
                                 </div>

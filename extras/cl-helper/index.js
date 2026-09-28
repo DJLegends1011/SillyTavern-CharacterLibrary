@@ -2021,6 +2021,59 @@ function registerDropboxRoutes(router) {
 }
 
 // =============================================================================
+// Harpy: public character page (RSC payload) for definitions
+// =============================================================================
+//
+// harpy.chat's Supabase views omit definitions, but the character page server-renders the
+// whole card for logged-out visitors. The page sends no CORS headers, so the browser cannot
+// read it; this route fetches only the RSC flight payload (`RSC: 1`, ~80 KB instead of the
+// ~220 KB HTML) and passes it through untouched. Parsing stays client-side (harpy-page.js).
+
+const HARPY_ORIGIN = 'https://harpy.chat';
+const HARPY_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+const HARPY_MAX_BYTES = 4 * 1024 * 1024;
+const HARPY_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function registerHarpyRoutes(router) {
+    router.get('/harpy-page/:id', async (req, res) => {
+        const id = String(req.params.id || '');
+        if (!HARPY_ID_RE.test(id)) {
+            return res.status(400).json({ error: 'Invalid Harpy character id' });
+        }
+        try {
+            const response = await fetch(`${HARPY_ORIGIN}/characters/${id.toLowerCase()}`, {
+                method: 'GET',
+                headers: {
+                    'User-Agent': HARPY_UA,
+                    'Accept': 'text/x-component',
+                    'Accept-Language': 'en-US,en;q=0.9',
+                    'RSC': '1',
+                },
+                redirect: 'follow',
+            });
+            const contentLength = parseInt(response.headers.get('content-length'), 10);
+            if (contentLength > HARPY_MAX_BYTES) {
+                return res.status(502).json({ error: 'Harpy page too large' });
+            }
+            const text = await response.text();
+            if (text.length > HARPY_MAX_BYTES) {
+                return res.status(502).json({ error: 'Harpy page too large' });
+            }
+            if (!response.ok) {
+                console.warn(`[cl-helper] Harpy page returned HTTP ${response.status} for ${id}`);
+            }
+            res.status(response.status);
+            res.set('Content-Type', response.headers.get('content-type') || 'text/x-component; charset=utf-8');
+            res.set('Cache-Control', 'no-store');
+            res.send(text);
+        } catch (err) {
+            console.error('[cl-helper] Harpy page error:', err.message);
+            res.status(502).json({ error: `Failed to reach Harpy: ${err.message}` });
+        }
+    });
+}
+
+// =============================================================================
 // JanitorAI browser endpoint (Chrome DevTools Protocol)
 // =============================================================================
 //
@@ -4310,6 +4363,8 @@ export async function init(router) {
             installPath: __dirname,
             admin: !!req.user?.profile?.admin,
             basicAuth: typeof auth === 'string' && auth.startsWith('Basic '),
+            // Route families a client can probe for instead of comparing version strings
+            features: ['harpy-page'],
         });
     });
 
@@ -4414,6 +4469,7 @@ export async function init(router) {
     registerPixivRoutes(router);
     registerSaucepanRoutes(router);
     registerDropboxRoutes(router);
+    registerHarpyRoutes(router);
     registerJanitoraiBrowserRoutes(router);
 
     console.log('[cl-helper] Character Library helper plugin loaded');

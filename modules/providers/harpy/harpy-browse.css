@@ -1,0 +1,13 @@
+/* Harpy browse view styles.
+ *
+ * The grid, cards, badges, dropdowns and preview reuse browse-shared.css; only
+ * Harpy-specific chrome lives here. */
+
+/* Locked-definition badge: amber so it reads as "caution", not "in library" */
+.browse-feature-badge.harpy-locked-badge {
+    color: var(--cl-warning-bright, #f0a500);
+}
+
+#harpyCharLockedStat {
+    color: var(--cl-warning-bright, #f0a500);
+}

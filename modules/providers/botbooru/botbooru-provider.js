@@ -44,7 +44,7 @@ let _cachedLinkNode = null;
  * import to the WRONG provider. Provenance is recorded in
  * extensions.botbooru.origin/sauce instead, display-only.
  */
-const FOREIGN_PROVIDER_NAMESPACES = ['chub', 'janitorai', 'jannyai', 'chartavern', 'pygmalion', 'wyvern', 'datacat', 'saucepan'];
+const FOREIGN_PROVIDER_NAMESPACES = ['chub', 'janitorai', 'jannyai', 'chartavern', 'pygmalion', 'wyvern', 'datacat', 'saucepan', 'harpy'];
 function stripForeignProviderNamespaces(card) {
     const ext = card?.data?.extensions;
     if (!ext) return;

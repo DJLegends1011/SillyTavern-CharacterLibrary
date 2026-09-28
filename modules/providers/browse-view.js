@@ -8,6 +8,7 @@ import { fetchCharactersByOwner, getCharacterPageUrl } from './pygmalion/pygmali
 import { WYVERN_API_BASE, WYVERN_SITE_BASE, getWyvernHeaders, getWyvernCharName } from './wyvern/wyvern-api.js';
 import { fetchDatacatCreatorCharacters, fetchDatacatCharacter, submitExtraction, fetchExtractionStatus } from './datacat/datacat-api.js';
 import { fetchSaucepanCompanionsOfUser } from './saucepan/saucepan-api.js';
+import { searchHarpy, harpyCharName, harpyCreatorName, harpyCharacterUrl } from './harpy/harpy-api.js';
 import { fetchJanitoraiCharacters } from './janitorai/janitorai-api.js';
 import { meiliMultiSearch } from './janny/janny-api.js';
 import { searchCards, isCtSessionActive, getCtCharName } from './chartavern/chartavern-api.js';
@@ -569,6 +570,49 @@ const CD_ADAPTERS = {
             if (!result.success) return { ok: false, error: result.error || 'Import failed' };
             const summaryArgs = {
                 mediaCharacters: cdHasMedia(result) ? [cdMediaEntry(result, { characterName: result.characterName, fileName: result.fileName })] : [],
+            };
+            return { ok: true, avatarFileName: result.fileName, summaryArgs };
+        },
+    },
+    harpy: {
+        // Exact owner filter (not a keyword search), paged until the listing says it is done.
+        // Locked cards ride along only when the view shows them, and then import incomplete.
+        async fetchAll(view) {
+            const ownerId = view._cdRef?.ownerId;
+            if (!ownerId) return [];
+            const showLocked = document.getElementById('harpyShowLocked')?.checked === true;
+            const nsfw = CoreAPI.getSetting('harpyNsfw') === true;
+            const results = [];
+            const seen = new Set();
+            const PAGE = 100;
+            for (let offset = 0, pages = 0; pages < 50; pages++) {
+                const data = await searchHarpy({ ownerId, nsfw, showLocked, offset, limit: PAGE, sort: 'popular' });
+                for (const row of data.characters) {
+                    if (!row.id || seen.has(row.id)) continue;
+                    seen.add(row.id);
+                    results.push({ key: row.id, name: harpyCharName(row), creator: harpyCreatorName(row) || view._cdRef?.name || '', raw: row });
+                }
+                offset += data.characters.length;
+                if (!data.hasMore || data.characters.length === 0) break;
+            }
+            return results;
+        },
+        async importOne(view, card) {
+            const provider = CoreAPI.getProvider('harpy');
+            if (!provider?.importCharacter) return { ok: false, error: 'Provider not available' };
+            const result = await provider.importCharacter(card.key, card.raw, { allowPartial: card.raw?.is_locked === true });
+            if (!result.success) return { ok: false, error: result.error || 'Import failed' };
+            const summaryArgs = {
+                galleryCharacters: result.hasGallery ? [{
+                    name: result.characterName,
+                    provider,
+                    linkInfo: { providerId: 'harpy', id: result.providerCharId },
+                    url: harpyCharacterUrl(result.providerCharId),
+                    avatar: result.fileName,
+                    galleryId: result.galleryId,
+                    cardData: result.cardData,
+                }] : [],
+                mediaCharacters: cdHasMedia(result) ? [cdMediaEntry(result)] : [],
             };
             return { ok: true, avatarFileName: result.fileName, summaryArgs };
         },
