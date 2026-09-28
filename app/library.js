@@ -577,6 +577,10 @@ const DEFAULT_SETTINGS = {
     saucepanNsfw: false,
     saucepanHideExtreme: false,
     harpyNsfw: false,
+    // Shared capture receiver (Harpy locked definitions): auto | localhost.run | cloudflared | relay
+    captureMode: 'auto',
+    captureRelayUrl: null,
+    captureRelayKey: null,
 
     // ---- Search & Sort ----
     defaultSort: 'name_asc',
@@ -4197,6 +4201,110 @@ function setupSettingsModal() {
                 showToast(`Clear error: ${err.message}`, 'error');
             }
         };
+    }
+
+    // ---- Capture receiver (shared; Harpy's section hosts it) ----
+    // Saved on change, like the JanitorAI endpoint: Test reads the stored values straight back.
+    {
+        const modeSelect = document.getElementById('settingsCaptureMode');
+        const relayUrlInput = document.getElementById('settingsCaptureRelayUrl');
+        const relayKeyInput = document.getElementById('settingsCaptureRelayKey');
+        const relayKeyToggle = document.getElementById('toggleCaptureRelayKeyVisibility');
+        const testBtn = document.getElementById('testCaptureBtn');
+        const checksEl = document.getElementById('captureChecks');
+        const captureMode = () => getSetting('captureMode') || 'auto';
+
+        const renderCaptureChecks = (checks, fatal) => {
+            if (!checksEl) return;
+            if (!checks?.length && !fatal) {
+                checksEl.classList.add('hidden');
+                checksEl.innerHTML = '';
+                return;
+            }
+            checksEl.classList.remove('hidden');
+            checksEl.innerHTML = (checks || []).map(c => `
+                <div class="janitorai-check ${c.ok ? 'ok' : 'fail'}">
+                    <i class="fa-solid ${c.ok ? 'fa-circle-check' : 'fa-circle-xmark'}"></i>
+                    <span class="janitorai-check-label">${escapeHtml(c.label || '')}</span>
+                    ${c.detail ? `<span class="janitorai-check-detail">${escapeHtml(String(c.detail))}</span>` : ''}
+                </div>`).join('') + (fatal
+                ? `<div class="janitorai-check fail"><i class="fa-solid fa-circle-xmark"></i><span class="janitorai-check-label">${escapeHtml(fatal)}</span></div>`
+                : '');
+        };
+
+        const applyCaptureMode = () => {
+            const relay = captureMode() === 'relay';
+            for (const id of ['captureRelayHintRow', 'captureRelayUrlRow', 'captureRelayKeyRow']) {
+                document.getElementById(id)?.classList.toggle('cl-hidden', !relay);
+            }
+            document.getElementById('captureTunnelHintRow')?.classList.toggle('cl-hidden', relay);
+        };
+
+        const refreshCaptureUi = () => {
+            if (modeSelect) {
+                modeSelect.value = captureMode();
+                modeSelect._customSelect?.update?.();
+            }
+            if (relayUrlInput) relayUrlInput.value = getSetting('captureRelayUrl') || '';
+            if (relayKeyInput) relayKeyInput.value = getSetting('captureRelayKey') || '';
+            applyCaptureMode();
+        };
+
+        modeSelect?.addEventListener('change', () => {
+            const allowed = ['auto', 'localhost.run', 'cloudflared', 'relay'];
+            setSetting('captureMode', allowed.includes(modeSelect.value) ? modeSelect.value : 'auto');
+            renderCaptureChecks([], null);
+            applyCaptureMode();
+        });
+        relayUrlInput?.addEventListener('change', () => setSetting('captureRelayUrl', relayUrlInput.value.trim() || null));
+        relayKeyInput?.addEventListener('change', () => setSetting('captureRelayKey', relayKeyInput.value.trim() || null));
+        if (relayKeyToggle && relayKeyInput) {
+            relayKeyToggle.onclick = () => {
+                const isPassword = relayKeyInput.type === 'password';
+                relayKeyInput.type = isPassword ? 'text' : 'password';
+                relayKeyToggle.innerHTML = `<i class="fa-solid fa-eye${isPassword ? '-slash' : ''}"></i>`;
+            };
+        }
+        document.getElementById('settingsHarpySection')?.addEventListener('toggle', (e) => {
+            if (e.target.open) refreshCaptureUi();
+        });
+
+        if (testBtn) {
+            testBtn.onclick = async () => {
+                const mode = captureMode();
+                const relayUrl = (relayUrlInput?.value || '').trim();
+                const relayKey = (relayKeyInput?.value || '').trim();
+                if (mode === 'relay' && (!relayUrl || !relayKey)) {
+                    showToast('Enter the relay URL and key first', 'warning');
+                    return;
+                }
+                if (mode === 'relay') {
+                    setSetting('captureRelayUrl', relayUrl);
+                    setSetting('captureRelayKey', relayKey);
+                }
+                const original = testBtn.innerHTML;
+                testBtn.disabled = true;
+                testBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Testing...';
+                renderCaptureChecks([], null);
+                try {
+                    const resp = await apiRequest('/plugins/cl-helper/capture-test', 'POST', { mode, relayUrl, relayKey });
+                    if (resp.status === 404) throw new Error('This cl-helper has no capture receiver; update it to 1.13.0 or newer');
+                    const data = await resp.json().catch(() => null);
+                    if (!data) throw new Error(`cl-helper answered HTTP ${resp.status}`);
+                    renderCaptureChecks(data.checks, data.checks?.length ? null : data.error);
+                    if (data.ok) showToast(`Capture receiver works (${data.kind})`, 'success');
+                    else showToast('Capture receiver is not usable yet', 'warning');
+                } catch (err) {
+                    renderCaptureChecks([], err.message || 'cl-helper did not answer');
+                    showToast(err.message || 'Capture test failed', 'error');
+                } finally {
+                    testBtn.disabled = false;
+                    testBtn.innerHTML = original;
+                }
+            };
+        }
+
+        refreshCaptureUi();
     }
 
     // ---- Saucepan Account (native extraction) ----

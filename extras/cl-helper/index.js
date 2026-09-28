@@ -4,10 +4,11 @@
 // custom headers (like Origin) that browsers forbid setting.
 // Also provides gallery thumbnail generation via ST's bundled jimp.
 
-import { randomUUID } from 'node:crypto';
+import { randomUUID, randomBytes } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
 import { homedir, tmpdir } from 'node:os';
 import { createServer } from 'node:net';
+import { createServer as createHttpServer } from 'node:http';
 import { join, resolve, sep, dirname } from 'node:path';
 import { existsSync, mkdirSync, readdirSync, rmSync, readFileSync, lstatSync, realpathSync } from 'node:fs';
 import { stat, lstat, readFile, writeFile, rename, unlink, readdir, open } from 'node:fs/promises';
@@ -2069,6 +2070,363 @@ function registerHarpyRoutes(router) {
         } catch (err) {
             console.error('[cl-helper] Harpy page error:', err.message);
             res.status(502).json({ error: `Failed to reach Harpy: ${err.message}` });
+        }
+    });
+}
+
+// =============================================================================
+// Capture receiver (shared): catch the prompt a site's SERVER sends to a user proxy
+// =============================================================================
+//
+// Some sites (Harpy, Saucepan) build the chat prompt server-side and POST it to a custom
+// OpenAI-compatible endpoint the user configures. Pointing that endpoint here yields the full
+// character definition. The site's server must reach us, so the receiver needs a PUBLIC URL:
+//
+//   built-in  a listener on 127.0.0.1 plus a tunnel: localhost.run over the system ssh (nothing
+//             to install on Windows; `pkg install openssh` on Termux), else cloudflared when
+//             ALREADY installed. Nothing is ever downloaded.
+//   relay     extras/capture-relay/run-relay.mjs on a public host: the site posts there, and
+//             this helper fetches the stored request back with the relay key.
+//
+// It cannot be a route on this plugin: ST guards plugin routes with its own auth and CSRF,
+// which a third-party server cannot pass. Secrets never reach the logs: every capture path
+// carries a random 32-byte component and every channel a random API key.
+
+const CAPTURE_REPLY = 'CL_CAPTURE_OK';
+const CAPTURE_MAX_BODY = 4 * 1024 * 1024;
+const CAPTURE_TUNNEL_TIMEOUT = 30000;
+const CAPTURE_READY_TIMEOUT = 20000;
+const CAPTURE_RELAY_POLL_MS = 1500;
+const _captureChildren = new Set();
+
+function captureSecret() {
+    return randomBytes(32).toString('hex');
+}
+
+function sendCompletion(res, body) {
+    let parsed = {};
+    try { parsed = JSON.parse(body || '{}'); } catch {}
+    const id = `chatcmpl-${randomBytes(6).toString('hex')}`;
+    const created = Math.floor(Date.now() / 1000);
+    const model = typeof parsed.model === 'string' ? parsed.model.slice(0, 64) : 'cl-capture';
+    if (parsed.stream) {
+        res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
+        const chunk = (delta, finish = null) => `data: ${JSON.stringify({ id, object: 'chat.completion.chunk', created, model, choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`;
+        res.write(chunk({ role: 'assistant', content: CAPTURE_REPLY }));
+        res.write(chunk({}, 'stop'));
+        res.end('data: [DONE]\n\n');
+        return;
+    }
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({
+        id, object: 'chat.completion', created, model,
+        choices: [{ index: 0, message: { role: 'assistant', content: CAPTURE_REPLY }, finish_reason: 'stop' }],
+        usage: { prompt_tokens: 0, completion_tokens: 1, total_tokens: 1 },
+    }));
+}
+
+function sendModels(res) {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ object: 'list', data: [{ id: 'cl-capture', object: 'model', owned_by: 'character-library' }] }));
+}
+
+/**
+ * Local capture listener on 127.0.0.1:<random>, serving /capture/<secret>/v1.
+ * The first authorized chat completion resolves waitForCapture().
+ */
+export function createCaptureListener({ timeoutMs = 120000, requireKey = true } = {}) {
+    const secret = captureSecret();
+    const apiKey = `cl-${captureSecret()}`;
+    const base = `/capture/${secret}/v1`;
+    let resolveCapture, rejectCapture;
+    const captured = new Promise((res, rej) => { resolveCapture = res; rejectCapture = rej; });
+    captured.catch(() => {});
+    let settled = false;
+    const sockets = new Set();
+
+    const server = createHttpServer((req, res) => {
+        const url = String(req.url || '').split('?')[0];
+        if (!url.startsWith(`${base}/`)) { res.writeHead(404).end(); return; }
+        const route = url.slice(base.length);
+        if (req.method === 'GET' && route === '/models') { sendModels(res); return; }
+        if (req.method !== 'POST' || route !== '/chat/completions') { res.writeHead(404).end(); return; }
+        if (requireKey && req.headers.authorization !== `Bearer ${apiKey}`) { res.writeHead(401).end(); return; }
+
+        const chunks = [];
+        let size = 0;
+        req.on('data', (c) => {
+            size += c.length;
+            if (size > CAPTURE_MAX_BODY) { req.destroy(); return; }
+            chunks.push(c);
+        });
+        req.on('end', () => {
+            const body = Buffer.concat(chunks).toString('utf8');
+            sendCompletion(res, body);
+            if (!settled) {
+                settled = true;
+                resolveCapture({ body, receivedAt: Date.now() });
+            }
+        });
+    });
+    server.on('connection', (s) => { sockets.add(s); s.on('close', () => sockets.delete(s)); });
+
+    const timer = setTimeout(() => {
+        if (!settled) { settled = true; rejectCapture(new Error('Timed out waiting for the site to send its prompt')); }
+    }, timeoutMs);
+    timer.unref?.();
+
+    const ready = new Promise((res, rej) => {
+        server.once('error', rej);
+        server.listen(0, '127.0.0.1', () => res(server.address().port));
+    });
+
+    return {
+        base,
+        apiKey,
+        ready,
+        waitForCapture: () => captured,
+        close: () => new Promise((res) => {
+            clearTimeout(timer);
+            if (!settled) { settled = true; rejectCapture(new Error('Capture cancelled')); }
+            for (const s of sockets) s.destroy();
+            server.close(() => res());
+        }),
+    };
+}
+
+function findCloudflared() {
+    const candidates = [process.env.CLOUDFLARED_PATH, 'cloudflared'];
+    if (process.platform === 'win32') {
+        candidates.push('C:\\Program Files (x86)\\cloudflared\\cloudflared.exe', 'C:\\Program Files\\cloudflared\\cloudflared.exe');
+    }
+    for (const c of candidates.filter(Boolean)) {
+        try {
+            const r = spawnSync(c, ['--version'], { stdio: 'ignore', timeout: 8000, windowsHide: true });
+            if (r.status === 0) return c;
+        } catch {}
+    }
+    return null;
+}
+
+function findSsh() {
+    for (const c of [process.env.CL_SSH_PATH, 'ssh'].filter(Boolean)) {
+        try {
+            const r = spawnSync(c, ['-V'], { stdio: 'ignore', timeout: 8000, windowsHide: true });
+            // ssh -V exits 0 on OpenSSH; some builds print to stderr and still exit 0
+            if (r.status === 0) return c;
+        } catch {}
+    }
+    return null;
+}
+
+/**
+ * Spawn a tunnel process and resolve with the public URL it prints. With readyRe, also wait
+ * for that line: probing a hostname before it exists gets the NXDOMAIN cached by the OS
+ * resolver, and every retry after that fails until the negative cache expires.
+ */
+function spawnTunnel(command, args, urlRe, label, readyRe = null) {
+    return new Promise((resolveUrl, rejectUrl) => {
+        let proc;
+        try {
+            proc = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+        } catch (err) {
+            rejectUrl(new Error(`Could not start ${label}: ${err.message}`));
+            return;
+        }
+        _captureChildren.add(proc);
+        proc.on('exit', () => _captureChildren.delete(proc));
+        let output = '';
+        let done = false;
+        const finish = (err, url) => {
+            if (done) return;
+            done = true;
+            clearTimeout(timer);
+            if (err) { treeKillBrowser(proc); rejectUrl(err); } else resolveUrl({ url, proc });
+        };
+        const onData = (d) => {
+            output = (output + d.toString()).slice(-16384);
+            const m = output.match(urlRe);
+            if (m && (!readyRe || readyRe.test(output))) finish(null, m[1] || m[0]);
+        };
+        proc.stdout.on('data', onData);
+        proc.stderr.on('data', onData);
+        proc.on('error', (err) => finish(new Error(`Could not start ${label}: ${err.message}`)));
+        proc.on('exit', (code) => finish(new Error(`${label} exited before publishing a URL (code ${code ?? 'unknown'})`)));
+        const timer = setTimeout(() => finish(new Error(`Timed out waiting for ${label} to publish a URL`)), CAPTURE_TUNNEL_TIMEOUT);
+    });
+}
+
+async function openLocalhostRunTunnel(port) {
+    const ssh = findSsh();
+    if (!ssh) throw new Error('No ssh client found (Termux: pkg install openssh)');
+    const knownHosts = join(tmpdir(), 'cl-helper-capture-known_hosts');
+    return spawnTunnel(ssh, [
+        '-T',
+        '-o', 'StrictHostKeyChecking=accept-new',
+        '-o', `UserKnownHostsFile=${knownHosts}`,
+        '-o', 'ServerAliveInterval=30',
+        '-o', 'ExitOnForwardFailure=yes',
+        // 127.0.0.1, never "localhost": on Windows that resolves to ::1 while the listener is IPv4-only
+        '-R', `80:127.0.0.1:${port}`,
+        'nokey@localhost.run',
+    // The welcome banner also prints https://admin.localhost.run; only this line is the tunnel
+    ], /tunneled with tls termination, (https:\/\/[a-z0-9.-]+)/i, 'localhost.run');
+}
+
+async function openCloudflaredTunnel(port) {
+    const bin = findCloudflared();
+    if (!bin) throw new Error('cloudflared is not installed');
+    const tunnel = await spawnTunnel(bin, ['tunnel', '--no-autoupdate', '--url', `http://127.0.0.1:${port}`],
+        /https:\/\/[a-z0-9-]+\.trycloudflare\.com\b/i, 'cloudflared', /Registered tunnel connection/i);
+    // "Registered" precedes the hostname's DNS record by a few seconds. Resolving in that gap
+    // gets NXDOMAIN, which the Windows DNS client caches for minutes and fails every retry on.
+    await new Promise(r => setTimeout(r, 5000));
+    return tunnel;
+}
+
+/**
+ * A fresh tunnel can take a few seconds to route; poll /models until OUR listener answers
+ * (a tunnel service's own page answering 200 is not readiness).
+ */
+async function waitTunnelReady(publicBase) {
+    const deadline = Date.now() + CAPTURE_READY_TIMEOUT;
+    let last = '';
+    while (Date.now() < deadline) {
+        try {
+            const r = await fetch(`${publicBase}/models`, { signal: AbortSignal.timeout(8000) });
+            const d = r.ok ? await r.json().catch(() => null) : null;
+            if (d?.data?.[0]?.owned_by === 'character-library') return;
+            last = r.ok ? 'something else answered' : `HTTP ${r.status}`;
+        } catch (err) {
+            last = err.message;
+        }
+        await new Promise(r => setTimeout(r, 1500));
+    }
+    throw new Error(`Tunnel never became reachable (${last || 'no answer'})`);
+}
+
+function relayBase(relayUrl) {
+    let u;
+    try { u = new URL(String(relayUrl || '').trim()); } catch { throw new Error('Relay URL is not a valid URL'); }
+    if (!/^https?:$/.test(u.protocol)) throw new Error('Relay URL must be http(s)');
+    return u.origin + u.pathname.replace(/\/+$/, '');
+}
+
+/**
+ * Open a capture channel. Returns the base URL a site should use as its OpenAI-compatible
+ * endpoint (…/v1), the API key to configure there, and waitForCapture()/close().
+ * @param {{mode?: 'auto'|'localhost.run'|'cloudflared'|'relay', relayUrl?: string, relayKey?: string, timeoutMs?: number, onStep?: Function}} opts
+ */
+export async function openCaptureChannel({ mode = 'auto', relayUrl, relayKey, timeoutMs = 120000, onStep = () => {} } = {}) {
+    if (mode === 'relay') {
+        const origin = relayBase(relayUrl);
+        if (!relayKey) throw new Error('Relay key is required');
+        const slot = captureSecret();
+        const apiKey = `cl-${captureSecret()}`;
+        const auth = { Authorization: `Bearer ${relayKey}` };
+        const health = await fetch(`${origin}/health`, { signal: AbortSignal.timeout(10000) }).then(r => r.json()).catch(() => null);
+        if (health?.relay !== 'cl-capture-relay') throw new Error('No capture relay answered at that URL');
+        onStep('relay reachable');
+        let closed = false;
+        const close = async () => {
+            if (closed) return;
+            closed = true;
+            await fetch(`${origin}/api/capture/${slot}`, { method: 'DELETE', headers: auth, signal: AbortSignal.timeout(8000) }).catch(() => {});
+        };
+        return {
+            kind: 'relay',
+            baseUrl: `${origin}/c/${slot}/v1`,
+            apiKey,
+            waitForCapture: async () => {
+                const deadline = Date.now() + timeoutMs;
+                while (!closed && Date.now() < deadline) {
+                    const r = await fetch(`${origin}/api/capture/${slot}`, { headers: auth, signal: AbortSignal.timeout(10000) }).catch(() => null);
+                    if (r?.status === 200) {
+                        const d = await r.json();
+                        // Anyone can POST to a slot; skip a request that lacks this extraction's key
+                        if (d?.apiKey === apiKey) return { body: d.body, receivedAt: d.receivedAt };
+                        continue;
+                    }
+                    if (r?.status === 401) throw new Error('Relay rejected the relay key');
+                    await new Promise(res => setTimeout(res, CAPTURE_RELAY_POLL_MS));
+                }
+                throw new Error(closed ? 'Capture cancelled' : 'Timed out waiting for the site to send its prompt');
+            },
+            close,
+        };
+    }
+
+    const listener = createCaptureListener({ timeoutMs });
+    const port = await listener.ready;
+    const attempts = mode === 'auto' ? ['localhost.run', 'cloudflared'] : [mode];
+    const errors = [];
+    for (const kind of attempts) {
+        let tunnel = null;
+        try {
+            onStep(`starting ${kind}`);
+            tunnel = kind === 'cloudflared' ? await openCloudflaredTunnel(port) : await openLocalhostRunTunnel(port);
+            const baseUrl = `${tunnel.url}${listener.base}`;
+            await waitTunnelReady(baseUrl);
+            onStep(`${kind} ready`);
+            const proc = tunnel.proc;
+            return {
+                kind,
+                baseUrl,
+                apiKey: listener.apiKey,
+                waitForCapture: listener.waitForCapture,
+                close: async () => {
+                    treeKillBrowser(proc);
+                    await listener.close();
+                },
+            };
+        } catch (err) {
+            if (tunnel?.proc) treeKillBrowser(tunnel.proc);
+            errors.push(`${kind}: ${err.message}`);
+        }
+    }
+    await listener.close();
+    throw new Error(`No public tunnel available. ${errors.join('; ')}`);
+}
+
+function killCaptureChildren() {
+    for (const p of _captureChildren) treeKillBrowserSync(p);
+}
+process.once('exit', killCaptureChildren);
+
+function registerCaptureRoutes(router) {
+    // Settings "Test": open a channel exactly as an extraction would, then play the site's part
+    // by POSTing a fake prompt to the public URL and confirming it comes back. Never returns the
+    // URL or keys; only which transport worked and how long each step took.
+    router.post('/capture-test', async (req, res) => {
+        const { mode, relayUrl, relayKey } = req.body ?? {};
+        const allowed = ['auto', 'localhost.run', 'cloudflared', 'relay'];
+        if (mode && !allowed.includes(mode)) return res.status(400).json({ ok: false, error: 'Unknown capture mode' });
+        const started = Date.now();
+        const checks = [];
+        const step = (label, ok = true, detail = '') => checks.push({ label, ok, detail: detail || `${((Date.now() - started) / 1000).toFixed(1)}s` });
+        let channel = null;
+        try {
+            channel = await openCaptureChannel({
+                mode: mode || 'auto', relayUrl, relayKey, timeoutMs: 30000,
+                onStep: (s) => step(s),
+            });
+            const probe = JSON.stringify({ model: 'cl-capture', stream: true, messages: [{ role: 'user', content: 'capture test' }] });
+            const r = await fetch(`${channel.baseUrl}/chat/completions`, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json', Authorization: `Bearer ${channel.apiKey}` },
+                body: probe,
+                signal: AbortSignal.timeout(20000),
+            });
+            const replyText = await r.text();
+            step('public URL answered like an OpenAI endpoint', r.ok && replyText.includes(CAPTURE_REPLY), r.ok ? '' : `HTTP ${r.status}`);
+            const got = await channel.waitForCapture();
+            step('prompt captured intact', got.body === probe);
+            res.json({ ok: checks.every(c => c.ok), kind: channel.kind, checks });
+        } catch (err) {
+            step(err.message, false);
+            res.json({ ok: false, kind: channel?.kind || null, checks, error: err.message });
+        } finally {
+            await channel?.close().catch(() => {});
         }
     });
 }
@@ -4364,7 +4722,7 @@ export async function init(router) {
             admin: !!req.user?.profile?.admin,
             basicAuth: typeof auth === 'string' && auth.startsWith('Basic '),
             // Route families a client can probe for instead of comparing version strings
-            features: ['harpy-page'],
+            features: ['harpy-page', 'capture'],
         });
     });
 
@@ -4470,6 +4828,7 @@ export async function init(router) {
     registerSaucepanRoutes(router);
     registerDropboxRoutes(router);
     registerHarpyRoutes(router);
+    registerCaptureRoutes(router);
     registerJanitoraiBrowserRoutes(router);
 
     console.log('[cl-helper] Character Library helper plugin loaded');

@@ -1,0 +1,22 @@
+# Character Library capture relay. A starting point, not a turnkey stack.
+#
+#   RELAY_KEY=<long random string> PUBLIC_URL=https://relay.example.com docker compose up -d --build
+#
+# Put HTTPS in front of it (Caddy, nginx, a named tunnel): sites may refuse a plain-http
+# endpoint. With the proxy on this host, publish the port on 127.0.0.1 only, as below.
+services:
+  cl-capture-relay:
+    build: .
+    image: cl-capture-relay:local
+    container_name: cl-capture-relay
+    restart: unless-stopped
+    init: true
+
+    environment:
+      # Without a fixed key the relay prints a new random one on every start.
+      RELAY_KEY: ${RELAY_KEY:-}
+      # The HTTPS address your proxy serves it on; only used for the printed hint.
+      PUBLIC_URL: ${PUBLIC_URL:-}
+
+    ports:
+      - "127.0.0.1:8787:8787"

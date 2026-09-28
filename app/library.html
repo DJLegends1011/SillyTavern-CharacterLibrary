@@ -3098,6 +3098,50 @@ https://jannyai.com/characters/uuid_slug
                                     </div>
                                 </div>
                                 <div class="settings-group">
+                                    <div class="settings-group-title"><i class="fa-solid fa-tower-broadcast"></i> Capture Receiver</div>
+                                    <div class="settings-row">
+                                        <span class="settings-hint">For locked definitions. Harpy's <strong>server</strong> sends a chat prompt, definition included, to a custom API endpoint you configure there, so the endpoint that catches it must be reachable from the internet. cl-helper (1.13.0+) opens one only for the few seconds an extraction takes.</span>
+                                    </div>
+                                    <div class="settings-row">
+                                        <label>Receiver:</label>
+                                        <select id="settingsCaptureMode" class="glass-select" title="How the site reaches the capture receiver">
+                                            <option value="auto">Automatic (localhost.run, then cloudflared)</option>
+                                            <option value="localhost.run">localhost.run (uses your ssh)</option>
+                                            <option value="cloudflared">cloudflared (if installed)</option>
+                                            <option value="relay">My own relay</option>
+                                        </select>
+                                    </div>
+                                    <div class="settings-row" id="captureTunnelHintRow">
+                                        <span class="settings-hint">Automatic needs nothing installed on Windows, macOS or Linux; on Termux run <code>pkg install openssh</code> once. A cloudflared already on this machine is used as the fallback; Character Library never downloads it. Both are third-party tunnels that see the prompt (the card's text and a one-time key) for those few seconds.</span>
+                                    </div>
+                                    <div class="settings-row" id="captureRelayHintRow">
+                                        <span class="settings-hint">Your own public relay instead of a third-party tunnel: run <code>run-relay.mjs</code> from <code>extras/capture-relay/</code> on any host with a public HTTPS address, and paste the URL and key it prints.</span>
+                                    </div>
+                                    <div class="settings-row" id="captureRelayUrlRow">
+                                        <label>Relay URL:</label>
+                                        <div class="settings-input-group">
+                                            <input type="search" class="glass-input" id="settingsCaptureRelayUrl" placeholder="https://relay.example.com" autocomplete="off" spellcheck="false">
+                                        </div>
+                                    </div>
+                                    <div class="settings-row" id="captureRelayKeyRow">
+                                        <label>Relay key:</label>
+                                        <div class="settings-input-group">
+                                            <input type="password" class="glass-input" id="settingsCaptureRelayKey" placeholder="Printed by run-relay.mjs" autocomplete="off" spellcheck="false">
+                                            <button id="toggleCaptureRelayKeyVisibility" class="glass-btn icon-only" title="Show/Hide">
+                                                <i class="fa-solid fa-eye"></i>
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div class="settings-row">
+                                        <button id="testCaptureBtn" class="settings-action-btn" title="Open a receiver and send it a test prompt from the public side">
+                                            <i class="fa-solid fa-plug-circle-check"></i> Test receiver
+                                        </button>
+                                    </div>
+                                    <div class="settings-row">
+                                        <div id="captureChecks" class="janitorai-check-list hidden"></div>
+                                    </div>
+                                </div>
+                                <div class="settings-group">
                                     <div class="settings-group-title"><i class="fa-solid fa-ban"></i> Exclude Tags</div>
                                     <div class="settings-row">
                                         <div class="provider-exclude-tags-container">
