@@ -49,7 +49,8 @@ class HarpyProvider extends ProviderBase {
     get id() { return 'harpy'; }
     get name() { return 'Harpy'; }
     get icon() { return 'fa-solid fa-feather-pointed'; }
-    get iconUrl() { return `${HARPY_SITE_BASE}/favicon.ico`; }
+    // harpy.chat has no /favicon.ico (404); this is the site's own transparent SVG logo
+    get iconUrl() { return `${HARPY_SITE_BASE}/icons/logo.svg`; }
     get beta() { return true; }
     get disabledByDefault() { return true; }
     get enableWarning() {

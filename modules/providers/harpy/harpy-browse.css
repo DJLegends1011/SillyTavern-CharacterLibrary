@@ -8,6 +8,18 @@
     color: var(--cl-warning-bright, #f0a500);
 }
 
+/* Exclusive: Harpy's gold foil accent */
+.browse-feature-badge.harpy-exclusive-badge {
+    color: #e8c07a;
+}
+
 #harpyCharLockedStat {
     color: var(--cl-warning-bright, #f0a500);
 }
+
+/* Published-window select sits beside the sort select, as on Botbooru */
+[data-select-id="harpyTimeframeSelect"] .custom-select-trigger {
+    min-width: 150px;
+}
+
+html.cl-mobile [data-select-id="harpyTimeframeSelect"] .custom-select-trigger { min-width: 0; }

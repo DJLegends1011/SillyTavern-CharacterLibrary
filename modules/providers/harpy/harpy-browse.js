@@ -16,6 +16,7 @@ import {
 import {
     HARPY_PAGE_SIZE,
     HARPY_SORT_OPTIONS,
+    HARPY_TIMEFRAMES,
     searchHarpy,
     fetchHarpyListingRow,
     fetchHarpyTopTags,
@@ -26,6 +27,7 @@ import {
     harpyListingTitle,
     harpyCreatorName,
     harpyAvatarUrl,
+    harpyThumbUrl,
     harpyTags,
     harpyCharacterUrl,
     parseHarpyUrl,
@@ -66,9 +68,11 @@ let harpyIsLoading = false;
 let harpyLoadToken = 0;
 let harpyGridRenderedCount = 0;
 let harpySearch = '';
-let harpySortMode = 'popular';
+let harpySortMode = 'trending';
+let harpyTimeframe = 'all';
 let harpyNsfwEnabled = false;
 let harpyShowLocked = false;
+let harpyExclusiveOnly = false;
 let harpyFilterHideOwned = false;
 let harpyFilterHidePossible = false;
 let harpyMinTokens = 0;
@@ -161,7 +165,7 @@ function createHarpyCard(row) {
     const name = harpyCharName(row);
     const title = harpyListingTitle(row);
     const creator = harpyCreatorName(row);
-    const avatarUrl = harpyAvatarUrl(row) || '/img/ai4.png';
+    const avatarUrl = harpyThumbUrl(row) || '/img/ai4.png';
     const tags = harpyTags(row).slice(0, 3);
     const inLibrary = isCharInLocalLibrary(row);
     const possibleTier = inLibrary ? null : view.getPossibleMatchTier(name, creator);
@@ -172,6 +176,9 @@ function createHarpyCard(row) {
         badges.push('<span class="browse-feature-badge in-library" title="In Your Library"><i class="fa-solid fa-check"></i></span>');
     } else if (possibleMatch) {
         badges.push(`<span class="browse-feature-badge possible-library pl-${possibleTier.tier}" title="${possibleTier.tooltip}"><i class="fa-solid fa-check"></i></span>`);
+    }
+    if (row.exclusive_status === 'approved') {
+        badges.push('<span class="browse-feature-badge harpy-exclusive-badge" title="Harpy Exclusive"><i class="fa-solid fa-gem"></i></span>');
     }
     if (row.is_locked) {
         badges.push(`<span class="browse-feature-badge harpy-locked-badge" title="${escapeHtml(lockedTooltip())}"><i class="fa-solid fa-lock"></i></span>`);
@@ -237,6 +244,8 @@ function buildSearchOpts(offset) {
     return {
         search: harpyCreator ? '' : harpySearch,
         sort: harpySortMode,
+        timeframe: harpyTimeframe,
+        exclusiveOnly: harpyExclusiveOnly,
         offset,
         limit: HARPY_PAGE_SIZE,
         includeTags: [...harpyIncludeTags],
@@ -863,10 +872,23 @@ function updateTagsButton() {
 function updateFiltersButton() {
     const btn = document.getElementById('harpyFiltersBtn');
     if (!btn) return;
-    const count = [harpyShowLocked, harpyFilterHideOwned, harpyFilterHidePossible].filter(Boolean).length;
+    const count = [harpyShowLocked, harpyExclusiveOnly, harpyFilterHideOwned, harpyFilterHidePossible].filter(Boolean).length;
     btn.classList.toggle('has-filters', count > 0);
     const span = btn.querySelector('span');
     if (span) span.textContent = count > 0 ? `Features (${count})` : 'Features';
+}
+
+// ========================================
+// PUBLISHED WINDOW
+// ========================================
+
+// Latest is already ordered by publish date, so the window would only trim the end of the
+// list; hide it there like harpy.chat does. The mobile sheet hides its subSort chip to match.
+function syncTimeframeVisibility() {
+    const el = document.getElementById('harpyTimeframeSelect');
+    if (!el) return;
+    const target = el._customSelect?.container || el;
+    target.classList.toggle('browse-filter-hidden', harpySortMode === 'latest');
 }
 
 // ========================================
@@ -983,7 +1005,16 @@ function initHarpyView() {
     delegatesInitialized = true;
 
     const sortEl = document.getElementById('harpySortSelect');
-    if (sortEl) CoreAPI.initCustomSelect?.(sortEl);
+    if (sortEl) {
+        sortEl.value = harpySortMode;
+        CoreAPI.initCustomSelect?.(sortEl);
+    }
+    const timeframeEl = document.getElementById('harpyTimeframeSelect');
+    if (timeframeEl) {
+        timeframeEl.value = harpyTimeframe;
+        CoreAPI.initCustomSelect?.(timeframeEl);
+    }
+    syncTimeframeVisibility();
 
     const grid = document.getElementById('harpyGrid');
     if (grid) {
@@ -1043,6 +1074,11 @@ function initHarpyView() {
     on('harpySortSelect', 'change', () => {
         const el = document.getElementById('harpySortSelect');
         if (el) harpySortMode = el.value;
+        syncTimeframeVisibility();
+        resetAndLoad();
+    });
+    on('harpyTimeframeSelect', 'change', (e) => {
+        harpyTimeframe = e.target.value;
         resetAndLoad();
     });
     on('harpyRefreshBtn', 'click', () => resetAndLoad());
@@ -1121,6 +1157,7 @@ function initHarpyView() {
     });
     // Locked-definition opt-in; default browsing is open definitions only, as on Saucepan
     bindFilter('harpyShowLocked', v => { harpyShowLocked = v; });
+    bindFilter('harpyExclusiveOnly', v => { harpyExclusiveOnly = v; });
     bindFilter('harpyFilterHideOwned', v => { harpyFilterHideOwned = v; });
     bindFilter('harpyFilterHidePossible', v => { harpyFilterHidePossible = v; });
 
@@ -1215,6 +1252,7 @@ class HarpyBrowseView extends BrowseView {
     get mobileFilterIds() {
         return {
             sort: 'harpySortSelect',
+            subSort: 'harpyTimeframeSelect',
             tags: 'harpyTagsBtn',
             filters: 'harpyFiltersBtn',
             nsfw: 'harpyNsfwToggle',
@@ -1239,6 +1277,9 @@ class HarpyBrowseView extends BrowseView {
             <div class="browse-sort-container">
                 <select id="harpySortSelect" class="glass-select" title="Sort order">
                     ${HARPY_SORT_OPTIONS.map((o, i) => `<option value="${o.value}"${i === 0 ? ' selected' : ''}>${o.emoji} ${o.label}</option>`).join('')}
+                </select>
+                <select id="harpyTimeframeSelect" class="glass-select" title="Published within">
+                    ${HARPY_TIMEFRAMES.map((t, i) => `<option value="${t.value}"${i === 0 ? ' selected' : ''}>📅 ${t.label}</option>`).join('')}
                 </select>
             </div>
 
@@ -1276,6 +1317,9 @@ class HarpyBrowseView extends BrowseView {
                 <div id="harpyFiltersDropdown" class="dropdown-menu browse-features-dropdown hidden" style="width: 250px;">
                     <div class="dropdown-section-title">Definitions:</div>
                     <label class="filter-checkbox" title="${escapeHtml(lockedTooltip())}"><input type="checkbox" id="harpyShowLocked"> <i class="fa-solid fa-lock"></i> Show Locked Definitions</label>
+                    <hr style="margin: 8px 0; border-color: var(--glass-border);">
+                    <div class="dropdown-section-title">Content:</div>
+                    <label class="filter-checkbox" title="Only characters Harpy approved as Exclusive"><input type="checkbox" id="harpyExclusiveOnly"> <i class="fa-solid fa-gem"></i> Exclusive Only</label>
                     <hr style="margin: 8px 0; border-color: var(--glass-border);">
                     <div class="dropdown-section-title">Library:</div>
                     <label class="filter-checkbox"><input type="checkbox" id="harpyFilterHideOwned"> <i class="fa-solid fa-check"></i> Hide Owned Characters</label>
@@ -1446,6 +1490,7 @@ class HarpyBrowseView extends BrowseView {
                 el.value = defaults.sort;
                 el._customSelect?.refresh?.();
             }
+            syncTimeframeVisibility();
         }
         if (defaults.hideOwned) {
             harpyFilterHideOwned = true;
@@ -1469,13 +1514,15 @@ class HarpyBrowseView extends BrowseView {
             harpyIsLoading = false;
             harpyGridRenderedCount = 0;
             harpyShowLocked = false;
+            harpyExclusiveOnly = false;
+            harpyTimeframe = 'all';
             harpyFilterHideOwned = false;
             harpyFilterHidePossible = false;
             harpyIncludeTags = new Set();
             harpyExcludeTags = new Set();
             harpyMinTokens = 0;
             harpyMaxTokens = 0;
-            harpySortMode = 'popular';
+            harpySortMode = 'trending';
             harpyCreator = null;
             harpySelectedChar = null;
             view._cdRef = null;

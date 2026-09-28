@@ -30,25 +30,48 @@ const HARPY_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{1
 
 export const HARPY_PAGE_SIZE = 48;
 
+// harpy.chat's explore page: exactly these three sorts (and the same column for each)
 export const HARPY_SORT_OPTIONS = [
-    { value: 'popular', label: 'Most Popular', order: 'total_interactions.desc.nullslast', emoji: '🔥' },
-    { value: 'recommended', label: 'Recommended', order: 'recommended_score.desc.nullslast', emoji: '✨' },
-    { value: 'newest', label: 'Newest', order: 'published_at.desc.nullslast', emoji: '🆕' },
-    { value: 'likes', label: 'Most Liked', order: 'like_count.desc.nullslast', emoji: '❤️' },
-    { value: 'chats', label: 'Most Chats', order: 'chat_count.desc.nullslast', emoji: '💬' },
-    { value: 'updated', label: 'Recently Updated', order: 'updated_at.desc', emoji: '🕐' },
+    { value: 'trending', label: 'Trending', order: 'trending_score.desc.nullslast', emoji: '🔥' },
+    { value: 'popular', label: 'Most Liked', order: 'like_count.desc.nullslast', emoji: '❤️' },
+    { value: 'latest', label: 'Latest', order: 'published_at.desc.nullslast', emoji: '🆕' },
 ];
 
+// "Published within" window. Harpy hides it for Latest, which is already date-ordered.
+export const HARPY_TIMEFRAMES = [
+    { value: 'all', label: 'Any Time', hours: 0 },
+    { value: '24h', label: 'Past 24 Hours', hours: 24 },
+    { value: '7d', label: 'Past 7 Days', hours: 24 * 7 },
+    { value: '30d', label: 'Past 30 Days', hours: 24 * 30 },
+];
+
+// Browse reads the explore materialized view, as harpy.chat does: it carries trending_score,
+// owner_name and icon paths inline and already holds only public, published cards.
+const EXPLORE_VIEW = 'hub_character_explore_mv';
+const EXPLORE_SELECT = [
+    'id,name,title,tags,token_count,creator,owner_id,owner_name',
+    'is_nsfw,is_nsfw_image,is_locked,is_premium,exclusive_status',
+    'like_count,chat_count,total_interactions,trending_score,created_at,published_at,updated_at',
+    'icon_file_path,icon_thumbnail_path',
+].join(',');
+
+// Single-card lookups use the live view: the explore view lags a refresh behind and has no joins.
 const LISTING_SELECT = [
     'id,name,title,tags,token_count,creator,owner_id',
-    'is_nsfw,is_nsfw_image,is_locked,is_premium',
+    'is_nsfw,is_nsfw_image,is_locked,is_premium,exclusive_status',
     'like_count,chat_count,total_interactions,created_at,published_at,updated_at',
     'icon_asset:hub_assets!icon_asset_id(file_path)',
     'owner_profile:astrsk_users!owner_id(name)',
 ].join(',');
 
-// Every listing excludes drafts and private session copies, as harpy.chat's own browse does.
-const BASE_FILTERS = ['is_public=eq.true', 'is_draft=eq.false', 'session_id=is.null'];
+/** ISO cutoff for a timeframe, rounded down to the hour like harpy.chat (so pages stay stable). */
+function timeframeCutoff(timeframe) {
+    const hours = HARPY_TIMEFRAMES.find(t => t.value === timeframe)?.hours || 0;
+    if (!hours) return null;
+    const now = new Date();
+    now.setUTCMinutes(0, 0, 0);
+    return new Date(now.getTime() - hours * 3600 * 1000).toISOString();
+}
 
 // ========================================
 // SUPABASE REST
@@ -93,7 +116,9 @@ const pgLikeTerm = (s) => String(s).replace(/[,()*%\\]/g, ' ').trim();
 export async function searchHarpy(opts = {}) {
     const {
         search = '',
-        sort = 'popular',
+        sort = 'trending',
+        timeframe = 'all',
+        exclusiveOnly = false,
         offset = 0,
         limit = HARPY_PAGE_SIZE,
         includeTags = [],
@@ -105,9 +130,13 @@ export async function searchHarpy(opts = {}) {
         maxTokens = 0,
     } = opts;
 
-    const filters = [...BASE_FILTERS];
-    if (!nsfw) filters.push('is_nsfw=eq.false');
+    const filters = [];
+    // SFW drops both flags, as harpy.chat does for a signed-in SFW viewer
+    if (!nsfw) filters.push('is_nsfw=eq.false', 'is_nsfw_image=eq.false');
     if (!showLocked) filters.push('is_locked=eq.false');
+    if (exclusiveOnly) filters.push('exclusive_status=eq.approved');
+    const cutoff = sort !== 'latest' ? timeframeCutoff(timeframe) : null;
+    if (cutoff) filters.push(`published_at=gte.${encodeURIComponent(cutoff)}`);
     if (ownerId && HARPY_ID_RE.test(ownerId)) filters.push(`owner_id=eq.${ownerId}`);
     const inc = [...new Set(includeTags.map(normalizeHarpyTag).filter(Boolean))];
     const exc = [...new Set(excludeTags.map(normalizeHarpyTag).filter(Boolean))];
@@ -122,8 +151,8 @@ export async function searchHarpy(opts = {}) {
     }
 
     const order = HARPY_SORT_OPTIONS.find(o => o.value === sort)?.order || HARPY_SORT_OPTIONS[0].order;
-    const query = `/hub_characters_with_likes?select=${encodeURIComponent(LISTING_SELECT)}&${filters.join('&')}`
-        + `&order=${order},id.asc&offset=${offset}&limit=${limit}`;
+    const query = `/${EXPLORE_VIEW}?select=${encodeURIComponent(EXPLORE_SELECT)}${filters.length ? `&${filters.join('&')}` : ''}`
+        + `&order=${order},id.desc&offset=${offset}&limit=${limit}`;
     const { data, total } = await restGet(query, { count: true });
     const characters = Array.isArray(data) ? data : [];
     return {
@@ -314,11 +343,17 @@ export function harpyListingTitle(row) {
 }
 
 export function harpyCreatorName(row) {
-    return row?.owner_profile?.name || row?.creator || '';
+    return row?.owner_profile?.name || row?.owner_name || row?.creator || '';
 }
 
+/** Full-size portrait (preview, import). Rows come from either view or the character page. */
 export function harpyAvatarUrl(row) {
-    return harpyAssetUrl(row?.icon_asset?.file_path || row?.imageFilePath || '') || row?.image || '';
+    return harpyAssetUrl(row?.icon_asset?.file_path || row?.icon_file_path || row?.imageFilePath || '') || row?.image || '';
+}
+
+/** Grid-size portrait: the explore view's thumbnail is 2-3x smaller than the full image. */
+export function harpyThumbUrl(row) {
+    return harpyAssetUrl(row?.icon_thumbnail_path || '') || harpyAvatarUrl(row);
 }
 
 export function harpyTags(row) {
