@@ -2418,7 +2418,7 @@ function registerCaptureRoutes(router) {
                 signal: AbortSignal.timeout(20000),
             });
             const replyText = await r.text();
-            step('public URL answered like an OpenAI endpoint', r.ok && replyText.includes(CAPTURE_REPLY), r.ok ? '' : `HTTP ${r.status}`);
+            step('public URL answers', r.ok && replyText.includes(CAPTURE_REPLY), r.ok ? '' : `HTTP ${r.status}`);
             const got = await channel.waitForCapture();
             step('prompt captured intact', got.body === probe);
             res.json({ ok: checks.every(c => c.ok), kind: channel.kind, checks });
