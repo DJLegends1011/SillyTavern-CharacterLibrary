@@ -2035,7 +2035,343 @@ const HARPY_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (
 const HARPY_MAX_BYTES = 4 * 1024 * 1024;
 const HARPY_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+// ---- Locked definitions: drive harpy.chat's own client in the shared browser -------------------
+//
+// A locked card's definition never reaches a public page, but Harpy's server still puts it in
+// the prompt it sends to a user-configured proxy. One extraction, every write undone at the end:
+//   temporary proxy config (saveProxyConfig) -> chat via startCharacterChat with a sentinel
+//   persona -> pick "My Proxies" in the chat, send "hi" -> capture receiver gets the prompt ->
+//   deleteChatAction + deleteProxyConfig.
+// Server actions are found BY NAME in the chunks the page loaded (their ids change every deploy)
+// and called from inside the page, so they ride Harpy's own session cookie.
+
+const HARPY_SUPABASE = 'https://ehgqxxoeyqsdgquzzond.supabase.co';
+// harpy.chat's own public client key (Supabase anon role), same one its bundle ships
+const HARPY_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVoZ3F4eG9leXFzZGdxdXp6b25kIiwicm9sZSI6ImFub24iLCJpYXQiOjE2OTI5NTM0ODUsImV4cCI6MjAwODUyOTQ4NX0.Cn-jDJqZFnwnhV9H6sBdRj8a3RA_XNWsBrApg4spOis';
+const HARPY_COOKIE = 'sb-ehgqxxoeyqsdgquzzond-auth-token';
+const HARPY_COOKIE_CHUNK_LIMIT = 3180;
+// Harpy substitutes the persona name for {{user}}; a sentinel name round-trips back exactly
+export const HARPY_SENTINEL_PERSONA = 'CLUSER7f3a';
+const HARPY_SENTINEL_DESC = 'Used by Character Library to read locked definitions. Recreated when missing; safe to delete.';
+const HARPY_CONFIG_NAME = 'Character Library (temporary)';
+
+const _harpySessions = new Map(); // email -> GoTrue session
+
+async function harpyPasswordLogin(email, password) {
+    const cached = _harpySessions.get(email);
+    const now = Math.floor(Date.now() / 1000);
+    if (cached?.expires_at && cached.expires_at - now > 120) return cached;
+    let resp;
+    if (cached?.refresh_token) {
+        resp = await fetch(`${HARPY_SUPABASE}/auth/v1/token?grant_type=refresh_token`, {
+            method: 'POST',
+            headers: { apikey: HARPY_ANON_KEY, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ refresh_token: cached.refresh_token }),
+        }).catch(() => null);
+    }
+    if (!resp?.ok) {
+        resp = await fetch(`${HARPY_SUPABASE}/auth/v1/token?grant_type=password`, {
+            method: 'POST',
+            headers: { apikey: HARPY_ANON_KEY, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email, password }),
+        });
+    }
+    const data = await resp.json().catch(() => null);
+    if (!resp.ok || !data?.access_token) {
+        const why = data?.error_description || data?.msg || data?.error || `HTTP ${resp.status}`;
+        throw new Error(`Harpy sign-in failed: ${why}`);
+    }
+    if (!data.expires_at) data.expires_at = now + (data.expires_in || 3600);
+    _harpySessions.set(email, data);
+    return data;
+}
+
+/** Store a GoTrue session the way @supabase/ssr does: base64url behind "base64-", chunked past ~3KB. */
+async function injectHarpySession(page, session) {
+    const value = 'base64-' + Buffer.from(JSON.stringify(session), 'utf8').toString('base64url');
+    const parts = value.length <= HARPY_COOKIE_CHUNK_LIMIT
+        ? [[HARPY_COOKIE, value]]
+        : Array.from({ length: Math.ceil(value.length / HARPY_COOKIE_CHUNK_LIMIT) },
+            (_, n) => [`${HARPY_COOKIE}.${n}`, value.slice(n * HARPY_COOKIE_CHUNK_LIMIT, (n + 1) * HARPY_COOKIE_CHUNK_LIMIT)]);
+    // A stale cookie in the other shape would win the read and pin a dead session
+    for (const name of [HARPY_COOKIE, ...Array.from({ length: 8 }, (_, i) => `${HARPY_COOKIE}.${i}`)]) {
+        try { await page.send('Network.deleteCookies', { name, domain: 'harpy.chat', path: '/' }); } catch {}
+    }
+    for (const [name, chunk] of parts) {
+        await page.send('Network.setCookie', {
+            name, value: chunk, domain: 'harpy.chat', path: '/', secure: true, httpOnly: false, sameSite: 'Lax',
+            expires: session.expires_at + 30 * 24 * 3600,
+        });
+    }
+}
+
+async function harpySignedIn(page) {
+    const t = await page.evaluate(`document.body ? document.body.innerText.slice(0, 4000) : ''`).catch(() => '');
+    return /\bMEMBER\b/.test(t) || /Proxy API configurations/i.test(t);
+}
+
+async function harpyGoto(page, path, settleMs = 2500) {
+    await page.goto(`${HARPY_ORIGIN}${path}`, { timeout: CDP_NAV_TIMEOUT });
+    await new Promise(r => setTimeout(r, settleMs));
+}
+
+/** Server-action ids by name, from the chunks the current page loaded. */
+async function harpyActionIds(page, names) {
+    return page.evaluate(`(async () => {
+        const want = new Set(${JSON.stringify(names)});
+        const urls = performance.getEntriesByType('resource').map(e => e.name).filter(u => /\\/_next\\/static\\/chunks\\/.+\\.js/.test(u));
+        const found = {};
+        const re = /createServerReference\\)\\("([0-9a-f]{40,44})",[\\w.]+\\.callServer,void 0,[\\w.]+\\.findSourceMapURL,"([A-Za-z0-9_]+)"\\)/g;
+        for (const u of urls) {
+            const t = await fetch(u).then(r => r.text()).catch(() => '');
+            for (const m of t.matchAll(re)) if (want.has(m[2])) found[m[2]] = m[1];
+        }
+        return found;
+    })()`, { timeout: 90000 });
+}
+
+/** Call a server action from the current page; returns the action's return value. */
+async function harpyAction(page, ids, name, args) {
+    const id = ids[name];
+    if (!id) throw new Error(`Harpy's page no longer exposes ${name} (site update?)`);
+    const r = await page.evaluate(`(async () => {
+        const r = await fetch(location.pathname + location.search, {
+            method: 'POST',
+            headers: { 'Next-Action': ${JSON.stringify(id)}, 'Accept': 'text/x-component', 'Content-Type': 'text/plain;charset=UTF-8' },
+            body: ${JSON.stringify(JSON.stringify(args))},
+        });
+        const text = await r.text();
+        const rows = {};
+        for (const line of text.split('\\n')) {
+            const m = line.match(/^([0-9a-f]+):(.*)$/);
+            if (!m) continue;
+            try { rows[m[1]] = JSON.parse(m[2]); } catch { rows[m[1]] = m[2]; }
+        }
+        const ref = rows['0'] && typeof rows['0'] === 'object' ? rows['0'].a : null;
+        const key = typeof ref === 'string' && ref.startsWith('$@') ? ref.slice(2) : '1';
+        return { status: r.status, value: rows[key] ?? null };
+    })()`, { timeout: 60000 });
+    if (r.status !== 200) throw new Error(`${name} answered HTTP ${r.status}`);
+    return r.value;
+}
+
+/** The sentinel persona's id, creating it through the Personas page when missing. */
+async function ensureHarpySentinelPersona(page) {
+    const read = async () => {
+        const cap = page.captureResponse(/\/rest\/v1\/hub_user_personas\?/, { timeout: 20000 });
+        await harpyGoto(page, '/profile/personas', 1500);
+        const res = await cap.wait();
+        try { return JSON.parse(res.text || '[]'); } catch { return []; }
+    };
+    let found = (await read()).find(p => p.name === HARPY_SENTINEL_PERSONA);
+    if (found) return found.id;
+
+    const created = await page.evaluate(`(async () => {
+        const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+        const open = [...document.querySelectorAll('button')].find(b => /create your first persona|^\\s*create\\s*$/i.test(b.textContent || ''));
+        if (!open) return 'no create button';
+        open.click();
+        await sleep(800);
+        const name = document.querySelector('input[placeholder*="persona name" i]');
+        const desc = document.querySelector('textarea[placeholder*="persona" i]');
+        if (!name) return 'no name field';
+        const setIn = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+        setIn.call(name, ${JSON.stringify(HARPY_SENTINEL_PERSONA)});
+        name.dispatchEvent(new Event('input', { bubbles: true }));
+        if (desc) {
+            const setTa = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
+            setTa.call(desc, ${JSON.stringify(HARPY_SENTINEL_DESC)});
+            desc.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+        await sleep(300);
+        const submit = [...document.querySelectorAll('button')].find(b => /create persona/i.test(b.textContent || '') && !b.disabled);
+        if (!submit) return 'no submit button';
+        submit.click();
+        await sleep(2000);
+        return 'ok';
+    })()`, { timeout: 30000 });
+    if (created !== 'ok') throw new Error(`Could not create the sentinel persona (${created})`);
+    found = (await read()).find(p => p.name === HARPY_SENTINEL_PERSONA);
+    if (!found) throw new Error('The sentinel persona did not appear after creating it');
+    return found.id;
+}
+
+async function pickHarpyProxyModel(page, configName) {
+    return page.evaluate(`(async () => {
+        const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+        let btn = null;
+        for (let i = 0; i < 20 && !btn; i++) { btn = document.querySelector('button[aria-label="Select model"]'); if (!btn) await sleep(500); }
+        if (!btn) return 'no model selector';
+        btn.click();
+        await sleep(800);
+        const tab = [...document.querySelectorAll('button,[role=tab]')].find(b => /my proxies/i.test(b.textContent || ''));
+        if (!tab) return 'no My Proxies tab';
+        tab.click();
+        await sleep(800);
+        const row = [...document.querySelectorAll('button,[role=option],[role=menuitem],li,div')]
+            .filter(el => (el.textContent || '').includes(${JSON.stringify(configName)}) && el.getClientRects().length)
+            .sort((a, b) => (a.textContent || '').length - (b.textContent || '').length)[0];
+        if (!row) return 'proxy config missing from My Proxies';
+        (row.closest('button,[role=option],[role=menuitem]') || row).click();
+        await sleep(600);
+        return 'ok';
+    })()`, { timeout: 30000 });
+}
+
+async function sendHarpyMessage(page, text) {
+    return page.evaluate(`(async () => {
+        const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+        let ta = null;
+        for (let i = 0; i < 20 && !ta; i++) {
+            ta = [...document.querySelectorAll('textarea')].find(t => /send a message/i.test(t.placeholder || '') && t.getClientRects().length);
+            if (!ta) await sleep(500);
+        }
+        if (!ta) return 'no message box';
+        const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
+        setter.call(ta, ${JSON.stringify(text)});
+        ta.dispatchEvent(new Event('input', { bubbles: true }));
+        await sleep(300);
+        const scope = ta.closest('form') || ta.parentElement?.parentElement?.parentElement || document.body;
+        const send = [...scope.querySelectorAll('button')].filter(b => !b.disabled && b.getClientRects().length).pop();
+        if (!send) return 'no send button';
+        send.click();
+        return 'ok';
+    })()`, { timeout: 20000 });
+}
+
+/**
+ * Split Harpy's captured prompt back into card fields. The scenario is its own "# Scenario"
+ * section of a system message, ending where Harpy appends the persona block; the description
+ * is the "# Character Description" message after its two-line preamble.
+ */
+export function parseHarpyCapture(bodyText, personaName = HARPY_SENTINEL_PERSONA) {
+    const body = JSON.parse(bodyText);
+    const messages = Array.isArray(body.messages) ? body.messages : [];
+    const text = (m) => typeof m?.content === 'string' ? m.content
+        : Array.isArray(m?.content) ? m.content.map(p => p?.text || '').join('') : '';
+    const restore = (s) => s.split(personaName).join('{{user}}').trim();
+
+    const descMsg = messages.map(text).find(t => /^\s*# Character Description/.test(t));
+    if (!descMsg) throw new Error('The captured prompt has no "# Character Description" section (layout changed?)');
+    // "# Character Description" / blank / "Below are X's description." / "Pay attention ..." / blank
+    const descLines = descMsg.split('\n');
+    let start = 1;
+    while (start < descLines.length && (!descLines[start].trim() || /^Below are .+ description\.?$/i.test(descLines[start].trim())
+        || /^Pay attention to all detail/i.test(descLines[start].trim()))) start++;
+    const description = restore(descLines.slice(start).join('\n'));
+
+    let scenario = '';
+    const sys = messages.map(text).find(t => /^# Scenario\s*$/m.test(t));
+    if (sys) {
+        const after = sys.slice(sys.search(/^# Scenario\s*$/m)).replace(/^# Scenario\s*\n/, '');
+        const cut = after.search(new RegExp(`^Below are information about ${personaName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}:`, 'm'));
+        scenario = restore(cut >= 0 ? after.slice(0, cut) : after);
+    }
+    return { description, scenario };
+}
+
+/**
+ * One locked-definition extraction. `session` (a GoTrue session) is injected unless the browser
+ * is already signed in to harpy.chat. `step` receives progress strings (no secrets).
+ */
+export async function harpyExtractLocked(endpoint, { characterId, session = null, capture = {}, step = () => {} }) {
+    const client = await CdpClient.connect(endpoint);
+    let page = null, channel = null, configId = null, chatId = null;
+    const ids = {};
+    try {
+        page = await CdpPage.create(client);
+        await harpyGoto(page, '/profile/chat-settings?tab=api-proxy');
+        if (!await harpySignedIn(page)) {
+            if (!session) throw new Error('The browser is not signed in to Harpy and no Harpy account is set (Settings > Online > Harpy).');
+            await injectHarpySession(page, session);
+            await harpyGoto(page, '/profile/chat-settings?tab=api-proxy');
+            if (!await harpySignedIn(page)) throw new Error('Harpy did not accept the session (sign-in cookie rejected).');
+        }
+        step('signed in');
+
+        const personaId = await ensureHarpySentinelPersona(page);
+        step('sentinel persona ready');
+
+        channel = await openCaptureChannel({ ...capture, timeoutMs: 120000, onStep: (s) => step(s) });
+
+        await harpyGoto(page, '/profile/chat-settings?tab=api-proxy');
+        Object.assign(ids, await harpyActionIds(page, ['saveProxyConfig', 'deleteProxyConfig']));
+        const saved = await harpyAction(page, ids, 'saveProxyConfig', [null, HARPY_CONFIG_NAME, channel.baseUrl, channel.apiKey, 'cl-capture']);
+        configId = saved?.id || null;
+        if (!configId) throw new Error(`Harpy would not save the proxy config (${saved?.error || 'no id'})`);
+        step('temporary proxy config saved');
+
+        await harpyGoto(page, `/characters/${characterId}`);
+        Object.assign(ids, await harpyActionIds(page, ['startCharacterChat']));
+        const started = await harpyAction(page, ids, 'startCharacterChat', [{ hubCharacterId: characterId, hubPersonaId: personaId }]);
+        chatId = started?.chatId || null;
+        if (!chatId) throw new Error(`Harpy would not start a chat (${started?.code || started?.message || 'no chat id'})`);
+        step('chat started');
+
+        await harpyGoto(page, `/chats/${chatId}`, 3500);
+        const picked = await pickHarpyProxyModel(page, HARPY_CONFIG_NAME);
+        if (picked !== 'ok') throw new Error(`Could not select the capture model (${picked})`);
+        const sent = await sendHarpyMessage(page, 'hi');
+        if (sent !== 'ok') throw new Error(`Could not send the chat message (${sent})`);
+        step('message sent');
+
+        const got = await channel.waitForCapture();
+        step('prompt captured');
+        return parseHarpyCapture(got.body);
+    } finally {
+        // Undo every write, whatever failed above
+        if (page && chatId) {
+            try {
+                await harpyGoto(page, '/chats', 2000);
+                Object.assign(ids, await harpyActionIds(page, ['deleteChatAction']));
+                await harpyAction(page, ids, 'deleteChatAction', [chatId]);
+                step('chat deleted');
+            } catch (e) { step(`chat cleanup failed: ${e.message}`); }
+        }
+        if (page && configId) {
+            try {
+                await harpyGoto(page, '/profile/chat-settings?tab=api-proxy', 2000);
+                if (!ids.deleteProxyConfig) Object.assign(ids, await harpyActionIds(page, ['deleteProxyConfig']));
+                await harpyAction(page, ids, 'deleteProxyConfig', [configId]);
+                step('proxy config deleted');
+            } catch (e) { step(`config cleanup failed: ${e.message}`); }
+        }
+        await channel?.close().catch(() => {});
+        if (page) await page.close();
+        client.close();
+    }
+}
+
 function registerHarpyRoutes(router) {
+    // Locked definition via the shared browser. Body: { characterId, email?, password?,
+    // managed|endpoint (browser, as for JanitorAI), capture: { mode, relayUrl, relayKey } }.
+    router.post('/harpy-extract', async (req, res) => {
+        const { characterId, email, password, capture } = req.body ?? {};
+        if (!HARPY_ID_RE.test(String(characterId || ''))) return res.status(400).json({ ok: false, error: 'Invalid Harpy character id' });
+        if ((email && typeof email !== 'string') || (password && typeof password !== 'string')
+            || String(email || '').length > 320 || String(password || '').length > 512) {
+            return res.status(400).json({ ok: false, error: 'Invalid Harpy credentials' });
+        }
+        const steps = [];
+        const started = Date.now();
+        const step = (s) => steps.push(`${((Date.now() - started) / 1000).toFixed(1)}s ${s}`);
+        try {
+            const session = email && password ? await harpyPasswordLogin(email.trim(), password) : null;
+            const endpoint = await resolveBrowserEndpoint(req);
+            if (!endpoint) throw new Error('No browser configured (Settings > Online > JanitorAI > Browser; the same browser serves Harpy).');
+            const result = await harpyExtractLocked(endpoint, {
+                characterId: characterId.toLowerCase(),
+                session,
+                capture: { mode: capture?.mode || 'auto', relayUrl: capture?.relayUrl, relayKey: capture?.relayKey },
+                step,
+            });
+            res.json({ ok: true, ...result, steps });
+        } catch (err) {
+            console.warn('[cl-helper] Harpy extract failed:', err.message);
+            res.status(502).json({ ok: false, error: err.message, steps });
+        }
+    });
+
     router.get('/harpy-page/:id', async (req, res) => {
         const id = String(req.params.id || '');
         if (!HARPY_ID_RE.test(id)) {
@@ -2473,7 +2809,7 @@ function withTimeout(promise, ms, label) {
     ]).finally(() => clearTimeout(timer));
 }
 
-class CdpClient {
+export class CdpClient {
     constructor(ws, info) {
         this.ws = ws;
         this.info = info;
@@ -2565,7 +2901,7 @@ class CdpClient {
     close() { try { this.ws.close(); } catch {} this._closed = true; }
 }
 
-class CdpPage {
+export class CdpPage {
     constructor(client, targetId, sessionId) {
         this.client = client;
         this.targetId = targetId;
@@ -4722,7 +5058,7 @@ export async function init(router) {
             admin: !!req.user?.profile?.admin,
             basicAuth: typeof auth === 'string' && auth.startsWith('Basic '),
             // Route families a client can probe for instead of comparing version strings
-            features: ['harpy-page', 'capture'],
+            features: ['harpy-page', 'capture', 'harpy-extract'],
         });
     });
 
