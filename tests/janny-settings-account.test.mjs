@@ -277,7 +277,7 @@ test('Janny collection randomization is saved and defaults to latest order', () 
     assert.match(js, /jannyRandomizeCollectionCards: false/);
     assert.match(js, /jannyRandomizeCollectionCardsCheckbox\.checked = getSetting\('jannyRandomizeCollectionCards'\) === true/);
     assert.match(js, /jannyRandomizeCollectionCards: jannyRandomizeCollectionCardsCheckbox/);
-    assert.match(html, /Off by default: collection cards keep the order JannyAI shows them in/);
+    assert.match(html, /Off by default: collection cards are sorted by newest character first/);
 });
 
 test('opening the settings modal re-reads shared configuration for both sections', async () => {

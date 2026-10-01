@@ -17,7 +17,7 @@
 import CoreAPI from '../../core-api.js';
 import { formatNumber, skeletonLines } from '../provider-utils.js';
 import { renderCollectionCard, wireCollectionGrid } from '../browse-collection-card.js';
-import { orderJannyCollectionCharacters, orderByIds } from './janny-collection-order.js';
+import { orderJannyCollectionCharacters } from './janny-collection-order.js';
 import { collectionEntryCharacterId, collectionEntryMatchesCharacter } from './janny-collection-membership.js';
 import {
     COLLECTION_COVER_LIMIT as COVER_LIMIT,
@@ -57,7 +57,7 @@ function arrangeCharacters(characters) {
  * @param {Object} host
  * @param {Object} host.api - fetchCollections, fetchCollectionCharacters, fetchPublicCollections,
  *   fetchPublicCollection, fetchCollectorCollections, fetchCharactersByIds, fetchPublicCharactersByIds,
- *   createCollection, updateCollection, deleteCollection, addCharacterToCollection,
+ *   fetchCreatedStamps, createCollection, updateCollection, deleteCollection, addCharacterToCollection,
  *   removeCharacterFromCollection, sessionStatus
  * @param {string} host.siteBase - https://jannyai.com
  * @param {() => import('../browse-view.js').BrowseView} host.getView
@@ -136,6 +136,25 @@ export function createJannyCollections(host) {
             }
         }
         return rows.map(row => row.c).filter(Boolean);
+    }
+
+    /**
+     * Fill createdAtStamp on characters that arrived without a date, so "latest" (the default
+     * order) has something to sort by. A failed lookup only costs the ordering, never the grid.
+     */
+    async function withCreatedDates(chars) {
+        const undated = chars.filter(c => !c.createdAtStamp && !c.createdAt);
+        if (!undated.length || !api.fetchCreatedStamps) return chars;
+        try {
+            const stamps = await api.fetchCreatedStamps(undated);
+            for (const c of undated) {
+                const stamp = stamps.get(String(c.id));
+                if (stamp) c.createdAtStamp = stamp;
+            }
+        } catch (err) {
+            debugLog('[JannyCollections] creation-date lookup failed:', err.message);
+        }
+        return chars;
     }
 
     function loadOwned(force = false) {
@@ -279,19 +298,19 @@ export function createJannyCollections(host) {
                 }
                 const entries = await fetchMembers(view.key, gen);
                 if (token !== view.token || gen !== generation()) return;
-                const chars = await hydrateEntries(entries, gen);
+                const chars = await withCreatedDates(await hydrateEntries(entries, gen));
                 if (token !== view.token || gen !== generation()) return;
                 view.collection = owned.items.find(c => String(c.id) === view.key) || view.collection;
                 view.characters = arrangeCharacters(chars);
             } else {
                 const data = await api.fetchPublicCollection(view.key);
                 if (token !== view.token) return;
-                const ids = Array.isArray(data?.characterIds) ? data.characterIds : [];
-                const fetched = await api.fetchPublicCharactersByIds(ids);
+                const fetched = await api.fetchPublicCharactersByIds(Array.isArray(data?.characterIds) ? data.characterIds : []);
+                if (token !== view.token) return;
+                const chars = await withCreatedDates(fetched.map(normalizeJannyCharacter).filter(Boolean));
                 if (token !== view.token) return;
                 view.collection = { ...view.collection, ...(data?.collection || {}), path: view.key };
-                // characterIds are in page order; get-characters answers in its own
-                view.characters = arrangeCharacters(orderByIds(fetched.map(normalizeJannyCharacter).filter(Boolean), ids));
+                view.characters = arrangeCharacters(chars);
             }
         } catch (err) {
             if (token !== view.token) return;

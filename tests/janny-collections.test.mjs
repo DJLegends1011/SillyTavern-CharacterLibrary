@@ -229,13 +229,18 @@ test('a collection opens with skeleton cards, then its characters', async () => 
     assert.ok(t.observed.includes('jannyCollectionCharGrid'));
 });
 
-test('a public collection shows its characters in JannyAI page order, not get-characters order', async () => {
+test('a public collection opens latest-first using looked-up creation dates', async () => {
+    let lookedUp = [];
     const t = setup({
         api: {
             fetchPublicCollections: async () => ({ collections: [{ id: 'c1', path: '/collections/c1', name: 'My own bots' }], hasMore: false }),
-            fetchPublicCollection: async () => ({ collection: { name: 'My own bots' }, characterIds: ['kobeni', 'alcina', 'jean'] }),
-            // The API answers alphabetically, with no dates
+            // JannyAI's page shuffles on every load and get-characters carries no dates
+            fetchPublicCollection: async () => ({ collection: { name: 'My own bots' }, characterIds: ['alcina', 'kobeni', 'jean'] }),
             fetchPublicCharactersByIds: async () => [{ id: 'alcina', name: 'Alcina' }, { id: 'jean', name: 'Jean Grey' }, { id: 'kobeni', name: 'Kobeni' }],
+            fetchCreatedStamps: async chars => {
+                lookedUp = chars.map(c => c.id);
+                return new Map([['kobeni', 300], ['jean', 200], ['alcina', 100]]);
+            },
         },
     });
     t.ctrl.setOpen(true);
@@ -243,7 +248,23 @@ test('a public collection shows its characters in JannyAI page order, not get-ch
     t.d.openFromDirectory('/collections/c1');
     await settle();
     const order = [...t.el('jannyCollectionCharGrid').innerHTML.matchAll(/data-janny-id="([^"]+)"/g)].map(m => m[1]);
-    assert.deepEqual(order, ['kobeni', 'alcina', 'jean']);
+    assert.deepEqual(order, ['kobeni', 'jean', 'alcina']);
+    assert.deepEqual(lookedUp.sort(), ['alcina', 'jean', 'kobeni']);
+});
+
+test('a failed date lookup still opens the collection', async () => {
+    const t = setup({
+        api: {
+            fetchPublicCollections: async () => ({ collections: [{ id: 'c1', path: '/collections/c1', name: 'One' }], hasMore: false }),
+            fetchPublicCollection: async () => ({ collection: {}, characterIds: ['a', 'b'] }),
+            fetchCreatedStamps: async () => { throw new Error('search down'); },
+        },
+    });
+    t.ctrl.setOpen(true);
+    await settle();
+    t.d.openFromDirectory('/collections/c1');
+    await settle();
+    assert.match(t.el('jannyCollectionCharGrid').innerHTML, /data-janny-id="a"[\s\S]*data-janny-id="b"/);
 });
 
 // ── Directory + navigation ───────────────────────────────────────────
