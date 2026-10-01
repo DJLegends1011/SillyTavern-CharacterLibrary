@@ -1086,7 +1086,9 @@ function initJannyView() {
         jannyCurrentPage = 1;
         loadCharacters(false);
     });
-    on('jannyCollectionsBtn', 'click', () => collections.setOpen(!collections.isOpen()));
+    document.querySelectorAll('.janny-view-btn').forEach(btn => {
+        btn.addEventListener('click', () => collections.setOpen(btn.dataset.jannyView === 'collections'));
+    });
     collections.wire();
 
     // ── Tags dropdown ──
@@ -1497,6 +1499,17 @@ function resolveJannyAvatarUrl(avatar) {
     return `${JANNY_IMAGE_BASE}${src}`;
 }
 
+// Mirrors DataCat's mode toggle: the active Browse/Collections button, and browse-only
+// filters (sort, tags) step aside while Collections is showing.
+function syncJannyViewToggle(collectionsOpen) {
+    document.querySelectorAll('.janny-view-btn').forEach(btn => {
+        btn.classList.toggle('active', (btn.dataset.jannyView === 'collections') === !!collectionsOpen);
+    });
+    const sortEl = document.getElementById('jannySortSelect');
+    (sortEl?._customSelect?.container || sortEl)?.classList.toggle('browse-filter-hidden', !!collectionsOpen);
+    document.getElementById('jannyTagsBtn')?.closest('.browse-tags-dropdown-container')?.classList.toggle('browse-filter-hidden', !!collectionsOpen);
+}
+
 function refreshJannyAccountControlsForSelection() {
     updateJannyBookmarkButton();
     if (jannyAccountStatus.active && !jannyBookmarksLoaded) {
@@ -1540,6 +1553,9 @@ class JannyBrowseView extends BrowseView {
         closePreviewModal();
     }
 
+    // Browse / Collections sit in the mobile sheet's Mode row, like DataCat's Community
+    get hasModeToggle() { return true; }
+
     get mobileFilterIds() {
         return {
             sort: 'jannySortSelect',
@@ -1547,7 +1563,12 @@ class JannyBrowseView extends BrowseView {
             filters: 'jannyFiltersBtn',
             nsfw: 'jannyNsfwToggle',
             refresh: 'jannyRefreshBtn',
-            collections: 'jannyCollectionsBtn'
+            modeBrowseSelector: '.janny-view-btn[data-janny-view="browse"]',
+            extraModes: [{
+                selector: '.janny-view-btn[data-janny-view="collections"]',
+                html: '<i class="fa-solid fa-layer-group"></i> Collections',
+                sort: 'jannyPublicCollectionsSort',
+            }],
         };
     }
 
@@ -1555,6 +1576,16 @@ class JannyBrowseView extends BrowseView {
 
     renderFilterBar() {
         return `
+            <!-- Mode Toggle -->
+            <div class="chub-view-toggle">
+                <button class="janny-view-btn active" data-janny-view="browse" title="Browse all characters">
+                    <i class="fa-solid fa-compass"></i> <span>Browse</span>
+                </button>
+                <button class="janny-view-btn" data-janny-view="collections" title="Public collections and your own">
+                    <i class="fa-solid fa-layer-group"></i> <span>Collections</span>
+                </button>
+            </div>
+
             <!-- Sort -->
             <div class="browse-sort-container">
                 <select id="jannySortSelect" class="glass-select" title="Sort order">
@@ -1619,9 +1650,6 @@ class JannyBrowseView extends BrowseView {
             <!-- NSFW toggle -->
             <button id="jannyNsfwToggle" class="glass-btn nsfw-toggle" title="Toggle NSFW content">
                 <i class="fa-solid fa-shield-halved"></i> <span>SFW Only</span>
-            </button>
-            <button id="jannyCollectionsBtn" class="glass-btn" title="Browse your Janny collections">
-                <i class="fa-solid fa-layer-group"></i> <span>Collections</span>
             </button>
             <!-- Refresh -->
             <button id="jannyRefreshBtn" class="glass-btn icon-only" title="Refresh">
@@ -1910,6 +1938,7 @@ const collections = createJannyCollections({
     openPreview: (character) => openPreviewModal(character),
     closePreview: () => closePreviewModal(),
     filterByAuthor: (name) => filterByAuthor(name),
+    onOpenChange: (open) => syncJannyViewToggle(open),
 });
 
 // Expose for library.js to call from viewOnProvider (linked character preview)

@@ -14,8 +14,8 @@ import CoreAPI from './core-api.js';
 // CSS LOADER
 // ========================================
 
-// 82.2: branch bump (Janny collections rewrite + shared collection-card CSS in browse-shared.css); take upstream's next integer on merge
-const MODULE_CSS_VERSION = 82.2;
+// 82.3: branch bump (Janny collections rewrite + Browse/Collections toggle; shared collection-card CSS in browse-shared.css); take upstream's next integer on merge
+const MODULE_CSS_VERSION = 82.3;
 
 function loadModuleCSS(path) {
     return new Promise((resolve) => {

@@ -54,8 +54,39 @@ test('topbar refresh and infinite scroll follow the collections surface while it
     h.handlers.get('jannyRefreshBtn:click')();
     assert.equal(h.collections.calls.refresh, 1);
     assert.equal(h.run('jannyBrowseView.canLoadMore()'), false);
-    h.handlers.get('jannyCollectionsBtn:click')();
-    assert.equal(h.collections.isOpen(), false, 'the Collections button toggles back to browse');
+});
+
+test('Browse / Collections is a mode toggle at the front of the filter bar, like DataCat', () => {
+    const bar = js.slice(js.indexOf('renderFilterBar() {'), js.indexOf('renderView() {'));
+    assert.ok(bar.indexOf('data-janny-view="collections"') < bar.indexOf('id="jannySortSelect"'), 'mode toggle leads the bar');
+    assert.match(bar, /<div class="chub-view-toggle">[\s\S]*data-janny-view="browse"[\s\S]*data-janny-view="collections"/);
+    assert.doesNotMatch(js, /jannyCollectionsBtn/);
+    assert.match(js, /get hasModeToggle\(\) \{ return true; \}/);
+    assert.match(js, /modeBrowseSelector: '\.janny-view-btn\[data-janny-view="browse"\]'/);
+    assert.match(js, /extraModes: \[\{\s*selector: '\.janny-view-btn\[data-janny-view="collections"\]'/);
+    assert.match(css, /\.janny-view-btn\.active \{/);
+});
+
+test('opening collections flips the toggle and hides browse-only sort and tags', () => {
+    const h = browseHarness();
+    const classes = (initial = []) => {
+        const set = new Set(initial);
+        return { contains: n => set.has(n), toggle: (n, force = !set.has(n)) => (force ? set.add(n) : set.delete(n), force) };
+    };
+    const browseBtn = { dataset: { jannyView: 'browse' }, classList: classes(['active']) };
+    const collBtn = { dataset: { jannyView: 'collections' }, classList: classes() };
+    const tagsBox = { classList: classes() };
+    h.context.document.querySelectorAll = sel => (sel === '.janny-view-btn' ? [browseBtn, collBtn] : []);
+    h.el('jannySortSelect').classList.remove('browse-filter-hidden');
+    h.el('jannyTagsBtn').closest = () => tagsBox;
+    h.collections.host.onOpenChange(true);
+    assert.equal(collBtn.classList.contains('active'), true);
+    assert.equal(browseBtn.classList.contains('active'), false);
+    assert.equal(h.el('jannySortSelect').classList.contains('browse-filter-hidden'), true);
+    assert.equal(tagsBox.classList.contains('browse-filter-hidden'), true);
+    h.collections.host.onOpenChange(false);
+    assert.equal(browseBtn.classList.contains('active'), true);
+    assert.equal(tagsBox.classList.contains('browse-filter-hidden'), false);
 });
 
 test('opening and closing a preview resets and closes the collection picker', () => {

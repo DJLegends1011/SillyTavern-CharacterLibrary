@@ -1771,16 +1771,55 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
             return window.ProviderRegistry?.getActiveMobileFilterIds?.();
         }
 
+        // Optional third+ modes (eg. DataCat Community) come from the provider's extraModes.
+        let extraModeChips = [];
+        function rebuildExtraModes() {
+            extraModeChips.forEach(({ chip }) => chip.remove());
+            extraModeChips = (getIds()?.extraModes || []).map(mode => {
+                const chip = createChip(mode.html);
+                chip.addEventListener('click', () => {
+                    const realBtn = document.querySelector(mode.selector);
+                    if (realBtn) { realBtn.click(); setTimeout(() => { syncMode(); syncSort(); syncMtTags(); }, 100); }
+                    close();
+                });
+                modeRow.appendChild(chip);
+                return { chip, mode };
+            });
+        }
+
+        function getActiveExtraMode() {
+            return extraModeChips.find(({ chip }) => chip.classList.contains('active'))?.mode || null;
+        }
+
         function syncMode() {
             const ids = getIds();
             if (!ids?.modeBrowseSelector) return;
+            // Browse + extra modes only (eg. Janny's Collections): no Following chip
+            followChip.style.display = ids.modeFollowSelector ? '' : 'none';
             const browseBtn = document.querySelector(ids.modeBrowseSelector);
             const followBtn = document.querySelector(ids.modeFollowSelector);
             if (browseBtn) browseChip.classList.toggle('active', browseBtn.classList.contains('active'));
             if (followBtn) followChip.classList.toggle('active', followBtn.classList.contains('active'));
+            extraModeChips.forEach(({ chip, mode }) => {
+                chip.classList.toggle('active', !!document.querySelector(mode.selector)?.classList.contains('active'));
+            });
         }
 
         function syncSort() {
+            const extraMode = getActiveExtraMode();
+            if (extraMode) {
+                // The provider hides its extra-mode sort when it does not apply (eg. inside a collection)
+                const real = extraMode.sort ? document.getElementById(extraMode.sort) : null;
+                const realTarget = real ? (real._customSelect?.container || real) : null;
+                const show = !!realTarget && !realTarget.classList.contains('hidden');
+                if (show) mtExtraSortChip._syncLabel();
+                mtBrowseSortChip.style.display = 'none';
+                mtFollowSortChip.style.display = 'none';
+                mtExtraSortChip.style.display = show ? '' : 'none';
+                mtSortSection.style.display = show ? '' : 'none';
+                return;
+            }
+            mtExtraSortChip.style.display = 'none';
             const isFollowing = followChip.classList.contains('active');
             // Wyvern has no Following-mode sort; gate the whole Sort By section so it doesnt show empty.
             const hasFollowSort = !!getIds()?.timelineSort;
@@ -1841,6 +1880,13 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
         );
         mtFollowSortChip.style.display = 'none';
         mtSortSection.appendChild(mtFollowSortChip);
+
+        const mtExtraSortChip = createSettingsSelectChip(
+            () => { const sortId = getActiveExtraMode()?.sort; return sortId ? document.getElementById(sortId) : null; },
+            'Sort By',
+        );
+        mtExtraSortChip.style.display = 'none';
+        mtSortSection.appendChild(mtExtraSortChip);
         modeToggleSection.appendChild(mtSortSection);
 
         // Filters row (Tags, Features, NSFW)
@@ -1979,25 +2025,10 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
             if (realBtn) { realBtn.click(); setTimeout(syncGenericNsfwState, 100); }
         });
 
-        // Collections (e.g. Janny account collections) - only shown when the active
-        // provider's mobileFilterIds exposes a 'collections' id (hidden toolbar button).
-        const genericCollectionsChip = createChip('<i class="fa-solid fa-layer-group"></i> Collections');
-        genericCollectionsChip.style.display = 'none';
-        genericCollectionsChip.addEventListener('click', () => {
-            const ids = window.ProviderRegistry?.getActiveMobileFilterIds?.();
-            const realBtn = ids?.collections ? document.getElementById(ids.collections) : null;
-            if (realBtn) { close(); setTimeout(() => realBtn.click(), 300); }
-        });
-        function syncGenericCollectionsVisibility() {
-            const ids = window.ProviderRegistry?.getActiveMobileFilterIds?.();
-            genericCollectionsChip.style.display = ids?.collections ? '' : 'none';
-        }
-
         genericFilterRow.appendChild(genericTagsChip);
         genericFilterRow.appendChild(genericFandomsChip);
         genericFilterRow.appendChild(genericFeaturesChip);
         genericFilterRow.appendChild(genericNsfwChip);
-        genericFilterRow.appendChild(genericCollectionsChip);
         genericFilterSection.appendChild(genericFilterRow);
         genericSection.appendChild(genericFilterSection);
 
@@ -2108,7 +2139,6 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
                     genericProviderLabel.textContent = prov ? prov.name : 'Online';
                     genericSortChip._syncLabel();
                     syncGenericNsfwState();
-                    syncGenericCollectionsVisibility();
                     genericFandomsChip.style.display = ids?.fandoms ? '' : 'none';
                 }
 
@@ -2116,6 +2146,7 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
                     // Chips read options live from the real selects at open time; only labels + per-mode visibility refresh here.
                     mtBrowseSortChip._syncLabel();
                     mtFollowSortChip._syncLabel();
+                    rebuildExtraModes();
                     syncMode();
                     syncMtNsfwState();
                     syncSort();

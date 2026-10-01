@@ -47,7 +47,7 @@ function fakeElement(id) {
 }
 
 const SECTION_IDS = [
-    'jannyBrowseSection', 'jannyCollectionsBtn', 'jannyCollectionsDirectory', 'jannyCollectionsHeader',
+    'jannyBrowseSection', 'jannyCollectionsDirectory', 'jannyCollectionsHeader',
     'jannyCollectionsTabs', 'jannyCollectionsPublicBtn', 'jannyCollectionsMineBtn', 'jannyCollectionsPublicTools',
     'jannyCollectionsOwnedTools', 'jannyCollectionsCreateForm', 'jannyCollectionsGrid', 'jannyCollectionsLoadMore',
     'jannyCollectionsLoadMoreBtn', 'jannyCollectionDetail', 'jannyCollectionDetailBanner', 'jannyCollectionEditor',

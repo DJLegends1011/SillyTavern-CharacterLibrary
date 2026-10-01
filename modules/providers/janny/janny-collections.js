@@ -72,6 +72,7 @@ function arrangeCharacters(characters) {
  * @param {(character: Object) => void} host.openPreview
  * @param {() => void} host.closePreview
  * @param {(name: string) => void} host.filterByAuthor
+ * @param {(open: boolean) => void} [host.onOpenChange] - sync the provider's Browse/Collections toggle
  */
 export function createJannyCollections(host) {
     const api = host.api;
@@ -576,7 +577,7 @@ export function createJannyCollections(host) {
         if (!section || !browse) return;
         section.classList.toggle('hidden', !open);
         browse.classList.toggle('hidden', !!open);
-        el('jannyCollectionsBtn')?.classList.toggle('active', !!open);
+        host.onOpenChange?.(!!open);
         if (!open) return;
         if (!nav.length) nav = [{ kind: rootTab }];
         render();
@@ -714,6 +715,9 @@ export function createJannyCollections(host) {
     function setSurface(surface) {
         el('jannyCollectionsDirectory')?.classList.toggle('hidden', surface !== 'directory');
         el('jannyCollectionDetail')?.classList.toggle('hidden', surface !== 'detail');
+        // The mobile sheet's Collections sort chip follows the select's own .hidden
+        const sort = el('jannyPublicCollectionsSort');
+        (sort?._customSelect?.container || sort)?.classList.toggle('hidden', !(surface === 'directory' && current()?.kind === 'public'));
     }
 
     function banner({ back: backAction, backLabel, title, metaHtml = '', actionsHtml = '' }) {

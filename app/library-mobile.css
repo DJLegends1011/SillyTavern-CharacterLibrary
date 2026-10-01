@@ -3476,7 +3476,7 @@ html.cl-mobile .cl-modal-close::before {
 
     /* ====================================================================
        JannyAI collections (mobile). The section renders in #onlineView; the
-       Collections chip in the mobile filter sheet clicks #jannyCollectionsBtn.
+       Collections mode chip in the mobile filter sheet clicks the Collections view toggle.
        ==================================================================== */
 
     /* One row for back + title + icon actions, not the shared banner's stacked layout */
