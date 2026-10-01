@@ -55,10 +55,39 @@ Implement only hooks that `modules/providers/provider-interface.js` currently de
 - `previewModalId`, `_getImageGridIds`, `_extractProviderIds` (drives the In Library lookup), `closePreview`, `openPreview` (calls `injectModals()` first).
 - **Modal listeners attach once.** `init()` reruns on every provider switch, but the modals persist in `document.body`. Use a module-level guard.
 - Preview modal: backdrop click closes it; `window.registerOverlay({ id, tier: 7, close })` handles Esc and mobile back; `BrowseView.wireTitleScroll`; desktop avatar click opens `BrowseView.openAvatarViewer(full, thumb)` (bail on `isMobileMode()`); set `avatar.dataset.full`.
-- Loading: reset shows `renderSkeletonGrid`/`renderLoadingState`. **Load-more appends:** render with `append=true` for page > 0 so existing cards stay put. `view.observeImages(grid)`, `updateLoadMoreVisibility`.
+- Loading: follow the shimmer contract below. **Load-more appends:** render with `append=true` for page > 0 so existing cards stay put. `updateLoadMoreVisibility`.
 - `applyDefaults({ sort, hideOwned, hidePossible })` + `getSettingsConfig()` (the Settings "Sort: Auto" list).
 - **Mobile contract:** `mobileFilterIds` `{ sort, tags, filters, nsfw, refresh }` (the mobile sheet mirrors these real controls), `getSearchModes()` (`['character','creator']`), `getSearchInputId(mode)`, `getSearchPlaceholder(mode)`. The input's sibling submit button needs `.browse-search-submit`. Add `hasModeToggle` + `mobileModeSections` only if there's a Browse/Following toggle.
 - `refreshInLibraryBadges`.
+
+### Loading states (shimmer contract)
+
+CL never shows a blank grid or an image drawing in line by line. Every new grid, and every
+new helper that draws image tiles (collection covers, galleries, creator avatars, and so on),
+must follow all three stages:
+
+1. **Grid fetch:** call `renderSkeletonGrid(grid)` before the request. On mobile this shows
+   shimmer placeholder cards; on desktop it shows the hero loader. Use `renderLoadingState`
+   only for one-shot lookups such as URL or ID resolution, never for a grid of results.
+2. **Image tiles:** wrap each image in `.browse-card-image` and put the URL in `data-src`, never in `src`:
+   `<img data-src="${url}" src="${IMG_PLACEHOLDER}" decoding="async" fetchpriority="low" onerror="this.dataset.failed='1';this.src='/img/ai4.png'">`.
+   **Never use `loading="lazy"` or a direct `src`.** Both skip CL's loader, so the image
+   draws in progressively like a dial-up download. After **every** render, call
+   `view.observeImages(grid)`, and list the grid's id in `_getImageGridIds` so
+   `reconnectImageObserver` covers it after a tab switch. Together these give the image
+   shimmer, the fade-in on `.loaded`, eager loading of on-screen tiles, portrait-aware
+   cropping and the fallback image. If you write a shared tile helper, state in its header
+   that callers must do both. Reference: the Saucepan card markup and
+   `browse-collection-card.js`, which is on `feat/datacat-community-collections` until
+   that branch merges. That branch's covers originally used native lazy loading and drew
+   in like dial-up, which is what this rule prevents.
+   Preview gallery cells use `.browse-gallery-cell` with an inline
+   `onload="this.parentElement.classList.add('loaded')"` and an `onerror` that adds `load-failed`.
+3. **Preview text:** when the modal opens, fill each heavy section with `skeletonLines(n)`
+   (n = 3 for description, 2 for scenario, 4 for first message, 3 for examples), then
+   replace the bars through `deferRender`. Show the creator-notes skeleton only when the
+   slim data suggests notes exist. On fetch failure or missing definitions, collapse or
+   fill every skeleton so none stays up forever.
 
 ## 3. Shared UI components
 
@@ -101,6 +130,7 @@ In `importCharacter`: download the PNG, **prefer its embedded card** (`extractCh
 
 Test each API shape live, then in CL on **both desktop and mobile**:
 - grid refresh (one transition), load-more (append, no flash)
+- shimmer on a throttled connection (mobile): placeholder cards appear first, then every image tile, including covers and gallery cells, shimmers and then fades in; nothing draws in line by line, and no text skeleton stays up
 - NSFW toggle state + persistence across reload, mobile sheet (sort/tags/features/NSFW/refresh), mobile search overlay (both modes)
 - preview (notes, tag clamp, backdrop/Esc/back), import, reopen (In Library), re-import (duplicate prompt)
 - Settings defaults (sort, hide owned/possible), exclude tags, "View on X" from the library
