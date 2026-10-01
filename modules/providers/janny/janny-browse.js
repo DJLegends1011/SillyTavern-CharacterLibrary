@@ -29,8 +29,7 @@ import {
     deleteJannyCollection,
     addJannyCharacterToCollection,
     removeJannyCharacterFromCollection,
-    fetchJannyCharactersByIds,
-    fetchJannyCreatedStamps
+    fetchJannyCharactersByIds
 } from './janny-api.js';
 
 const {
@@ -1919,7 +1918,6 @@ const collections = createJannyCollections({
         fetchCollectorCollections: fetchJannyCollectorCollections,
         fetchCharactersByIds: fetchJannyCharactersByIds,
         fetchPublicCharactersByIds: fetchJannyPublicCharactersByIds,
-        fetchCreatedStamps: fetchJannyCreatedStamps,
         createCollection: createJannyCollection,
         updateCollection: updateJannyCollection,
         deleteCollection: deleteJannyCollection,

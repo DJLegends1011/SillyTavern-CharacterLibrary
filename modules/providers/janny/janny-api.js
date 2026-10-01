@@ -104,56 +104,6 @@ export async function meiliMultiSearch({ search = '', page = 1, limit = 80, filt
     return readJsonClassified(response);
 }
 
-// 20 queries per request, sent in parallel: measured fastest (a 208-card collection in ~1.7s vs ~8s at 50)
-const CREATED_STAMP_BATCH = 20;
-
-/**
- * Creation times for characters that arrived without one. /api/get-characters and collection
- * pages carry no dates, and the search index can't filter by id, so each character is looked
- * up by name (many queries per multi-search request) and matched back by id.
- * @param {Array<{id: string, name: string}>} characters
- * @returns {Promise<Map<string, number>>} character id -> createdAtStamp (seconds); misses are absent
- */
-export async function fetchJannyCreatedStamps(characters) {
-    const wanted = (Array.isArray(characters) ? characters : []).filter(c => c?.id && String(c.name || '').trim());
-    const stamps = new Map();
-    if (!wanted.length) return stamps;
-    const token = await getSearchToken();
-    const headers = {
-        'Accept': '*/*',
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`,
-        'Origin': JANNY_SITE_BASE,
-        'Referer': `${JANNY_SITE_BASE}/`,
-    };
-    const batches = [];
-    for (let i = 0; i < wanted.length; i += CREATED_STAMP_BATCH) batches.push(wanted.slice(i, i + CREATED_STAMP_BATCH));
-    await Promise.all(batches.map(async batch => {
-        const body = JSON.stringify({
-            queries: batch.map(c => ({
-                indexUid: 'janny-characters',
-                q: String(c.name).trim(),
-                hitsPerPage: 20,
-                attributesToRetrieve: ['id', 'createdAtStamp'],
-            })),
-        });
-        let response;
-        try {
-            response = await fetch(JANNY_SEARCH_URL, { method: 'POST', headers, body });
-        } catch (_) {
-            response = await fetchWithProxy(JANNY_SEARCH_URL, { method: 'POST', headers, body });
-        }
-        const data = await readJsonClassified(response);
-        (data?.results || []).forEach((result, i) => {
-            const id = String(batch[i].id);
-            const hit = (result?.hits || []).find(h => String(h?.id) === id);
-            const stamp = Number(hit?.createdAtStamp);
-            if (Number.isFinite(stamp) && stamp > 0) stamps.set(id, stamp);
-        });
-    }));
-    return stamps;
-}
-
 export function resolveTagNames(tagIds) {
     return (tagIds || []).map(id => TAG_MAP[id] || `Tag ${id}`);
 }

@@ -596,7 +596,6 @@ const DEFAULT_SETTINGS = {
 
     // ---- Online / Browse ----
     possibleMatchMinScore: 65,
-    jannyRandomizeCollectionCards: false,
 
     // ---- Gallery & Media ----
     includeProviderGallery: true,
@@ -1963,7 +1962,6 @@ function setupSettingsModal() {
     const toggleJannyTokenVisibility = document.getElementById('toggleJannyTokenVisibility');
     const saveJannyTokenBtn = document.getElementById('saveJannyTokenBtn');
     const clearJannyTokenBtn = document.getElementById('clearJannyTokenBtn');
-    const jannyRandomizeCollectionCardsCheckbox = document.getElementById('jannyRandomizeCollectionCards');
     const minScoreSlider = document.getElementById('settingsMinScore');
     const minScoreValue = document.getElementById('minScoreValue');
     const possibleMatchScoreSlider = document.getElementById('settingsPossibleMatchScore');
@@ -2808,7 +2806,6 @@ function setupSettingsModal() {
         if (wyvernPasswordInput) wyvernPasswordInput.value = getSetting('wyvernPassword') || '';
         if (wyvernRememberCredsCheckbox) wyvernRememberCredsCheckbox.checked = getSetting('wyvernRememberCredentials') || false;
         if (datacatTokenInput) datacatTokenInput.value = getSetting('datacatToken') || '';
-        if (jannyRandomizeCollectionCardsCheckbox) jannyRandomizeCollectionCardsCheckbox.checked = getSetting('jannyRandomizeCollectionCards') === true;
         refreshJannySettingsUi();
         if (saucepanTokenInput) saucepanTokenInput.value = getSetting('saucepanToken') || '';
         // Not just field repopulation: this also re-reads the managed browser's live state, which
@@ -3831,7 +3828,6 @@ function setupSettingsModal() {
             wyvernRememberCredentials: wyvernRememberCredsCheckbox ? wyvernRememberCredsCheckbox.checked : false,
             duplicateMinScore: parseInt(minScoreSlider.value),
             possibleMatchMinScore: possibleMatchScoreSlider ? parseInt(possibleMatchScoreSlider.value) : 65,
-            jannyRandomizeCollectionCards: jannyRandomizeCollectionCardsCheckbox ? jannyRandomizeCollectionCardsCheckbox.checked : false,
             importDirectDownloads: importDirectDownloadsCheckbox ? importDirectDownloadsCheckbox.checked : false,
             searchInName: searchNameCheckbox.checked,
             searchInListingName: searchListingNameCheckbox ? searchListingNameCheckbox.checked : true,
@@ -4012,9 +4008,6 @@ function setupSettingsModal() {
         if (possibleMatchScoreSlider) {
             possibleMatchScoreSlider.value = DEFAULT_SETTINGS.possibleMatchMinScore;
             if (possibleMatchScoreValue) possibleMatchScoreValue.textContent = String(DEFAULT_SETTINGS.possibleMatchMinScore);
-        }
-        if (jannyRandomizeCollectionCardsCheckbox) {
-            jannyRandomizeCollectionCardsCheckbox.checked = DEFAULT_SETTINGS.jannyRandomizeCollectionCards;
         }
         if (importDirectDownloadsCheckbox) {
             importDirectDownloadsCheckbox.checked = DEFAULT_SETTINGS.importDirectDownloads;

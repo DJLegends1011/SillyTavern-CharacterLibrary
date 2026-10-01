@@ -247,7 +247,6 @@ test('separate Janny settings expose browser and one-time account controls', () 
         'jannySettingsRefreshBtn',
         'jannySettingsAccountHint',
         'jannySettingsOpenJannyLink',
-        'jannyRandomizeCollectionCards',
         'settingsJannyToken',
         'toggleJannyTokenVisibility',
         'saveJannyTokenBtn',
@@ -273,13 +272,6 @@ test('desktop and mobile styles include Janny status/action rows', () => {
     assert.ok(/html\.cl-mobile #janitoraiManagedStatusRow \.settings-action-btn,\s*html\.cl-mobile #jannyManagedStatusRow \.settings-action-btn\s*\{/.test(mobile));
 });
 
-test('Janny collection randomization is saved and defaults to latest order', () => {
-    assert.match(js, /jannyRandomizeCollectionCards: false/);
-    assert.match(js, /jannyRandomizeCollectionCardsCheckbox\.checked = getSetting\('jannyRandomizeCollectionCards'\) === true/);
-    assert.match(js, /jannyRandomizeCollectionCards: jannyRandomizeCollectionCardsCheckbox/);
-    assert.match(html, /Off by default: collection cards are sorted by newest character first/);
-});
-
 test('opening the settings modal re-reads shared configuration for both sections', async () => {
     const h = await harness();
     const start = js.indexOf('    settingsBtn.onclick = () => {', js.indexOf('async function refreshJannySettingsAccountStatus'));
@@ -287,7 +279,7 @@ test('opening the settings modal re-reads shared configuration for both sections
     const prefix = js.slice(start, end);
     // Exercise the real open-handler prefix, before the unrelated settings panels are loaded.
     for (const [, name] of prefix.matchAll(/if \((\w+)\)/g)) {
-        if (name !== 'jannyRandomizeCollectionCardsCheckbox') h.context[name] = new Element();
+        h.context[name] = new Element();
     }
     Object.assign(h.context, {
         settingsBtn: new Element(), chubTokenInput: new Element(), rememberTokenCheckbox: new Element(),

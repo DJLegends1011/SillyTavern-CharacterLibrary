@@ -96,7 +96,6 @@ export function browseHarness(overrides = {}) {
         fetchJannyPublicCollection: async () => ({ collection: {}, characterIds: [] }),
         fetchJannyCollectorCollections: async () => ({ collections: [] }),
         fetchJannyCharactersByIds: async () => [], fetchJannyPublicCharactersByIds: async () => [],
-        fetchJannyCreatedStamps: async () => new Map(),
         isJanitorBridgeAvailable: () => false, warmJanitorClearance: async () => {},
         ...overrides, CoreAPI,
     });

@@ -229,42 +229,49 @@ test('a collection opens with skeleton cards, then its characters', async () => 
     assert.ok(t.observed.includes('jannyCollectionCharGrid'));
 });
 
-test('a public collection opens latest-first using looked-up creation dates', async () => {
-    let lookedUp = [];
-    const t = setup({
-        api: {
-            fetchPublicCollections: async () => ({ collections: [{ id: 'c1', path: '/collections/c1', name: 'My own bots' }], hasMore: false }),
-            // JannyAI's page shuffles on every load and get-characters carries no dates
-            fetchPublicCollection: async () => ({ collection: { name: 'My own bots' }, characterIds: ['alcina', 'kobeni', 'jean'] }),
-            fetchPublicCharactersByIds: async () => [{ id: 'alcina', name: 'Alcina' }, { id: 'jean', name: 'Jean Grey' }, { id: 'kobeni', name: 'Kobeni' }],
-            fetchCreatedStamps: async chars => {
-                lookedUp = chars.map(c => c.id);
-                return new Map([['kobeni', 300], ['jean', 200], ['alcina', 100]]);
-            },
-        },
+for (const legacyShuffle of [false, true]) {
+    test(`public collection retains page order on open and refresh (legacy shuffle=${legacyShuffle})`, async () => {
+        let pageIds = ['kobeni', 'alcina', 'jean'];
+        const t = setup({ api: {
+            fetchPublicCollections: async () => ({ collections: [{ id: 'c1', path: '/collections/c1' }], hasMore: false }),
+            fetchPublicCollection: async () => ({ collection: {}, characterIds: pageIds }),
+            // Details arrive alphabetically; dates would put Jean first.
+            fetchPublicCharactersByIds: async () => [
+                { id: 'alcina', name: 'Alcina', createdAtStamp: 200 },
+                { id: 'jean', name: 'Jean', createdAtStamp: 300 },
+                { id: 'kobeni', name: 'Kobeni', createdAtStamp: 100 },
+            ],
+        } });
+        window.getSetting = key => key === 'jannyRandomizeCollectionCards' ? legacyShuffle : undefined;
+        const originalRandom = Math.random;
+        Math.random = () => 0;
+        try {
+            const order = () => [...t.el('jannyCollectionCharGrid').innerHTML.matchAll(/data-janny-id="([^"]+)"/g)].map(m => m[1]);
+            t.ctrl.setOpen(true);
+            await settle();
+            t.d.openFromDirectory('/collections/c1');
+            await settle();
+            assert.deepEqual(order(), ['kobeni', 'alcina', 'jean']);
+            pageIds = ['alcina', 'jean', 'kobeni'];
+            t.ctrl.refresh();
+            await settle();
+            assert.deepEqual(order(), ['alcina', 'jean', 'kobeni']);
+        } finally { Math.random = originalRandom; }
     });
+}
+
+test('owned collection preserves member order after hydrating details', async () => {
+    const t = setup({ api: {
+        fetchCollectionCharacters: async () => [{ characterId: 'z' }, { characterId: 'a' }],
+        fetchCharactersByIds: async () => [{ id: 'a', name: 'Alpha', createdAtStamp: 200 }, { id: 'z', name: 'Zed', createdAtStamp: 100 }],
+    } });
     t.ctrl.setOpen(true);
+    t.d.setTab('owned');
     await settle();
-    t.d.openFromDirectory('/collections/c1');
+    t.d.openFromDirectory('col-1');
     await settle();
     const order = [...t.el('jannyCollectionCharGrid').innerHTML.matchAll(/data-janny-id="([^"]+)"/g)].map(m => m[1]);
-    assert.deepEqual(order, ['kobeni', 'jean', 'alcina']);
-    assert.deepEqual(lookedUp.sort(), ['alcina', 'jean', 'kobeni']);
-});
-
-test('a failed date lookup still opens the collection', async () => {
-    const t = setup({
-        api: {
-            fetchPublicCollections: async () => ({ collections: [{ id: 'c1', path: '/collections/c1', name: 'One' }], hasMore: false }),
-            fetchPublicCollection: async () => ({ collection: {}, characterIds: ['a', 'b'] }),
-            fetchCreatedStamps: async () => { throw new Error('search down'); },
-        },
-    });
-    t.ctrl.setOpen(true);
-    await settle();
-    t.d.openFromDirectory('/collections/c1');
-    await settle();
-    assert.match(t.el('jannyCollectionCharGrid').innerHTML, /data-janny-id="a"[\s\S]*data-janny-id="b"/);
+    assert.deepEqual(order, ['z', 'a']);
 });
 
 // ── Directory + navigation ───────────────────────────────────────────

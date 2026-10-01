@@ -353,33 +353,3 @@ test('form login redirects and rate limits retain stable errors through the help
         assert.equal(harness.requests.length, 2);
     } finally { window.apiRequest = previous; }
 });
-
-test('creation dates come from batched name searches, matched back by id', async () => {
-    const realFetch = globalThis.fetch;
-    const bodies = [];
-    globalThis.fetch = async (url, init) => {
-        assert.equal(url, 'https://search.jannyai.com/multi-search');
-        const body = JSON.parse(init.body);
-        bodies.push(body);
-        const results = body.queries.map(q => ({
-            hits: q.q === 'Missing'
-                ? [{ id: 'someone-else', createdAtStamp: 5 }]
-                : [{ id: 'decoy', createdAtStamp: 1 }, { id: q.q.toLowerCase(), createdAtStamp: q.q.length * 100 }],
-        }));
-        return { ok: true, status: 200, text: async () => JSON.stringify({ results }) };
-    };
-    try {
-        const chars = Array.from({ length: 51 }, (_, i) => ({ id: `name${i}`, name: `Name${i}` }));
-        chars.push({ id: 'missing', name: 'Missing' }, { id: 'nameless', name: '  ' });
-        const stamps = await api.fetchJannyCreatedStamps(chars);
-        assert.equal(bodies.length, 3, '52 named characters go out as three parallel requests of up to 20');
-        assert.equal(bodies[0].queries.length, 20);
-        assert.deepEqual(bodies[0].queries[0].attributesToRetrieve, ['id', 'createdAtStamp']);
-        assert.equal(stamps.get('name7'), 500);
-        assert.equal(stamps.has('missing'), false, 'a hit for a different id is not borrowed');
-        assert.equal(stamps.has('nameless'), false);
-        assert.equal((await api.fetchJannyCreatedStamps([])).size, 0);
-    } finally {
-        globalThis.fetch = realFetch;
-    }
-});

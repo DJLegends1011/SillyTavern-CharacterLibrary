@@ -29,7 +29,7 @@ import {
     parseJannyCharacterId,
 } from './janny-collection-model.js';
 
-const { escapeHtml, showToast, debugLog, getSetting, renderSkeletonGrid, showConfirm, initCustomSelect } = CoreAPI;
+const { escapeHtml, showToast, debugLog, renderSkeletonGrid, showConfirm, initCustomSelect } = CoreAPI;
 
 const SKELETON_COLLECTIONS = 8;
 
@@ -43,12 +43,6 @@ function formatDate(value) {
     return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleDateString();
 }
 
-function arrangeCharacters(characters) {
-    return orderJannyCollectionCharacters(characters, {
-        randomize: getSetting('jannyRandomizeCollectionCards') === true,
-    });
-}
-
 // ========================================
 // CONTROLLER
 // ========================================
@@ -57,7 +51,7 @@ function arrangeCharacters(characters) {
  * @param {Object} host
  * @param {Object} host.api - fetchCollections, fetchCollectionCharacters, fetchPublicCollections,
  *   fetchPublicCollection, fetchCollectorCollections, fetchCharactersByIds, fetchPublicCharactersByIds,
- *   fetchCreatedStamps, createCollection, updateCollection, deleteCollection, addCharacterToCollection,
+ *   createCollection, updateCollection, deleteCollection, addCharacterToCollection,
  *   removeCharacterFromCollection, sessionStatus
  * @param {string} host.siteBase - https://jannyai.com
  * @param {() => import('../browse-view.js').BrowseView} host.getView
@@ -138,25 +132,6 @@ export function createJannyCollections(host) {
         return rows.map(row => row.c).filter(Boolean);
     }
 
-    /**
-     * Fill createdAtStamp on characters that arrived without a date, so "latest" (the default
-     * order) has something to sort by. A failed lookup only costs the ordering, never the grid.
-     */
-    async function withCreatedDates(chars) {
-        const undated = chars.filter(c => !c.createdAtStamp && !c.createdAt);
-        if (!undated.length || !api.fetchCreatedStamps) return chars;
-        try {
-            const stamps = await api.fetchCreatedStamps(undated);
-            for (const c of undated) {
-                const stamp = stamps.get(String(c.id));
-                if (stamp) c.createdAtStamp = stamp;
-            }
-        } catch (err) {
-            debugLog('[JannyCollections] creation-date lookup failed:', err.message);
-        }
-        return chars;
-    }
-
     function loadOwned(force = false) {
         if (owned.loading) return owned.promise;
         if (owned.loaded && !force) return Promise.resolve(owned.items);
@@ -208,7 +183,7 @@ export function createJannyCollections(host) {
                 if (token !== hydrateToken || gen !== generation()) return;
                 const chars = await hydrateEntries(entries, gen, COVER_LIMIT);
                 if (token !== hydrateToken || gen !== generation()) return;
-                const covers = arrangeCharacters(chars.filter(c => c.avatar)).slice(0, COVER_LIMIT);
+                const covers = chars.filter(c => c.avatar).slice(0, COVER_LIMIT);
                 if (!covers.length) continue;
                 collection.coverCharacters = covers;
                 replaceOwnedCard(collection);
@@ -298,19 +273,19 @@ export function createJannyCollections(host) {
                 }
                 const entries = await fetchMembers(view.key, gen);
                 if (token !== view.token || gen !== generation()) return;
-                const chars = await withCreatedDates(await hydrateEntries(entries, gen));
+                const chars = await hydrateEntries(entries, gen);
                 if (token !== view.token || gen !== generation()) return;
                 view.collection = owned.items.find(c => String(c.id) === view.key) || view.collection;
-                view.characters = arrangeCharacters(chars);
+                view.characters = chars;
             } else {
                 const data = await api.fetchPublicCollection(view.key);
                 if (token !== view.token) return;
-                const fetched = await api.fetchPublicCharactersByIds(Array.isArray(data?.characterIds) ? data.characterIds : []);
+                const ids = Array.isArray(data?.characterIds) ? data.characterIds : [];
+                const fetched = await api.fetchPublicCharactersByIds(ids);
                 if (token !== view.token) return;
-                const chars = await withCreatedDates(fetched.map(normalizeJannyCharacter).filter(Boolean));
-                if (token !== view.token) return;
+                const chars = fetched.map(normalizeJannyCharacter).filter(Boolean);
                 view.collection = { ...view.collection, ...(data?.collection || {}), path: view.key };
-                view.characters = arrangeCharacters(chars);
+                view.characters = orderJannyCollectionCharacters(chars, ids);
             }
         } catch (err) {
             if (token !== view.token) return;
