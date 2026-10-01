@@ -1,7 +1,6 @@
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
-import { collectionEntryCharacterId, collectionEntryMatchesCharacter } from '../../modules/providers/janny/janny-collection-membership.js';
-import { orderJannyCollectionCharacters } from '../../modules/providers/janny/janny-collection-order.js';
+import { normalizeJannyCharacter } from '../../modules/providers/janny/janny-collection-model.js';
 
 const source = readFileSync(new URL('../../modules/providers/janny/janny-browse.js', import.meta.url), 'utf8');
 export const flush = () => new Promise(resolve => setImmediate(resolve));
@@ -13,9 +12,28 @@ export function deferred() {
     return { promise, resolve, reject };
 }
 
+// The collections UI lives in janny-collections.js (tested on its own in
+// janny-collections.test.mjs); here it is a stub that records what the browse view asks of it.
+function collectionsStub() {
+    const calls = { invalidate: 0, resetPicker: 0, closePicker: 0, preload: 0, wire: 0, wirePicker: 0, refresh: 0, setOpen: [] };
+    let open = false;
+    return {
+        calls,
+        host: null,
+        renderSection: () => '<div id="jannyCollectionsSection" class="hidden"></div>',
+        wire() { calls.wire++; }, wirePicker() { calls.wirePicker++; },
+        isOpen: () => open, setOpen(value) { open = !!value; calls.setOpen.push(open); },
+        refresh() { calls.refresh++; }, canLoadMore: () => false, loadMore() {},
+        invalidate() { calls.invalidate++; }, preload() { calls.preload++; },
+        resetPicker() { calls.resetPicker++; }, closePicker() { calls.closePicker++; }, togglePicker() {},
+        gridIds: ['jannyCollectionsGrid', 'jannyCollectionCharGrid'],
+    };
+}
+
 // Execute the complete production module with only its DOM, base view and service
 // boundaries supplied. run() accesses its real lexical state/handlers, not replicas.
 export function browseHarness(overrides = {}) {
+    const collections = collectionsStub();
     const elements = new Map(), toasts = [], settingsOpened = [], handlers = new Map();
     function el(id) {
         if (!elements.has(id)) {
@@ -63,7 +81,8 @@ export function browseHarness(overrides = {}) {
         IMG_PLACEHOLDER: '', BROWSE_PURIFY_CONFIG: {}, formatNumber: String,
         slugify: s => s.toLowerCase(), stripHtml: s => s || '', resolveTagNames: () => [],
         skeletonLines: () => 'Loading...', deferCall: (el, fn) => fn(), deferRender: (el, fn) => { el.innerHTML = fn(); },
-        collectionEntryCharacterId, collectionEntryMatchesCharacter, orderJannyCollectionCharacters,
+        normalizeJannyCharacter,
+        createJannyCollections: (host) => { collections.host = host; return collections; },
         probeJannyAccount: async () => ({ ...ready }),
         // Fail-closed default: no browser session is installed unless a test says otherwise,
         // so a 401 reads as a real rejection rather than a duplicate-add no-op.
@@ -73,6 +92,10 @@ export function browseHarness(overrides = {}) {
         addJannyBookmarks: async () => [], removeJannyBookmarks: async () => [],
         addJannyCharacterToCollection: async () => ({}), removeJannyCharacterFromCollection: async () => ({}),
         updateJannyCollection: async () => ({}), deleteJannyCollection: async () => ({}),
+        createJannyCollection: async () => ({}), fetchJannyPublicCollections: async () => ({ collections: [], hasMore: false }),
+        fetchJannyPublicCollection: async () => ({ collection: {}, characterIds: [] }),
+        fetchJannyCollectorCollections: async () => ({ collections: [] }),
+        fetchJannyCharactersByIds: async () => [], fetchJannyPublicCharactersByIds: async () => [],
         isJanitorBridgeAvailable: () => false, warmJanitorClearance: async () => {},
         ...overrides, CoreAPI,
     });
@@ -83,10 +106,6 @@ export function browseHarness(overrides = {}) {
         jannySelectedChar = { id: 'old-character', name: 'Old character' };
         jannyBookmarkIds = new Set(['old-character']); jannyBookmarksLoaded = true;
         jannyBookmarkTotalCount = 220; jannyBookmarkLimitToastShown = true;
-        jannyOwnedCollections = [{ id: 'old-collection', name: 'Old private collection', characterCount: 1 }];
-        jannyOwnedCollectionsLoaded = true;
-        jannyModalCollectionIds = new Set(['old-collection']);
-        jannyModalCollectionChecksLoadedFor = 'old-character';
     `);
-    return { context, run, el, elements, toasts, settingsOpened, handlers, window: context.window, seedAccount };
+    return { context, run, el, elements, toasts, settingsOpened, handlers, window: context.window, seedAccount, collections };
 }

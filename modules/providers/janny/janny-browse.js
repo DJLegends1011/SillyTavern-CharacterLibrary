@@ -3,8 +3,8 @@
 import { BrowseView } from '../browse-view.js';
 import CoreAPI from '../../core-api.js';
 import { IMG_PLACEHOLDER, formatNumber, BROWSE_PURIFY_CONFIG, skeletonLines, deferRender, deferCall, isMobileMode, finishBrowseImport, renderBrowseError } from '../provider-utils.js';
-import { orderJannyCollectionCharacters } from './janny-collection-order.js';
-import { collectionEntryCharacterId, collectionEntryMatchesCharacter } from './janny-collection-membership.js';
+import { createJannyCollections } from './janny-collections.js';
+import { normalizeJannyCharacter } from './janny-collection-model.js';
 import { jannySessionStatus } from './janny-session.js';
 import {
     JANNY_IMAGE_BASE,
@@ -97,30 +97,6 @@ let jannyBookmarkTotalCount = null;
 let jannyBookmarkLimitToastShown = false;
 let jannyAccountStatus = { browser: false, active: false, cloudflare: false, reason: '', code: '' };
 let jannyAccountGeneration = 0;
-let jannyOwnedCollections = [];
-let jannyOwnedCollectionsLoaded = false;
-let jannyOwnedCollectionsLoading = false;
-let jannyOwnedCollectionsError = '';
-let jannyOwnedPreviewHydrationToken = 0;
-let jannyModalCollectionIds = new Set();
-let jannyModalCollectionChecksLoadedFor = '';
-let jannyCollectionDropdownOpen = false;
-let jannyCollectionRowMutations = new Set();
-let jannyCollectionsMode = 'public';
-let jannyPublicCollections = [];
-let jannyPublicCollectionsPage = 1;
-let jannyPublicCollectionsHasMore = true;
-let jannyPublicCollectionsLoading = false;
-let jannyPublicCollectionsLoaded = false;
-let jannyPublicCollectionsError = '';
-let jannyPublicCollectionsSort = 'latest';
-let jannyCollectionDetailLoadToken = 0;
-let jannyCollectionManageLoadToken = 0;
-let jannyCollectionCharacters = [];
-let jannyActiveCollection = null;
-let jannyManageCollection = null;
-let jannyCollectorView = null;
-let jannyCollectorLoadToken = 0;
 
 // ========================================
 // SEARCH API
@@ -474,7 +450,7 @@ async function loadBookmarkedIntoGrid(thisToken) {
     if (thisToken !== jannyLoadToken || !jannyBookmarksLoaded) return;
     const fetched = await fetchJannyCharactersByIds(ids);
     if (thisToken !== jannyLoadToken || !delegatesInitialized) return;
-    let chars = fetched.map(normalizeJannyCollectionCharacter).filter(Boolean);
+    let chars = fetched.map(normalizeJannyCharacter).filter(Boolean);
 
     const query = (jannyAuthorFilter || jannyCurrentSearch || '').trim().toLowerCase();
     if (query) {
@@ -512,10 +488,7 @@ function openPreviewModal(hit) {
     jannySelectedChar = hit;
     delete hit._fullData;
     delete hit._detailError;
-    jannyCollectionDropdownOpen = false;
-    jannyModalCollectionIds = new Set();
-    jannyModalCollectionChecksLoadedFor = '';
-    jannyCollectionRowMutations = new Set();
+    collections.resetPicker();
 
     const modal = document.getElementById('jannyCharModal');
     if (!modal) return;
@@ -745,7 +718,7 @@ function cleanupJannyCharModal() {
 
 function closePreviewModal() {
     jannyDetailFetchToken++;
-    closeJannyCollectionDropdown();
+    collections.closePicker();
     jannyDetailFetchPromise = null;
     cleanupJannyCharModal();
     const modal = document.getElementById('jannyCharModal');
@@ -1025,8 +998,6 @@ function initJannyView() {
     // Convert native selects to styled custom dropdowns
     const sortEl = document.getElementById('jannySortSelect');
     if (sortEl) CoreAPI.initCustomSelect?.(sortEl);
-    const publicCollectionsSortEl = document.getElementById('jannyPublicCollectionsSort');
-    if (publicCollectionsSortEl) CoreAPI.initCustomSelect?.(publicCollectionsSortEl);
 
     // Grid card click → open preview (delegation)
     const grid = document.getElementById('jannyGrid');
@@ -1050,23 +1021,6 @@ function initJannyView() {
     }
 
     // Search
-    const collectionPanel = document.getElementById('jannyCollectionDetailPanel');
-    if (collectionPanel) {
-        collectionPanel.addEventListener('click', (e) => {
-            const authorLink = e.target.closest('.browse-card-creator-link');
-            if (authorLink) {
-                e.stopPropagation();
-                const author = authorLink.dataset.author;
-                if (author) filterByAuthor(author);
-                return;
-            }
-            const card = e.target.closest('.browse-card');
-            if (!card) return;
-            const charId = card.dataset.jannyId;
-            const hit = jannyCollectionCharacters.find(c => String(c.id) === String(charId));
-            if (hit) openPreviewModal(hit);
-        });
-    }
     on('jannySearchInput', 'keydown', (e) => {
         if (e.key === 'Enter') {
             e.preventDefault();
@@ -1125,74 +1079,16 @@ function initJannyView() {
     on('jannyClearAuthorBtn', 'click', () => clearAuthorFilter());
 
     on('jannyRefreshBtn', 'click', () => {
-        const collectionsSection = document.getElementById('jannyCollectionsSection');
-        if (collectionsSection && !collectionsSection.classList.contains('hidden')) {
-            reloadJannyCollections();
+        if (collections.isOpen()) {
+            collections.refresh();
             return;
         }
         jannyCurrentPage = 1;
         loadCharacters(false);
     });
-    on('jannyCollectionsBtn', 'click', () => switchJannyCollectionsPanel(true));
-    on('jannyBackToBrowseBtn', 'click', () => switchJannyCollectionsPanel(false));
-    on('jannyCollectionsPublicBtn', 'click', () => setJannyCollectionsMode('public'));
-    on('jannyCollectionsMineBtn', 'click', () => setJannyCollectionsMode('owned'));
-    on('jannyPublicCollectionsSort', 'change', () => {
-        const el = document.getElementById('jannyPublicCollectionsSort');
-        jannyPublicCollectionsSort = el?.value === 'popular' ? 'popular' : 'latest';
-        loadJannyPublicCollections({ reset: true });
-    });
-    on('jannyCreateCollectionBtn', 'click', () => createCollectionFromPanel());
-    on('jannyNewCollectionName', 'keydown', (e) => {
-        if (e.key === 'Enter') { e.preventDefault(); createCollectionFromPanel(); }
-    });
+    on('jannyCollectionsBtn', 'click', () => collections.setOpen(!collections.isOpen()));
+    collections.wire();
 
-    const collectionsSection = document.getElementById('jannyCollectionsSection');
-    if (collectionsSection) {
-        collectionsSection.addEventListener('click', (e) => {
-            const ownerLink = e.target.closest('.janny-collection-owner-link');
-            if (ownerLink) {
-                e.preventDefault();
-                const author = ownerLink.dataset.author;
-                if (author) openJannyCollectorCollections(author);
-                return;
-            }
-            const collectorBack = e.target.closest('#jannyCollectorBackBtn');
-            if (collectorBack) { setJannyCollectionsMode(jannyCollectionsMode); return; }
-            const publicOpen = e.target.closest('.janny-public-collection-open');
-            if (publicOpen) { openJannyPublicCollection(publicOpen.dataset.collectionPath); return; }
-            const loadMorePublic = e.target.closest('#jannyPublicCollectionsLoadMoreBtn');
-            if (loadMorePublic) { loadJannyPublicCollections(); return; }
-            const ownedOpen = e.target.closest('.janny-owned-collection-open');
-            if (ownedOpen) { openJannyOwnedCollection(ownedOpen.dataset.collectionId); return; }
-            const ownedEdit = e.target.closest('.janny-owned-collection-edit');
-            if (ownedEdit) { openJannyCollectionManage(ownedEdit.dataset.collectionId); return; }
-            const ownedDelete = e.target.closest('.janny-owned-collection-delete');
-            if (ownedDelete) { confirmAndDeleteJannyCollection(ownedDelete.dataset.collectionId); return; }
-            const detailBack = e.target.closest('#jannyCollectionDetailBackBtn');
-            if (detailBack) { setJannyCollectionsMode(jannyActiveCollection?.kind === 'owned' ? 'owned' : 'public'); return; }
-            const manageBack = e.target.closest('#jannyManageBackBtn');
-            if (manageBack) { setJannyCollectionsMode('owned'); return; }
-            const manageSave = e.target.closest('#jannyManageSaveBtn');
-            if (manageSave) { saveJannyManagedCollection(); return; }
-            const managePrivate = e.target.closest('#jannyManagePrivateBtn');
-            if (managePrivate && jannyManageCollection?.collection) { jannyManageCollection.collection.isPrivate = true; renderJannyCollectionManage(); return; }
-            const managePublic = e.target.closest('#jannyManagePublicBtn');
-            if (managePublic && jannyManageCollection?.collection) { jannyManageCollection.collection.isPrivate = false; renderJannyCollectionManage(); return; }
-            const manageAdd = e.target.closest('#jannyManageAddCharacterBtn');
-            if (manageAdd) { addCharacterToManagedCollection(); return; }
-            const manageRemove = e.target.closest('.janny-manage-character-remove');
-            if (manageRemove) { removeCharacterFromManagedCollection(manageRemove.dataset.characterId); return; }
-            const manageDelete = e.target.closest('#jannyManageDeleteBtn');
-            if (manageDelete) confirmAndDeleteJannyCollection(jannyManageCollection?.collection?.id);
-        });
-        collectionsSection.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter' && e.target?.id === 'jannyManageAddCharacterInput') {
-                e.preventDefault();
-                addCharacterToManagedCollection();
-            }
-        });
-    }
     // ── Tags dropdown ──
     const tagsDropdown = document.getElementById('jannyTagsDropdown');
 
@@ -1327,39 +1223,11 @@ function initJannyView() {
         }
 
         on('jannyBookmarkBtn', 'click', () => toggleSelectedJannyBookmark());
-        on('jannyCollectionDropdownBtn', 'click', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            openJannyCollectionDropdown();
-        });
         on('jannyImportBtn', 'click', () => {
             if (jannySelectedChar) importCharacter(jannySelectedChar);
         });
+        collections.wirePicker();
 
-        const collectionDropdown = document.getElementById('jannyCollectionDropdown');
-        if (collectionDropdown) {
-            collectionDropdown.addEventListener('click', (e) => {
-                e.stopPropagation();
-                const showOwned = e.target.closest('[data-action="show-owned"]');
-                if (showOwned) {
-                    closeJannyCollectionDropdown();
-                    closePreviewModal();
-                    switchJannyCollectionsPanel(true);
-                    setJannyCollectionsMode('owned');
-                    return;
-                }
-                const row = e.target.closest('.janny-collection-toggle-row[data-collection-id]');
-                if (row) toggleSelectedJannyCollectionMembership(row.dataset.collectionId);
-            });
-        }
-
-        document.addEventListener('click', (e) => {
-            if (!jannyCollectionDropdownOpen) return;
-            if (!e.target.closest('#jannyCollectionAction')) closeJannyCollectionDropdown();
-        });
-        document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape' && jannyCollectionDropdownOpen) closeJannyCollectionDropdown();
-        });
         const modalOverlay = document.getElementById('jannyCharModal');
         if (modalOverlay) {
             modalOverlay.addEventListener('click', (e) => {
@@ -1484,25 +1352,7 @@ function invalidateJannyAccountCache() {
     jannyBookmarkIds = new Set();
     jannyBookmarkTotalCount = null;
     jannyBookmarkLimitToastShown = false;
-    jannyOwnedCollectionsLoaded = false;
-    jannyOwnedCollections = [];
-    jannyOwnedCollectionsLoading = false;
-    jannyOwnedCollectionsError = '';
-    ++jannyOwnedPreviewHydrationToken;
-    jannyModalCollectionIds = new Set();
-    jannyModalCollectionChecksLoadedFor = '';
-    jannyCollectionRowMutations = new Set();
-    ++jannyCollectionManageLoadToken;
-    jannyManageCollection = null;
-    const managePanel = document.getElementById('jannyCollectionManagePanel');
-    if (managePanel) { managePanel.innerHTML = ''; managePanel.classList.add('hidden'); }
-    if (jannyActiveCollection?.kind === 'owned') {
-        ++jannyCollectionDetailLoadToken;
-        jannyActiveCollection = null;
-        jannyCollectionCharacters = [];
-        const panel = document.getElementById('jannyCollectionDetailPanel');
-        if (panel) { panel.innerHTML = ''; panel.classList.add('hidden'); }
-    }
+    collections.invalidate();
     if (jannyFilterOnlyBookmarked) {
         ++jannyLoadToken;
         jannyCharacters = [];
@@ -1511,12 +1361,8 @@ function invalidateJannyAccountCache() {
         const grid = document.getElementById('jannyGrid');
         if (grid) grid.innerHTML = '<div class="browse-empty-state">JannyAI account changed. Refresh My Bookmarks after signing in.</div>';
     }
-    const dropdown = document.getElementById('jannyCollectionDropdown');
-    if (dropdown) dropdown.innerHTML = '';
     document.getElementById('jannyBookmarkBtn')?.classList.remove('loading');
     updateJannyBookmarkButton();
-    renderJannyOwnedCollectionsList();
-    renderJannyCollectionDropdown();
     ++jannyDetailFetchToken;
     jannyDetailFetchPromise = null;
     if (jannySelectedChar) delete jannySelectedChar._fullData;
@@ -1534,31 +1380,6 @@ function handleJannyAccountFailure(err, generation = jannyAccountGeneration) {
 }
 
 window.jannyInvalidateAccountCache = invalidateJannyAccountCache;
-
-function collectionCharacterCount(collection) {
-    if (Array.isArray(collection?.collectionCharacters)) return collection.collectionCharacters.length;
-    if (Array.isArray(collection?.characters)) return collection.characters.length;
-    return collection?.characterCount || collection?._count?.collectionCharacters || 0;
-}
-
-function normalizeJannyCollectionCharacter(item) {
-    const raw = item?.character || item?.characters || item;
-    if (!raw) return null;
-    const c = raw.character || raw;
-    const id = c.id || c.characterId || c.character_id || item?.characterId || item?.character_id || '';
-    if (!id) return null;
-    const name = c.name || c.title || 'Unknown';
-    return {
-        ...c,
-        id,
-        name,
-        avatar: c.avatar || c.avatarUrl || c.image || c.imageUrl || c.image_url || c.botAvatar || c.profilePicture || c.profile_picture || '',
-        description: c.description || c.creatorNotes || c.tagline || '',
-        tagIds: c.tagIds || c.tag_ids || [],
-        totalToken: c.totalToken || c.total_tokens || c.token_counts?.total_tokens || 0,
-        creatorUsername: c.creatorUsername || c.creator_username || c.user?.username || c.creator?.username || '',
-    };
-}
 
 // Tracks account readiness for gating (ensureJannyAccountReady) only. Login state is
 // shown in Settings, matching every other provider.
@@ -1676,950 +1497,14 @@ function resolveJannyAvatarUrl(avatar) {
     return `${JANNY_IMAGE_BASE}${src}`;
 }
 
-function arrangeJannyCollectionCharacters(characters) {
-    return orderJannyCollectionCharacters(characters, {
-        randomize: getSetting('jannyRandomizeCollectionCards') === true,
-    });
-}
-
-function collectionIsPrivate(collection) {
-    const raw = collection?.isPrivate ?? collection?.private ?? collection?.is_private;
-    if (raw === undefined || raw === null || raw === '') return false;
-    if (typeof raw === 'boolean') return raw;
-    const value = String(raw).toLowerCase();
-    return value === 'true' || value === 'yes' || value === '1' || value === 'private';
-}
-
-function collectionPrivacyLabel(collection) {
-    return collectionIsPrivate(collection) ? 'Private' : 'Public';
-}
-
-function setOwnedCollectionCount(collection, count) {
-    if (!collection) return;
-    const next = Math.max(0, count);
-    collection.characterCount = next;
-    if (collection._count && typeof collection._count === 'object') collection._count.collectionCharacters = next;
-}
-
-function updateOwnedCollectionCount(collectionId, delta) {
-    const collection = jannyOwnedCollections.find(c => String(c.id) === String(collectionId));
-    if (collection) setOwnedCollectionCount(collection, collectionCharacterCount(collection) + delta);
-    if (jannyManageCollection?.collection && String(jannyManageCollection.collection.id) === String(collectionId)) {
-        setOwnedCollectionCount(jannyManageCollection.collection, collectionCharacterCount(jannyManageCollection.collection) + delta);
-    }
-}
-
-
-function collectionHasPreviewImages(collection) {
-    return getJannyCollectionPreviewImages(collection).length > 0;
-}
-
-async function hydrateJannyOwnedCollectionPreviews() {
-    const generation = jannyAccountGeneration;
-    const token = ++jannyOwnedPreviewHydrationToken;
-    const candidates = jannyOwnedCollections.filter(collection =>
-        collection?.id && collectionCharacterCount(collection) > 0 && !collectionHasPreviewImages(collection)
-    );
-    if (!candidates.length) return;
-
-    for (const collection of candidates) {
-        try {
-            const entries = await fetchJannyCollectionCharacters(collection.id);
-            if (token !== jannyOwnedPreviewHydrationToken || !jannyOwnedCollectionsLoaded) return;
-
-            let previewCharacters = entries.map(normalizeJannyCollectionCharacter).filter(Boolean);
-            const missingIds = entries
-                .map(collectionEntryCharacterId)
-                .filter(id => id && !previewCharacters.some(c => String(c.id) === String(id)))
-                .slice(0, Math.max(0, 4 - previewCharacters.length));
-            if (missingIds.length) {
-                const fetched = await fetchJannyCharactersByIds(missingIds);
-                if (token !== jannyOwnedPreviewHydrationToken || !jannyOwnedCollectionsLoaded) return;
-                previewCharacters = previewCharacters.concat(fetched.map(normalizeJannyCollectionCharacter).filter(Boolean));
-            }
-
-            previewCharacters = arrangeJannyCollectionCharacters(previewCharacters.filter(c => c.avatar)).slice(0, 4);
-            if (!previewCharacters.length) continue;
-            collection.previewCharacters = previewCharacters;
-            renderJannyOwnedCollectionsList();
-        } catch (err) {
-            if (generation !== jannyAccountGeneration) return;
-            handleJannyAccountFailure(err, generation);
-            debugLog('[JannyAccount] owned collection preview hydration failed:', err.message);
-            if (generation !== jannyAccountGeneration) return;
-        }
-    }
-}
-
-function getJannyCollectionPreviewImages(collection) {
-    const pools = [
-        collection?.images,
-        collection?.previewImages,
-        collection?.previewCharacters,
-        collection?.collectionCharacters,
-        collection?.characters,
-        collection?.members,
-    ];
-    const images = [];
-    for (const pool of pools) {
-        if (!Array.isArray(pool)) continue;
-        for (const item of pool) {
-            const raw = item?.character || item?.characters || item;
-            const c = raw?.character || raw;
-            const src = typeof item === 'string'
-                ? item
-                : (c?.avatar || c?.avatarUrl || c?.image || c?.imageUrl || c?.image_url || c?.botAvatar || c?.profilePicture || c?.profile_picture || raw?.avatar || raw?.image || raw?.imageUrl || item?.avatar || item?.avatarUrl || item?.image || item?.imageUrl || '');
-            if (src && !images.includes(src)) images.push(src);
-            if (images.length >= 4) return images;
-        }
-    }
-    return images;
-}
-
-function renderJannyCollectionPreviewCells(collection) {
-    const images = getJannyCollectionPreviewImages(collection);
-    const initials = String(collection?.name || 'J').trim().slice(0, 2).toUpperCase() || 'J';
-    // One cell per card in the collection (max 4): a 2-card collection gets 2
-    // tiles, not 2 tiles plus 2 initials fillers. Initials only stand in for
-    // cards whose avatars aren't known (yet).
-    const cellCount = Math.max(1, Math.min(4, Math.max(images.length, collectionCharacterCount(collection))));
-    const cells = [];
-    for (let i = 0; i < cellCount; i++) {
-        const src = images[i];
-        cells.push(src
-            ? `<span class="janny-collection-preview-cell"><img class="browse-decode-image" data-src="${escapeHtml(resolveJannyAvatarUrl(src))}" src="${IMG_PLACEHOLDER}" alt="" decoding="async" fetchpriority="low" onerror="this.remove()"></span>`
-            : `<span class="janny-collection-preview-cell janny-collection-preview-empty">${escapeHtml(initials)}</span>`);
-    }
-    return cells.join('');
-}
-
-function renderJannyCollectionOwnerLink(ownerName) {
-    const owner = String(ownerName || '').trim();
-    if (!owner) return '';
-    return `<a href="#" class="creator-link janny-collection-owner-link" data-author="${escapeHtml(owner)}" title="View collections by ${escapeHtml(owner)}">${escapeHtml(owner)}</a>`;
-}
-
-function formatJannyCollectionDate(value) {
-    if (!value) return '';
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return String(value);
-    return date.toLocaleDateString();
-}
-
-function createJannyCollectionCard(collection, { owned = false } = {}) {
-    const id = collection?.id || '';
-    const path = collection?.path || '';
-    const name = collection?.name || 'Untitled collection';
-    const desc = stripHtml(collection?.description || '');
-    const count = collectionCharacterCount(collection);
-    const owner = collection?.ownerName || collection?.creatorUsername || collection?.user?.username || '';
-    const views = typeof collection?.viewCount === 'number' ? collection.viewCount : null;
-    const updated = formatJannyCollectionDate(collection?.updatedAt || collection?.updated_at || collection?.createdAt);
-    const attrs = owned
-        ? `data-collection-id="${escapeHtml(String(id))}"`
-        : `data-collection-path="${escapeHtml(path)}"`;
-    const openClass = owned ? 'janny-owned-collection-open' : 'janny-public-collection-open';
-    const meta = [
-        `<span><i class="fa-solid fa-layer-group"></i> ${formatNumber(count)} cards</span>`,
-        owner ? `<span><i class="fa-solid fa-user"></i> ${renderJannyCollectionOwnerLink(owner)}</span>` : '',
-        views !== null ? `<span><i class="fa-solid fa-eye"></i> ${formatNumber(views)} views</span>` : '',
-        updated ? `<span><i class="fa-solid fa-clock"></i> ${escapeHtml(updated)}</span>` : '',
-        owned ? `<span><i class="fa-solid ${collectionIsPrivate(collection) ? 'fa-lock' : 'fa-globe'}"></i> ${collectionPrivacyLabel(collection)}</span>` : '',
-    ].filter(Boolean).join('');
-
-    return `
-        <article class="janny-collection-card" ${attrs}>
-            <div class="janny-collection-preview" aria-hidden="true">${renderJannyCollectionPreviewCells(collection)}</div>
-            <div class="janny-collection-card-body">
-                <h3>${escapeHtml(name)}</h3>
-                <p class="janny-collection-description">${desc ? escapeHtml(desc) : 'No description yet.'}</p>
-                <div class="janny-collection-meta">${meta}</div>
-                <div class="janny-collection-card-actions">
-                    <button class="glass-btn ${openClass}" ${attrs}><i class="fa-solid fa-folder-open"></i> Open</button>
-                    ${owned ? `<button class="glass-btn janny-owned-collection-edit" data-collection-id="${escapeHtml(String(id))}"><i class="fa-solid fa-pen"></i> Edit</button>` : ''}
-                    ${owned ? `<button class="glass-btn janny-owned-collection-delete" data-collection-id="${escapeHtml(String(id))}"><i class="fa-solid fa-trash"></i> Delete</button>` : ''}
-                </div>
-            </div>
-        </article>
-    `;
-}
-
-function showJannyCollectionSurface(surface) {
-    const publicBtn = document.getElementById('jannyCollectionsPublicBtn');
-    const mineBtn = document.getElementById('jannyCollectionsMineBtn');
-    publicBtn?.classList.toggle('active', jannyCollectionsMode === 'public');
-    mineBtn?.classList.toggle('active', jannyCollectionsMode === 'owned');
-    publicBtn?.setAttribute('aria-pressed', String(jannyCollectionsMode === 'public'));
-    mineBtn?.setAttribute('aria-pressed', String(jannyCollectionsMode === 'owned'));
-
-    document.getElementById('jannyPublicCollectionsToolbar')?.classList.toggle('hidden', surface !== 'public');
-    document.getElementById('jannyPublicCollectionsList')?.classList.toggle('hidden', surface !== 'public');
-    document.getElementById('jannyOwnedCreatePanel')?.classList.toggle('hidden', surface !== 'owned');
-    document.getElementById('jannyOwnedCollectionsList')?.classList.toggle('hidden', surface !== 'owned');
-    document.getElementById('jannyCollectionDetailPanel')?.classList.toggle('hidden', surface !== 'detail');
-    document.getElementById('jannyCollectionManagePanel')?.classList.toggle('hidden', surface !== 'manage');
-    document.getElementById('jannyCollectorCollectionsPanel')?.classList.toggle('hidden', surface !== 'collector');
-}
-
-function setJannyCollectionsMode(mode) {
-    const next = mode === 'owned' ? 'owned' : 'public';
-    jannyCollectionsMode = next;
-    jannyCollectionDetailLoadToken++;
-    jannyCollectionManageLoadToken++;
-    jannyCollectorLoadToken++;
-    jannyActiveCollection = null;
-    jannyManageCollection = null;
-    jannyCollectorView = null;
-    showJannyCollectionSurface(next);
-    if (next === 'public' && !jannyPublicCollectionsLoaded && !jannyPublicCollectionsLoading) {
-        loadJannyPublicCollections({ reset: true }).catch(err => debugLog('[JannyAccount] public collections failed:', err.message));
-    }
-    if (next === 'owned' && !jannyOwnedCollectionsLoaded) {
-        loadJannyOwnedCollections(false).catch(err => debugLog('[JannyAccount] owned collections failed:', err.message));
-    }
-}
-
-async function loadJannyPublicCollections({ reset = false } = {}) {
-    if (jannyPublicCollectionsLoading) return jannyPublicCollections;
-    if (reset) {
-        jannyPublicCollections = [];
-        jannyPublicCollectionsPage = 1;
-        jannyPublicCollectionsHasMore = true;
-        jannyPublicCollectionsError = '';
-        jannyPublicCollectionsLoaded = false;
-    }
-    if (!jannyPublicCollectionsHasMore && !reset) return jannyPublicCollections;
-
-    jannyPublicCollectionsLoading = true;
-    renderJannyPublicCollectionsList();
-    try {
-        const data = await fetchJannyPublicCollections({ sort: jannyPublicCollectionsSort, page: jannyPublicCollectionsPage });
-        const seen = new Set(jannyPublicCollections.map(c => String(c.id || c.path)));
-        for (const collection of (Array.isArray(data.collections) ? data.collections : [])) {
-            const key = String(collection.id || collection.path || '');
-            if (!key || seen.has(key)) continue;
-            seen.add(key);
-            jannyPublicCollections.push(collection);
-        }
-        jannyPublicCollectionsHasMore = !!data.hasMore;
-        jannyPublicCollectionsPage += 1;
-        jannyPublicCollectionsLoaded = true;
-        jannyPublicCollectionsError = '';
-    } catch (err) {
-        jannyPublicCollectionsError = describeJannyAccountError(err);
-        showToast(`Could not load public Janny collections: ${jannyPublicCollectionsError}`, 'error', 8000);
-    } finally {
-        jannyPublicCollectionsLoading = false;
-        renderJannyPublicCollectionsList();
-    }
-    return jannyPublicCollections;
-}
-
-function renderJannyPublicCollectionsList() {
-    const list = document.getElementById('jannyPublicCollectionsList');
-    if (!list) return;
-    if (jannyPublicCollectionsError && !jannyPublicCollections.length) {
-        list.innerHTML = `<div class="browse-empty-state">${escapeHtml(jannyPublicCollectionsError)}</div>`;
-        return;
-    }
-    if (jannyPublicCollectionsLoading && !jannyPublicCollections.length) {
-        list.innerHTML = '<div class="browse-empty-state"><i class="fa-solid fa-spinner fa-spin"></i> Loading public collections...</div>';
-        return;
-    }
-    if (jannyPublicCollectionsLoaded && !jannyPublicCollections.length) {
-        list.innerHTML = '<div class="browse-empty-state">No public Janny collections found.</div>';
-        return;
-    }
-    const cards = jannyPublicCollections.map(collection => createJannyCollectionCard(collection, { owned: false })).join('');
-    const more = jannyPublicCollectionsHasMore
-        ? `<div class="browse-load-more"><button id="jannyPublicCollectionsLoadMoreBtn" class="glass-btn" ${jannyPublicCollectionsLoading ? 'disabled' : ''}><i class="fa-solid ${jannyPublicCollectionsLoading ? 'fa-spinner fa-spin' : 'fa-plus'}"></i> ${jannyPublicCollectionsLoading ? 'Loading...' : 'Load More'}</button></div>`
-        : '';
-    list.innerHTML = `<div class="janny-collection-card-grid">${cards}</div>${more}`;
-    jannyBrowseView.observeImages(list);
-}
-
-// Collector profile surface: a Janny user's other public collections
-// (jannyai.com/collectors/<name>), reached by clicking a collection's owner.
-async function openJannyCollectorCollections(name) {
-    const owner = String(name || '').trim();
-    if (!owner) return;
-    const token = ++jannyCollectorLoadToken;
-    jannyCollectorView = { name: owner, collections: [], loading: true, error: '' };
-    renderJannyCollectorCollections();
-    try {
-        const data = await fetchJannyCollectorCollections(owner);
-        if (token !== jannyCollectorLoadToken) return;
-        jannyCollectorView = {
-            name: owner,
-            collections: Array.isArray(data.collections) ? data.collections : [],
-            loading: false,
-            error: '',
-        };
-    } catch (err) {
-        if (token !== jannyCollectorLoadToken) return;
-        jannyCollectorView = { name: owner, collections: [], loading: false, error: describeJannyAccountError(err) };
-        showToast(`Could not load collections by ${owner}: ${jannyCollectorView.error}`, 'error', 8000);
-    }
-    renderJannyCollectorCollections();
-}
-
-function renderJannyCollectorCollections() {
-    const panel = document.getElementById('jannyCollectorCollectionsPanel');
-    if (!panel || !jannyCollectorView) return;
-    showJannyCollectionSurface('collector');
-    const { name, collections, loading, error } = jannyCollectorView;
-    let body;
-    if (loading) {
-        body = '<div class="browse-empty-state"><i class="fa-solid fa-spinner fa-spin"></i> Loading collections...</div>';
-    } else if (error) {
-        body = `<div class="browse-empty-state">${escapeHtml(error)}</div>`;
-    } else if (!collections.length) {
-        body = `<div class="browse-empty-state">No public collections by ${escapeHtml(name)}.</div>`;
-    } else {
-        body = `<div class="janny-collection-card-grid">${collections.map(c => createJannyCollectionCard(c, { owned: false })).join('')}</div>`;
-    }
-    panel.innerHTML = `
-        <div class="janny-collection-detail">
-            <div class="browse-author-banner">
-                <div class="browse-author-banner-content">
-                    <i class="fa-solid fa-user"></i>
-                    <span><strong>Collections by ${escapeHtml(name)}</strong> <span class="browse-author-banner-hint">${loading ? '' : `${formatNumber(collections.length)} public`}</span></span>
-                </div>
-                <div class="browse-author-banner-actions">
-                    <button id="jannyCollectorBackBtn" class="glass-btn"><i class="fa-solid fa-arrow-left"></i> Back</button>
-                </div>
-            </div>
-            ${body}
-        </div>
-    `;
-    jannyBrowseView.observeImages(panel);
-}
-
-async function loadJannyOwnedCollections(force = false) {
-    if (jannyOwnedCollectionsLoaded && !force) return jannyOwnedCollections;
-    if (jannyOwnedCollectionsLoading) return jannyOwnedCollections;
-    const generation = jannyAccountGeneration;
-    jannyOwnedCollectionsLoading = true;
-    jannyOwnedCollectionsError = '';
-    renderJannyOwnedCollectionsList();
-    try {
-        if (!await ensureJannyAccountReady() || generation !== jannyAccountGeneration) {
-            renderJannyCollectionDropdown();
-            return [];
-        }
-        const collections = await fetchJannyCollections();
-        if (generation !== jannyAccountGeneration) return [];
-        jannyOwnedCollections = collections;
-        jannyOwnedCollectionsLoaded = true;
-        hydrateJannyOwnedCollectionPreviews().catch(err => debugLog('[JannyAccount] owned preview hydration failed:', err.message));
-        renderJannyCollectionDropdown();
-        return jannyOwnedCollections;
-    } catch (err) {
-        if (generation !== jannyAccountGeneration) return [];
-        handleJannyAccountFailure(err, generation);
-        jannyOwnedCollectionsError = describeJannyAccountError(err);
-        showToast(`Could not load Janny collections: ${jannyOwnedCollectionsError}`, 'error', 8000);
-        return [];
-    } finally {
-        if (generation === jannyAccountGeneration) {
-            jannyOwnedCollectionsLoading = false;
-            renderJannyOwnedCollectionsList();
-        }
-    }
-}
-
-function renderJannyOwnedCollectionsList() {
-    const list = document.getElementById('jannyOwnedCollectionsList');
-    if (!list) return;
-    if (jannyOwnedCollectionsLoading) {
-        list.innerHTML = '<div class="browse-empty-state"><i class="fa-solid fa-spinner fa-spin"></i> Loading your collections...</div>';
-        return;
-    }
-    if (jannyOwnedCollectionsError && !jannyOwnedCollections.length) {
-        list.innerHTML = `<div class="browse-empty-state">${escapeHtml(jannyOwnedCollectionsError)}</div>`;
-        return;
-    }
-    if (!jannyOwnedCollectionsLoaded) {
-        list.innerHTML = '<div class="browse-empty-state">Install your browser-owned login in JannyAI Settings to load your collections.</div>';
-        return;
-    }
-    if (!jannyOwnedCollections.length) {
-        list.innerHTML = '<div class="browse-empty-state">No Janny collections found. Create one above to start organizing cards.</div>';
-        return;
-    }
-    list.innerHTML = `<div class="janny-collection-card-grid">${jannyOwnedCollections.map(c => createJannyCollectionCard(c, { owned: true })).join('')}</div>`;
-    jannyBrowseView.observeImages(list);
-}
-
-function getCollectionEntries(collection) {
-    if (Array.isArray(collection?.collectionCharacters)) return collection.collectionCharacters;
-    if (Array.isArray(collection?.characters)) return collection.characters;
-    return null;
-}
-
-
-async function refreshSelectedJannyCollectionMemberships() {
-    const generation = jannyAccountGeneration;
-    const characterId = String(jannySelectedChar?.id || '');
-    const membershipIds = new Set();
-    if (!characterId || !jannyOwnedCollectionsLoaded) return jannyModalCollectionIds;
-
-    for (const collection of jannyOwnedCollections) {
-        const entries = getCollectionEntries(collection);
-        if (entries) {
-            if (entries.some(entry => collectionEntryMatchesCharacter(entry, characterId))) membershipIds.add(String(collection.id));
-            continue;
-        }
-        if (!collection?.id || collectionCharacterCount(collection) <= 0) continue;
-        try {
-            const fetched = await fetchJannyCollectionCharacters(collection.id);
-            if (generation !== jannyAccountGeneration || String(jannySelectedChar?.id || '') !== characterId) return jannyModalCollectionIds;
-            if (Array.isArray(fetched) && fetched.some(entry => collectionEntryMatchesCharacter(entry, characterId))) {
-                membershipIds.add(String(collection.id));
-            }
-        } catch (err) {
-            handleJannyAccountFailure(err, generation);
-            debugLog('[JannyAccount] membership check failed:', err.message);
-            return jannyModalCollectionIds;
-        }
-    }
-    if (generation !== jannyAccountGeneration || String(jannySelectedChar?.id || '') !== characterId) return jannyModalCollectionIds;
-    jannyModalCollectionIds = membershipIds;
-    jannyModalCollectionChecksLoadedFor = characterId;
-    return jannyModalCollectionIds;
-}
-
-function renderJannyCollectionDropdown() {
-    const dropdown = document.getElementById('jannyCollectionDropdown');
-    const btn = document.getElementById('jannyCollectionDropdownBtn');
-    if (!dropdown) return;
-    dropdown.classList.toggle('hidden', !jannyCollectionDropdownOpen);
-    if (btn) btn.setAttribute('aria-expanded', String(jannyCollectionDropdownOpen));
-    if (!jannyCollectionDropdownOpen) return;
-
-    if (!jannyAccountStatus.active) {
-        dropdown.innerHTML = '<div class="janny-collection-dropdown-title">Janny collections</div><div class="janny-collection-dropdown-empty">Install your browser-owned login in JannyAI Settings to use owned collections.</div>';
-        return;
-    }
-    if (!jannyOwnedCollectionsLoaded) {
-        dropdown.innerHTML = '<div class="janny-collection-dropdown-title">Janny collections</div><div class="janny-collection-dropdown-empty"><i class="fa-solid fa-spinner fa-spin"></i> Loading collections...</div>';
-        return;
-    }
-    if (!jannyOwnedCollections.length) {
-        dropdown.innerHTML = `
-            <div class="janny-collection-dropdown-title">Janny collections</div>
-            <div class="janny-collection-dropdown-empty">No collections yet.</div>
-            <button class="janny-collection-toggle-row" data-action="show-owned"><i class="fa-solid fa-plus"></i><span>Create one in My Collections</span></button>
-        `;
-        return;
-    }
-
-    const rows = jannyOwnedCollections.map(collection => {
-        const id = String(collection.id || '');
-        const isMember = jannyModalCollectionIds.has(id);
-        const isLoading = jannyCollectionRowMutations.has(id);
-        return `
-            <button class="janny-collection-toggle-row ${isMember ? 'is-member' : ''}" data-collection-id="${escapeHtml(id)}" role="menuitemcheckbox" aria-checked="${isMember}">
-                <i class="fa-solid ${isLoading ? 'fa-spinner fa-spin' : isMember ? 'fa-check' : 'fa-plus'}"></i>
-                <span class="janny-collection-toggle-name">${escapeHtml(collection.name || 'Untitled')}</span>
-                <span class="janny-collection-toggle-meta">${formatNumber(collectionCharacterCount(collection))} <i class="fa-solid ${collectionIsPrivate(collection) ? 'fa-lock' : 'fa-globe'}"></i></span>
-            </button>
-        `;
-    }).join('');
-    dropdown.innerHTML = `<div class="janny-collection-dropdown-title">Add to collection</div>${rows}`;
-}
-
-async function openJannyCollectionDropdown() {
-    if (jannyCollectionDropdownOpen) {
-        closeJannyCollectionDropdown();
-        return;
-    }
-    jannyCollectionDropdownOpen = true;
-    renderJannyCollectionDropdown();
-    if (!await ensureJannyAccountReady()) {
-        renderJannyCollectionDropdown();
-        return;
-    }
-    await loadJannyOwnedCollections(false);
-    if (jannySelectedChar?.id && jannyModalCollectionChecksLoadedFor !== String(jannySelectedChar.id)) {
-        await refreshSelectedJannyCollectionMemberships();
-    }
-    renderJannyCollectionDropdown();
-}
-
-function closeJannyCollectionDropdown() {
-    jannyCollectionDropdownOpen = false;
-    renderJannyCollectionDropdown();
-}
-
-async function toggleSelectedJannyCollectionMembership(collectionId) {
-    const generation = jannyAccountGeneration;
-    const characterId = String(jannySelectedChar?.id || '');
-    const characterName = jannySelectedChar?.name || 'character';
-    if (!characterId || !collectionId) return;
-    if (!await ensureJannyAccountReady() || generation !== jannyAccountGeneration) return;
-    const collection = jannyOwnedCollections.find(c => String(c.id) === String(collectionId));
-    const name = collection?.name || 'collection';
-    const wasMember = jannyModalCollectionIds.has(String(collectionId));
-    jannyCollectionRowMutations.add(String(collectionId));
-    renderJannyCollectionDropdown();
-    try {
-        if (wasMember) {
-            await removeJannyCharacterFromCollection(collectionId, characterId);
-            if (generation !== jannyAccountGeneration) return;
-            if (String(jannySelectedChar?.id || '') === characterId) jannyModalCollectionIds.delete(String(collectionId));
-            updateOwnedCollectionCount(collectionId, -1);
-            showToast(`Removed ${characterName} from ${name}.`, 'success');
-        } else {
-            await addJannyCharacterToCollection(collectionId, characterId);
-            if (generation !== jannyAccountGeneration) return;
-            if (String(jannySelectedChar?.id || '') === characterId) jannyModalCollectionIds.add(String(collectionId));
-            updateOwnedCollectionCount(collectionId, 1);
-            showToast(`Added ${characterName} to ${name}.`, 'success');
-        }
-        renderJannyOwnedCollectionsList();
-        if (jannyActiveCollection?.kind === 'owned' && String(jannyActiveCollection.id) === String(collectionId)) {
-            openJannyOwnedCollection(collectionId);
-        }
-    } catch (err) {
-        if (generation !== jannyAccountGeneration) return;
-        if (await reconcileJannyDuplicateAdd(err, { wasMember, collectionId, characterId, generation })) {
-            if (generation !== jannyAccountGeneration) return;
-            if (String(jannySelectedChar?.id || '') === characterId) jannyModalCollectionIds.add(String(collectionId));
-            showToast(`${characterName} is already in ${name}. Membership refreshed.`, 'info');
-            renderJannyOwnedCollectionsList();
-        } else {
-            if (generation !== jannyAccountGeneration) return;
-            handleJannyAccountFailure(err, generation);
-            showToast(`Could not update collection: ${describeJannyAccountError(err)}`, 'error', 8000);
-        }
-    } finally {
-        if (generation === jannyAccountGeneration) {
-            jannyCollectionRowMutations.delete(String(collectionId));
-            if (String(jannySelectedChar?.id || '') === characterId) renderJannyCollectionDropdown();
-        }
-    }
-}
-
-/**
- * JannyAI answers an add of a character already in the collection with a 401, which is
- * indistinguishable from a rejected login by status alone. The browser transport has already
- * spent its one recovery attempt by the time this runs, so ask the browser what the session
- * actually looks like: only a still-active session plus a collection re-fetch that shows the
- * character present counts as a duplicate. Anything else stays a login failure and fails closed.
- * @returns {Promise<boolean>} true when the "add" was a no-op on an existing membership
- */
-async function reconcileJannyDuplicateAdd(err, { wasMember, collectionId, characterId, generation }) {
-    if (wasMember || err?.status !== 401) return false;
-    try {
-        const status = await jannySessionStatus();
-        if (generation !== jannyAccountGeneration || status?.active !== true) return false;
-        const entries = await fetchJannyCollectionCharacters(collectionId);
-        if (generation !== jannyAccountGeneration) return false;
-        return Array.isArray(entries) && entries.some(entry => collectionEntryMatchesCharacter(entry, characterId));
-    } catch (refreshErr) {
-        debugLog('[JannyAccount] duplicate-add membership check failed:', refreshErr.message);
-        return false;
-    }
-}
-
-function renderJannyCollectionCharactersGrid() {
-    const grid = document.getElementById('jannyCollectionCharactersGrid');
-    if (!grid) return;
-    if (!jannyActiveCollection) {
-        grid.innerHTML = '';
-        return;
-    }
-    if (!jannyCollectionCharacters.length) {
-        grid.innerHTML = '<div style="grid-column: 1 / -1; padding: 24px; color: var(--text-muted); text-align: center;">No cards in this collection.</div>';
-        return;
-    }
-    grid.innerHTML = jannyCollectionCharacters.map(c => createJannyCard(c)).join('');
-    jannyBrowseView.observeImages(grid);
-}
-
-function renderJannyCollectionDetail({ loading = false, error = '' } = {}) {
-    const panel = document.getElementById('jannyCollectionDetailPanel');
-    if (!panel) return;
-    showJannyCollectionSurface('detail');
-    if (loading) {
-        panel.innerHTML = '<div class="browse-empty-state"><i class="fa-solid fa-spinner fa-spin"></i> Loading collection...</div>';
-        return;
-    }
-    if (error) {
-        panel.innerHTML = `<div class="browse-empty-state" style="color: var(--cl-error-bright);">${escapeHtml(error)}</div>`;
-        return;
-    }
-    const collection = jannyActiveCollection || {};
-    const desc = stripHtml(collection.description || '');
-    const updated = formatJannyCollectionDate(collection.updatedAt || collection.updated_at || '');
-    panel.innerHTML = `
-        <div class="janny-collection-detail">
-            <div class="browse-author-banner">
-                <div class="browse-author-banner-content">
-                    <i class="fa-solid fa-folder-open"></i>
-                    <span><strong>${escapeHtml(collection.name || 'Collection')}</strong> <span class="browse-author-banner-hint">${escapeHtml(collection.kind === 'owned' ? 'My collection' : 'Public collection')}</span></span>
-                </div>
-                <div class="browse-author-banner-actions">
-                    <button id="jannyCollectionDetailBackBtn" class="glass-btn"><i class="fa-solid fa-arrow-left"></i> Back</button>
-                </div>
-            </div>
-            ${updated ? `<p class="janny-collection-detail-updated">Last updated: ${escapeHtml(updated)}</p>` : ''}
-            ${desc ? `<p class="janny-collection-detail-description">${escapeHtml(desc)}</p>` : ''}
-            <div class="janny-collection-meta janny-collection-detail-meta">
-                <span class="janny-collection-meta-box"><i class="fa-solid fa-layer-group"></i> ${formatNumber(collectionCharacterCount(collection) || jannyCollectionCharacters.length)} cards</span>
-                ${collection.ownerName ? `<span class="janny-collection-meta-box"><i class="fa-solid fa-user"></i> ${renderJannyCollectionOwnerLink(collection.ownerName)}</span>` : ''}
-                ${typeof collection.viewCount === 'number' ? `<span class="janny-collection-meta-box"><i class="fa-solid fa-eye"></i> ${formatNumber(collection.viewCount)} views</span>` : ''}
-                ${collection.kind === 'owned' ? `<span class="janny-collection-meta-box"><i class="fa-solid ${collectionIsPrivate(collection) ? 'fa-lock' : 'fa-globe'}"></i> ${collectionPrivacyLabel(collection)}</span>` : ''}
-            </div>
-            <div id="jannyCollectionCharactersGrid" class="browse-grid"></div>
-        </div>
-    `;
-    renderJannyCollectionCharactersGrid();
-}
-
-async function openJannyPublicCollection(path) {
-    if (!path) return;
-    const requestedPath = String(path);
-    const token = ++jannyCollectionDetailLoadToken;
-    jannyActiveCollection = { kind: 'public', path: requestedPath, name: 'Public collection' };
-    jannyCollectionCharacters = [];
-    renderJannyCollectionDetail({ loading: true });
-    try {
-        const data = await fetchJannyPublicCollection(requestedPath);
-        const characterIds = Array.isArray(data.characterIds) ? data.characterIds : [];
-        const fetched = await fetchJannyPublicCharactersByIds(characterIds);
-        if (token !== jannyCollectionDetailLoadToken || jannyActiveCollection?.kind !== 'public' || String(jannyActiveCollection.path || '') !== requestedPath) return;
-        jannyActiveCollection = { kind: 'public', ...(data.collection || {}) };
-        jannyCollectionCharacters = arrangeJannyCollectionCharacters(fetched.map(normalizeJannyCollectionCharacter).filter(Boolean));
-        renderJannyCollectionDetail();
-    } catch (err) {
-        if (token !== jannyCollectionDetailLoadToken || jannyActiveCollection?.kind !== 'public' || String(jannyActiveCollection.path || '') !== requestedPath) return;
-        renderJannyCollectionDetail({ error: describeJannyAccountError(err) });
-        showToast(`Could not load public Janny collection: ${describeJannyAccountError(err)}`, 'error', 8000);
-    }
-}
-
-async function openJannyOwnedCollection(collectionId) {
-    if (!collectionId) return;
-    const generation = jannyAccountGeneration;
-    if (!await ensureJannyAccountReady() || generation !== jannyAccountGeneration) return;
-    const requestedId = String(collectionId);
-    const token = ++jannyCollectionDetailLoadToken;
-    jannyActiveCollection = { kind: 'owned', id: requestedId, name: 'Collection' };
-    jannyCollectionCharacters = [];
-    renderJannyCollectionDetail({ loading: true });
-    try {
-        const collection = jannyOwnedCollections.find(c => String(c.id) === requestedId) || { id: requestedId, name: 'Collection' };
-        let entries = await fetchJannyCollectionCharacters(requestedId);
-        let chars = entries.map(normalizeJannyCollectionCharacter).filter(Boolean);
-        const missingDetailIds = entries
-            .map(collectionEntryCharacterId)
-            .filter(id => id && !chars.some(c => String(c.id) === String(id)));
-        if (missingDetailIds.length) {
-            const fetched = await fetchJannyCharactersByIds(missingDetailIds);
-            chars = chars.concat(fetched.map(normalizeJannyCollectionCharacter).filter(Boolean));
-        }
-        if (token !== jannyCollectionDetailLoadToken || jannyActiveCollection?.kind !== 'owned' || String(jannyActiveCollection.id || '') !== requestedId) return;
-        jannyActiveCollection = { kind: 'owned', ...collection };
-        jannyCollectionCharacters = arrangeJannyCollectionCharacters(chars);
-        renderJannyCollectionDetail();
-    } catch (err) {
-        if (token !== jannyCollectionDetailLoadToken || jannyActiveCollection?.kind !== 'owned' || String(jannyActiveCollection.id || '') !== requestedId) return;
-        handleJannyAccountFailure(err, generation);
-        renderJannyCollectionDetail({ error: describeJannyAccountError(err) });
-        showToast(`Could not load Janny collection: ${describeJannyAccountError(err)}`, 'error', 8000);
-    }
-}
-
-async function createCollectionFromPanel() {
-    const generation = jannyAccountGeneration;
-    const nameEl = document.getElementById('jannyNewCollectionName');
-    const descEl = document.getElementById('jannyNewCollectionDescription');
-    const privateEl = document.getElementById('jannyNewCollectionPrivate');
-    const errorEl = document.getElementById('jannyCreateCollectionError');
-    const name = (nameEl?.value || '').trim();
-
-    if (errorEl) { errorEl.classList.add('hidden'); errorEl.innerHTML = ''; }
-
-    if (!name) {
-        showToast('Name the collection first', 'warning');
-        return;
-    }
-    if (!await ensureJannyAccountReady() || generation !== jannyAccountGeneration) return;
-    try {
-        const isPrivate = privateEl ? !!privateEl.checked : true;
-        await createJannyCollection({ name, description: descEl?.value || '', isPrivate });
-        if (generation !== jannyAccountGeneration) return;
-        if (nameEl) nameEl.value = '';
-        if (descEl) descEl.value = '';
-        jannyOwnedCollectionsLoaded = false;
-        await loadJannyOwnedCollections(true);
-        if (generation !== jannyAccountGeneration) return;
-        showToast('Janny collection created', 'success');
-    } catch (err) {
-        if (generation !== jannyAccountGeneration) return;
-        handleJannyAccountFailure(err, generation);
-        if (errorEl) {
-            errorEl.classList.remove('hidden');
-            errorEl.innerHTML = `Couldn't create the collection here (${escapeHtml(describeJannyAccountError(err))}). <a href="${JANNY_SITE_BASE}/collections/new" target="_blank" rel="noopener noreferrer">Create it on JannyAI</a> instead.`;
-        } else {
-            showToast(`Create collection failed: ${describeJannyAccountError(err)}`, 'error', 8000);
-        }
-    }
-}
-
-async function openJannyCollectionManage(collectionId) {
-    if (!collectionId) return;
-    const generation = jannyAccountGeneration;
-    if (!await ensureJannyAccountReady() || generation !== jannyAccountGeneration) return;
-    const requestedId = String(collectionId);
-    const collection = jannyOwnedCollections.find(c => String(c.id) === requestedId);
-    if (!collection) {
-        showToast('Collection not found', 'warning');
-        return;
-    }
-    const token = ++jannyCollectionManageLoadToken;
-    jannyManageCollection = { collection: { ...collection }, characters: [], saving: false, error: '' };
-    renderJannyCollectionManage({ loading: true });
-    try {
-        const entries = await fetchJannyCollectionCharacters(requestedId);
-        let chars = entries.map(normalizeJannyCollectionCharacter).filter(Boolean);
-        const missingDetailIds = entries
-            .map(collectionEntryCharacterId)
-            .filter(id => id && !chars.some(c => String(c.id) === String(id)));
-        if (missingDetailIds.length) {
-            const fetched = await fetchJannyCharactersByIds(missingDetailIds);
-            chars = chars.concat(fetched.map(normalizeJannyCollectionCharacter).filter(Boolean));
-        }
-        if (token !== jannyCollectionManageLoadToken || String(jannyManageCollection?.collection?.id || '') !== requestedId) return;
-        jannyManageCollection.characters = arrangeJannyCollectionCharacters(chars);
-        renderJannyCollectionManage();
-    } catch (err) {
-        if (token !== jannyCollectionManageLoadToken || String(jannyManageCollection?.collection?.id || '') !== requestedId) return;
-        handleJannyAccountFailure(err, generation);
-        if (generation !== jannyAccountGeneration) {
-            showToast(describeJannyAccountError(err), 'error', 8000);
-            return;
-        }
-        jannyManageCollection.error = describeJannyAccountError(err);
-        renderJannyCollectionManage();
-    }
-}
-
-function renderJannyCollectionManage({ loading = false } = {}) {
-    const panel = document.getElementById('jannyCollectionManagePanel');
-    if (!panel) return;
-    showJannyCollectionSurface('manage');
-    if (loading || !jannyManageCollection) {
-        panel.innerHTML = '<div class="browse-empty-state"><i class="fa-solid fa-spinner fa-spin"></i> Loading collection editor...</div>';
-        return;
-    }
-    const collection = jannyManageCollection.collection;
-    const isPrivate = collectionIsPrivate(collection);
-    const rows = jannyManageCollection.characters.map(c => `
-        <div class="janny-manage-character-row" data-character-id="${escapeHtml(String(c.id))}">
-            <img class="browse-decode-image" data-src="${escapeHtml(resolveJannyAvatarUrl(c.avatar))}" src="${IMG_PLACEHOLDER}" alt="" decoding="async" fetchpriority="low" onerror="this.src='/img/ai4.png'">
-            <div><strong>${escapeHtml(c.name || 'Unknown')}</strong>${c.creatorUsername ? `<span>${escapeHtml(c.creatorUsername)}</span>` : ''}</div>
-            <button class="glass-btn icon-only janny-manage-character-remove" data-character-id="${escapeHtml(String(c.id))}" title="Remove from collection"><i class="fa-solid fa-xmark"></i></button>
-        </div>
-    `).join('');
-
-    panel.innerHTML = `
-        <div class="janny-collection-manage">
-            <div class="browse-author-banner">
-                <div class="browse-author-banner-content">
-                    <i class="fa-solid fa-pen"></i>
-                    <span><strong>Edit collection</strong> <span class="browse-author-banner-hint">Metadata and membership</span></span>
-                </div>
-                <div class="browse-author-banner-actions">
-                    <button id="jannyManageBackBtn" class="glass-btn"><i class="fa-solid fa-arrow-left"></i> My Collections</button>
-                </div>
-            </div>
-            ${jannyManageCollection.error ? `<div class="browse-empty-state" style="color: var(--cl-error-bright);">${escapeHtml(jannyManageCollection.error)}</div>` : ''}
-            <label>Name <input id="jannyManageCollectionName" class="glass-input" value="${escapeHtml(collection.name || '')}" autocomplete="one-time-code"></label>
-            <label>Description <textarea id="jannyManageCollectionDescription" class="glass-input" rows="3">${escapeHtml(collection.description || '')}</textarea></label>
-            <div class="janny-collection-segmented" role="group" aria-label="Collection privacy">
-                <button id="jannyManagePrivateBtn" class="glass-btn ${isPrivate ? 'active' : ''}" aria-pressed="${isPrivate}"><i class="fa-solid fa-lock"></i> Private</button>
-                <button id="jannyManagePublicBtn" class="glass-btn ${!isPrivate ? 'active' : ''}" aria-pressed="${!isPrivate}"><i class="fa-solid fa-globe"></i> Public</button>
-            </div>
-            <div class="janny-collection-toolbar">
-                <button id="jannyManageSaveBtn" class="glass-btn"><i class="fa-solid fa-save"></i> Save</button>
-                <button id="jannyManageDeleteBtn" class="glass-btn"><i class="fa-solid fa-trash"></i> Delete</button>
-                <span class="browse-author-banner-hint">Changes save back to JannyAI.</span>
-            </div>
-            <div class="janny-collection-toolbar">
-                <input id="jannyManageAddCharacterInput" class="glass-input" placeholder="Paste a Janny character URL or UUID" autocomplete="one-time-code">
-                <button id="jannyManageAddCharacterBtn" class="glass-btn"><i class="fa-solid fa-plus"></i> Add</button>
-            </div>
-            <h3 class="browse-section-title"><i class="fa-solid fa-users"></i> Characters (${jannyManageCollection.characters.length})</h3>
-            <div class="janny-manage-character-list">${rows || '<div class="browse-empty-state">No cards in this collection.</div>'}</div>
-        </div>
-    `;
-    jannyBrowseView.observeImages(panel);
-}
-
-async function saveJannyManagedCollection() {
-    if (!jannyManageCollection?.collection?.id) return;
-    const generation = jannyAccountGeneration;
-    const managed = jannyManageCollection;
-    const collection = jannyManageCollection.collection;
-    const name = (document.getElementById('jannyManageCollectionName')?.value || '').trim();
-    const description = document.getElementById('jannyManageCollectionDescription')?.value || '';
-    if (!name) {
-        showToast('Name the collection first', 'warning');
-        return;
-    }
-    try {
-        await updateJannyCollection({ id: collection.id, name, description, isPrivate: collectionIsPrivate(collection) });
-        if (generation !== jannyAccountGeneration || managed !== jannyManageCollection) return;
-        collection.name = name;
-        collection.description = description;
-        const existing = jannyOwnedCollections.find(c => String(c.id) === String(collection.id));
-        if (existing) Object.assign(existing, collection);
-        renderJannyOwnedCollectionsList();
-        renderJannyCollectionManage();
-        showToast('Collection saved.', 'success');
-    } catch (err) {
-        if (generation !== jannyAccountGeneration) return;
-        handleJannyAccountFailure(err, generation);
-        showToast(`Could not save collection: ${describeJannyAccountError(err)}`, 'error', 8000);
-    }
-}
-
-function parseJannyCharacterIdFromInput(value) {
-    const text = String(value || '').trim();
-    const match = text.match(/\/characters\/([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})(?:_[^/?#\s]+)?/i)
-        || text.match(/^([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i);
-    return match ? match[1] : '';
-}
-
-async function addCharacterToManagedCollection() {
-    if (!jannyManageCollection?.collection?.id) return;
-    const generation = jannyAccountGeneration;
-    const managed = jannyManageCollection;
-    const input = document.getElementById('jannyManageAddCharacterInput');
-    const id = parseJannyCharacterIdFromInput(input?.value || '');
-    if (!id) {
-        showToast('Paste a valid Janny character URL or UUID', 'warning');
-        return;
-    }
-    if (jannyManageCollection.characters.some(c => String(c.id) === String(id))) {
-        showToast('That character is already in this collection', 'info');
-        return;
-    }
-    try {
-        await addJannyCharacterToCollection(jannyManageCollection.collection.id, id);
-        if (generation !== jannyAccountGeneration || managed !== jannyManageCollection) return;
-        const fetched = await fetchJannyCharactersByIds([id]);
-        if (generation !== jannyAccountGeneration || managed !== jannyManageCollection) return;
-        const normalized = fetched.map(normalizeJannyCollectionCharacter).filter(Boolean)[0] || { id, name: id, avatar: '' };
-        jannyManageCollection.characters = arrangeJannyCollectionCharacters([...jannyManageCollection.characters, normalized]);
-        updateOwnedCollectionCount(jannyManageCollection.collection.id, 1);
-        if (input) input.value = '';
-        renderJannyOwnedCollectionsList();
-        renderJannyCollectionManage();
-        showToast('Character added to collection.', 'success');
-    } catch (err) {
-        if (generation !== jannyAccountGeneration) return;
-        handleJannyAccountFailure(err, generation);
-        showToast(`Could not add character: ${describeJannyAccountError(err)}`, 'error', 8000);
-    }
-}
-
-async function removeCharacterFromManagedCollection(characterId) {
-    if (!jannyManageCollection?.collection?.id || !characterId) return;
-    const generation = jannyAccountGeneration;
-    const managed = jannyManageCollection;
-    try {
-        await removeJannyCharacterFromCollection(jannyManageCollection.collection.id, characterId);
-        if (generation !== jannyAccountGeneration || managed !== jannyManageCollection) return;
-        jannyManageCollection.characters = jannyManageCollection.characters.filter(c => String(c.id) !== String(characterId));
-        updateOwnedCollectionCount(jannyManageCollection.collection.id, -1);
-        renderJannyOwnedCollectionsList();
-        renderJannyCollectionManage();
-        showToast('Character removed from collection.', 'success');
-    } catch (err) {
-        if (generation !== jannyAccountGeneration) return;
-        handleJannyAccountFailure(err, generation);
-        showToast(`Could not remove character: ${describeJannyAccountError(err)}`, 'error', 8000);
-    }
-}
-
-async function confirmAndDeleteJannyCollection(collectionId) {
-    if (!collectionId) return;
-    const generation = jannyAccountGeneration;
-    const ok = showConfirm
-        ? await showConfirm({ title: 'Delete Janny collection?', message: 'This cannot be undone from Character Library.', confirmText: 'Delete', cancelText: 'Cancel', danger: true, icon: 'fa-solid fa-trash' })
-        : window.confirm('Delete this Janny collection? This cannot be undone from Character Library.');
-    if (!ok || generation !== jannyAccountGeneration) return;
-    try {
-        await deleteJannyCollection(collectionId);
-        if (generation !== jannyAccountGeneration) return;
-        jannyOwnedCollections = jannyOwnedCollections.filter(c => String(c.id) !== String(collectionId));
-        jannyManageCollection = null;
-        renderJannyOwnedCollectionsList();
-        setJannyCollectionsMode('owned');
-        showToast('Collection deleted.', 'success');
-    } catch (err) {
-        if (generation !== jannyAccountGeneration) return;
-        handleJannyAccountFailure(err, generation);
-        showToast(`Could not delete collection: ${describeJannyAccountError(err)}`, 'error', 8000);
-    }
-}
-
-// Topbar refresh while the collections panel is open: re-fetch whatever
-// surface is actually visible, not just the list behind it.
-function reloadJannyCollections() {
-    const collectorVisible = !document.getElementById('jannyCollectorCollectionsPanel')?.classList.contains('hidden');
-    if (collectorVisible && jannyCollectorView?.name) {
-        openJannyCollectorCollections(jannyCollectorView.name);
-        return;
-    }
-    const manageVisible = !document.getElementById('jannyCollectionManagePanel')?.classList.contains('hidden');
-    if (manageVisible && jannyManageCollection?.collection?.id) {
-        openJannyCollectionManage(jannyManageCollection.collection.id);
-        return;
-    }
-    const detailVisible = !document.getElementById('jannyCollectionDetailPanel')?.classList.contains('hidden');
-    if (detailVisible && jannyActiveCollection) {
-        if (jannyActiveCollection.kind === 'owned' && jannyActiveCollection.id) {
-            openJannyOwnedCollection(jannyActiveCollection.id);
-            return;
-        }
-        if (jannyActiveCollection.path) {
-            openJannyPublicCollection(jannyActiveCollection.path);
-            return;
-        }
-    }
-    if (jannyCollectionsMode === 'owned') {
-        jannyOwnedCollectionsLoaded = false;
-        loadJannyOwnedCollections(true);
-    } else {
-        loadJannyPublicCollections({ reset: true });
-    }
-}
-
-function switchJannyCollectionsPanel(show) {
-    const panel = document.getElementById('jannyCollectionsSection');
-    const browse = document.getElementById('jannyBrowseSection');
-    if (!panel || !browse) return;
-    panel.classList.toggle('hidden', !show);
-    browse.classList.toggle('hidden', !!show);
-    document.getElementById('jannyCollectionsBtn')?.classList.toggle('active', !!show);
-    if (show) setJannyCollectionsMode(jannyCollectionsMode || 'public');
-}
-
 function refreshJannyAccountControlsForSelection() {
     updateJannyBookmarkButton();
-    renderJannyCollectionDropdown();
     if (jannyAccountStatus.active && !jannyBookmarksLoaded) {
         loadJannyBookmarks(false).catch(err => debugLog('[JannyAccount] bookmark load failed:', err.message));
     }
-    if (jannyAccountStatus.active && !jannyOwnedCollectionsLoaded) {
-        loadJannyOwnedCollections(false).catch(err => debugLog('[JannyAccount] collection load failed:', err.message));
-    }
+    collections.preload();
 }
+
 // ========================================
 // BROWSE VIEW CLASS
 // ========================================
@@ -2749,52 +1634,7 @@ class JannyBrowseView extends BrowseView {
 
     renderView() {
         return `
-            <div id="jannyCollectionsSection" class="browse-section hidden">
-                <div class="browse-author-banner">
-                    <div class="browse-author-banner-content">
-                        <i class="fa-solid fa-layer-group"></i>
-                        <span><strong>Janny Collections</strong> <span class="browse-author-banner-hint">Browse public lists or manage your own collections.</span></span>
-                    </div>
-                    <div class="browse-author-banner-actions">
-                        <button id="jannyBackToBrowseBtn" class="glass-btn"><i class="fa-solid fa-arrow-left"></i> Browse</button>
-                    </div>
-                </div>
-
-                <div class="janny-collection-segmented" role="group" aria-label="Janny collection mode">
-                    <button id="jannyCollectionsPublicBtn" class="glass-btn active" aria-pressed="true"><i class="fa-solid fa-globe"></i> Public Collections</button>
-                    <button id="jannyCollectionsMineBtn" class="glass-btn" aria-pressed="false"><i class="fa-solid fa-user-lock"></i> My Collections</button>
-                </div>
-
-                <div id="jannyPublicCollectionsToolbar" class="janny-collection-toolbar">
-                    <label class="browse-author-banner-hint" for="jannyPublicCollectionsSort">Sort</label>
-                    <select id="jannyPublicCollectionsSort" class="glass-select" title="Public collections sort">
-                        <option value="latest" selected>Latest</option>
-                        <option value="popular">Most popular</option>
-                    </select>
-                </div>
-
-                <div id="jannyPublicCollectionsList"></div>
-
-                <div id="jannyOwnedCreatePanel" class="browse-search-bar hidden" style="align-items: stretch; flex-direction: column; gap: 8px;">
-                    <div class="browse-search-input-wrapper">
-                        <i class="fa-solid fa-plus"></i>
-                        <input type="search" id="jannyNewCollectionName" placeholder="New collection name..." autocomplete="one-time-code">
-                        <button id="jannyCreateCollectionBtn" class="browse-search-submit" title="Create collection">
-                            <i class="fa-solid fa-arrow-right"></i>
-                        </button>
-                    </div>
-                    <input type="search" id="jannyNewCollectionDescription" class="glass-input" placeholder="Optional description" autocomplete="one-time-code">
-                    <label class="browse-author-banner-hint" style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
-                        <input type="checkbox" id="jannyNewCollectionPrivate" checked> <i class="fa-solid fa-lock"></i> Private collection
-                    </label>
-                    <div id="jannyCreateCollectionError" class="browse-author-banner-hint hidden" style="color: var(--cl-error-bright);"></div>
-                </div>
-
-                <div id="jannyOwnedCollectionsList" class="hidden"></div>
-                <div id="jannyCollectionDetailPanel" class="hidden"></div>
-                <div id="jannyCollectionManagePanel" class="hidden"></div>
-                <div id="jannyCollectorCollectionsPanel" class="hidden"></div>
-            </div>
+            ${collections.renderSection()}
             <div id="jannyBrowseSection" class="browse-section">
                 <div class="browse-search-bar">
                     <div class="browse-search-input-wrapper">
@@ -2863,11 +1703,11 @@ class JannyBrowseView extends BrowseView {
                         <i class="fa-solid fa-external-link"></i> Open
                     </a>
 
-                    <div class="janny-collection-action" id="jannyCollectionAction">
+                    <div class="janny-collection-picker" id="jannyCollectionAction">
                         <button id="jannyCollectionDropdownBtn" class="action-btn secondary" title="Add to Janny collection" aria-haspopup="menu" aria-expanded="false">
-                            <i class="fa-solid fa-layer-group"></i> <span>Add to collection</span> <i class="fa-solid fa-chevron-down janny-collection-caret"></i>
+                            <i class="fa-solid fa-layer-group"></i> <span>Add to collection</span> <i class="fa-solid fa-chevron-down janny-collection-picker-caret"></i>
                         </button>
-                        <div id="jannyCollectionDropdown" class="dropdown-menu janny-collection-dropdown hidden" role="menu"></div>
+                        <div id="jannyCollectionDropdown" class="dropdown-menu janny-collection-picker-menu hidden" role="menu"></div>
                     </div>
                     <button id="jannyImportBtn" class="action-btn primary" title="Download to SillyTavern">
                         <i class="fa-solid fa-download"></i> Import
@@ -2938,19 +1778,20 @@ class JannyBrowseView extends BrowseView {
     // ── Lifecycle ───────────────────────────────────────────
 
     _getImageGridIds() {
-        return [
-            'jannyGrid',
-            'jannyPublicCollectionsList',
-            'jannyOwnedCollectionsList',
-            'jannyCollectionCharactersGrid',
-            'jannyCollectorCollectionsPanel',
-            'jannyCollectionManagePanel',
-        ];
+        return ['jannyGrid', ...collections.gridIds];
     }
 
-    canLoadMore() { return jannyHasMore && !jannyIsLoading; }
+    // Infinite scroll follows whichever surface is showing
+    canLoadMore() {
+        if (collections.isOpen()) return collections.canLoadMore();
+        return jannyHasMore && !jannyIsLoading;
+    }
 
     loadMore() {
+        if (collections.isOpen()) {
+            collections.loadMore();
+            return;
+        }
         jannyCurrentPage++;
         loadCharacters(true);
     }
@@ -3039,6 +1880,37 @@ class JannyBrowseView extends BrowseView {
 }
 
 const jannyBrowseView = new JannyBrowseView(null);
+
+const collections = createJannyCollections({
+    api: {
+        fetchCollections: fetchJannyCollections,
+        fetchCollectionCharacters: fetchJannyCollectionCharacters,
+        fetchPublicCollections: fetchJannyPublicCollections,
+        fetchPublicCollection: fetchJannyPublicCollection,
+        fetchCollectorCollections: fetchJannyCollectorCollections,
+        fetchCharactersByIds: fetchJannyCharactersByIds,
+        fetchPublicCharactersByIds: fetchJannyPublicCharactersByIds,
+        createCollection: createJannyCollection,
+        updateCollection: updateJannyCollection,
+        deleteCollection: deleteJannyCollection,
+        addCharacterToCollection: addJannyCharacterToCollection,
+        removeCharacterFromCollection: removeJannyCharacterFromCollection,
+        sessionStatus: jannySessionStatus,
+    },
+    siteBase: JANNY_SITE_BASE,
+    getView: () => jannyBrowseView,
+    getGeneration: () => jannyAccountGeneration,
+    isAccountActive: () => !!jannyAccountStatus.active,
+    ensureAccountReady: () => ensureJannyAccountReady(),
+    handleAccountFailure: (err, generation) => handleJannyAccountFailure(err, generation),
+    describeError: (err) => describeJannyAccountError(err),
+    resolveAvatarUrl: (src) => resolveJannyAvatarUrl(src),
+    createCard: (character) => createJannyCard(character),
+    getSelectedCharacter: () => jannySelectedChar,
+    openPreview: (character) => openPreviewModal(character),
+    closePreview: () => closePreviewModal(),
+    filterByAuthor: (name) => filterByAuthor(name),
+});
 
 // Expose for library.js to call from viewOnProvider (linked character preview)
 window.openJannyCharPreview = function(hit) {

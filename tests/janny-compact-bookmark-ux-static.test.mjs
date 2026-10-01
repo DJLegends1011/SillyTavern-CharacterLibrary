@@ -177,13 +177,14 @@ for (const rejected of [false, true]) {
         h.run("jannySelectedChar._fullData = { id: 'old-character', personality: 'Definition', firstMessage: 'Hello' }");
         const pending = h.run('importCharacter(jannySelectedChar)');
         await flush(); h.window.jannyInvalidateAccountCache(); h.seedAccount();
+        const invalidations = h.collections.calls.invalidate;
         btn.disabled = true; btn.innerHTML = 'Replacement import pending';
         if (rejected) d.reject(failure('JANNY_TOKEN_REJECTED'));
         else d.resolve({ success: true, characterName: 'Old character', fileName: 'old-character.png' });
         await pending;
         assert.equal(h.run('jannyAccountStatus.active'), true);
         assert.equal(h.run('jannyBookmarkIds.size'), 1);
-        assert.equal(h.run('jannyOwnedCollections.length'), 1);
+        assert.equal(h.collections.calls.invalidate, invalidations, 'old import invalidated the replacement account');
         assert.equal(h.run('jannyAccountStatus.code'), '');
         assert.equal(btn.innerHTML, 'Replacement import pending');
         assert.equal(btn.disabled, true);
@@ -207,6 +208,7 @@ for (const phase of ['duplicate check', 'duplicate decision', 'replacement delet
         h.run("jannySelectedChar._fullData = { id: 'old-character', personality: 'Definition', firstMessage: 'Hello' }");
         const pending = h.run('importCharacter(jannySelectedChar)');
         await flush(); h.window.jannyInvalidateAccountCache(); h.seedAccount();
+        const invalidations = h.collections.calls.invalidate;
         btn.disabled = true; btn.innerHTML = 'Replacement import pending';
         d.resolve(phase === 'duplicate check' ? [] : phase === 'duplicate decision' ? { choice: 'skip' } : true);
         await pending;

@@ -84,8 +84,9 @@ for (const action of ['saveJannyTokenBtn', 'clearJannyTokenBtn']) {
         const h = await harness({ jannyInvalidateAccountCache: browse.window.jannyInvalidateAccountCache });
         h.el('settingsJannyToken').value = 'synthetic-session';
         await h.el(action).dispatch('click');
-        assert.equal(browse.run('jannyBookmarkIds.size + jannyOwnedCollections.length + jannyModalCollectionIds.size'), 0);
-        assert.equal(browse.run('jannyBookmarksLoaded || jannyOwnedCollectionsLoaded'), false);
+        assert.equal(browse.run('jannyBookmarkIds.size'), 0);
+        assert.equal(browse.run('jannyBookmarksLoaded'), false);
+        assert.ok(browse.collections.calls.invalidate > 0, 'collection caches were not invalidated');
     });
 }
 
@@ -93,7 +94,8 @@ test('refresh detecting an inactive browser session invalidates browse account d
     const browse = browseHarness(); browse.seedAccount();
     const h = await harness({ jannyInvalidateAccountCache: browse.window.jannyInvalidateAccountCache, jannySessionStatus: async () => ({ active: false }) });
     await h.el('jannySettingsRefreshBtn').dispatch('click');
-    assert.equal(browse.run('jannyBookmarkIds.size + jannyOwnedCollections.length'), 0);
+    assert.equal(browse.run('jannyBookmarkIds.size'), 0);
+    assert.ok(browse.collections.calls.invalidate > 0, 'collection caches were not invalidated');
 });
 
 for (const [action, boundary] of [['saveJannyTokenBtn', 'jannySetSession'], ['clearJannyTokenBtn', 'jannyLogout']]) {
@@ -102,7 +104,8 @@ for (const [action, boundary] of [['saveJannyTokenBtn', 'jannySetSession'], ['cl
         const h = await harness({ jannyInvalidateAccountCache: browse.window.jannyInvalidateAccountCache, [boundary]: async () => { throw new Error('Synthetic failure'); } });
         h.el('settingsJannyToken').value = 'synthetic-session';
         await h.el(action).dispatch('click');
-        assert.equal(browse.run('jannyBookmarkIds.size + jannyOwnedCollections.length'), 0);
+        assert.equal(browse.run('jannyBookmarkIds.size'), 0);
+        assert.ok(browse.collections.calls.invalidate > 0, 'collection caches were not invalidated');
         assert.equal(h.toasts.some(([, type]) => type === 'success'), false);
     });
 }

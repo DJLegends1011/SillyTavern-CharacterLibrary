@@ -3475,53 +3475,55 @@ html.cl-mobile .cl-modal-close::before {
    ======================================== */
 
     /* ====================================================================
-       JannyAI collections panel (mobile)
-       Collections entry reachable via the mobile settings sheet chip; the
-       panel renders in #onlineView (not the hidden .filters-wrapper). Ported
-       to the v6.5.0 html.cl-mobile single-source-of-truth convention.
+       JannyAI collections (mobile). The section renders in #onlineView; the
+       Collections chip in the mobile filter sheet clicks #jannyCollectionsBtn.
        ==================================================================== */
 
-    /* JannyAI collections panel renders in #onlineView (not .filters-wrapper), so its
-       "create collection" row shares the .browse-search-bar class - re-show just that
-       one, but only while its surface toggle hasn't .hidden it. */
-    html.cl-mobile #onlineView #jannyCollectionsSection .browse-search-bar:not(.hidden) {
-        display: flex !important;
-    }
-
-    html.cl-mobile #jannyCollectionsSection .browse-search-bar {
-        padding: var(--space-sm-md);
-    }
-    /* Header ("Browse") and per-collection ("Open" / "Add Current") action
-       rows: wrap + fill so buttons get full-width touch targets instead of squeezing
-       side-by-side at ~380px. */
-    html.cl-mobile #jannyCollectionsSection .browse-author-banner-actions {
-        flex-wrap: wrap;
-        width: 100%;
-    }
-    html.cl-mobile #jannyCollectionsSection .browse-author-banner-actions .glass-btn {
-        flex: 1 1 auto;
-        display: flex;
+    /* One row for back + title + icon actions, not the shared banner's stacked layout */
+    html.cl-mobile #jannyCollectionsSection .janny-collection-banner {
+        flex-direction: row;
         align-items: center;
-        justify-content: center;
-        min-height: var(--touch-target-min);
     }
-    html.cl-mobile #jannyCollectionsSection .browse-author-banner-content {
-        min-width: 0;
+    html.cl-mobile #jannyCollectionsSection .janny-collection-banner .browse-author-banner-actions {
+        width: auto;
+        flex-shrink: 0;
     }
-    html.cl-mobile #jannyCollectionsSection .browse-author-banner-content span {
+    html.cl-mobile #jannyCollectionsSection .janny-collection-banner-meta {
         white-space: normal;
     }
+    html.cl-mobile #jannyCollectionsSection .janny-collections-bar {
+        margin-bottom: var(--space-sm);
+    }
+    html.cl-mobile #jannyCollectionsSection .janny-collections-tabs .glass-btn,
+    html.cl-mobile #jannyCollectionsSection .janny-collections-tools .glass-btn,
+    html.cl-mobile #jannyCollectionsSection .janny-collections-form .glass-btn {
+        min-height: var(--touch-target-min);
+    }
+    html.cl-mobile #jannyCollectionsSection .janny-collections-form {
+        padding: var(--space-sm-md);
+    }
+    html.cl-mobile #jannyCollectionsSection .janny-collections-form-actions .glass-btn {
+        flex: 1 1 0;
+        justify-content: center;
+    }
+    /* Finger-sized remove target on small cards */
+    html.cl-mobile #jannyCollectionsSection .janny-collection-remove {
+        top: 6px;
+        left: 6px;
+        width: 36px;
+        height: 36px;
+    }
 
-    /* ---- JannyAI collections dropdown / sheet ---- */
+    /* ---- Add-to-collection picker: bottom sheet ---- */
     html.cl-browse-quick-import.cl-mobile #jannyCharModal .mobile-more-actions-btn {
         display: inline-flex;
     }
 
-    html.cl-mobile #jannyCharModal .janny-collection-caret {
+    html.cl-mobile #jannyCharModal .janny-collection-picker-caret {
         display: none;
     }
 
-    html.cl-mobile #jannyCharModal .janny-collection-dropdown {
+    html.cl-mobile #jannyCharModal .janny-collection-picker-menu {
         position: fixed;
         left: 0;
         right: 0;
@@ -3541,7 +3543,7 @@ html.cl-mobile .cl-modal-close::before {
         z-index: 10010;
     }
 
-    html.cl-mobile #jannyCharModal .janny-collection-dropdown::before {
+    html.cl-mobile #jannyCharModal .janny-collection-picker-menu::before {
         content: '';
         display: block;
         width: 42px;
@@ -3549,39 +3551,6 @@ html.cl-mobile .cl-modal-close::before {
         margin: 0 auto 10px;
         border-radius: 999px;
         background: rgba(255, 255, 255, 0.22);
-    }
-
-    html.cl-mobile #jannyCharModal .janny-collection-toggle-row {
-        min-height: var(--touch-target-min);
-    }
-
-    html.cl-mobile #jannyCollectionsSection .janny-collection-card-grid {
-        grid-template-columns: 1fr;
-    }
-
-    html.cl-mobile #jannyCollectionsSection .janny-collection-card {
-        grid-template-columns: 88px minmax(0, 1fr);
-    }
-
-    html.cl-mobile #jannyCollectionsSection .janny-collection-toolbar,
-    html.cl-mobile #jannyCollectionsSection .janny-collection-segmented {
-        width: 100%;
-        flex-wrap: wrap;
-    }
-
-    html.cl-mobile #jannyCollectionsSection .janny-collection-segmented .glass-btn,
-    html.cl-mobile #jannyCollectionsSection .janny-collection-toolbar .glass-btn {
-        flex: 1 1 auto;
-        justify-content: center;
-        min-height: var(--touch-target-min);
-    }
-
-    html.cl-mobile #jannyCollectionsSection .janny-collection-manage {
-        gap: var(--space-md);
-    }
-
-    html.cl-mobile #jannyCollectionsSection .janny-manage-character-row {
-        grid-template-columns: 44px minmax(0, 1fr) auto;
     }
 
 @media screen and (max-width: 480px) {
