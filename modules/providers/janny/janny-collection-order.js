@@ -1,7 +1,7 @@
 /**
- * Restore the collection page's order after fetching character details, which can arrive
+ * Restore the collection's membership order after fetching character details, which can arrive
  * in a different order. Never sort by name/date or shuffle. Unlisted characters retain
- * their relative order at the end; without page ids, preserve the supplied member order.
+ * their relative order at the end; without member ids, preserve the supplied member order.
  * Returns a separate array so cached API results are not mutated.
  */
 export function orderJannyCollectionCharacters(characters, ids = []) {

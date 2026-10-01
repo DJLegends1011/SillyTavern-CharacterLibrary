@@ -230,11 +230,11 @@ test('a collection opens with skeleton cards, then its characters', async () => 
 });
 
 for (const legacyShuffle of [false, true]) {
-    test(`public collection retains page order on open and refresh (legacy shuffle=${legacyShuffle})`, async () => {
-        let pageIds = ['kobeni', 'alcina', 'jean'];
+    test(`public collection retains supplied membership order on open and refresh (legacy shuffle=${legacyShuffle})`, async () => {
+        let memberIds = ['kobeni', 'alcina', 'jean'];
         const t = setup({ api: {
             fetchPublicCollections: async () => ({ collections: [{ id: 'c1', path: '/collections/c1' }], hasMore: false }),
-            fetchPublicCollection: async () => ({ collection: {}, characterIds: pageIds }),
+            fetchPublicCollection: async () => ({ collection: {}, characterIds: memberIds }),
             // Details arrive alphabetically; dates would put Jean first.
             fetchPublicCharactersByIds: async () => [
                 { id: 'alcina', name: 'Alcina', createdAtStamp: 200 },
@@ -252,7 +252,7 @@ for (const legacyShuffle of [false, true]) {
             t.d.openFromDirectory('/collections/c1');
             await settle();
             assert.deepEqual(order(), ['kobeni', 'alcina', 'jean']);
-            pageIds = ['alcina', 'jean', 'kobeni'];
+            memberIds = ['alcina', 'jean', 'kobeni'];
             t.ctrl.refresh();
             await settle();
             assert.deepEqual(order(), ['alcina', 'jean', 'kobeni']);
@@ -598,3 +598,61 @@ for (const [operation, boundary, args] of [
         assert.equal(t.toasts.some(([, kind]) => kind === 'success'), false);
     });
 }
+
+// Replay the two different HTML orders observed for the reported six-card collection.
+// Keep the real API, parser, controller and sorter; replace only the helper transport.
+test('reopening and refreshing a public collection uses stable membership despite changing page HTML', async () => {
+    const { fetchJannyPublicCollection } = await import('../modules/providers/janny/janny-api.js');
+    const collectionId = '69e2874b-c520-4d25-856c-5029521b3a3a';
+    const path = '/collections/' + collectionId + '_my-152';
+    const ids = [
+        'e3d06664-cf44-4f11-b083-fcb52e8ebb74', // LUM1
+        '001d92a8-5987-4152-98e1-0befde986c26', // Parallel World
+        'a261e857-c0fe-470a-a10d-a7ed6f3c5a36', // Mio
+        'd2235068-36b6-4d41-8d6e-970417fabe23', // Yulia
+        'a1779f2a-3764-41d8-9172-39c7ad4e7f0a', // Reina
+        '252546d9-31c6-4e18-92e4-80b9e81d6669', // SAORI
+    ];
+    const names = ['LUM1', 'Parallel World', 'Mio', 'Yulia', 'Reina', 'SAORI'];
+    const characters = ids.map((id, i) => ({ id, name: names[i] }));
+    let members = characters;
+    let pageReads = 0;
+    const t = setup({ api: {
+        fetchPublicCollections: async () => ({ collections: [{ id: collectionId, path, name: 'my' }], hasMore: false }),
+        fetchPublicCollection: fetchJannyPublicCollection,
+        fetchPublicCharactersByIds: async requested => characters.filter(c => requested.includes(c.id)).slice().reverse(),
+    } });
+    const previousRequest = window.apiRequest;
+    window.apiRequest = async (_route, _method, request) => {
+        let body;
+        if (request.path === path) {
+            const positions = pageReads++ % 2 === 0 ? [2, 1, 5, 4, 0, 3] : [1, 3, 5, 2, 0, 4];
+            body = '<h1>my</h1><h2>Characters (6)</h2>' + positions.map(i => '<a href="/characters/' + ids[i] + '_card">Card</a>').join('');
+        } else {
+            assert.equal(request.path, '/api/collections/' + collectionId + '/characters');
+            body = JSON.stringify({ characters: members });
+        }
+        return { ok: true, status: 200, json: async () => ({ ok: true, status: 200, body, finalUrl: 'https://jannyai.com' + request.path }) };
+    };
+    try {
+        const order = () => [...t.el('jannyCollectionCharGrid').innerHTML.matchAll(/data-janny-id="([^"]+)"/g)].map(m => m[1]);
+        t.ctrl.setOpen(true);
+        await settle();
+        t.d.openFromDirectory(path);
+        await settle();
+        assert.deepEqual(order(), ids);
+        t.d.back();
+        t.d.openFromDirectory(path);
+        await settle();
+        assert.deepEqual(order(), ids);
+        t.ctrl.refresh();
+        await settle();
+        assert.deepEqual(order(), ids);
+        // Membership updates are still fetched; stability is not a frozen cached list.
+        members = characters.slice(1);
+        t.ctrl.refresh();
+        await settle();
+        assert.deepEqual(order(), ids.slice(1));
+        assert.equal(pageReads, 4);
+    } finally { window.apiRequest = previousRequest; }
+});

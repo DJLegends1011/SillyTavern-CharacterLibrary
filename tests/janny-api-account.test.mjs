@@ -213,7 +213,10 @@ test('collector pages and collection details use browser transport and existing 
     assert.equal(collector.collections[0].name, 'Cool');
     assert.equal(seenFetchBodies.length, 1);
     assert.equal(seenFetchBodies[0].path, '/collectors/Reader%20Name');
-    helperReplies.push({ ok: true, status: 200, body: '<h1>My Set</h1><a href="/characters/' + characterId + '_one">One</a>' });
+    helperReplies.push(
+        { ok: true, status: 200, body: '<h1>My Set</h1><a href="/characters/' + characterId + '_one">One</a>' },
+        { ok: true, status: 200, body: JSON.stringify({ characters: [{ id: characterId }] }) },
+    );
     const detail = await api.fetchJannyPublicCollection('/collections/' + collectionId + '_my-set');
     assert.equal(detail.collection.name, 'My Set');
     assert.equal(detail.collection.id, collectionId);
@@ -352,4 +355,22 @@ test('form login redirects and rate limits retain stable errors through the help
         assert.equal(recoveryCalls, 0);
         assert.equal(harness.requests.length, 2);
     } finally { window.apiRequest = previous; }
+});
+
+test('public collection member failures are surfaced instead of using shuffled page order', async () => {
+    helperReplies.push(
+        { ok: true, status: 200, body: '<h1>My Set</h1><a href="/characters/' + characterId + '_one">One</a>' },
+        { ok: true, status: 429, body: '{}' },
+    );
+    await assert.rejects(api.fetchJannyPublicCollection('/collections/' + collectionId), error => error.code === 'JANNY_RATE_LIMITED');
+});
+
+test('empty membership overrides stale character links in a public collection page', async () => {
+    helperReplies.push(
+        { ok: true, status: 200, body: '<h1>My Set</h1><a href="/characters/' + characterId + '_one">One</a>' },
+        { ok: true, status: 200, body: '{"characters":[]}' },
+    );
+    const detail = await api.fetchJannyPublicCollection('/collections/' + collectionId);
+    assert.deepEqual(detail.characterIds, []);
+    assert.equal(seenFetchBodies[1].path, '/api/collections/' + collectionId + '/characters');
 });

@@ -114,6 +114,7 @@ export function resolveTagNames(tagIds) {
 // The persistent browser profile owns authentication and Cloudflare cookies.
 import { jannyBrowserFetch } from './janny-browser.js';
 import { jannyRecoverSession, jannySessionStatus } from './janny-session.js';
+import { collectionEntryCharacterId } from './janny-collection-membership.js';
 import {
     parseJannyPublicCollectionsPage,
     parseJannyPublicCollectionDetailPage,
@@ -310,5 +311,10 @@ export async function fetchJannyPublicCollection(path) {
     const validation = validateJannyPublicCollectionPath(path);
     if (!validation.ok) throw new Error(validation.error);
     const res = await jannyBrowserRequest('GET', validation.path);
-    return { ok: true, status: res.status, ...parseJannyPublicCollectionDetailPage(res.body, validation.path) };
+    const detail = parseJannyPublicCollectionDetailPage(res.body, validation.path);
+    // The page HTML can shuffle on every request. Use it for metadata only;
+    // the members endpoint supplies the collection's stable character order.
+    const members = await fetchJannyCollectionCharacters(detail.collection.id);
+    const characterIds = [...new Set(members.map(collectionEntryCharacterId).filter(Boolean))];
+    return { ok: true, status: res.status, ...detail, characterIds };
 }
