@@ -1,34 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { orderJannyCollectionCharacters } from '../modules/providers/janny/janny-collection-order.js';
+import { orderJannyCollectionCharacters, orderByIds } from '../modules/providers/janny/janny-collection-order.js';
 
-test('Janny collection cards sort newest first without mutating API order', () => {
+test('Janny collection cards keep JannyAI order by default, never alphabetical', () => {
     const input = [
-        { id: 'old', name: 'Old', createdAtStamp: 100 },
-        { id: 'iso', name: 'ISO', createdAt: '2026-07-19T12:00:00Z' },
-        { id: 'new', name: 'New', createdAtStamp: 2000000000 },
+        { id: 'k', name: 'Kobeni', createdAtStamp: 100 },
+        { id: 'a', name: 'Alcina' },
+        { id: 'j', name: 'Jean Grey', createdAtStamp: 2000000000 },
     ];
-
     const ordered = orderJannyCollectionCharacters(input);
-
-    assert.deepEqual(ordered.map(c => c.id), ['new', 'iso', 'old']);
-    assert.deepEqual(input.map(c => c.id), ['old', 'iso', 'new']);
-});
-
-test('Janny latest order has a deterministic fallback when dates are missing or tied', () => {
-    const input = [
-        { id: 'b', name: 'Same' },
-        { id: 'z', name: 'Zed', createdAtStamp: 10 },
-        { id: 'a', name: 'Same' },
-        { id: 'alpha', name: 'Alpha' },
-    ];
-
-    const first = orderJannyCollectionCharacters(input);
-    const second = orderJannyCollectionCharacters([...input].reverse());
-
-    assert.deepEqual(first.map(c => c.id), ['z', 'alpha', 'a', 'b']);
-    assert.deepEqual(second.map(c => c.id), first.map(c => c.id));
+    assert.deepEqual(ordered.map(c => c.id), ['k', 'a', 'j']);
+    assert.notEqual(ordered, input, 'returns a copy');
 });
 
 test('Janny random collection order uses Fisher-Yates and remains non-mutating', () => {
@@ -41,4 +24,10 @@ test('Janny random collection order uses Fisher-Yates and remains non-mutating',
 
     assert.deepEqual(ordered.map(c => c.id), ['b', 'c', 'd', 'a']);
     assert.deepEqual(input.map(c => c.id), ['a', 'b', 'c', 'd']);
+});
+
+test('orderByIds restores page order after get-characters reorders the batch', () => {
+    const fetched = [{ id: 'a' }, { id: 'extra' }, { id: 'k' }, { id: 'j' }];
+    assert.deepEqual(orderByIds(fetched, ['k', 'a', 'j']).map(c => c.id), ['k', 'a', 'j', 'extra']);
+    assert.deepEqual(orderByIds(fetched, []).map(c => c.id), ['a', 'extra', 'k', 'j']);
 });

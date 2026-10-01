@@ -229,6 +229,23 @@ test('a collection opens with skeleton cards, then its characters', async () => 
     assert.ok(t.observed.includes('jannyCollectionCharGrid'));
 });
 
+test('a public collection shows its characters in JannyAI page order, not get-characters order', async () => {
+    const t = setup({
+        api: {
+            fetchPublicCollections: async () => ({ collections: [{ id: 'c1', path: '/collections/c1', name: 'My own bots' }], hasMore: false }),
+            fetchPublicCollection: async () => ({ collection: { name: 'My own bots' }, characterIds: ['kobeni', 'alcina', 'jean'] }),
+            // The API answers alphabetically, with no dates
+            fetchPublicCharactersByIds: async () => [{ id: 'alcina', name: 'Alcina' }, { id: 'jean', name: 'Jean Grey' }, { id: 'kobeni', name: 'Kobeni' }],
+        },
+    });
+    t.ctrl.setOpen(true);
+    await settle();
+    t.d.openFromDirectory('/collections/c1');
+    await settle();
+    const order = [...t.el('jannyCollectionCharGrid').innerHTML.matchAll(/data-janny-id="([^"]+)"/g)].map(m => m[1]);
+    assert.deepEqual(order, ['kobeni', 'alcina', 'jean']);
+});
+
 // ── Directory + navigation ───────────────────────────────────────────
 
 test('load more appends the next page instead of repainting the grid', async () => {

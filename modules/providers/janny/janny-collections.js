@@ -17,7 +17,7 @@
 import CoreAPI from '../../core-api.js';
 import { formatNumber, skeletonLines } from '../provider-utils.js';
 import { renderCollectionCard, wireCollectionGrid } from '../browse-collection-card.js';
-import { orderJannyCollectionCharacters } from './janny-collection-order.js';
+import { orderJannyCollectionCharacters, orderByIds } from './janny-collection-order.js';
 import { collectionEntryCharacterId, collectionEntryMatchesCharacter } from './janny-collection-membership.js';
 import {
     COLLECTION_COVER_LIMIT as COVER_LIMIT,
@@ -285,10 +285,12 @@ export function createJannyCollections(host) {
             } else {
                 const data = await api.fetchPublicCollection(view.key);
                 if (token !== view.token) return;
-                const fetched = await api.fetchPublicCharactersByIds(Array.isArray(data?.characterIds) ? data.characterIds : []);
+                const ids = Array.isArray(data?.characterIds) ? data.characterIds : [];
+                const fetched = await api.fetchPublicCharactersByIds(ids);
                 if (token !== view.token) return;
                 view.collection = { ...view.collection, ...(data?.collection || {}), path: view.key };
-                view.characters = arrangeCharacters(fetched.map(normalizeJannyCharacter).filter(Boolean));
+                // characterIds are in page order; get-characters answers in its own
+                view.characters = arrangeCharacters(orderByIds(fetched.map(normalizeJannyCharacter).filter(Boolean), ids));
             }
         } catch (err) {
             if (token !== view.token) return;
@@ -349,7 +351,7 @@ export function createJannyCollections(host) {
             const present = view.characters.some(c => String(c.id) === charId);
             if (isMember && !present) {
                 const normalized = normalizeJannyCharacter(character);
-                if (normalized) view.characters = arrangeCharacters([...view.characters, normalized]);
+                if (normalized) view.characters = [...view.characters, normalized];
             } else if (!isMember && present) {
                 view.characters = view.characters.filter(c => String(c.id) !== charId);
             }
