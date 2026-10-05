@@ -491,7 +491,7 @@ Providers with Following support include a **Followed Creators Manager** panel f
 | Character Linking | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Gallery Downloads | ✅ | -- | -- | -- | ✅ | ✅ | ✅ | ✅ | -- |
 | Remote Version History | ✅ | -- | -- | -- | -- | -- | -- | -- | -- |
-| Following / Timeline | ✅ | ✅ | -- | -- | ✅ | ✅ | ✅ | ✅ | -- |
+| Following / Timeline | ✅ | ✅ | -- | ✅ | ✅ | ✅ | ✅ | ✅ | -- |
 | Favorites | ✅ | -- | -- | ✅ | -- | -- | -- | ✅ | -- |
 | Auth Required | Optional | Browser required | Userscript required (no account) | Optional | Optional | Optional | None | Optional | Required |
 
@@ -631,6 +631,8 @@ The userscript makes the gated request from your own browser and hands back only
 #### With Authentication (session cookie, cl-helper 1.13.0+)
 - **NSFW browsing**, following your account's content preferences
 - **Likes** (the heart in the preview's stats row) synced with your account, and a **My Likes** filter (Features dropdown) listing your liked characters
+- **Follow / Unfollow** creators from the creator view banner, which shows your live follow state
+- **Following** mode: your timeline (newest characters from creators you follow) plus the **Followed Creators Manager** to browse, add (by username or URL) and remove follows. CharacterTavern only exposes follows as user ids, so names are learned from your timeline, likes and visited creators; one that never appears there shows as an unnamed entry you can still unfollow
 
 #### NSFW Access
 CharacterTavern requires a session cookie for NSFW content. To set it up:

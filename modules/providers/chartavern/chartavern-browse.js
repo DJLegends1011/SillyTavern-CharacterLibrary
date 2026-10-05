@@ -29,6 +29,8 @@ import {
     ctToggleLike,
     fetchLikedCards,
     ctSetFollow,
+    fetchTimeline,
+    fetchFollowedCreatorIds,
 } from './chartavern-api.js';
 
 const {
@@ -76,6 +78,11 @@ let ctLoadToken = 0; // Generation counter for search requests
 let ctCreator = null;
 let ctCreatorSort = 'newest';
 let ctCreatorInfo = null; // last creator-page payload (profile, hiddenCount, isFollowing, featured...)
+
+// Following mode: the account's timeline (homepage TimelineCards, fixed 28)
+let ctViewMode = 'browse'; // 'browse' | 'following'
+let ctTimeline = [];
+let ctTimelineToken = 0;
 
 // Auth state
 let ctPluginAvailable = false;
@@ -324,8 +331,16 @@ function restoreBrowseSorts() {
     el._customSelect?.refresh?.();
 }
 
+let ctBrowseStale = false; // a browse filter changed while Following was showing
+
 async function loadCharacters(append = false, { fresh = false } = {}) {
     if (append && ctIsLoading) return;
+    if (ctViewMode === 'following') {
+        // Every filter handler funnels here; in Following they apply to the timeline instead
+        ctBrowseStale = true;
+        renderCtTimeline();
+        return;
+    }
 
     // A site feed cant be searched or filtered; fall to the catalog's relevance sort instead
     const likesView = !ctCreator && ctFilterLikes;
@@ -376,6 +391,7 @@ async function loadCharacters(append = false, { fresh = false } = {}) {
                 const featured = ctCreatorSort === 'featured';
                 const res = await fetchCreatorPage(creator.username, { sort: featured ? 'newest' : ctCreatorSort, page }, apiRequest);
                 if (res.profile && (page === 1 || !ctCreatorInfo)) ctCreatorInfo = res;
+                rememberCreator(res.profile, res.stats);
                 return featured ? { hits: res.featured, totalPages: 1 } : { hits: res.cards, totalPages: res.pages };
             }
             if (likesView) {
@@ -827,6 +843,152 @@ async function fetchAndPopulateDetails(hit, token) {
 }
 
 // ========================================
+// FOLLOWING (timeline + followed creators)
+// ========================================
+
+// CT exposes the follow list only as user ids, and a creator page is the only id -> name
+// source, so resolved names are cached in settings (synced, so mobile reuses the PC's work).
+const CREATOR_CACHE_KEY = 'ctCreatorNameCache';
+const CREATOR_CACHE_MAX = 300;
+
+function getCreatorCache() {
+    const c = getSetting(CREATOR_CACHE_KEY);
+    return c && typeof c === 'object' ? c : {};
+}
+
+/** Record a creator page's profile under its user id. */
+function rememberCreator(profile, stats) {
+    if (!profile?.userId || !profile.username) return;
+    const cache = getCreatorCache();
+    const prev = cache[profile.userId];
+    const next = {
+        username: profile.username,
+        displayName: profile.displayName || profile.username,
+        avatar: profile.avatarURL || '',
+        cards: stats?.cards ?? prev?.cards ?? null,
+    };
+    if (prev && prev.username === next.username && prev.displayName === next.displayName
+        && prev.avatar === next.avatar && prev.cards === next.cards) return;
+    const ids = Object.keys(cache);
+    if (!prev && ids.length >= CREATOR_CACHE_MAX) delete cache[ids[0]];
+    cache[profile.userId] = next;
+    setSetting(CREATOR_CACHE_KEY, cache);
+}
+
+/**
+ * Fill the name cache for followed ids it lacks, by visiting creator pages of authors the
+ * account is likely to follow: timeline authors first (all from followed creators), then
+ * authors of liked cards. Stops as soon as every id resolves.
+ */
+async function resolveCreatorNames(ids) {
+    const known = getCreatorCache();
+    const missing = new Set(ids.filter(id => !known[id]));
+    if (!missing.size) return;
+
+    const knownNames = new Set(Object.values(known).map(c => c.username.toLowerCase()));
+    const candidates = [];
+    const addAuthors = (cards) => {
+        for (const c of cards) {
+            const u = (c.author || c.path?.split('/')[0] || '').trim();
+            if (u && !knownNames.has(u.toLowerCase()) && !candidates.includes(u)) candidates.push(u);
+        }
+    };
+    addAuthors(await fetchTimeline(apiRequest).catch(() => []));
+    addAuthors(await fetchLikedCards(apiRequest).catch(() => []));
+
+    const MAX_LOOKUPS = 40;
+    for (let i = 0; i < Math.min(candidates.length, MAX_LOOKUPS) && missing.size; i += 4) {
+        const batch = candidates.slice(i, i + 4);
+        const pages = await Promise.all(batch.map(u => fetchCreatorPage(u, {}, apiRequest).catch(() => null)));
+        for (const page of pages) {
+            const uid = page?.profile?.userId;
+            if (!uid) continue;
+            rememberCreator(page.profile, page.stats);
+            missing.delete(uid);
+        }
+    }
+    if (missing.size) debugLog(`[CTFollow] ${missing.size} followed creator id(s) left unresolved`);
+}
+
+function switchCtViewMode(newMode, opts = {}) {
+    ctViewMode = newMode === 'following' ? 'following' : 'browse';
+    const following = ctViewMode === 'following';
+    document.querySelectorAll('.chub-view-btn[data-ct-view]').forEach(btn =>
+        btn.classList.toggle('active', btn.dataset.ctView === ctViewMode));
+    document.getElementById('ctBrowseSection')?.classList.toggle('hidden', following);
+    document.getElementById('ctFollowingSection')?.classList.toggle('hidden', !following);
+    // The timeline is one fixed, unsortable, untagged set: sort and tags only apply to Browse
+    for (const id of ['ctSortContainer', 'ctTagsContainer']) {
+        document.getElementById(id)?.classList.toggle('browse-filter-hidden', following);
+    }
+    if (following && !opts.skipLoad && ctTimeline.length === 0) loadCtTimeline();
+    if (!following && !opts.skipLoad && (ctBrowseStale || ctCharacters.length === 0)) {
+        ctBrowseStale = false;
+        ctCurrentPage = 1;
+        loadCharacters(false);
+    }
+}
+
+async function loadCtTimeline({ fresh = false } = {}) {
+    const grid = document.getElementById('ctTimelineGrid');
+    if (!grid) return;
+    const token = ++ctTimelineToken;
+
+    if (!isCtSessionActive()) {
+        ctTimeline = [];
+        grid.innerHTML = `
+            <div class="browse-empty">
+                <i class="fa-solid fa-key"></i>
+                <h3>Login Required</h3>
+                <p>Following needs your CharacterTavern session. Turn on NSFW or open Settings to add your session cookie.</p>
+            </div>`;
+        return;
+    }
+
+    renderSkeletonGrid(grid);
+    try {
+        const cards = await fetchTimeline(apiRequest, { fresh });
+        if (token !== ctTimelineToken || !delegatesInitialized) return;
+        ctTimeline = cards;
+        renderCtTimeline();
+    } catch (err) {
+        if (token !== ctTimelineToken) return;
+        console.error('[CTFollow] Timeline error:', err);
+        renderBrowseError(grid, {
+            provider: 'chartavern',
+            error: err,
+            view: 'timeline',
+            message: `Timeline failed: ${err.message}`,
+            retry: () => loadCtTimeline({ fresh: true }),
+        });
+    }
+}
+
+/** Paint the timeline with the same client-side filters Browse applies. */
+function renderCtTimeline() {
+    const grid = document.getElementById('ctTimelineGrid');
+    if (!grid) return;
+    let cards = ctTimeline;
+    if (!ctNsfwEnabled) cards = cards.filter(h => !h.isNSFW);
+    if (ctFilterHideOwned) cards = cards.filter(h => !isCharInLocalLibrary(h));
+    if (ctFilterHidePossible) cards = cards.filter(h => !isCharPossibleMatchObj(h));
+
+    if (!cards.length) {
+        grid.innerHTML = `
+            <div class="browse-empty">
+                <i class="fa-solid fa-user-group"></i>
+                <h3>${ctTimeline.length ? 'Nothing to show' : 'No Timeline Yet'}</h3>
+                <p>${ctTimeline.length
+                    ? 'Your filters hide every timeline character.'
+                    : 'Follow creators from their creator view, or add them by name in the Manage panel.'}</p>
+            </div>`;
+        return;
+    }
+    grid.innerHTML = cards.map(c => createCtCard(c)).join('');
+    chartavernBrowseView.observeImages(grid);
+}
+
+// ========================================
 // ACCOUNT: LIKES (CL Favorites = CT likes)
 // ========================================
 
@@ -1036,10 +1198,13 @@ async function importCharacter(charData) {
 }
 
 function markCardAsImported(path) {
-    const grid = document.getElementById('ctGrid');
-    if (!grid) return;
-    const card = grid.querySelector(`[data-ct-path="${CSS.escape(path)}"]`);
-    if (!card) return;
+    for (const gridId of ['ctGrid', 'ctTimelineGrid']) {
+        const card = document.getElementById(gridId)?.querySelector(`[data-ct-path="${CSS.escape(path)}"]`);
+        if (card) markCardElementImported(card);
+    }
+}
+
+function markCardElementImported(card) {
     card.classList.add('in-library');
     card.classList.remove('possible-library');
     let badgesEl = card.querySelector('.browse-feature-badges');
@@ -1198,15 +1363,18 @@ function initCtView() {
     const sortEl = document.getElementById('ctSortSelect');
     if (sortEl) CoreAPI.initCustomSelect?.(sortEl);
 
-    // Grid card click → open preview (delegation)
-    const grid = document.getElementById('ctGrid');
-    if (grid) {
+    // Grid card click → open preview (delegation), for the browse grid and the timeline
+    const wireGrid = (gridId, getCards) => {
+        const grid = document.getElementById(gridId);
+        if (!grid) return;
         grid.addEventListener('click', (e) => {
             const authorLink = e.target.closest('.browse-card-creator-link');
             if (authorLink) {
                 e.stopPropagation();
                 const author = authorLink.dataset.author;
-                if (author) filterByAuthor(author);
+                if (!author) return;
+                if (ctViewMode === 'following') switchCtViewMode('browse', { skipLoad: true });
+                filterByAuthor(author);
                 return;
             }
 
@@ -1214,10 +1382,19 @@ function initCtView() {
             if (!card) return;
             const path = card.dataset.ctPath;
             if (!path) return;
-            const hit = ctCharacters.find(c => c.path === path);
+            const hit = getCards().find(c => c.path === path);
             if (hit) openPreviewModal(hit);
         });
-    }
+    };
+    wireGrid('ctGrid', () => ctCharacters);
+    wireGrid('ctTimelineGrid', () => ctTimeline);
+
+    // Browse / Following
+    document.querySelectorAll('.chub-view-btn[data-ct-view]').forEach(btn => {
+        btn.addEventListener('click', () => {
+            if (btn.dataset.ctView !== ctViewMode) switchCtViewMode(btn.dataset.ctView);
+        });
+    });
 
     // Search
     on('ctSearchInput', 'keydown', (e) => {
@@ -1289,6 +1466,10 @@ function initCtView() {
 
     // Refresh
     on('ctRefreshBtn', 'click', () => {
+        if (ctViewMode === 'following') {
+            loadCtTimeline({ fresh: true });
+            return;
+        }
         ctCurrentPage = 1;
         loadCharacters(false, { fresh: true });
     });
@@ -1492,7 +1673,8 @@ function doSearch() {
     const clearBtn = document.getElementById('ctClearSearchBtn');
     const val = (input?.value || '').trim();
 
-    // A manual search leaves creator view
+    // A manual search leaves creator view, and runs in Browse
+    if (ctViewMode === 'following') switchCtViewMode('browse', { skipLoad: true });
     if (ctCreator) exitCreatorView();
 
     ctCurrentSearch = val;
@@ -1518,6 +1700,8 @@ function doCreatorSearch() {
 
 /** Enter creator view: the creator's own cards from their CT page (exact, paged). */
 function filterByAuthor(authorName) {
+    // Creator view lives in Browse (the mobile search overlay can trigger it from Following)
+    if (ctViewMode === 'following') switchCtViewMode('browse', { skipLoad: true });
     const username = parseCreatorRef(authorName) || authorName;
     ctCreator = { username, displayName: username };
     ctCreatorInfo = null;
@@ -1607,7 +1791,7 @@ async function toggleCtFollow() {
         const { isFollowing } = await ctSetFollow(userId, !info.isFollowing, apiRequest);
         info.isFollowing = isFollowing;
         if (info.stats?.followers != null) info.stats.followers += isFollowing ? 1 : -1;
-        view._followedCache = null; // the manager list changed
+        ctTimeline = []; // the timeline is built from the follow list; refetch it next time
         showToast(isFollowing ? `Now following ${creator.displayName}` : `Unfollowed ${creator.displayName}`,
             isFollowing ? 'success' : 'info');
     } catch (err) {
@@ -1886,7 +2070,10 @@ class ChartavernBrowseView extends BrowseView {
                 { value: 'recently_updated', label: 'Recently Updated' },
             ],
             followingSortOptions: [],
-            viewModes: [],
+            viewModes: [
+                { value: 'browse', label: 'Browse' },
+                { value: 'following', label: 'Following' },
+            ],
         };
     }
 
@@ -1900,16 +2087,104 @@ class ChartavernBrowseView extends BrowseView {
             tags: 'ctTagsBtn',
             filters: 'ctFiltersBtn',
             nsfw: 'ctNsfwToggle',
-            refresh: 'ctRefreshBtn'
+            refresh: 'ctRefreshBtn',
+            modeBrowseSelector: '.chub-view-btn[data-ct-view="browse"]',
+            modeFollowSelector: '.chub-view-btn[data-ct-view="following"]',
+            modeBtnClass: 'chub-view-btn',
         };
+    }
+
+    get hasModeToggle() { return true; }
+
+    // ── Following Manager (server-backed account follows) ──
+
+    get supportsFollowingManager() { return true; }
+
+    async getFollowedCreators() {
+        if (!isCtSessionActive()) return [];
+        const ids = await fetchFollowedCreatorIds(apiRequest);
+        await resolveCreatorNames(ids);
+        const cache = getCreatorCache();
+        return ids.map((id) => {
+            const c = cache[id];
+            return c
+                ? { id, name: c.displayName || c.username, username: c.username, avatar: c.avatar || '', characterCount: c.cards ?? undefined }
+                // No timeline/liked card or visit has revealed this id's name yet; still unfollowable
+                : { id, name: `Unnamed creator (${id.slice(0, 6)}...)`, username: '' };
+        });
+    }
+
+    async followCreator(query) {
+        if (!(await ensureCtAccount('follow creators'))) return null;
+        const username = parseCreatorRef(query);
+        if (!username) {
+            showToast('Enter a CharacterTavern username or creator URL', 'info');
+            return null;
+        }
+        let page;
+        try {
+            page = await fetchCreatorPage(username, {}, apiRequest);
+        } catch (err) {
+            showToast(err.notFound ? `No CharacterTavern creator named "${username}"` : `Could not look up ${username}: ${err.message}`, 'error');
+            return null;
+        }
+        const userId = page.profile?.userId;
+        if (!userId) return null;
+        rememberCreator(page.profile, page.stats);
+        const name = page.profile.displayName || username;
+        if (page.isFollowing) {
+            showToast(`Already following ${name}`, 'info');
+            return { id: userId, name };
+        }
+        const { isFollowing } = await ctSetFollow(userId, true, apiRequest);
+        if (!isFollowing) {
+            showToast('Failed to follow creator', 'error');
+            return null;
+        }
+        showToast(`Now following ${name}!`, 'success');
+        if (ctViewMode === 'following') loadCtTimeline({ fresh: true });
+        return { id: userId, name };
+    }
+
+    async unfollowCreator(id) {
+        if (!(await ensureCtAccount('unfollow creators'))) return false;
+        try {
+            const { isFollowing } = await ctSetFollow(id, false, apiRequest);
+            if (isFollowing) throw new Error('still following');
+            showToast('Unfollowed', 'info');
+            if (ctViewMode === 'following') loadCtTimeline({ fresh: true });
+            return true;
+        } catch (err) {
+            showToast(`Failed to unfollow: ${err.message}`, 'error');
+            return false;
+        }
+    }
+
+    browseCreatorFromManager(creator) {
+        if (!creator.username) {
+            showToast('This creator\'s name has not been resolved yet', 'info');
+            return;
+        }
+        switchCtViewMode('browse', { skipLoad: true });
+        filterByAuthor(creator.username);
     }
 
     // ── Filter Bar ──────────────────────────────────────────
 
     renderFilterBar() {
         return `
+            <!-- Mode Toggle (reuses the canonical chub-view-toggle styling) -->
+            <div class="chub-view-toggle">
+                <button class="chub-view-btn active" data-ct-view="browse" title="Browse all characters">
+                    <i class="fa-solid fa-compass"></i> <span>Browse</span>
+                </button>
+                <button class="chub-view-btn" data-ct-view="following" title="New from creators you follow (requires login)">
+                    <i class="fa-solid fa-users"></i> <span>Following</span>
+                </button>
+            </div>
+
             <!-- Sort -->
-            <div class="browse-sort-container">
+            <div class="browse-sort-container" id="ctSortContainer">
                 <select id="ctSortSelect" class="glass-select" title="Sort order">
                     <optgroup label="Site feeds (28)">
                         <option value="feed:trending">🔥 Trending</option>
@@ -1929,7 +2204,7 @@ class ChartavernBrowseView extends BrowseView {
             </div>
 
             <!-- Tags & Advanced Filters -->
-            <div class="browse-tags-dropdown-container" style="position: relative;">
+            <div class="browse-tags-dropdown-container" id="ctTagsContainer" style="position: relative;">
                 <button id="ctTagsBtn" class="glass-btn" title="Tag filters and advanced options">
                     <i class="fa-solid fa-tags"></i> <span id="ctTagsBtnLabel">Tags</span>
                 </button>
@@ -2038,6 +2313,24 @@ class ChartavernBrowseView extends BrowseView {
                         <i class="fa-solid fa-plus"></i> Load More
                     </button>
                 </div>
+            </div>
+
+            <!-- Following Section -->
+            <div id="ctFollowingSection" class="browse-section hidden">
+                <div class="chub-timeline-header">
+                    <div class="chub-timeline-header-left">
+                        <h3><i class="fa-solid fa-clock"></i> Timeline</h3>
+                        <p>New characters from creators you follow</p>
+                    </div>
+                    <div class="chub-timeline-header-right">
+                        <button class="follow-mgr-toggle-btn glass-btn" id="chartavernFollowMgrToggle"
+                                title="Manage followed creators">
+                            <i class="fa-solid fa-users-gear"></i> Manage
+                        </button>
+                    </div>
+                </div>
+                ${this.renderFollowingManagerPanel()}
+                <div id="ctTimelineGrid" class="browse-grid"></div>
             </div>
         `;
     }
@@ -2235,10 +2528,10 @@ class ChartavernBrowseView extends BrowseView {
     // ── Lifecycle ───────────────────────────────────────────
 
     _getImageGridIds() {
-        return ['ctGrid'];
+        return ctViewMode === 'following' ? ['ctTimelineGrid'] : ['ctGrid'];
     }
 
-    canLoadMore() { return ctHasMore && !ctIsLoading; }
+    canLoadMore() { return ctViewMode === 'browse' && ctHasMore && !ctIsLoading; }
 
     loadMore() {
         ctCurrentPage++;
@@ -2261,6 +2554,7 @@ class ChartavernBrowseView extends BrowseView {
     }
 
     applyDefaults(defaults) {
+        if (defaults.view === 'following') switchCtViewMode('following', { skipLoad: true });
         if (defaults.sort) {
             // Saved defaults may hold a pre-rework value (most_popular, trending, ...)
             ctSortMode = normalizeCtSort(defaults.sort);
@@ -2304,6 +2598,8 @@ class ChartavernBrowseView extends BrowseView {
             ctCreatorInfo = null;
             ctCreatorSort = 'newest';
             ctBrowseSortStash = null; // the DOM (and its select) was rebuilt
+            ctViewMode = 'browse';
+            ctTimeline = [];
         }
         super.activate(container, options);
 
@@ -2312,7 +2608,11 @@ class ChartavernBrowseView extends BrowseView {
         // Test for real cards, not child nodes: an aborted load leaves skeletons.
         const grid = document.getElementById('ctGrid');
         const painted = !!grid?.querySelector('.browse-card');
-        if (ctCharacters.length === 0) {
+        if (ctViewMode === 'following') {
+            if (ctTimeline.length === 0) tryCheckSession().then(() => loadCtTimeline());
+            else if (!document.getElementById('ctTimelineGrid')?.querySelector('.browse-card')) renderCtTimeline();
+            else this.reconnectImageObserver();
+        } else if (ctCharacters.length === 0) {
             // Session check first so a logged-in account fetches NSFW-inclusive results once, not twice.
             tryCheckSession().then(() => loadCharacters(false));
         } else if (!painted) {
@@ -2331,7 +2631,7 @@ class ChartavernBrowseView extends BrowseView {
             const name = card.querySelector('.browse-card-name')?.textContent || '';
             const author = card.querySelector('.browse-card-creator-link')?.textContent || '';
             return isCharInLocalLibrary({ path, name, author });
-        });
+        }, ['ctGrid', 'ctTimelineGrid']);
     }
 
     deactivate() {
