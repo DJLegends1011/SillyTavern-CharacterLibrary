@@ -754,6 +754,7 @@ function captureCtExpiry(setCookieHeader) {
 // CT paths the proxy is allowed to forward (read-only page data only). CT dropped its /api/ JSON
 // endpoints in its 2026-10 SvelteKit rework; the same data now comes from the pages' __data.json.
 const CT_ALLOWED_PATHS = [
+    /^\/__data\.json$/, // homepage feeds + logged-in timeline
     /^\/search\/cards\/__data\.json$/,
     /^\/character\/[^/]+\/[^/]+\/__data\.json$/,
 ];

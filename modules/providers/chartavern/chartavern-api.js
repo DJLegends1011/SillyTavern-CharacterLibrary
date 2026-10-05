@@ -32,6 +32,22 @@ export const CT_SORT_OPTIONS = {
 };
 export const CT_DEFAULT_SORT = 'popular';
 
+// The homepage's own feeds: fixed 28-card sets (its 7x4 grid), no paging or filters.
+// Sort values carry a `feed:` prefix so they share the sort dropdown with the catalog.
+export const CT_FEED_PREFIX = 'feed:';
+export const CT_HOME_FEEDS = {
+    trending: { label: 'Trending', key: 'TrendingCharacters' },
+    newest: { label: 'Newest', key: 'NewCharacters' },
+    popular: { label: 'Popular', key: 'PopularCharacters' },
+};
+
+/** @param {string} sort @returns {string|null} feed id for a `feed:` sort, else null */
+export function ctFeedOf(sort) {
+    if (typeof sort !== 'string' || !sort.startsWith(CT_FEED_PREFIX)) return null;
+    const id = sort.slice(CT_FEED_PREFIX.length);
+    return Object.hasOwn(CT_HOME_FEEDS, id) ? id : null;
+}
+
 // Pre-rework sort values, still found in saved browse defaults
 const CT_LEGACY_SORTS = {
     most_popular: 'popular',
@@ -43,6 +59,7 @@ const CT_LEGACY_SORTS = {
 /** @param {string} sort @returns {string} a sort value the catalog accepts */
 export function normalizeCtSort(sort) {
     if (sort && Object.hasOwn(CT_SORT_OPTIONS, sort)) return sort;
+    if (ctFeedOf(sort)) return sort;
     return CT_LEGACY_SORTS[sort] || CT_DEFAULT_SORT;
 }
 
@@ -485,7 +502,8 @@ export async function searchCards(opts = {}, apiRequest) {
 
     const params = new URLSearchParams();
     if (query) params.set('query', query);
-    params.set('sort', normalizeCtSort(sort));
+    // A feed sort never reaches the catalog; relevance is the sane stand-in for a search
+    params.set('sort', ctFeedOf(sort) ? 'best' : normalizeCtSort(sort));
     params.set('page', String(page));
     if (tags) params.set('tags', tags);
     if (excludeTags) params.set('exclude_tags', excludeTags);
@@ -537,6 +555,43 @@ export function fetchCharacterDetail(author, slug, apiRequest) {
     _detailCache.set(key, { at: Date.now(), promise });
     if (_detailCache.size > 50) _detailCache.delete(_detailCache.keys().next().value);
     return promise;
+}
+
+// The homepage data holds every feed at once; switching feeds shouldnt refetch it
+const HOME_TTL_MS = 60_000;
+let _homeCache = null; // { at, key, promise }
+
+/**
+ * Fetch the homepage's page data (all feeds + the logged-in timeline in one payload).
+ * @param {Function} [apiRequest]
+ * @param {{ fresh?: boolean }} [opts] - fresh bypasses the short cache (refresh button)
+ * @returns {Promise<Object>} merged node data
+ */
+function fetchHomeData(apiRequest, { fresh = false } = {}) {
+    const key = ctSessionActive ? 'auth' : 'guest';
+    if (!fresh && _homeCache && _homeCache.key === key && Date.now() - _homeCache.at < HOME_TTL_MS) {
+        return _homeCache.promise;
+    }
+    const promise = fetchCtPageData('', null, apiRequest);
+    promise.catch(() => { if (_homeCache?.promise === promise) _homeCache = null; });
+    _homeCache = { at: Date.now(), key, promise };
+    return promise;
+}
+
+/**
+ * One homepage feed, adapted to catalog-hit shape.
+ * @param {string} feedId - a CT_HOME_FEEDS key
+ * @param {Function} [apiRequest]
+ * @param {{ fresh?: boolean }} [opts]
+ * @returns {Promise<Array>} the feed's cards in site order
+ */
+export async function fetchHomeFeed(feedId, apiRequest, opts) {
+    const feed = CT_HOME_FEEDS[feedId];
+    if (!feed) throw new Error(`Unknown CharacterTavern feed: ${feedId}`);
+    const data = await fetchHomeData(apiRequest, opts);
+    const list = data?.[feed.key];
+    if (!Array.isArray(list)) throw new Error(`CharacterTavern homepage has no ${feed.label} feed`);
+    return list.map(adaptSearchHit);
 }
 
 /**

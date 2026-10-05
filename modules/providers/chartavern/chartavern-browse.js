@@ -21,6 +21,8 @@ import {
     normalizeCtSort,
     CT_DEFAULT_SORT,
     CT_PAGE_SIZE,
+    ctFeedOf,
+    fetchHomeFeed,
 } from './chartavern-api.js';
 
 const {
@@ -265,8 +267,29 @@ function updateLoadMore() {
 // SEARCH / LOAD
 // ========================================
 
-async function loadCharacters(append = false) {
+/** True when anything only the catalog can honor is set (feeds are fixed, unfilterable sets). */
+function hasCatalogOnlyFilters() {
+    return !!ctCurrentSearch || ctIncludeTags.size > 0 || ctExcludeTags.size > 0
+        || ctMinTokens > 0 || ctMaxTokens > 0 || ctFilterHasLorebook || ctFilterIsOC;
+}
+
+/** Point the sort dropdown (and its custom-select face) at a value. */
+function setSortSelect(value) {
+    ctSortMode = value;
+    const el = document.getElementById('ctSortSelect');
+    if (el) {
+        el.value = value;
+        el._customSelect?.refresh?.();
+    }
+}
+
+async function loadCharacters(append = false, { fresh = false } = {}) {
     if (append && ctIsLoading) return;
+
+    // A site feed cant be searched or filtered; fall to the catalog's relevance sort instead
+    if (ctFeedOf(ctSortMode) && hasCatalogOnlyFilters()) setSortSelect('best');
+    const feedId = ctFeedOf(ctSortMode);
+    if (append && feedId) return; // feeds are one fixed page
 
     // Concurrency control: prevent stale responses from overwriting newer ones
     const thisToken = ++ctLoadToken;
@@ -303,7 +326,9 @@ async function loadCharacters(append = false) {
         if (ctFilterHasLorebook) opts.hasLorebook = true;
         if (ctFilterIsOC) opts.isOC = true;
 
-        const data = await searchCards(opts, apiRequest);
+        const data = feedId
+            ? { hits: await fetchHomeFeed(feedId, apiRequest, { fresh }), totalPages: 1 }
+            : await searchCards(opts, apiRequest);
 
         // Stale response check
         if (thisToken !== ctLoadToken) return;
@@ -329,7 +354,7 @@ async function loadCharacters(append = false) {
 
         // Auto-fetch when client-side filters remove too many results
         const hasClientFilters = ctFilterHideOwned || ctFilterHidePossible || !ctNsfwEnabled;
-        if (hasClientFilters && ctCurrentPage < ctTotalPages) {
+        if (!feedId && hasClientFilters && ctCurrentPage < ctTotalPages) {
             let autoFetches = 0;
             while (hits.length < CT_PAGE_SIZE && ctCurrentPage < ctTotalPages && autoFetches < 3 && delegatesInitialized) {
                 autoFetches++;
@@ -1112,7 +1137,7 @@ function initCtView() {
     // Refresh
     on('ctRefreshBtn', 'click', () => {
         ctCurrentPage = 1;
-        loadCharacters(false);
+        loadCharacters(false, { fresh: true });
     });
 
     // ── Tags dropdown ──
@@ -1580,6 +1605,9 @@ class ChartavernBrowseView extends BrowseView {
     getSettingsConfig() {
         return {
             browseSortOptions: [
+                { value: 'feed:trending', label: 'Site feed: Trending' },
+                { value: 'feed:newest', label: 'Site feed: Newest' },
+                { value: 'feed:popular', label: 'Site feed: Popular' },
                 { value: 'popular', label: 'Popular' },
                 { value: 'best', label: 'Best' },
                 { value: 'new_noteworthy', label: 'New & Noteworthy' },
@@ -1614,13 +1642,20 @@ class ChartavernBrowseView extends BrowseView {
             <!-- Sort -->
             <div class="browse-sort-container">
                 <select id="ctSortSelect" class="glass-select" title="Sort order">
-                    <option value="popular" selected>🔥 Popular</option>
-                    <option value="best">🏆 Best</option>
-                    <option value="new_noteworthy">📈 New &amp; Noteworthy</option>
-                    <option value="most_liked">❤️ Top Rated</option>
-                    <option value="hidden_gems">💎 Hidden Gems</option>
-                    <option value="newest">🆕 Newest</option>
-                    <option value="recently_updated">🕐 Recently Updated</option>
+                    <optgroup label="Site feeds (28)">
+                        <option value="feed:trending">🔥 Trending</option>
+                        <option value="feed:newest">✨ Newest</option>
+                        <option value="feed:popular">⭐ Popular</option>
+                    </optgroup>
+                    <optgroup label="Catalog">
+                        <option value="popular" selected>🔥 Popular</option>
+                        <option value="best">🏆 Best</option>
+                        <option value="new_noteworthy">📈 New &amp; Noteworthy</option>
+                        <option value="most_liked">❤️ Top Rated</option>
+                        <option value="hidden_gems">💎 Hidden Gems</option>
+                        <option value="newest">🆕 Newest</option>
+                        <option value="recently_updated">🕐 Recently Updated</option>
+                    </optgroup>
                 </select>
             </div>
 
