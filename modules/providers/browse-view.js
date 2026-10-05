@@ -579,12 +579,12 @@ const CD_ADAPTERS = {
             if (!authorName) return [];
             const wanted = authorName.toLowerCase();
             const nsfw = CoreAPI.getSetting('ctNsfw') === true && isCtSessionActive();
-            const sort = document.getElementById('ctSortSelect')?.value || 'most_popular';
+            const sort = document.getElementById('ctSortSelect')?.value || 'popular';
             const results = [];
             const seen = new Set();
             const MAX_PAGES = 50;
             for (let page = 1; page <= MAX_PAGES; page++) {
-                const data = await searchCards({ query: authorName, sort, page, limit: 60, nsfw }, CoreAPI.apiRequest);
+                const data = await searchCards({ query: authorName, sort, page, nsfw }, CoreAPI.apiRequest);
                 const hits = data?.hits || [];
                 for (const hit of hits) {
                     const path = hit.path || '';

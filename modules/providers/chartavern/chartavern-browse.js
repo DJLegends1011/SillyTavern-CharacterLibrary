@@ -18,6 +18,9 @@ import {
     ctLogout,
     isCtSessionActive,
     getCtCharName,
+    normalizeCtSort,
+    CT_DEFAULT_SORT,
+    CT_PAGE_SIZE,
 } from './chartavern-api.js';
 
 const {
@@ -55,7 +58,7 @@ let ctIsLoading = false;
 let ctCurrentSearch = '';
 let ctNsfwEnabled = false;
 let ctNsfwWarnedThisSession = false;
-let ctSortMode = 'most_popular';
+let ctSortMode = CT_DEFAULT_SORT;
 let ctSelectedChar = null;
 let ctGridRenderedCount = 0;
 let ctLoadToken = 0; // Generation counter for search requests
@@ -174,7 +177,7 @@ function applyTagsClamp(tagsEl) {
 
 function createCtCard(hit) {
     const name = hit.name || 'Unknown';
-    const desc = stripHtml(hit.tagline || hit.pageDescription || '');
+    const desc = stripHtml(hit.tagline || '');
     const avatarUrl = hit.path ? getAvatarUrl(hit.path) : '/img/ai4.png';
     const tags = parseTags(hit.tags).slice(0, 3);
     const tokens = formatNumber(hit.totalTokens || 0);
@@ -219,8 +222,7 @@ function createCtCard(hit) {
             </div>
             <div class="browse-card-footer">
                 <span class="browse-card-stat" title="Tokens"><i class="fa-solid fa-font"></i> ${tokens}</span>
-                <span class="browse-card-stat" title="Downloads"><i class="fa-solid fa-download"></i> ${formatNumber(hit.downloads || 0)}</span>
-                <span class="browse-card-stat" title="Likes"><i class="fa-solid fa-heart"></i> ${formatNumber(hit.likes || 0)}</span>
+                ${hit.likes != null ? `<span class="browse-card-stat" title="Likes"><i class="fa-solid fa-heart"></i> ${formatNumber(hit.likes)}</span>` : ''}
                 ${dateInfo}
             </div>
         </div>
@@ -287,7 +289,6 @@ async function loadCharacters(append = false) {
             query: ctCurrentSearch,
             sort: ctSortMode,
             page: ctCurrentPage,
-            limit: 60,
             nsfw: ctNsfwEnabled
         };
 
@@ -330,7 +331,7 @@ async function loadCharacters(append = false) {
         const hasClientFilters = ctFilterHideOwned || ctFilterHidePossible || !ctNsfwEnabled;
         if (hasClientFilters && ctCurrentPage < ctTotalPages) {
             let autoFetches = 0;
-            while (hits.length < 60 && ctCurrentPage < ctTotalPages && autoFetches < 3 && delegatesInitialized) {
+            while (hits.length < CT_PAGE_SIZE && ctCurrentPage < ctTotalPages && autoFetches < 3 && delegatesInitialized) {
                 autoFetches++;
                 ctCurrentPage++;
                 opts.page = ctCurrentPage;
@@ -398,6 +399,91 @@ async function loadCharacters(append = false) {
 // PREVIEW MODAL
 // ========================================
 
+/**
+ * Fill the modal's stats, tags and alt-greetings from a catalog hit or an adapted detail card.
+ * Fields a source lacks fall back to placeholders, so the detail pass can repaint over the hit pass.
+ */
+function populateModalExtras(src, name) {
+    const tokensEl = document.getElementById('ctCharTokens');
+    if (tokensEl) tokensEl.textContent = formatNumber(src.totalTokens || 0);
+    const chatsEl = document.getElementById('ctCharChats');
+    if (chatsEl) chatsEl.textContent = src.chats != null ? formatNumber(src.chats) : '–';
+    const likesEl = document.getElementById('ctCharLikes');
+    if (likesEl) likesEl.textContent = src.likes != null ? formatNumber(src.likes) : '–';
+    const dateEl = document.getElementById('ctCharDate');
+    if (dateEl) dateEl.textContent = src.createdAt ? new Date(src.createdAt * 1000).toLocaleDateString() : 'Unknown';
+
+    const altGreetings = Array.isArray(src.alternativeFirstMessage) ? src.alternativeFirstMessage.filter(Boolean) : [];
+    const greetingsStat = document.getElementById('ctCharGreetingsStat');
+    const greetingsCount = document.getElementById('ctCharGreetingsCount');
+    if (greetingsStat) {
+        if (altGreetings.length > 0) {
+            greetingsStat.style.display = 'flex';
+            if (greetingsCount) greetingsCount.textContent = String(altGreetings.length + 1);
+        } else {
+            greetingsStat.style.display = 'none';
+        }
+    }
+
+    const lorebookStat = document.getElementById('ctCharLorebookStat');
+    if (lorebookStat) lorebookStat.style.display = src.hasLorebook ? 'flex' : 'none';
+
+    const tagsEl = document.getElementById('ctCharTags');
+    if (tagsEl) {
+        tagsEl.innerHTML = parseTags(src.tags).map(t => `<span class="browse-tag">${escapeHtml(t)}</span>`).join('');
+        requestAnimationFrame(() => applyTagsClamp(tagsEl));
+    }
+
+    // Alternate Greetings - collapsible details with lazy rendering (matches Chub pattern)
+    const altGreetingsSection = document.getElementById('ctCharAltGreetingsSection');
+    const altGreetingsEl = document.getElementById('ctCharAltGreetings');
+    const altGreetingsCountEl = document.getElementById('ctCharAltGreetingsCount');
+    if (altGreetingsSection) {
+        if (altGreetings.length > 0) {
+            altGreetingsSection.style.display = 'block';
+            if (altGreetingsCountEl) altGreetingsCountEl.textContent = `(${altGreetings.length})`;
+            CoreAPI.setBrowseAltGreetings(altGreetings);
+            if (altGreetingsEl) {
+                const buildPreview = (text) => {
+                    const cleaned = (text || '').replace(/\s+/g, ' ').trim();
+                    if (!cleaned) return 'No content';
+                    return cleaned.length > 90 ? `${cleaned.slice(0, 87)}...` : cleaned;
+                };
+                altGreetingsEl.innerHTML = altGreetings.map((greeting, idx) => {
+                    const label = `#${idx + 1}`;
+                    const preview = escapeHtml(buildPreview(greeting));
+                    return `
+                        <details class="browse-alt-greeting" data-greeting-idx="${idx}">
+                            <summary>
+                                <span class="browse-alt-greeting-index">${label}</span>
+                                <span class="browse-alt-greeting-preview">${preview}</span>
+                                <span class="browse-alt-greeting-chevron"><i class="fa-solid fa-chevron-down"></i></span>
+                            </summary>
+                            <div class="browse-alt-greeting-body"></div>
+                        </details>
+                    `;
+                }).join('');
+                altGreetingsEl.querySelectorAll('details.browse-alt-greeting').forEach(details => {
+                    details.addEventListener('toggle', function onToggle() {
+                        if (!details.open) return;
+                        const body = details.querySelector('.browse-alt-greeting-body');
+                        if (body && !body.dataset.rendered) {
+                            const idx = parseInt(details.dataset.greetingIdx, 10);
+                            if (altGreetings[idx] != null) {
+                                deferRender(body, () => safePurify(formatRichText(altGreetings[idx], name, true), BROWSE_PURIFY_CONFIG));
+                            }
+                            body.dataset.rendered = '1';
+                        }
+                    }, { once: true });
+                });
+            }
+        } else {
+            altGreetingsSection.style.display = 'none';
+            CoreAPI.setBrowseAltGreetings([]);
+        }
+    }
+}
+
 let ctDetailFetchToken = 0;
 
 function openPreviewModal(hit) {
@@ -419,15 +505,7 @@ function openPreviewModal(hit) {
 
     try {
         const tagline = stripHtml(hit.tagline || '');
-        const creatorNotes = hit.pageDescription || '';
-        const tags = parseTags(hit.tags);
-        const tokens = formatNumber(hit.totalTokens || 0);
-        const downloads = formatNumber(hit.downloads || 0);
-        const likes = formatNumber(hit.likes || 0);
-
-        const createdDate = hit.createdAt
-            ? new Date(hit.createdAt * 1000).toLocaleDateString()
-            : '';
+        const creatorNotes = hit.description || '';
 
         // Header
         const avatarImg = document.getElementById('ctCharAvatar');
@@ -463,41 +541,8 @@ function openPreviewModal(hit) {
             }
         }
 
-        // Stats
-        const tokensEl = document.getElementById('ctCharTokens');
-        if (tokensEl) tokensEl.textContent = tokens;
-        const downloadsEl = document.getElementById('ctCharDownloads');
-        if (downloadsEl) downloadsEl.textContent = downloads;
-        const likesEl = document.getElementById('ctCharLikes');
-        if (likesEl) likesEl.textContent = likes;
-        const dateEl = document.getElementById('ctCharDate');
-        if (dateEl) dateEl.textContent = createdDate || 'Unknown';
-
-        // Greetings stat
-        const greetingsStat = document.getElementById('ctCharGreetingsStat');
-        const greetingsCount = document.getElementById('ctCharGreetingsCount');
-        const altGreetings = Array.isArray(hit.alternativeFirstMessage) ? hit.alternativeFirstMessage.filter(Boolean) : [];
-        if (greetingsStat) {
-            if (altGreetings.length > 0) {
-                greetingsStat.style.display = 'flex';
-                if (greetingsCount) greetingsCount.textContent = String(altGreetings.length + 1);
-            } else {
-                greetingsStat.style.display = 'none';
-            }
-        }
-
-        // Lorebook stat
-        const lorebookStat = document.getElementById('ctCharLorebookStat');
-        if (lorebookStat) {
-            lorebookStat.style.display = hit.hasLorebook ? 'flex' : 'none';
-        }
-
-        // Tags
-        const tagsEl = document.getElementById('ctCharTags');
-        if (tagsEl) {
-            tagsEl.innerHTML = tags.map(t => `<span class="browse-tag">${escapeHtml(t)}</span>`).join('');
-            requestAnimationFrame(() => applyTagsClamp(tagsEl));
-        }
+        // Stats, tags, alt greetings: catalog hits carry little of this, so the detail fetch repaints it
+        populateModalExtras(hit, name);
 
         // Skeletons sync, safePurify pipeline RAF-deferred so it doesnt block the modal-open paint.
         const creatorNotesSection = document.getElementById('ctCharCreatorNotesSection');
@@ -508,9 +553,10 @@ function openPreviewModal(hit) {
         const scenarioEl = document.getElementById('ctCharScenario');
         const firstMsgSection = document.getElementById('ctCharFirstMsgSection');
         const firstMsgEl = document.getElementById('ctCharFirstMsg');
-        charDef = hit.characterDefinition || '';
-        const scenario = hit.characterScenario || '';
-        const firstMsg = hit.characterFirstMessage || '';
+        // Catalog hits carry no definitions; a linked-card preview object is already a detail card
+        charDef = hit.definition_character_description || '';
+        const scenario = hit.definition_scenario || '';
+        const firstMsg = hit.definition_first_message || '';
         if (creatorNotesSection && creatorNotesEl) {
             if (creatorNotes && creatorNotes.trim()) {
                 creatorNotesSection.style.display = 'block';
@@ -550,59 +596,10 @@ function openPreviewModal(hit) {
             }
         });
 
-        // Alternate Greetings - collapsible details with lazy rendering (matches Chub pattern)
-        const altGreetingsSection = document.getElementById('ctCharAltGreetingsSection');
-        const altGreetingsEl = document.getElementById('ctCharAltGreetings');
-        const altGreetingsCountEl = document.getElementById('ctCharAltGreetingsCount');
-        if (altGreetingsSection) {
-            if (altGreetings.length > 0) {
-                altGreetingsSection.style.display = 'block';
-                if (altGreetingsCountEl) altGreetingsCountEl.textContent = `(${altGreetings.length})`;
-                CoreAPI.setBrowseAltGreetings(altGreetings);
-                if (altGreetingsEl) {
-                    const buildPreview = (text) => {
-                        const cleaned = (text || '').replace(/\s+/g, ' ').trim();
-                        if (!cleaned) return 'No content';
-                        return cleaned.length > 90 ? `${cleaned.slice(0, 87)}...` : cleaned;
-                    };
-                    altGreetingsEl.innerHTML = altGreetings.map((greeting, idx) => {
-                        const label = `#${idx + 1}`;
-                        const preview = escapeHtml(buildPreview(greeting));
-                        return `
-                            <details class="browse-alt-greeting" data-greeting-idx="${idx}">
-                                <summary>
-                                    <span class="browse-alt-greeting-index">${label}</span>
-                                    <span class="browse-alt-greeting-preview">${preview}</span>
-                                    <span class="browse-alt-greeting-chevron"><i class="fa-solid fa-chevron-down"></i></span>
-                                </summary>
-                                <div class="browse-alt-greeting-body"></div>
-                            </details>
-                        `;
-                    }).join('');
-                    altGreetingsEl.querySelectorAll('details.browse-alt-greeting').forEach(details => {
-                        details.addEventListener('toggle', function onToggle() {
-                            if (!details.open) return;
-                            const body = details.querySelector('.browse-alt-greeting-body');
-                            if (body && !body.dataset.rendered) {
-                                const idx = parseInt(details.dataset.greetingIdx, 10);
-                                if (altGreetings[idx] != null) {
-                                    deferRender(body, () => safePurify(formatRichText(altGreetings[idx], name, true), BROWSE_PURIFY_CONFIG));
-                                }
-                                body.dataset.rendered = '1';
-                            }
-                        }, { once: true });
-                    });
-                }
-            } else {
-                altGreetingsSection.style.display = 'none';
-                CoreAPI.setBrowseAltGreetings([]);
-            }
-        }
-
         // Example Dialogs
         const examplesSection = document.getElementById('ctCharExamplesSection');
         const examplesEl = document.getElementById('ctCharExamples');
-        const examples = hit.characterExampleMessages || '';
+        const examples = hit.definition_example_messages || '';
         if (examplesSection && examplesEl) { examplesSection.style.display = 'block'; examplesEl.innerHTML = skeletonLines(3); }
         requestAnimationFrame(() => {
             if (examplesSection) {
@@ -670,6 +667,8 @@ async function fetchAndPopulateDetails(hit, token) {
             ctSelectedChar._fullDetail = card;
         }
 
+        populateModalExtras(card, name);
+
         // Detail-API populate (richer than the search hit). RAF defer in case the modal-open transition is still running.
         const creatorNotesSection = document.getElementById('ctCharCreatorNotesSection');
         const creatorNotesEl = document.getElementById('ctCharCreatorNotes');
@@ -724,12 +723,6 @@ async function fetchAndPopulateDetails(hit, token) {
                 }
             }
         });
-
-        // Lorebook stat (detail API has lorebookId; search hit might not)
-        const lorebookStat = document.getElementById('ctCharLorebookStat');
-        if (lorebookStat && card.lorebookId) {
-            lorebookStat.style.display = 'flex';
-        }
     } catch (err) {
         debugLog('[CTBrowse] Detail fetch error:', err);
         if (token === ctDetailFetchToken) {
@@ -1587,11 +1580,13 @@ class ChartavernBrowseView extends BrowseView {
     getSettingsConfig() {
         return {
             browseSortOptions: [
-                { value: 'most_popular', label: 'Most Popular' },
-                { value: 'trending', label: 'Trending' },
+                { value: 'popular', label: 'Popular' },
+                { value: 'best', label: 'Best' },
+                { value: 'new_noteworthy', label: 'New & Noteworthy' },
+                { value: 'most_liked', label: 'Top Rated' },
+                { value: 'hidden_gems', label: 'Hidden Gems' },
                 { value: 'newest', label: 'Newest' },
-                { value: 'oldest', label: 'Oldest' },
-                { value: 'most_likes', label: 'Most Liked' },
+                { value: 'recently_updated', label: 'Recently Updated' },
             ],
             followingSortOptions: [],
             viewModes: [],
@@ -1619,11 +1614,13 @@ class ChartavernBrowseView extends BrowseView {
             <!-- Sort -->
             <div class="browse-sort-container">
                 <select id="ctSortSelect" class="glass-select" title="Sort order">
-                    <option value="most_popular" selected>🔥 Most Popular</option>
-                    <option value="trending">📈 Trending</option>
+                    <option value="popular" selected>🔥 Popular</option>
+                    <option value="best">🏆 Best</option>
+                    <option value="new_noteworthy">📈 New &amp; Noteworthy</option>
+                    <option value="most_liked">❤️ Top Rated</option>
+                    <option value="hidden_gems">💎 Hidden Gems</option>
                     <option value="newest">🆕 Newest</option>
-                    <option value="oldest">🕐 Oldest</option>
-                    <option value="most_likes">❤️ Most Liked</option>
+                    <option value="recently_updated">🕐 Recently Updated</option>
                 </select>
             </div>
 
@@ -1840,8 +1837,8 @@ class ChartavernBrowseView extends BrowseView {
                             <span id="ctCharTokens">0</span> tokens
                         </div>
                         <div class="browse-stat">
-                            <i class="fa-solid fa-download"></i>
-                            <span id="ctCharDownloads">0</span> downloads
+                            <i class="fa-solid fa-comments"></i>
+                            <span id="ctCharChats">0</span> chats
                         </div>
                         <div class="browse-stat">
                             <i class="fa-solid fa-heart"></i>
@@ -1944,9 +1941,10 @@ class ChartavernBrowseView extends BrowseView {
 
     applyDefaults(defaults) {
         if (defaults.sort) {
-            ctSortMode = defaults.sort;
+            // Saved defaults may hold a pre-rework value (most_popular, trending, ...)
+            ctSortMode = normalizeCtSort(defaults.sort);
             const el = document.getElementById('ctSortSelect');
-            if (el) el.value = defaults.sort;
+            if (el) el.value = ctSortMode;
         }
         if (defaults.hideOwned) {
             ctFilterHideOwned = true;
@@ -1977,7 +1975,7 @@ class ChartavernBrowseView extends BrowseView {
             ctExcludeTags = new Set();
             ctMinTokens = 0;
             ctMaxTokens = 0;
-            ctSortMode = 'most_popular';
+            ctSortMode = CT_DEFAULT_SORT;
             ctNsfwEnabled = false;
             ctSelectedChar = null;
         }

@@ -751,12 +751,25 @@ function captureCtExpiry(setCookieHeader) {
     if (!Number.isNaN(t)) ctSessionExpires = t;
 }
 
-// CT API paths the proxy is allowed to forward (read-only endpoints only).
+// CT paths the proxy is allowed to forward (read-only page data only). CT dropped its /api/ JSON
+// endpoints in its 2026-10 SvelteKit rework; the same data now comes from the pages' __data.json.
 const CT_ALLOWED_PATHS = [
-    /^\/api\/search\/cards\b/,
-    /^\/api\/character\/[^/]+\/[^/]+$/,
-    /^\/api\/catalog\/top-tags$/,
+    /^\/search\/cards\/__data\.json$/,
+    /^\/character\/[^/]+\/[^/]+\/__data\.json$/,
 ];
+
+const CT_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)';
+
+// The root layout's data carries `user` (null for guests), so it is an exact login check.
+// Returns the decoded user object, or null. devalue-flat: data[0] maps field -> value index.
+function ctUserFromLayout(text) {
+    const head = JSON.parse(String(text).split('\n')[0]);
+    const values = head?.nodes?.[0]?.data;
+    const idx = Array.isArray(values) ? values[0]?.user : undefined;
+    if (typeof idx !== 'number' || idx < 0) return null;
+    const user = values[idx];
+    return user && typeof user === 'object' ? user : null;
+}
 
 function registerCharacterTavernRoutes(router) {
     /**
@@ -810,36 +823,47 @@ function registerCharacterTavernRoutes(router) {
         }
 
         try {
-            // Search a term that returns both SFW and NSFW results when authenticated
-            const response = await fetch('https://character-tavern.com/api/search/cards?query=sara+lane&limit=5', {
+            // The catalog page's data carries both the layout `user` (login check) and the hits'
+            // contentWarnings: sexual-content cards only reach sessions whose prefs allow them
+            const response = await fetch('https://character-tavern.com/search/cards/__data.json?sort=popular', {
                 headers: {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)',
-                    'Accept': 'application/json',
+                    'User-Agent': CT_UA,
+                    'Accept': '*/*',
                     'Cookie': ctSessionCookies,
                 },
             });
 
             if (response.ok) {
-                const data = await response.json();
-                const hits = data?.hits || [];
-                // Authenticated sessions return NSFW results (isNSFW=true, contentWarnings populated)
-                const hasNsfw = hits.some(h => h.isNSFW === true);
-                
+                const text = await response.text();
+
                 // Check if server rejected the cookie (by setting it to empty/expired)
                 const setCookie = response.headers.get('set-cookie');
-                const isRejected = setCookie && (setCookie.includes('session=;') || setCookie.includes('Max-Age=0'));
-                
-                if (isRejected) {
-                    console.warn('[cl-helper] CT session rejected (Set-Cookie deletion detected)');
+                const isRejected = setCookie && (setCookie.includes('session=;') || /max-age=0/i.test(setCookie));
+
+                let user = null;
+                try {
+                    user = ctUserFromLayout(text);
+                } catch {
+                    // Unparseable 200 (challenge page, format change) never judged the cookie
+                    return res.json({ valid: false, transient: true, reason: 'unreadable CT response' });
+                }
+
+                if (isRejected || !user) {
+                    console.warn(`[cl-helper] CT session rejected (${isRejected ? 'Set-Cookie deletion' : 'no user on page'})`);
                     ctSessionCookies = null; // Clear our invalid cookie
                     ctSessionExpires = null;
                     res.json({ valid: false, definitive: true, reason: 'Session rejected/expired by server' });
                     return;
                 }
 
+                // Only the catalog node's values: the layout's user prefs may name the warning too
+                const nodes = JSON.parse(text.split('\n')[0])?.nodes || [];
+                const hasNsfw = nodes.some(n => Array.isArray(n?.data)
+                    && n.data[0] && 'searchResults' in n.data[0]
+                    && n.data.includes('nsfw_sexual'));
                 captureCtExpiry(setCookie); // this authed request slid the window; snapshot the new expiry
-                console.log(`[cl-helper] CT validate: ${hits.length} hits, totalHits=${data?.totalHits}, hasNSFW=${hasNsfw}`);
-                res.json({ valid: true, hasNsfw, expires: ctSessionExpires });
+                console.log(`[cl-helper] CT validate: logged in, hasNSFW=${hasNsfw}`);
+                res.json({ valid: true, hasNsfw, username: user.username || user.name || null, expires: ctSessionExpires });
             } else if (response.status === 403) {
                 ctSessionCookies = null;
                 ctSessionExpires = null;
@@ -881,7 +905,7 @@ function registerCharacterTavernRoutes(router) {
     router.get('/ct-proxy/*', async (req, res) => {
         const targetPath = '/' + req.params[0]; // everything after /ct-proxy/
 
-        // Normalize and allowlist check: only known read-only API paths
+        // Normalize and allowlist check: only known read-only page-data paths
         const normalizedPath = new URL(targetPath, 'https://character-tavern.com/').pathname;
         if (!CT_ALLOWED_PATHS.some(re => re.test(normalizedPath))) {
             console.warn(`[cl-helper] CT proxy blocked: ${normalizedPath}`);
@@ -898,8 +922,8 @@ function registerCharacterTavernRoutes(router) {
         }
 
         const headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'Accept': 'application/json',
+            'User-Agent': CT_UA,
+            'Accept': '*/*',
         };
         if (ctSessionCookies) {
             headers['Cookie'] = ctSessionCookies;

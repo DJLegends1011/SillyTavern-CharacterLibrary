@@ -1,7 +1,11 @@
 // Shared CharacterTavern API utilities - used by both chartavern-provider.js and chartavern-browse.js
 //
-// Contains constants, fetch helpers, and text utilities for the
-// character-tavern.com API.
+// Contains constants, fetch helpers, and text utilities for character-tavern.com.
+//
+// CT's JSON API (/api/search/cards, /api/character/*, /api/catalog/top-tags) was removed in its
+// 2026-10 SvelteKit rework. The same data now ships as the pages' own `__data.json` payloads
+// (devalue-encoded, streamed promises as trailing chunk lines). The fetchers below decode those and
+// adapt them back to the legacy shapes so the provider/browse code keeps one data model.
 
 // ========================================
 // CONSTANTS
@@ -10,24 +14,43 @@
 import { CL_HELPER_PLUGIN_BASE as CL_HELPER_CT_BASE } from '../provider-utils.js';
 export { CL_HELPER_CT_BASE };
 
-export const CT_API_BASE = 'https://character-tavern.com/api';
 export const CT_SITE_BASE = 'https://character-tavern.com';
 export const CT_CARDS_CDN = 'https://ct-cards.storage.character-tavern.com';
 
-// Sort options accepted by /api/search/cards
+// The catalog serves a fixed page size; its `limit` param is ignored.
+export const CT_PAGE_SIZE = 30;
+
+// Sort values the catalog accepts (anything else silently becomes `best`)
 export const CT_SORT_OPTIONS = {
-    most_popular: 'Most Popular',
-    trending: 'Trending',
+    popular: 'Popular',
+    best: 'Best',
+    new_noteworthy: 'New & Noteworthy',
+    most_liked: 'Top Rated',
+    hidden_gems: 'Hidden Gems',
     newest: 'Newest',
-    oldest: 'Oldest',
-    most_likes: 'Most Liked'
+    recently_updated: 'Recently Updated',
 };
+export const CT_DEFAULT_SORT = 'popular';
+
+// Pre-rework sort values, still found in saved browse defaults
+const CT_LEGACY_SORTS = {
+    most_popular: 'popular',
+    trending: 'new_noteworthy',
+    most_likes: 'most_liked',
+    oldest: 'newest',
+};
+
+/** @param {string} sort @returns {string} a sort value the catalog accepts */
+export function normalizeCtSort(sort) {
+    if (sort && Object.hasOwn(CT_SORT_OPTIONS, sort)) return sort;
+    return CT_LEGACY_SORTS[sort] || CT_DEFAULT_SORT;
+}
 
 // ========================================
 // NETWORK (shared)
 // ========================================
 
-import { fetchWithProxy, readJsonClassified } from '../provider-utils.js';
+import { fetchWithProxy, classifyErrorPage } from '../provider-utils.js';
 export { fetchWithProxy };
 
 // ========================================
@@ -161,9 +184,12 @@ function ctHelperAvailable(apiRequest) {
     return _ctHelperProbe;
 }
 
+// Set once a cl-helper predating the __data.json allowlist refuses a path, so later calls skip it
+let _ctProxyOutdated = false;
+
 /**
- * Fetch a CT API URL, routing through cl-helper's /ct-proxy whenever cl-helper is available.
- * @param {string} url - Full CT API URL (e.g. https://character-tavern.com/api/search/cards?...)
+ * Fetch a CT URL, routing through cl-helper's /ct-proxy whenever cl-helper is available.
+ * @param {string} url - Full CT URL (e.g. https://character-tavern.com/search/cards/__data.json?...)
  * @param {Function} [apiRequest] - CoreAPI.apiRequest (required for proxied requests)
  * @returns {Promise<Response>}
  */
@@ -173,11 +199,264 @@ async function ctFetch(url, apiRequest) {
     // zstd, and STs node-fetch pipe can neither decompress it nor forward the Content-Encoding
     // header, so the browser receives undecodable bytes. /ct-proxy negotiates only encodings its
     // runtime can decode, so its responses always arrive readable.
-    if (apiRequest && (ctSessionActive || await ctHelperAvailable(apiRequest))) {
+    if (apiRequest && !_ctProxyOutdated && (ctSessionActive || await ctHelperAvailable(apiRequest))) {
         const path = url.replace(CT_SITE_BASE, '');
-        return apiRequest(`${CL_HELPER_CT_BASE}/ct-proxy${path}`);
+        const resp = await apiRequest(`${CL_HELPER_CT_BASE}/ct-proxy${path}`);
+        if (resp.status !== 403) return resp;
+        // An older cl-helper only allowlists the removed /api/ paths. Guest browsing still works
+        // through ST's /proxy/ (CT streams __data.json uncompressed); only the session is lost.
+        const body = await resp.clone().json().catch(() => null);
+        if (body?.error !== 'Proxy path not allowed') return resp;
+        _ctProxyOutdated = true;
+        console.warn('[CharacterTavern] cl-helper is outdated for the new CT site; browsing as guest. Update cl-helper to restore the session.');
     }
     return fetchWithProxy(url);
+}
+
+// ========================================
+// SVELTEKIT DATA DECODING
+// ========================================
+
+// devalue's reserved negative indices
+const DV_UNDEFINED = -1, DV_HOLE = -2, DV_NAN = -3, DV_POS_INF = -4, DV_NEG_INF = -5, DV_NEG_ZERO = -6;
+
+/**
+ * Rebuild one devalue-flattened value array. SvelteKit encodes a streamed promise as
+ * ["Promise", <id>], so `chunks` resolves those to the matching chunk line's data.
+ * @param {Array} values
+ * @param {(id: number) => any} resolveChunk
+ */
+function unflattenDevalue(values, resolveChunk) {
+    if (!Array.isArray(values)) return undefined;
+    const done = new Map();
+
+    function hydrate(i) {
+        switch (i) {
+            case DV_UNDEFINED: case DV_HOLE: return undefined;
+            case DV_NAN: return NaN;
+            case DV_POS_INF: return Infinity;
+            case DV_NEG_INF: return -Infinity;
+            case DV_NEG_ZERO: return -0;
+        }
+        if (done.has(i)) return done.get(i);
+        const v = values[i];
+        if (v === null || typeof v !== 'object') {
+            done.set(i, v);
+            return v;
+        }
+        if (Array.isArray(v)) {
+            if (typeof v[0] === 'string') {
+                const type = v[0];
+                switch (type) {
+                    case 'Date': { const d = new Date(v[1]); done.set(i, d); return d; }
+                    case 'Promise': { const r = resolveChunk(hydrate(v[1])); done.set(i, r); return r; }
+                    case 'Set': {
+                        const s = new Set();
+                        done.set(i, s);
+                        for (let j = 1; j < v.length; j++) s.add(hydrate(v[j]));
+                        return s;
+                    }
+                    case 'Map': {
+                        const m = new Map();
+                        done.set(i, m);
+                        for (let j = 1; j < v.length; j += 2) m.set(hydrate(v[j]), hydrate(v[j + 1]));
+                        return m;
+                    }
+                    case 'null': {
+                        const o = Object.create(null);
+                        done.set(i, o);
+                        for (let j = 1; j < v.length; j += 2) o[v[j]] = hydrate(v[j + 1]);
+                        return o;
+                    }
+                    case 'BigInt': { const b = BigInt(v[1]); done.set(i, b); return b; }
+                    // Other built-ins (RegExp, URL, typed arrays) carry no card data; keep the raw payload
+                    default: { const raw = hydrate(v[1]); done.set(i, raw); return raw; }
+                }
+            }
+            const arr = new Array(v.length);
+            done.set(i, arr);
+            for (let j = 0; j < v.length; j++) {
+                if (v[j] !== DV_HOLE) arr[j] = hydrate(v[j]);
+            }
+            return arr;
+        }
+        const obj = {};
+        done.set(i, obj);
+        for (const key of Object.keys(v)) obj[key] = hydrate(v[key]);
+        return obj;
+    }
+
+    return hydrate(0);
+}
+
+/**
+ * Decode a SvelteKit `__data.json` body: one `{type:"data", nodes}` line, then one
+ * `{type:"chunk", id, data}` line per streamed promise. Every node's data is merged into one
+ * object (layout first, page last), so callers read page fields straight off it.
+ * @param {string} text
+ * @returns {Object}
+ */
+export function parseSvelteKitData(text) {
+    const lines = String(text || '').split('\n').filter(l => l.trim());
+    if (!lines.length) throw new Error('CharacterTavern returned an empty response');
+
+    let head;
+    const rawChunks = new Map();
+    for (const line of lines) {
+        let msg;
+        try {
+            msg = JSON.parse(line);
+        } catch {
+            throw new Error('CharacterTavern returned an unreadable page payload');
+        }
+        if (msg.type === 'chunk') rawChunks.set(msg.id, msg);
+        else if (!head) head = msg;
+    }
+    if (head?.type === 'redirect') throw new Error(`CharacterTavern redirected to ${head.location}`);
+    if (head?.type === 'error') throw new Error(`CharacterTavern error: ${head.error?.message || 'unknown'}`);
+    if (!Array.isArray(head?.nodes)) throw new Error('CharacterTavern returned an unexpected page payload');
+
+    const chunkCache = new Map();
+    const resolveChunk = (id) => {
+        if (chunkCache.has(id)) return chunkCache.get(id);
+        const raw = rawChunks.get(id);
+        // A rejected promise (raw.error) or an unsent chunk reads as missing data, never a throw
+        const val = raw && !raw.error ? unflattenDevalue(raw.data, resolveChunk) : null;
+        chunkCache.set(id, val);
+        return val;
+    };
+
+    const merged = {};
+    for (const node of head.nodes) {
+        if (node?.type === 'error') throw new Error(`CharacterTavern error: ${node.error?.message || 'unknown'}`);
+        if (node?.type !== 'data') continue;
+        const data = unflattenDevalue(node.data, resolveChunk);
+        if (data && typeof data === 'object') Object.assign(merged, data);
+    }
+    return merged;
+}
+
+/**
+ * Fetch and decode a CT page's `__data.json`.
+ * @param {string} pagePath - site path without trailing slash, e.g. "/search/cards"
+ * @param {URLSearchParams|null} params
+ * @param {Function} [apiRequest]
+ * @returns {Promise<Object>} merged node data
+ */
+async function fetchCtPageData(pagePath, params, apiRequest) {
+    const qs = params && String(params) ? `?${params}` : '';
+    const resp = await ctFetch(`${CT_SITE_BASE}${pagePath}/__data.json${qs}`, apiRequest);
+    const text = await resp.text();
+    if (!resp.ok) {
+        const pageMsg = classifyErrorPage(text, resp.status);
+        const err = new Error(pageMsg || `CharacterTavern returned HTTP ${resp.status}`);
+        err.status = resp.status;
+        err.bodySnippet = text.slice(0, 300);
+        throw err;
+    }
+    // A Cloudflare challenge or HTML error page can arrive as 200; the payload is always JSON lines
+    if (!text.trimStart().startsWith('{')) {
+        const err = new Error(classifyErrorPage(text, resp.status) || 'CharacterTavern returned a web page instead of data');
+        err.status = resp.status;
+        err.bodySnippet = text.slice(0, 300);
+        throw err;
+    }
+    return parseSvelteKitData(text);
+}
+
+// ========================================
+// SHAPE ADAPTERS (new payloads -> legacy shapes)
+// ========================================
+
+/** @param {string[]} [warnings] */
+function hasSexualWarning(warnings) {
+    return Array.isArray(warnings) && warnings.includes('nsfw_sexual');
+}
+
+/**
+ * Catalog hits now carry only id/name/tagline/path/author/contentWarnings/permanentTokens.
+ * Stats, tags and definitions live on the detail page only.
+ */
+function adaptSearchHit(hit) {
+    return {
+        ...hit,
+        totalTokens: hit.permanentTokens ?? 0,
+        isNSFW: hasSexualWarning(hit.contentWarnings),
+    };
+}
+
+/** Normalize an alternative-greetings payload (strings or {content|message|text} rows) to strings. */
+function adaptAltGreetings(raw) {
+    const list = Array.isArray(raw) ? raw : Array.isArray(raw?.greetings) ? raw.greetings : [];
+    return list
+        .map(g => (typeof g === 'string' ? g : g?.content ?? g?.message ?? g?.text ?? ''))
+        .filter(g => typeof g === 'string' && g.trim());
+}
+
+function toEpochSeconds(value) {
+    if (!value) return 0;
+    const ms = value instanceof Date ? value.getTime() : Date.parse(value);
+    return Number.isFinite(ms) ? Math.floor(ms / 1000) : 0;
+}
+
+/**
+ * Character page data -> the legacy detail `card`. Adds the fields the old search hits used to
+ * carry (tags, likes, alt greetings, lorebook flag) so callers no longer need a second request.
+ */
+function adaptDetail(data) {
+    const character = data?.character;
+    if (!character) return null;
+    const altGreetings = adaptAltGreetings(data.alternativeGreetings);
+    const username = data.authorUsername || character.path?.split('/')[0] || '';
+    const card = {
+        ...character,
+        // `author` is now CT's numeric user id; everything here reads it as the username
+        author: username,
+        author_username: username,
+        authorId: character.author ?? null,
+        tags: Array.isArray(data.tags) ? data.tags.filter(Boolean) : [],
+        contentWarnings: data.contentWarnings || [],
+        isNSFW: character.isNSFW === true || hasSexualWarning(data.contentWarnings),
+        likes: data.likesData?.likeCount ?? null,
+        dislikes: data.likesData?.dislikeCount ?? null,
+        chats: character.analytics_chats ?? null,
+        totalTokens: character.tokenTotal ?? 0,
+        createdAt: toEpochSeconds(character.createdAt),
+        hasLorebook: !!(character.lorebookId || data.lorebook),
+        alternativeFirstMessage: altGreetings,
+        lorebook: data.lorebook || null,
+    };
+    return { card, ownerCTId: data.authorUserId ?? null };
+}
+
+/**
+ * CT lorebook (detail page `lorebook`) -> V2 character_book.
+ * @param {Object|null} lorebook - { name, description, scanDepth, entries: [{ id, name, content, keys, enabled, insertionOrder, constant }] }
+ * @returns {Object|undefined}
+ */
+export function buildCtCharacterBook(lorebook) {
+    const entries = Array.isArray(lorebook?.entries) ? lorebook.entries : [];
+    if (!entries.length) return undefined;
+    return {
+        name: (lorebook.name || '').trim(),
+        description: lorebook.description || '',
+        scan_depth: lorebook.scanDepth ?? undefined,
+        extensions: {},
+        entries: entries.map((e, i) => ({
+            id: i,
+            keys: Array.isArray(e.keys) ? e.keys.filter(Boolean) : [],
+            secondary_keys: [],
+            content: e.content || '',
+            comment: (e.name || '').trim(),
+            name: (e.name || '').trim(),
+            enabled: e.enabled !== false,
+            constant: e.constant === true,
+            selective: false,
+            insertion_order: e.insertionOrder ?? 100,
+            case_sensitive: false,
+            extensions: {},
+        })),
+    };
 }
 
 // ========================================
@@ -185,17 +464,16 @@ async function ctFetch(url, apiRequest) {
 // ========================================
 
 /**
- * Search characters via /api/search/cards
+ * Search the catalog via /search/cards/__data.json
  * @param {Object} opts
  * @param {Function} [apiRequest] - CoreAPI.apiRequest for authenticated proxy
- * @returns {Promise<{hits: Array, totalHits: number, totalPages: number, page: number}>}
+ * @returns {Promise<{hits: Array, totalHits: number, totalPages: number, page: number, hiddenByPrefs: boolean}>}
  */
 export async function searchCards(opts = {}, apiRequest) {
     const {
         query = '',
-        sort = 'most_popular',
+        sort = CT_DEFAULT_SORT,
         page = 1,
-        limit = 30,
         tags = '',
         excludeTags = '',
         minimumTokens,
@@ -206,10 +484,9 @@ export async function searchCards(opts = {}, apiRequest) {
     } = opts;
 
     const params = new URLSearchParams();
-    params.set('query', query);
-    params.set('sort', sort);
+    if (query) params.set('query', query);
+    params.set('sort', normalizeCtSort(sort));
     params.set('page', String(page));
-    params.set('limit', String(limit));
     if (tags) params.set('tags', tags);
     if (excludeTags) params.set('exclude_tags', excludeTags);
     if (minimumTokens != null) params.set('minimum_tokens', String(minimumTokens));
@@ -224,37 +501,56 @@ export async function searchCards(opts = {}, apiRequest) {
         params.set('exclude_tags', existing.join(','));
     }
 
-    const url = `${CT_API_BASE}/search/cards?${params}`;
-    const resp = await ctFetch(url, apiRequest);
-    return readJsonClassified(resp);
+    const data = await fetchCtPageData('/search/cards', params, apiRequest);
+    const results = data?.searchResults;
+    if (!results || !Array.isArray(results.hits)) {
+        throw new Error('CharacterTavern search returned no results block');
+    }
+    return {
+        hits: results.hits.map(adaptSearchHit),
+        totalHits: results.totalHits ?? 0,
+        totalPages: results.totalPages ?? 1,
+        page: results.page ?? page,
+        hiddenByPrefs: results.hiddenByPrefs === true,
+    };
 }
 
+// Preview, enrichment, link stats and import often read the same card back to back
+const DETAIL_TTL_MS = 60_000;
+const _detailCache = new Map(); // key -> { at, promise }
+
 /**
- * Fetch full character details via /api/character/{author}/{slug}
+ * Fetch full character details via /character/{author}/{slug}/__data.json
  * @param {string} author
  * @param {string} slug
  * @param {Function} [apiRequest] - CoreAPI.apiRequest for authenticated proxy
- * @returns {Promise<Object>} { card: {...}, ownerCTId: ... }
+ * @returns {Promise<{card: Object, ownerCTId: string|null}|null>} null when the page has no character
  */
-export async function fetchCharacterDetail(author, slug, apiRequest) {
-    const url = `${CT_API_BASE}/character/${encodeURIComponent(author)}/${encodeURIComponent(slug)}`;
-    const resp = await ctFetch(url, apiRequest);
-    if (!resp.ok) {
-        throw new Error(`CT detail returned HTTP ${resp.status}`);
-    }
-    return resp.json();
+export function fetchCharacterDetail(author, slug, apiRequest) {
+    const key = `${ctSessionActive ? 'auth' : 'guest'}:${author}/${slug}`;
+    const hit = _detailCache.get(key);
+    if (hit && Date.now() - hit.at < DETAIL_TTL_MS) return hit.promise;
+
+    const pagePath = `/character/${encodeURIComponent(author)}/${encodeURIComponent(slug)}`;
+    const promise = fetchCtPageData(pagePath, null, apiRequest).then(adaptDetail);
+    promise.catch(() => _detailCache.delete(key)); // never cache a failure
+    _detailCache.set(key, { at: Date.now(), promise });
+    if (_detailCache.size > 50) _detailCache.delete(_detailCache.keys().next().value);
+    return promise;
 }
 
 /**
- * Fetch top tags from /api/catalog/top-tags
+ * Fetch the catalog's tag list (the search page's streamed `tagCatalogue`).
  * @param {Function} [apiRequest] - CoreAPI.apiRequest for the cl-helper transport
  * @returns {Promise<Array<{tag: string, count: number}>>}
  */
 export async function fetchTopTags(apiRequest) {
-    const url = `${CT_API_BASE}/catalog/top-tags`;
-    const resp = await ctFetch(url, apiRequest);
-    if (!resp.ok) throw new Error(`Top tags fetch failed (${resp.status})`);
-    return resp.json();
+    const data = await fetchCtPageData('/search/cards', null, apiRequest);
+    const tags = data?.tagCatalogue?.tags;
+    if (!Array.isArray(tags)) throw new Error('CharacterTavern tag catalogue missing');
+    return tags
+        .filter(t => t?.value)
+        .map(t => ({ tag: t.value, count: t.count ?? 0 }));
 }
 
 // ========================================

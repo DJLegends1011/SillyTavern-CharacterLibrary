@@ -1,6 +1,6 @@
 // CharacterTavern Provider - implementation for character-tavern.com character source
 //
-// Uses the CT REST API for search and character details. Cards are served as
+// Uses CT's SvelteKit page data for search and character details. Cards are served as
 // PNG files with embedded V2 data via their CDN. No version history or gallery support.
 
 import { ProviderBase } from '../provider-interface.js';
@@ -20,6 +20,7 @@ import {
     stripHtml,
     parseTags,
     getCtCharName,
+    buildCtCharacterBook,
     checkCtSession,
     isCtSessionActive,
     ctSetCookie,
@@ -34,7 +35,7 @@ let api = null;
 // ========================================
 
 /**
- * Build V2 card from the detail API response (/api/character/{author}/{slug}).
+ * Build V2 card from the adapted detail `card` (fetchCharacterDetail).
  * Field mapping:
  *   definition_character_description → V2 description
  *   definition_first_message        → V2 first_mes
@@ -44,8 +45,10 @@ let api = null;
  *   definition_system_prompt        → V2 system_prompt
  *   definition_post_history_prompt  → V2 post_history_instructions
  *   tagline / description           → V2 creator_notes
+ *   alternativeFirstMessage         → V2 alternate_greetings
+ *   lorebook                        → V2 character_book
  */
-function buildV2FromDetail(card, authorName, altGreetings) {
+function buildV2FromDetail(card, authorName, altGreetings = card.alternativeFirstMessage) {
     return {
         spec: 'chara_card_v2',
         spec_version: '2.0',
@@ -70,41 +73,7 @@ function buildV2FromDetail(card, authorName, altGreetings) {
                     tagline: card.tagline || ''
                 }
             },
-            character_book: undefined,
-        }
-    };
-}
-
-/**
- * Build V2 card from a search hit (less detailed than the full API response).
- * Search hits include the actual character definitions.
- */
-function buildV2FromSearchHit(hit) {
-    return {
-        spec: 'chara_card_v2',
-        spec_version: '2.0',
-        data: {
-            name: getCtCharName(hit),
-            description: hit.characterDefinition || '',
-            personality: hit.characterPersonality || '',
-            scenario: hit.characterScenario || '',
-            first_mes: hit.characterFirstMessage || '',
-            mes_example: hit.characterExampleMessages || '',
-            system_prompt: '',
-            post_history_instructions: hit.characterPostHistoryPrompt || '',
-            creator_notes: hit.pageDescription || '',
-            creator: hit.author || '',
-            character_version: '',
-            tags: hit.tags ? parseTags(hit.tags) : [],
-            alternate_greetings: Array.isArray(hit.alternativeFirstMessage) ? hit.alternativeFirstMessage.filter(Boolean) : [],
-            extensions: {
-                chartavern: {
-                    id: hit.id || null,
-                    path: hit.path || null,
-                    tagline: hit.tagline || ''
-                }
-            },
-            character_book: undefined,
+            character_book: buildCtCharacterBook(card.lorebook),
         }
     };
 }
@@ -122,12 +91,12 @@ class ChartavernProvider extends ProviderBase {
     get iconUrl() { return `${CT_SITE_BASE}/favicon.ico`; }
     // Base SFW browse works without cl-helper (ctFetch falls to ST /proxy/ when no session), so
     // NO global minClHelperVersion. Only NSFW (cookie session via /ct-proxy) is cl-helper-gated.
-    get clHelperFeatures() { return { nsfw: { minVersion: '1.0.0', label: 'NSFW browsing' } }; }
+    get clHelperFeatures() { return { nsfw: { minVersion: '1.12.1', label: 'NSFW browsing' } }; }
     get browseView() { return chartavernBrowseView; }
 
     get linkStatFields() {
         return {
-            stat1: { icon: 'fa-solid fa-download', label: 'Downloads' },
+            stat1: { icon: 'fa-solid fa-comments', label: 'Chats' },
             stat2: { icon: 'fa-solid fa-heart', label: 'Likes' },
             stat3: { icon: 'fa-solid fa-coins', label: 'Tokens' },
         };
@@ -224,15 +193,15 @@ class ChartavernProvider extends ProviderBase {
         const path = linkInfo?.fullPath;
         if (!path) return null;
 
-        // Find this character via the search API to get the same hit shape the browse view uses
-        const slug = path.split('/')[1] || '';
-        try {
-            const data = await searchCards({ query: slug, sort: 'most_popular', page: 1, limit: 10 }, api?.apiRequest);
-            const hits = data?.hits || [];
-            const match = hits.find(h => h.path === path);
-            if (match) return match;
-        } catch (e) {
-            console.warn('[ChartavernProvider] buildPreviewObject search failed:', e.message);
+        // The adapted detail card is a superset of a browse hit (same name/path/author/tags fields)
+        const parts = path.split('/');
+        if (parts.length >= 2) {
+            try {
+                const data = await fetchCharacterDetail(parts[0], parts[1], api?.apiRequest);
+                if (data?.card) return data.card;
+            } catch (e) {
+                console.warn('[ChartavernProvider] buildPreviewObject detail fetch failed:', e.message);
+            }
         }
 
         // Fallback to local data if remote fetch failed
@@ -352,24 +321,13 @@ class ChartavernProvider extends ProviderBase {
             const parts = path.split('/');
             if (parts.length < 2) return null;
 
-            // Detail API uses different field names than search: analytics_downloads, tokenTotal.
-            // It has no likes/favorites field, so fall back to a search query for that.
+            // CT stopped publishing download counts; chats is the closest popularity figure
             const data = await fetchCharacterDetail(parts[0], parts[1], api?.apiRequest);
             const card = data?.card;
             if (!card) return null;
-
-            // Try to get likes from a search hit matched by path
-            let likes = null;
-            try {
-                const slug = parts[1];
-                const searchData = await searchCards({ query: slug, sort: 'most_popular', page: 1, limit: 10 }, api?.apiRequest);
-                const match = (searchData?.hits || []).find(h => h.path === path);
-                if (match) likes = match.likes ?? null;
-            } catch (_) { /* search is best-effort */ }
-
             return {
-                stat1: card.analytics_downloads ?? null,
-                stat2: likes,
+                stat1: card.chats ?? null,
+                stat2: card.likes ?? null,
                 stat3: card.tokenTotal ?? null
             };
         } catch (e) {
@@ -399,8 +357,7 @@ class ChartavernProvider extends ProviderBase {
             const parts = linkInfo.fullPath.split('/');
             if (parts.length < 2) return null;
 
-            // Primary: extract full V2 card from CDN PNG (canonical source with alt greetings).
-            // The CT detail API doesn't return alternate_greetings, but the PNG embeds the complete card.
+            // Primary: extract full V2 card from CDN PNG (canonical source, same bytes users download).
             const pngUrl = getCardPngUrl(linkInfo.fullPath);
             try {
                 const resp = await fetchWithProxy(pngUrl);
@@ -428,7 +385,7 @@ class ChartavernProvider extends ProviderBase {
                 console.warn('[ChartavernProvider] PNG extraction failed, falling back to detail API:', e.message);
             }
 
-            // Fallback: detail API only (alternate_greetings will be empty)
+            // Fallback: detail page only (carries alt greetings and lorebook too)
             const data = await fetchCharacterDetail(parts[0], parts[1], api?.apiRequest);
             if (!data?.card) return null;
             const result = buildV2FromDetail(data.card, parts[0]);
@@ -520,7 +477,8 @@ class ChartavernProvider extends ProviderBase {
     async searchForBulkLink(name, _creator) {
         try {
             // CT search indexes card names/descriptions, not creator usernames
-            const data = await searchCards({ query: name, sort: 'most_popular', page: 1, limit: 15 }, api?.apiRequest);
+            // `best` is the catalog's relevance ranking, the right order for a name lookup
+            const data = await searchCards({ query: name, sort: 'best', page: 1 }, api?.apiRequest);
             return (data?.hits || []).map(hit => this._normalizeSearchResult(hit));
         } catch (e) {
             console.error('[ChartavernProvider] searchForBulkLink error:', e);
@@ -564,25 +522,40 @@ class ChartavernProvider extends ProviderBase {
 
             const characterName = (cardData || hitData) ? getCtCharName(cardData || hitData) : slug;
 
-            // Build the V2 card from the best available data
-            const altGreetings = Array.isArray(hitData?.alternativeFirstMessage) ? hitData.alternativeFirstMessage : [];
+            // Download the PNG card from CDN (already has card data embedded)
+            const pngUrl = getCardPngUrl(path);
+            let imageBuffer = null;
+            try {
+                const resp = await fetchWithProxy(pngUrl);
+                imageBuffer = await resp.arrayBuffer();
+            } catch (e) {
+                console.warn('[ChartavernProvider] PNG download failed:', e.message);
+            }
+            let pngCard = null;
+            if (imageBuffer) {
+                try {
+                    pngCard = api.extractCharacterDataFromPng?.(imageBuffer) || null;
+                } catch (_) { /* PNG extraction is best-effort */ }
+            }
+
+            // Detail page is the live source; the PNG fills gaps, or stands in when the detail
+            // fetch failed (catalog hits no longer carry definitions to build from)
             let characterCard;
             if (cardData) {
-                characterCard = buildV2FromDetail(cardData, author, altGreetings);
-                // Backfill tags from hitData or search if detail API returned none
-                if (!characterCard.data.tags?.length) {
-                    if (hitData?.tags) {
-                        characterCard.data.tags = parseTags(hitData.tags);
-                    } else {
-                        try {
-                            const searchData = await searchCards({ query: slug, sort: 'most_popular', page: 1, limit: 10 }, api?.apiRequest);
-                            const match = (searchData?.hits || []).find(h => h.path === path);
-                            if (match?.tags) characterCard.data.tags = parseTags(match.tags);
-                        } catch (_) { /* search fallback is best-effort */ }
+                characterCard = buildV2FromDetail(cardData, author);
+                if (pngCard?.data) {
+                    if (!characterCard.data.alternate_greetings?.length && pngCard.data.alternate_greetings?.length) {
+                        characterCard.data.alternate_greetings = pngCard.data.alternate_greetings;
+                    }
+                    if (!characterCard.data.tags?.length && pngCard.data.tags?.length) {
+                        characterCard.data.tags = pngCard.data.tags;
+                    }
+                    if (pngCard.data.character_book && !characterCard.data.character_book) {
+                        characterCard.data.character_book = pngCard.data.character_book;
                     }
                 }
-            } else if (hitData) {
-                characterCard = buildV2FromSearchHit(hitData);
+            } else if (pngCard?.data) {
+                characterCard = { spec: 'chara_card_v2', spec_version: '2.0', ...pngCard, data: { ...pngCard.data } };
             } else {
                 throw new Error('Could not fetch character data from CharacterTavern');
             }
@@ -599,35 +572,6 @@ class ChartavernProvider extends ProviderBase {
             };
 
             assignGalleryId(characterCard, options, api);
-
-            // Download the PNG card from CDN (already has card data embedded)
-            const pngUrl = getCardPngUrl(path);
-            let imageBuffer = null;
-            try {
-                const resp = await fetchWithProxy(pngUrl);
-                imageBuffer = await resp.arrayBuffer();
-            } catch (e) {
-                console.warn('[ChartavernProvider] PNG download failed:', e.message);
-            }
-
-            // Extract fields from PNG card data that the detail API omits
-            // (alt greetings, tags, character_book/lorebook)
-            if (imageBuffer) {
-                try {
-                    const pngCard = api.extractCharacterDataFromPng?.(imageBuffer);
-                    if (pngCard?.data) {
-                        if (!characterCard.data.alternate_greetings?.length && pngCard.data.alternate_greetings?.length) {
-                            characterCard.data.alternate_greetings = pngCard.data.alternate_greetings;
-                        }
-                        if (!characterCard.data.tags?.length && pngCard.data.tags?.length) {
-                            characterCard.data.tags = pngCard.data.tags;
-                        }
-                        if (pngCard.data.character_book && !characterCard.data.character_book) {
-                            characterCard.data.character_book = pngCard.data.character_book;
-                        }
-                    }
-                } catch (_) { /* PNG extraction is best-effort */ }
-            }
 
             return await importFromPng({
                 characterCard, imageBuffer,
@@ -662,7 +606,7 @@ class ChartavernProvider extends ProviderBase {
             avatarUrl: hit.path ? getAvatarUrl(hit.path) : '',
             rating: 0,
             starCount: hit.likes || 0,
-            description: stripHtml(hit.pageDescription || hit.tagline || ''),
+            description: stripHtml(hit.tagline || ''),
             tagline: hit.tagline || '',
             nTokens: hit.totalTokens || 0,
         };
