@@ -23,6 +23,8 @@ import {
     CT_PAGE_SIZE,
     ctFeedOf,
     fetchHomeFeed,
+    fetchCreatorPage,
+    parseCreatorRef,
 } from './chartavern-api.js';
 
 const {
@@ -64,6 +66,12 @@ let ctSortMode = CT_DEFAULT_SORT;
 let ctSelectedChar = null;
 let ctGridRenderedCount = 0;
 let ctLoadToken = 0; // Generation counter for search requests
+
+// Creator view: { username, displayName } while the author banner is up, else null.
+// Cards come from the creator's own CT page, not a keyword search.
+let ctCreator = null;
+let ctCreatorSort = 'newest';
+let ctCreatorInfo = null; // last creator-page payload (profile, hiddenCount, isFollowing, featured...)
 
 // Auth state
 let ctPluginAvailable = false;
@@ -287,8 +295,8 @@ async function loadCharacters(append = false, { fresh = false } = {}) {
     if (append && ctIsLoading) return;
 
     // A site feed cant be searched or filtered; fall to the catalog's relevance sort instead
-    if (ctFeedOf(ctSortMode) && hasCatalogOnlyFilters()) setSortSelect('best');
-    const feedId = ctFeedOf(ctSortMode);
+    if (!ctCreator && ctFeedOf(ctSortMode) && hasCatalogOnlyFilters()) setSortSelect('best');
+    const feedId = ctCreator ? null : ctFeedOf(ctSortMode);
     if (append && feedId) return; // feeds are one fixed page
 
     // Concurrency control: prevent stale responses from overwriting newer ones
@@ -326,9 +334,19 @@ async function loadCharacters(append = false, { fresh = false } = {}) {
         if (ctFilterHasLorebook) opts.hasLorebook = true;
         if (ctFilterIsOC) opts.isOC = true;
 
-        const data = feedId
-            ? { hits: await fetchHomeFeed(feedId, apiRequest, { fresh }), totalPages: 1 }
-            : await searchCards(opts, apiRequest);
+        // One page from whichever source is active: creator page, homepage feed, or the catalog
+        const creator = ctCreator;
+        const fetchPage = async (page) => {
+            if (creator) {
+                const res = await fetchCreatorPage(creator.username, { sort: ctCreatorSort, page }, apiRequest);
+                if (page === 1 || !ctCreatorInfo) ctCreatorInfo = res;
+                return { hits: res.cards, totalPages: res.pages };
+            }
+            if (feedId) return { hits: await fetchHomeFeed(feedId, apiRequest, { fresh }), totalPages: 1 };
+            return searchCards({ ...opts, page }, apiRequest);
+        };
+
+        const data = await fetchPage(ctCurrentPage);
 
         // Stale response check
         if (thisToken !== ctLoadToken) return;
@@ -338,6 +356,7 @@ async function loadCharacters(append = false, { fresh = false } = {}) {
 
         let hits = data?.hits || [];
         ctTotalPages = data?.totalPages || 1;
+        if (creator && ctCurrentPage === 1) updateCreatorBanner();
 
         // Client-side: filter NSFW when toggle is off (exclude_tags alone doesn't catch all isNSFW cards)
         if (!ctNsfwEnabled) {
@@ -359,8 +378,7 @@ async function loadCharacters(append = false, { fresh = false } = {}) {
             while (hits.length < CT_PAGE_SIZE && ctCurrentPage < ctTotalPages && autoFetches < 3 && delegatesInitialized) {
                 autoFetches++;
                 ctCurrentPage++;
-                opts.page = ctCurrentPage;
-                const moreData = await searchCards(opts, apiRequest);
+                const moreData = await fetchPage(ctCurrentPage);
                 if (thisToken !== ctLoadToken || !delegatesInitialized) return;
                 let moreHits = moreData?.hits || [];
                 if (!ctNsfwEnabled) moreHits = moreHits.filter(h => !h.isNSFW);
@@ -385,10 +403,12 @@ async function loadCharacters(append = false, { fresh = false } = {}) {
         renderGrid(ctCharacters, append);
 
         if (!append && ctCharacters.length === 0) {
+            const hidden = creator ? (ctCreatorInfo?.hiddenCount || 0) : 0;
             grid.innerHTML = `
                 <div style="grid-column: 1 / -1; padding: 40px; text-align: center; color: var(--text-muted);">
                     <i class="fa-solid fa-search" style="font-size: 2rem; opacity: 0.5;"></i>
                     <p style="margin-top: 12px;">No characters found</p>
+                    ${hidden ? `<p style="margin-top: 6px;">${hidden} of this creator's characters are hidden by your content settings${isCtSessionActive() ? '' : ' (log in to CharacterTavern to see them)'}.</p>` : ''}
                 </div>
             `;
         }
@@ -1095,12 +1115,19 @@ function initCtView() {
         if (clearBtn) clearBtn.classList.add('hidden');
         ctCurrentSearch = '';
         ctCurrentPage = 1;
-        // Also clear author banner if visible
-        const authorBanner = document.getElementById('ctAuthorBanner');
-        if (authorBanner) authorBanner.classList.add('hidden');
+        if (ctCreator) exitCreatorView();
         loadCharacters(false);
     });
     on('ctClearAuthorBtn', 'click', () => clearCtAuthorFilter());
+
+    // Creator search: username, @name, or a creator/character URL
+    on('ctCreatorSearchInput', 'keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            doCreatorSearch();
+        }
+    });
+    on('ctCreatorSearchBtn', 'click', () => doCreatorSearch());
 
     // Load More
     on('ctLoadMoreBtn', 'click', () => {
@@ -1318,9 +1345,8 @@ function doSearch() {
     const clearBtn = document.getElementById('ctClearSearchBtn');
     const val = (input?.value || '').trim();
 
-    // Clear author banner if user typed a manual search
-    const authorBanner = document.getElementById('ctAuthorBanner');
-    if (authorBanner) authorBanner.classList.add('hidden');
+    // A manual search leaves creator view
+    if (ctCreator) exitCreatorView();
 
     ctCurrentSearch = val;
     ctCurrentPage = 1;
@@ -1332,33 +1358,78 @@ function doSearch() {
     loadCharacters(false);
 }
 
+function doCreatorSearch() {
+    const input = document.getElementById('ctCreatorSearchInput');
+    const username = parseCreatorRef(input?.value);
+    if (!username) {
+        showToast('Enter a CharacterTavern username or creator URL', 'info');
+        return;
+    }
+    if (input) input.value = '';
+    filterByAuthor(username);
+}
+
+/** Enter creator view: the creator's own cards from their CT page (exact, paged). */
 function filterByAuthor(authorName) {
-    ctCurrentSearch = authorName;
+    const username = parseCreatorRef(authorName) || authorName;
+    ctCreator = { username, displayName: username };
+    ctCreatorInfo = null;
+    ctCreatorSort = 'newest';
+    ctCurrentSearch = '';
     ctCurrentPage = 1;
 
     const input = document.getElementById('ctSearchInput');
-    if (input) input.value = authorName;
-
+    if (input) input.value = '';
     const clearBtn = document.getElementById('ctClearSearchBtn');
-    if (clearBtn) clearBtn.classList.toggle('hidden', !authorName);
+    if (clearBtn) clearBtn.classList.add('hidden');
 
     const banner = document.getElementById('ctAuthorBanner');
-    const bannerName = document.getElementById('ctAuthorBannerName');
-    if (banner && bannerName) {
-        bannerName.textContent = authorName;
+    if (banner) {
+        if (banner.classList.contains('hidden')) window.pushOverlayGuard?.();
         banner.classList.remove('hidden');
-        window.pushOverlayGuard?.();
-        view._cdRef = { name: authorName };
     }
+    updateCreatorBanner();
+    view._cdRef = { name: username };
 
     closePreviewModal();
 
     loadCharacters(false);
 }
 
-function clearCtAuthorFilter() {
+/** Paint the creator banner from ctCreator + the last creator-page payload. */
+function updateCreatorBanner() {
+    if (!ctCreator) return;
+    const info = ctCreatorInfo;
+    const displayName = info?.profile?.displayName || ctCreator.displayName;
+    ctCreator.displayName = displayName;
+
+    const nameEl = document.getElementById('ctAuthorBannerName');
+    if (nameEl) nameEl.textContent = displayName;
+
+    const hintEl = document.getElementById('ctAuthorBannerHint');
+    if (hintEl) {
+        const parts = [];
+        if (displayName.toLowerCase() !== ctCreator.username.toLowerCase()) parts.push(`@${ctCreator.username}`);
+        if (info?.stats?.cards != null) parts.push(`${formatNumber(info.stats.cards)} characters`);
+        if (info?.hiddenCount) {
+            parts.push(isCtSessionActive()
+                ? `${formatNumber(info.hiddenCount)} hidden by your content settings`
+                : `${formatNumber(info.hiddenCount)} hidden (log in to see them)`);
+        }
+        hintEl.textContent = parts.length ? `(${parts.join(' · ')})` : '';
+    }
+}
+
+/** Leave creator view without reloading (callers reload as needed). */
+function exitCreatorView() {
+    ctCreator = null;
+    ctCreatorInfo = null;
     const banner = document.getElementById('ctAuthorBanner');
     if (banner) banner.classList.add('hidden');
+}
+
+function clearCtAuthorFilter() {
+    exitCreatorView();
 
     ctCurrentSearch = '';
     ctCurrentPage = 1;
@@ -1731,12 +1802,21 @@ class ChartavernBrowseView extends BrowseView {
                             <i class="fa-solid fa-arrow-right"></i>
                         </button>
                     </div>
+                    <div class="browse-creator-search">
+                        <div class="browse-creator-search-wrapper">
+                            <i class="fa-solid fa-user"></i>
+                            <input type="search" id="ctCreatorSearchInput" placeholder="Search by creator..." autocomplete="one-time-code">
+                            <button id="ctCreatorSearchBtn" class="browse-search-submit" title="Search by creator">
+                                <i class="fa-solid fa-arrow-right"></i>
+                            </button>
+                        </div>
+                    </div>
                 </div>
 
                 <div id="ctAuthorBanner" class="browse-author-banner hidden">
                     <div class="browse-author-banner-content">
-                        <i class="fa-solid fa-magnifying-glass"></i>
-                        <span>Searching for <strong id="ctAuthorBannerName">Author</strong> <span class="browse-author-banner-hint">(keyword search — may include unrelated results)</span></span>
+                        <i class="fa-solid fa-user"></i>
+                        <span>Showing characters by <strong id="ctAuthorBannerName">Author</strong> <span id="ctAuthorBannerHint" class="browse-author-banner-hint"></span></span>
                     </div>
                     <div class="browse-author-banner-actions">
                         <button id="ctClearAuthorBtn" class="glass-btn icon-only" title="Clear author filter">
@@ -1970,8 +2050,10 @@ class ChartavernBrowseView extends BrowseView {
         // No initial load here: init() runs before applyDefaults(), so activate() issues it.
     }
 
+    getSearchModes() { return ['character', 'creator']; }
+
     getSearchInputId(mode) {
-        return mode === 'character' ? 'ctSearchInput' : null;
+        return mode === 'creator' ? 'ctCreatorSearchInput' : 'ctSearchInput';
     }
 
     applyDefaults(defaults) {
@@ -2013,6 +2095,9 @@ class ChartavernBrowseView extends BrowseView {
             ctSortMode = CT_DEFAULT_SORT;
             ctNsfwEnabled = false;
             ctSelectedChar = null;
+            ctCreator = null;
+            ctCreatorInfo = null;
+            ctCreatorSort = 'newest';
         }
         super.activate(container, options);
 

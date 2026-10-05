@@ -10,7 +10,7 @@ import { fetchDatacatCreatorCharacters, fetchDatacatCharacter, submitExtraction,
 import { fetchSaucepanCompanionsOfUser } from './saucepan/saucepan-api.js';
 import { fetchJanitoraiCharacters } from './janitorai/janitorai-api.js';
 import { meiliMultiSearch } from './janny/janny-api.js';
-import { searchCards, isCtSessionActive, getCtCharName } from './chartavern/chartavern-api.js';
+import { fetchCreatorPage, isCtSessionActive, getCtCharName } from './chartavern/chartavern-api.js';
 
 // ── Shared In-Library lookup base ────────────────────────
 // byNameAndCreator + byNormalizedName are pure functions of the global character list, so
@@ -575,29 +575,24 @@ const CD_ADAPTERS = {
     },
     chartavern: {
         async fetchAll(view) {
-            const authorName = view._cdRef?.name;
-            if (!authorName) return [];
-            const wanted = authorName.toLowerCase();
+            const username = view._cdRef?.name;
+            if (!username) return [];
+            // The creator's own page is exact (no keyword noise); it already hides what the
+            // session's content prefs hide, so the NSFW toggle only needs a client-side pass
             const nsfw = CoreAPI.getSetting('ctNsfw') === true && isCtSessionActive();
-            const sort = document.getElementById('ctSortSelect')?.value || 'popular';
             const results = [];
             const seen = new Set();
             const MAX_PAGES = 50;
             for (let page = 1; page <= MAX_PAGES; page++) {
-                const data = await searchCards({ query: authorName, sort, page, nsfw }, CoreAPI.apiRequest);
-                const hits = data?.hits || [];
-                for (const hit of hits) {
+                const data = await fetchCreatorPage(username, { page }, CoreAPI.apiRequest);
+                for (const hit of data.cards) {
                     const path = hit.path || '';
                     if (!path || seen.has(path)) continue;
-                    // exclude_tags alone doesnt catch all isNSFW cards
                     if (!nsfw && hit.isNSFW) continue;
-                    const hitAuthor = (hit.author_username || hit.author || path.split('/')[0] || '').toLowerCase();
-                    if (hitAuthor !== wanted) continue;
                     seen.add(path);
-                    results.push({ key: path, name: getCtCharName(hit), creator: hit.author_username || hit.author || '', raw: hit });
+                    results.push({ key: path, name: getCtCharName(hit), creator: hit.author || username, raw: hit });
                 }
-                const totalPages = data?.totalPages || 1;
-                if (page >= totalPages || hits.length === 0) break;
+                if (page >= data.pages || data.cards.length === 0) break;
             }
             return results;
         },

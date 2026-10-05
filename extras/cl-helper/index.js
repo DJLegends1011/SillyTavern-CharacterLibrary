@@ -757,6 +757,7 @@ const CT_ALLOWED_PATHS = [
     /^\/__data\.json$/, // homepage feeds + logged-in timeline
     /^\/search\/cards\/__data\.json$/,
     /^\/character\/[^/]+\/[^/]+\/__data\.json$/,
+    /^\/author\/[^/]+\/__data\.json$/,
 ];
 
 const CT_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)';

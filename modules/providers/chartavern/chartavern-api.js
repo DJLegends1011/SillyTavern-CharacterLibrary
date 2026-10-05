@@ -306,6 +306,13 @@ function unflattenDevalue(values, resolveChunk) {
     return hydrate(0);
 }
 
+/** A load-function error node (eg. 404 "This user does not exist"), keeping its HTTP status. */
+function ctNodeError(error) {
+    const err = new Error(`CharacterTavern error: ${error?.message || 'unknown'}`);
+    if (error?.status) err.status = error.status;
+    return err;
+}
+
 /**
  * Decode a SvelteKit `__data.json` body: one `{type:"data", nodes}` line, then one
  * `{type:"chunk", id, data}` line per streamed promise. Every node's data is merged into one
@@ -329,8 +336,12 @@ export function parseSvelteKitData(text) {
         if (msg.type === 'chunk') rawChunks.set(msg.id, msg);
         else if (!head) head = msg;
     }
-    if (head?.type === 'redirect') throw new Error(`CharacterTavern redirected to ${head.location}`);
-    if (head?.type === 'error') throw new Error(`CharacterTavern error: ${head.error?.message || 'unknown'}`);
+    if (head?.type === 'redirect') {
+        const err = new Error(`CharacterTavern redirected to ${head.location}`);
+        err.redirect = head.location;
+        throw err;
+    }
+    if (head?.type === 'error') throw ctNodeError(head.error);
     if (!Array.isArray(head?.nodes)) throw new Error('CharacterTavern returned an unexpected page payload');
 
     const chunkCache = new Map();
@@ -345,7 +356,7 @@ export function parseSvelteKitData(text) {
 
     const merged = {};
     for (const node of head.nodes) {
-        if (node?.type === 'error') throw new Error(`CharacterTavern error: ${node.error?.message || 'unknown'}`);
+        if (node?.type === 'error') throw ctNodeError(node.error);
         if (node?.type !== 'data') continue;
         const data = unflattenDevalue(node.data, resolveChunk);
         if (data && typeof data === 'object') Object.assign(merged, data);
@@ -594,6 +605,69 @@ export async function fetchHomeFeed(feedId, apiRequest, opts) {
     return list.map(adaptSearchHit);
 }
 
+// Sort values the creator page accepts (anything else becomes newest)
+export const CT_CREATOR_SORTS = {
+    newest: 'Newest',
+    popular: 'Most popular',
+    name: 'Name',
+};
+
+/** Creator-page card -> catalog-hit shape (it says tokenTotal/warnings where hits say permanentTokens/contentWarnings). */
+function adaptCreatorCard(card, username) {
+    return adaptSearchHit({
+        ...card,
+        author: username,
+        contentWarnings: card.warnings ?? card.contentWarnings ?? [],
+        permanentTokens: card.tokenTotal ?? card.permanentTokens ?? 0,
+    });
+}
+
+/**
+ * A creator's own cards from /author/{username}/__data.json.
+ * Paging past the last page makes CT redirect back to page 1, so that (and a page beyond
+ * `pages`) reads as an empty page rather than an error.
+ * @param {string} username
+ * @param {{ sort?: string, page?: number, q?: string }} [opts]
+ * @param {Function} [apiRequest]
+ * @returns {Promise<{profile: Object, stats: Object, cards: Array, featured: Array, pages: number, matches: number, hiddenCount: number, isFollowing: boolean, isLoggedIn: boolean}>}
+ */
+export async function fetchCreatorPage(username, { sort = 'newest', page = 1, q = '' } = {}, apiRequest) {
+    const params = new URLSearchParams();
+    if (q) params.set('q', q);
+    // The site omits its defaults from the URL; mirror that so the request matches a real visit
+    const safeSort = Object.hasOwn(CT_CREATOR_SORTS, sort) ? sort : 'newest';
+    if (safeSort !== 'newest') params.set('sort', safeSort);
+    if (page > 1) params.set('page', String(page));
+
+    let data;
+    try {
+        data = await fetchCtPageData(`/author/${encodeURIComponent(username)}`, params, apiRequest);
+    } catch (err) {
+        if (err.redirect && page > 1) {
+            return { profile: null, stats: null, cards: [], featured: [], pages: page - 1, matches: 0, hiddenCount: 0, isFollowing: false, isLoggedIn: false };
+        }
+        if (err.status === 404) {
+            const e = new Error(`CharacterTavern creator "${username}" was not found`);
+            e.notFound = true;
+            throw e;
+        }
+        throw err;
+    }
+
+    const name = data.profile?.username || username;
+    return {
+        profile: data.profile || null,
+        stats: data.stats || null,
+        cards: (data.cards || []).map(c => adaptCreatorCard(c, name)),
+        featured: (data.featured || []).map(c => adaptCreatorCard(c, name)),
+        pages: data.pages ?? 1,
+        matches: data.matches ?? 0,
+        hiddenCount: data.hiddenCount ?? 0,
+        isFollowing: data.isFollowing === true,
+        isLoggedIn: data.isLoggedIn === true,
+    };
+}
+
 /**
  * Fetch the catalog's tag list (the search page's streamed `tagCatalogue`).
  * @param {Function} [apiRequest] - CoreAPI.apiRequest for the cl-helper transport
@@ -654,6 +728,28 @@ export function parseCharacterUrl(url) {
         if (match) return `${match[1]}/${match[2]}`;
     } catch { /* ignore */ }
     return null;
+}
+
+/**
+ * Creator username from a user's typed reference: a bare or @-prefixed username, a creator
+ * page URL (/author/name) or a character URL (/character/name/slug).
+ * @param {string} input
+ * @returns {string|null}
+ */
+export function parseCreatorRef(input) {
+    const raw = String(input || '').trim();
+    if (!raw) return null;
+    if (/character-tavern\.com/i.test(raw)) {
+        try {
+            const u = new URL(raw.startsWith('http') ? raw : `https://${raw}`);
+            const m = u.pathname.match(/^\/(?:author|character)\/([^/]+)/);
+            return m ? decodeURIComponent(m[1]) : null;
+        } catch {
+            return null;
+        }
+    }
+    const name = raw.replace(/^@/, '');
+    return /^[^\s/?#]+$/.test(name) ? name : null;
 }
 
 // ========================================
