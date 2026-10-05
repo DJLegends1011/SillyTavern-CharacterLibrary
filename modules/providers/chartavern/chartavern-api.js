@@ -35,10 +35,12 @@ export const CT_DEFAULT_SORT = 'popular';
 // The homepage's own feeds: fixed 28-card sets (its 7x4 grid), no paging or filters.
 // Sort values carry a `feed:` prefix so they share the sort dropdown with the catalog.
 export const CT_FEED_PREFIX = 'feed:';
+// Same three tabs as the site homepage, in its order. Timeline is the account's follow feed,
+// empty for guests.
 export const CT_HOME_FEEDS = {
+    timeline: { label: 'Timeline', key: 'TimelineCards', needsSession: true },
     trending: { label: 'Trending', key: 'TrendingCharacters' },
     newest: { label: 'Newest', key: 'NewCharacters' },
-    popular: { label: 'Popular', key: 'PopularCharacters' },
 };
 
 /** @param {string} sort @returns {string|null} feed id for a `feed:` sort, else null */
@@ -60,6 +62,8 @@ const CT_LEGACY_SORTS = {
 export function normalizeCtSort(sort) {
     if (sort && Object.hasOwn(CT_SORT_OPTIONS, sort)) return sort;
     if (ctFeedOf(sort)) return sort;
+    // A feed that no longer exists (the old Site feed: Popular) falls to the homepage's default tab
+    if (typeof sort === 'string' && sort.startsWith(CT_FEED_PREFIX)) return `${CT_FEED_PREFIX}trending`;
     return CT_LEGACY_SORTS[sort] || CT_DEFAULT_SORT;
 }
 

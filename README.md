@@ -622,9 +622,10 @@ The userscript makes the gated request from your own browser and hands back only
 **Auth:** Optional session cookie (for NSFW access and account sync). Requires the [cl-helper plugin](#cl-helper-plugin-not-detected).
 
 - Browse and search the CharacterTavern catalog (Popular, Best, New & Noteworthy, Top Rated, Hidden Gems, Newest, Recently Updated)
-- **Site feeds**: the homepage's own Trending / Newest / Popular sets (28 cards each), from the same Sort dropdown
+- **Site feeds**: the homepage's own Timeline / Trending / Newest tabs (28 cards each; Timeline needs your session), from the same Sort dropdown
+- **Surprise me**: jump to a random page of the current results, as on the site
 - Filter by tags, token count, has-lorebook, is-OC (original character)
-- **Creator view**: click a creator or use "Search by creator..." (username, @name, or a creator/character URL) to see exactly that creator's characters, sorted Newest / Most popular / Name, or their pinned **Featured** cards
+- **Creator view**: click a creator or use "Search by creator..." (username, @name, or a creator/character URL) to see exactly that creator's characters, showing their pinned **Featured** cards or sorted Newest / Most popular / Name
 - In-app character preview with card details, alternate greetings and lorebook
 - Character linking and card updates
 

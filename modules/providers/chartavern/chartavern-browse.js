@@ -315,7 +315,7 @@ function showCreatorSorts() {
     const opts = Object.entries(CT_CREATOR_SORTS)
         .map(([value, label]) => `<option value="${value}">${CT_CREATOR_SORT_ICONS[value] || ''} ${escapeHtml(label)}</option>`)
         .join('');
-    el.innerHTML = `${opts}<option value="featured">📌 Featured</option>`;
+    el.innerHTML = `<option value="featured">📌 Featured</option>${opts}`;
     el.value = ctCreatorSort;
     el.title = "Sort this creator's characters";
     el._customSelect?.refresh?.();
@@ -401,6 +401,7 @@ async function loadCharacters(append = false, { fresh = false } = {}) {
                 const hits = q ? liked.filter(h => `${h.name} ${h.tagline || ''} ${h.author}`.toLowerCase().includes(q)) : liked;
                 return { hits, totalPages: 1 };
             }
+            if (feedId === 'timeline' && !isCtSessionActive()) return { hits: [], totalPages: 1, needsLogin: true };
             if (feedId) return { hits: await fetchHomeFeed(feedId, apiRequest, { fresh }), totalPages: 1 };
             return searchCards({ ...opts, page }, apiRequest);
         };
@@ -458,10 +459,18 @@ async function loadCharacters(append = false, { fresh = false } = {}) {
         }
 
         ctHasMore = ctCurrentPage < ctTotalPages;
+        syncSurpriseBtn();
 
         renderGrid(ctCharacters, append);
 
-        if (!append && ctCharacters.length === 0) {
+        if (!append && ctCharacters.length === 0 && data?.needsLogin) {
+            grid.innerHTML = `
+                <div class="browse-empty">
+                    <i class="fa-solid fa-key"></i>
+                    <h3>Login Required</h3>
+                    <p>The Timeline feed shows new characters from creators you follow, so it needs your CharacterTavern session. Turn on NSFW or open Settings to add your session cookie.</p>
+                </div>`;
+        } else if (!append && ctCharacters.length === 0) {
             const hidden = creator ? (ctCreatorInfo?.hiddenCount || 0) : 0;
             const noFeatured = creator && ctCreatorSort === 'featured';
             grid.innerHTML = `
@@ -910,6 +919,13 @@ async function resolveCreatorNames(ids) {
     if (missing.size) debugLog(`[CTFollow] ${missing.size} followed creator id(s) left unresolved`);
 }
 
+/** Surprise me only makes sense where there are pages to jump between. */
+function syncSurpriseBtn() {
+    const btn = document.getElementById('ctSurpriseBtn');
+    if (!btn) return;
+    btn.classList.toggle('browse-filter-hidden', ctViewMode !== 'browse' || ctTotalPages <= 1);
+}
+
 function switchCtViewMode(newMode, opts = {}) {
     ctViewMode = newMode === 'following' ? 'following' : 'browse';
     const following = ctViewMode === 'following';
@@ -921,6 +937,7 @@ function switchCtViewMode(newMode, opts = {}) {
     for (const id of ['ctSortContainer', 'ctTagsContainer']) {
         document.getElementById(id)?.classList.toggle('browse-filter-hidden', following);
     }
+    syncSurpriseBtn();
     if (following && !opts.skipLoad && ctTimeline.length === 0) loadCtTimeline();
     if (!following && !opts.skipLoad && (ctBrowseStale || ctCharacters.length === 0)) {
         ctBrowseStale = false;
@@ -1465,6 +1482,17 @@ function initCtView() {
     });
 
     // Refresh
+    on('ctSurpriseBtn', 'click', () => {
+        // Same as the site: a uniformly random page of the current sort + filters
+        if (ctViewMode !== 'browse' || ctTotalPages <= 1 || ctIsLoading) return;
+        const total = ctTotalPages;
+        let page = 1 + Math.floor(Math.random() * total);
+        if (total > 1 && page === ctCurrentPage) page = (page % total) + 1;
+        ctCurrentPage = page;
+        loadCharacters(false);
+        showToast(`Page ${page} of ${total}`, 'info', 2000);
+    });
+
     on('ctRefreshBtn', 'click', () => {
         if (ctViewMode === 'following') {
             loadCtTimeline({ fresh: true });
@@ -2058,9 +2086,9 @@ class ChartavernBrowseView extends BrowseView {
     getSettingsConfig() {
         return {
             browseSortOptions: [
+                { value: 'feed:timeline', label: 'Site feed: Timeline' },
                 { value: 'feed:trending', label: 'Site feed: Trending' },
                 { value: 'feed:newest', label: 'Site feed: Newest' },
-                { value: 'feed:popular', label: 'Site feed: Popular' },
                 { value: 'popular', label: 'Popular' },
                 { value: 'best', label: 'Best' },
                 { value: 'new_noteworthy', label: 'New & Noteworthy' },
@@ -2088,6 +2116,7 @@ class ChartavernBrowseView extends BrowseView {
             filters: 'ctFiltersBtn',
             nsfw: 'ctNsfwToggle',
             refresh: 'ctRefreshBtn',
+            surprise: 'ctSurpriseBtn',
             modeBrowseSelector: '.chub-view-btn[data-ct-view="browse"]',
             modeFollowSelector: '.chub-view-btn[data-ct-view="following"]',
             modeBtnClass: 'chub-view-btn',
@@ -2187,9 +2216,9 @@ class ChartavernBrowseView extends BrowseView {
             <div class="browse-sort-container" id="ctSortContainer">
                 <select id="ctSortSelect" class="glass-select" title="Sort order">
                     <optgroup label="Site feeds (28)">
+                        <option value="feed:timeline">🕒 Timeline</option>
                         <option value="feed:trending">🔥 Trending</option>
                         <option value="feed:newest">✨ Newest</option>
-                        <option value="feed:popular">⭐ Popular</option>
                     </optgroup>
                     <optgroup label="Catalog">
                         <option value="popular" selected>🔥 Popular</option>
@@ -2253,6 +2282,11 @@ class ChartavernBrowseView extends BrowseView {
             <!-- NSFW toggle -->
             <button id="ctNsfwToggle" class="glass-btn nsfw-toggle" title="Showing SFW only - click to include NSFW (requires login)" style="opacity: 0.5;">
                 <i class="fa-solid fa-shield-halved"></i> <span>SFW Only</span>
+            </button>
+
+            <!-- Surprise me: jump to a random page of the current results (as the site does) -->
+            <button id="ctSurpriseBtn" class="glass-btn browse-filter-hidden" title="Jump to a random page">
+                <i class="fa-solid fa-shuffle"></i> <span>Surprise me</span>
             </button>
 
             <!-- Refresh -->

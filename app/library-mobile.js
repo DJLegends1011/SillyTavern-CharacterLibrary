@@ -1653,6 +1653,28 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
 
         addSheetHandle(sheet);
 
+        // Optional "Surprise me" (random page) chip for providers whose mobileFilterIds name a
+        // `surprise` button. Mirrors the real button: hidden whenever it is hidden or missing.
+        const surpriseChips = [];
+        function createSurpriseChip(getIds) {
+            const chip = createChip('<i class="fa-solid fa-shuffle"></i> Surprise me');
+            chip.style.width = '100%';
+            chip.style.marginTop = 'var(--space-sm)';
+            chip._syncVisible = () => {
+                const ids = getIds();
+                const real = ids?.surprise ? document.getElementById(ids.surprise) : null;
+                const shown = !!real && !real.classList.contains('browse-filter-hidden') && !real.classList.contains('hidden');
+                chip.style.display = shown ? '' : 'none';
+            };
+            chip.addEventListener('click', () => {
+                const ids = getIds();
+                const real = ids?.surprise ? document.getElementById(ids.surprise) : null;
+                if (real) { real.click(); close(); }
+            });
+            surpriseChips.push(chip);
+            return chip;
+        }
+
         const body = document.createElement('div');
         body.className = 'mobile-settings-body';
         sheet.appendChild(body);
@@ -1910,6 +1932,7 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
 
         mtActionsRow.appendChild(mtRefreshChip);
         mtActionsSection.appendChild(mtActionsRow);
+        mtActionsSection.appendChild(createSurpriseChip(getIds));
         modeToggleSection.appendChild(mtActionsSection);
 
         // ===== GENERIC PROVIDER SECTION (no mode toggle - Janny, CT, future providers) =====
@@ -1996,6 +2019,7 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
             if (realBtn) { realBtn.click(); close(); }
         });
         genericActionsSection.appendChild(genericRefreshChip);
+        genericActionsSection.appendChild(createSurpriseChip(() => window.ProviderRegistry?.getActiveMobileFilterIds?.()));
         genericSection.appendChild(genericActionsSection);
         body.appendChild(genericSection);
 
@@ -2087,6 +2111,7 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
 
                 modeToggleSection.style.display = hasModeToggle ? '' : 'none';
                 genericSection.style.display = hasModeToggle ? 'none' : '';
+                surpriseChips.forEach(c => c._syncVisible());
 
                 if (!hasModeToggle) {
                     const prov = reg?.getActiveProvider?.();

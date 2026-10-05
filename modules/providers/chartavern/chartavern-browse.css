@@ -84,3 +84,8 @@
 .ct-like-btn.loading {
     pointer-events: none;
 }
+
+/* Surprise me collapses (not just fades) where there are no pages to jump between */
+#ctSurpriseBtn.browse-filter-hidden {
+    display: none;
+}
