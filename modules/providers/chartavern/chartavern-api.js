@@ -736,7 +736,7 @@ export async function fetchCreatorPage(username, { sort = 'newest', page = 1, q 
         data = await fetchCtPageData(`/author/${encodeURIComponent(username)}`, params, apiRequest);
     } catch (err) {
         if (err.redirect && page > 1) {
-            return { profile: null, stats: null, cards: [], featured: [], pages: page - 1, matches: 0, hiddenCount: 0, isFollowing: false, isLoggedIn: false };
+            return { profile: null, stats: null, cards: [], featured: [], pages: page - 1, matches: 0, hiddenCount: 0, isFollowing: false, isLoggedIn: false, isOwnProfile: false };
         }
         if (err.status === 404) {
             const e = new Error(`CharacterTavern creator "${username}" was not found`);
@@ -757,6 +757,7 @@ export async function fetchCreatorPage(username, { sort = 'newest', page = 1, q 
         hiddenCount: data.hiddenCount ?? 0,
         isFollowing: data.isFollowing === true,
         isLoggedIn: data.isLoggedIn === true,
+        isOwnProfile: data.isOwnProfile === true,
     };
 }
 

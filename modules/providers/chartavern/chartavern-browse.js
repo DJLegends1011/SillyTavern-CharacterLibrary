@@ -28,6 +28,7 @@ import {
     CT_CREATOR_SORTS,
     ctToggleLike,
     fetchLikedCards,
+    ctSetFollow,
 } from './chartavern-api.js';
 
 const {
@@ -374,7 +375,7 @@ async function loadCharacters(append = false, { fresh = false } = {}) {
                 // Featured = the creator's pinned cards, carried on every creator page as its own list
                 const featured = ctCreatorSort === 'featured';
                 const res = await fetchCreatorPage(creator.username, { sort: featured ? 'newest' : ctCreatorSort, page }, apiRequest);
-                if (page === 1 || !ctCreatorInfo) ctCreatorInfo = res;
+                if (res.profile && (page === 1 || !ctCreatorInfo)) ctCreatorInfo = res;
                 return featured ? { hits: res.featured, totalPages: 1 } : { hits: res.cards, totalPages: res.pages };
             }
             if (likesView) {
@@ -462,6 +463,10 @@ async function loadCharacters(append = false, { fresh = false } = {}) {
         if (thisToken !== ctLoadToken) return;
 
         console.error('[CTBrowse] Search error:', err);
+        if (ctCreator && !ctCreatorInfo) {
+            const followBtn = document.getElementById('ctFollowCreatorBtn');
+            if (followBtn) followBtn.style.display = 'none'; // no profile, nothing to follow
+        }
         showToast(`CharacterTavern search failed: ${err.message}`, 'error');
         if (!append && grid) {
             renderBrowseError(grid, {
@@ -1237,6 +1242,7 @@ function initCtView() {
         loadCharacters(false);
     });
     on('ctClearAuthorBtn', 'click', () => clearCtAuthorFilter());
+    on('ctFollowCreatorBtn', 'click', () => toggleCtFollow());
 
     // Creator search: username, @name, or a creator/character URL
     on('ctCreatorSearchInput', 'keydown', (e) => {
@@ -1559,6 +1565,55 @@ function updateCreatorBanner() {
                 : `${formatNumber(info.hiddenCount)} hidden (log in to see them)`);
         }
         hintEl.textContent = parts.length ? `(${parts.join(' · ')})` : '';
+    }
+    paintFollowButton();
+}
+
+/** Banner follow button: hidden for guests and your own profile, spinner until the page loads. */
+function paintFollowButton() {
+    const btn = document.getElementById('ctFollowCreatorBtn');
+    if (!btn) return;
+    const info = ctCreatorInfo;
+    if (!ctCreator || !isCtSessionActive() || info?.isOwnProfile) {
+        btn.style.display = 'none';
+        return;
+    }
+    btn.style.display = '';
+    if (!info?.profile?.userId) {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
+        return;
+    }
+    btn.disabled = false;
+    btn.classList.toggle('following', info.isFollowing);
+    btn.innerHTML = info.isFollowing
+        ? '<i class="fa-solid fa-heart"></i> <span>Following</span>'
+        : '<i class="fa-regular fa-heart"></i> <span>Follow</span>';
+    btn.title = info.isFollowing ? 'Unfollow this creator on CharacterTavern' : 'Follow this creator on CharacterTavern';
+}
+
+async function toggleCtFollow() {
+    const info = ctCreatorInfo;
+    const creator = ctCreator;
+    const userId = info?.profile?.userId;
+    if (!creator || !userId) return;
+    if (!(await ensureCtAccount('follow creators'))) return;
+    const btn = document.getElementById('ctFollowCreatorBtn');
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
+    }
+    try {
+        const { isFollowing } = await ctSetFollow(userId, !info.isFollowing, apiRequest);
+        info.isFollowing = isFollowing;
+        if (info.stats?.followers != null) info.stats.followers += isFollowing ? 1 : -1;
+        view._followedCache = null; // the manager list changed
+        showToast(isFollowing ? `Now following ${creator.displayName}` : `Unfollowed ${creator.displayName}`,
+            isFollowing ? 'success' : 'info');
+    } catch (err) {
+        showToast(`Could not update follow: ${err.message}`, 'error');
+    } finally {
+        if (ctCreator === creator) paintFollowButton();
     }
 }
 
@@ -1965,6 +2020,9 @@ class ChartavernBrowseView extends BrowseView {
                         <span>Showing characters by <strong id="ctAuthorBannerName">Author</strong> <span id="ctAuthorBannerHint" class="browse-author-banner-hint"></span></span>
                     </div>
                     <div class="browse-author-banner-actions">
+                        <button id="ctFollowCreatorBtn" class="glass-btn browse-author-follow-btn" title="Follow this creator on CharacterTavern" style="display: none;">
+                            <i class="fa-solid fa-heart"></i> <span>Follow</span>
+                        </button>
                         <button id="ctClearAuthorBtn" class="glass-btn icon-only" title="Clear author filter">
                             <i class="fa-solid fa-times"></i>
                         </button>
