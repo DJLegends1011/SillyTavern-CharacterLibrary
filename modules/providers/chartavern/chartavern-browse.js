@@ -25,6 +25,7 @@ import {
     fetchHomeFeed,
     fetchCreatorPage,
     parseCreatorRef,
+    CT_CREATOR_SORTS,
 } from './chartavern-api.js';
 
 const {
@@ -291,6 +292,34 @@ function setSortSelect(value) {
     }
 }
 
+// The sort dropdown is swapped in place for creator view (the mobile sheet mirrors this same
+// select, so it follows automatically). The browse options are stashed and restored on exit.
+const CT_CREATOR_SORT_ICONS = { newest: '🆕', popular: '🔥', name: '🔤' };
+let ctBrowseSortStash = null; // { html, value } while creator sorts are showing
+
+function showCreatorSorts() {
+    const el = document.getElementById('ctSortSelect');
+    if (!el) return;
+    if (!ctBrowseSortStash) ctBrowseSortStash = { html: el.innerHTML, value: el.value };
+    const opts = Object.entries(CT_CREATOR_SORTS)
+        .map(([value, label]) => `<option value="${value}">${CT_CREATOR_SORT_ICONS[value] || ''} ${escapeHtml(label)}</option>`)
+        .join('');
+    el.innerHTML = `${opts}<option value="featured">📌 Featured</option>`;
+    el.value = ctCreatorSort;
+    el.title = "Sort this creator's characters";
+    el._customSelect?.refresh?.();
+}
+
+function restoreBrowseSorts() {
+    const el = document.getElementById('ctSortSelect');
+    if (!el || !ctBrowseSortStash) return;
+    el.innerHTML = ctBrowseSortStash.html;
+    el.value = ctBrowseSortStash.value;
+    el.title = 'Sort order';
+    ctBrowseSortStash = null;
+    el._customSelect?.refresh?.();
+}
+
 async function loadCharacters(append = false, { fresh = false } = {}) {
     if (append && ctIsLoading) return;
 
@@ -338,9 +367,11 @@ async function loadCharacters(append = false, { fresh = false } = {}) {
         const creator = ctCreator;
         const fetchPage = async (page) => {
             if (creator) {
-                const res = await fetchCreatorPage(creator.username, { sort: ctCreatorSort, page }, apiRequest);
+                // Featured = the creator's pinned cards, carried on every creator page as its own list
+                const featured = ctCreatorSort === 'featured';
+                const res = await fetchCreatorPage(creator.username, { sort: featured ? 'newest' : ctCreatorSort, page }, apiRequest);
                 if (page === 1 || !ctCreatorInfo) ctCreatorInfo = res;
-                return { hits: res.cards, totalPages: res.pages };
+                return featured ? { hits: res.featured, totalPages: 1 } : { hits: res.cards, totalPages: res.pages };
             }
             if (feedId) return { hits: await fetchHomeFeed(feedId, apiRequest, { fresh }), totalPages: 1 };
             return searchCards({ ...opts, page }, apiRequest);
@@ -404,10 +435,11 @@ async function loadCharacters(append = false, { fresh = false } = {}) {
 
         if (!append && ctCharacters.length === 0) {
             const hidden = creator ? (ctCreatorInfo?.hiddenCount || 0) : 0;
+            const noFeatured = creator && ctCreatorSort === 'featured';
             grid.innerHTML = `
                 <div style="grid-column: 1 / -1; padding: 40px; text-align: center; color: var(--text-muted);">
-                    <i class="fa-solid fa-search" style="font-size: 2rem; opacity: 0.5;"></i>
-                    <p style="margin-top: 12px;">No characters found</p>
+                    <i class="fa-solid ${noFeatured ? 'fa-thumbtack' : 'fa-search'}" style="font-size: 2rem; opacity: 0.5;"></i>
+                    <p style="margin-top: 12px;">${noFeatured ? "This creator hasn't featured any characters" : 'No characters found'}</p>
                     ${hidden ? `<p style="margin-top: 6px;">${hidden} of this creator's characters are hidden by your content settings${isCtSessionActive() ? '' : ' (log in to CharacterTavern to see them)'}.</p>` : ''}
                 </div>
             `;
@@ -1156,7 +1188,9 @@ function initCtView() {
     // Sort mode
     on('ctSortSelect', 'change', () => {
         const el = document.getElementById('ctSortSelect');
-        if (el) ctSortMode = el.value;
+        // In creator view the same select carries the creator-page sorts
+        if (el && ctCreator) ctCreatorSort = el.value;
+        else if (el) ctSortMode = el.value;
         ctCurrentPage = 1;
         loadCharacters(false);
     });
@@ -1377,6 +1411,7 @@ function filterByAuthor(authorName) {
     ctCreatorSort = 'newest';
     ctCurrentSearch = '';
     ctCurrentPage = 1;
+    showCreatorSorts();
 
     const input = document.getElementById('ctSearchInput');
     if (input) input.value = '';
@@ -1424,6 +1459,7 @@ function updateCreatorBanner() {
 function exitCreatorView() {
     ctCreator = null;
     ctCreatorInfo = null;
+    restoreBrowseSorts();
     const banner = document.getElementById('ctAuthorBanner');
     if (banner) banner.classList.add('hidden');
 }
@@ -2098,6 +2134,7 @@ class ChartavernBrowseView extends BrowseView {
             ctCreator = null;
             ctCreatorInfo = null;
             ctCreatorSort = 'newest';
+            ctBrowseSortStash = null; // the DOM (and its select) was rebuilt
         }
         super.activate(container, options);
 
