@@ -492,7 +492,7 @@ Providers with Following support include a **Followed Creators Manager** panel f
 | Gallery Downloads | ✅ | -- | -- | -- | ✅ | ✅ | ✅ | ✅ | -- |
 | Remote Version History | ✅ | -- | -- | -- | -- | -- | -- | -- | -- |
 | Following / Timeline | ✅ | ✅ | -- | -- | ✅ | ✅ | ✅ | ✅ | -- |
-| Favorites | ✅ | -- | -- | -- | -- | -- | -- | ✅ | -- |
+| Favorites | ✅ | -- | -- | ✅ | -- | -- | -- | ✅ | -- |
 | Auth Required | Optional | Browser required | Userscript required (no account) | Optional | Optional | Optional | None | Optional | Required |
 
 <details>
@@ -619,12 +619,18 @@ The userscript makes the gated request from your own browser and hands back only
 <details>
 <summary><h3>CharacterTavern</h3></summary>
 
-**Auth:** Optional session cookie (for NSFW access). Requires the [cl-helper plugin](#cl-helper-plugin-not-detected).
+**Auth:** Optional session cookie (for NSFW access and account sync). Requires the [cl-helper plugin](#cl-helper-plugin-not-detected).
 
-- Browse and search the CharacterTavern catalog
+- Browse and search the CharacterTavern catalog (Popular, Best, New & Noteworthy, Top Rated, Hidden Gems, Newest, Recently Updated)
+- **Site feeds**: the homepage's own Trending / Newest / Popular sets (28 cards each), from the same Sort dropdown
 - Filter by tags, token count, has-lorebook, is-OC (original character)
-- In-app character preview with card details
+- **Creator view**: click a creator or use "Search by creator..." (username, @name, or a creator/character URL) to see exactly that creator's characters, sorted Newest / Most popular / Name, or their pinned **Featured** cards
+- In-app character preview with card details, alternate greetings and lorebook
 - Character linking and card updates
+
+#### With Authentication (session cookie, cl-helper 1.13.0+)
+- **NSFW browsing**, following your account's content preferences
+- **Likes** (the heart in the preview's stats row) synced with your account, and a **My Likes** filter (Features dropdown) listing your liked characters
 
 #### NSFW Access
 CharacterTavern requires a session cookie for NSFW content. To set it up:

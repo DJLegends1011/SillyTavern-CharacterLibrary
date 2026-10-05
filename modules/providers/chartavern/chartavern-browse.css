@@ -47,4 +47,40 @@
     font-style: italic;
 }
 
+/* Like heart in the preview stats row: CL Favorites = CT likes (styled like Chub's favorite) */
+.ct-like-btn {
+    cursor: pointer;
+    padding: 2px 8px;
+    border-radius: var(--radius-sm);
+    transition: background 0.2s ease, opacity 0.2s ease;
+}
 
+.ct-like-btn:hover {
+    background: rgba(255, 100, 100, 0.15);
+}
+
+.ct-like-btn i {
+    color: #ff6b6b;
+    transition: transform 0.2s ease;
+}
+
+.ct-like-btn:hover i {
+    transform: scale(1.15);
+}
+
+.ct-like-btn.favorited {
+    background: rgba(255, 100, 100, 0.1);
+}
+
+.ct-like-btn.favorited i {
+    font-weight: 900;
+}
+
+.ct-like-btn.loading,
+.ct-like-btn.pending {
+    opacity: 0.6;
+}
+
+.ct-like-btn.loading {
+    pointer-events: none;
+}

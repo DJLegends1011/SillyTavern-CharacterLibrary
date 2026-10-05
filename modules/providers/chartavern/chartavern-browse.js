@@ -26,6 +26,8 @@ import {
     fetchCreatorPage,
     parseCreatorRef,
     CT_CREATOR_SORTS,
+    ctToggleLike,
+    fetchLikedCards,
 } from './chartavern-api.js';
 
 const {
@@ -84,6 +86,7 @@ let ctMaxTokens = 0;
 let ctFilterHideOwned = false;
 let ctFilterHidePossible = false;
 let ctFilterHasLorebook = false;
+let ctFilterLikes = false; // "My Likes": the account's liked cards (CL Favorites = CT likes)
 let ctFilterIsOC = false;
 
 // Tag filter state
@@ -324,9 +327,10 @@ async function loadCharacters(append = false, { fresh = false } = {}) {
     if (append && ctIsLoading) return;
 
     // A site feed cant be searched or filtered; fall to the catalog's relevance sort instead
-    if (!ctCreator && ctFeedOf(ctSortMode) && hasCatalogOnlyFilters()) setSortSelect('best');
-    const feedId = ctCreator ? null : ctFeedOf(ctSortMode);
-    if (append && feedId) return; // feeds are one fixed page
+    const likesView = !ctCreator && ctFilterLikes;
+    if (!ctCreator && !likesView && ctFeedOf(ctSortMode) && hasCatalogOnlyFilters()) setSortSelect('best');
+    const feedId = ctCreator || likesView ? null : ctFeedOf(ctSortMode);
+    if (append && (feedId || likesView)) return; // feeds and the likes list are one fixed page
 
     // Concurrency control: prevent stale responses from overwriting newer ones
     const thisToken = ++ctLoadToken;
@@ -373,6 +377,13 @@ async function loadCharacters(append = false, { fresh = false } = {}) {
                 if (page === 1 || !ctCreatorInfo) ctCreatorInfo = res;
                 return featured ? { hits: res.featured, totalPages: 1 } : { hits: res.cards, totalPages: res.pages };
             }
+            if (likesView) {
+                // The whole liked list in one page; a typed search narrows it client-side
+                const q = ctCurrentSearch.toLowerCase();
+                const liked = await fetchLikedCards(apiRequest);
+                const hits = q ? liked.filter(h => `${h.name} ${h.tagline || ''} ${h.author}`.toLowerCase().includes(q)) : liked;
+                return { hits, totalPages: 1 };
+            }
             if (feedId) return { hits: await fetchHomeFeed(feedId, apiRequest, { fresh }), totalPages: 1 };
             return searchCards({ ...opts, page }, apiRequest);
         };
@@ -404,7 +415,7 @@ async function loadCharacters(append = false, { fresh = false } = {}) {
 
         // Auto-fetch when client-side filters remove too many results
         const hasClientFilters = ctFilterHideOwned || ctFilterHidePossible || !ctNsfwEnabled;
-        if (!feedId && hasClientFilters && ctCurrentPage < ctTotalPages) {
+        if (!feedId && !likesView && hasClientFilters && ctCurrentPage < ctTotalPages) {
             let autoFetches = 0;
             while (hits.length < CT_PAGE_SIZE && ctCurrentPage < ctTotalPages && autoFetches < 3 && delegatesInitialized) {
                 autoFetches++;
@@ -487,6 +498,7 @@ function populateModalExtras(src, name) {
     if (chatsEl) chatsEl.textContent = src.chats != null ? formatNumber(src.chats) : '–';
     const likesEl = document.getElementById('ctCharLikes');
     if (likesEl) likesEl.textContent = src.likes != null ? formatNumber(src.likes) : '–';
+    paintLikeButton(src);
     const dateEl = document.getElementById('ctCharDate');
     if (dateEl) dateEl.textContent = src.createdAt ? new Date(src.createdAt * 1000).toLocaleDateString() : 'Unknown';
 
@@ -809,6 +821,80 @@ async function fetchAndPopulateDetails(hit, token) {
     }
 }
 
+// ========================================
+// ACCOUNT: LIKES (CL Favorites = CT likes)
+// ========================================
+
+/**
+ * Gate an account action: cl-helper new enough + an active CT session.
+ * @param {string} what - "like characters", for the prompts
+ * @returns {Promise<boolean>}
+ */
+async function ensureCtAccount(what) {
+    if (!(await CoreAPI.ensureFeatureClHelper('chartavern', 'account'))) return false;
+    if (!isCtSessionActive()) {
+        showToast(`Log in to CharacterTavern to ${what}`, 'info');
+        openCtLoginModal();
+        return false;
+    }
+    return true;
+}
+
+/**
+ * Heart state from a source's userReaction. Catalog hits dont know it (undefined): the heart
+ * stays neutral until the detail page fills it in, and refuses clicks meanwhile.
+ */
+function paintLikeButton(src) {
+    const btn = document.getElementById('ctCharLikeBtn');
+    if (!btn) return;
+    const known = src.userReaction !== undefined;
+    const liked = src.userReaction === 'like';
+    btn.classList.toggle('favorited', liked);
+    btn.classList.toggle('pending', !known);
+    btn.dataset.liked = liked ? '1' : '';
+    const icon = btn.querySelector('i');
+    if (icon) icon.className = `fa-${liked ? 'solid' : 'regular'} fa-heart`;
+    btn.title = !isCtSessionActive()
+        ? 'Log in to CharacterTavern to like characters'
+        : liked ? 'Unlike on CharacterTavern' : 'Like on CharacterTavern';
+}
+
+async function toggleCtLike() {
+    const btn = document.getElementById('ctCharLikeBtn');
+    const char = ctSelectedChar;
+    if (!btn || !char || btn.classList.contains('loading')) return;
+    if (!(await ensureCtAccount('like characters'))) return;
+    const detail = char._fullDetail || (char.userReaction !== undefined ? char : null);
+    const cardId = detail?.id || char.id;
+    if (!detail || !cardId) {
+        showToast('Still loading this character, try again in a moment', 'info');
+        return;
+    }
+
+    btn.classList.add('loading');
+    try {
+        // CT toggles on every call, so one call flips whatever the current state is
+        const res = await ctToggleLike(cardId, apiRequest);
+        if (ctSelectedChar !== char) return; // modal moved on
+        detail.userReaction = res.userReaction ?? null;
+        detail.likes = res.likeCount;
+        const likesEl = document.getElementById('ctCharLikes');
+        if (likesEl) likesEl.textContent = formatNumber(res.likeCount ?? 0);
+        paintLikeButton(detail);
+        showToast(res.userReaction === 'like' ? 'Liked on CharacterTavern' : 'Removed like on CharacterTavern',
+            res.userReaction === 'like' ? 'success' : 'info');
+        // Unliking inside My Likes drops the card from that list
+        if (ctFilterLikes && res.userReaction !== 'like') {
+            ctCharacters = ctCharacters.filter(c => c.path !== char.path);
+            renderGrid(ctCharacters, false);
+        }
+    } catch (err) {
+        showToast(`Could not update like: ${err.message}`, 'error');
+    } finally {
+        btn.classList.remove('loading');
+    }
+}
+
 function cleanupCtCharModal() {
     BrowseView.closeAvatarViewer();
     CoreAPI.setBrowseAltGreetings(null);
@@ -1087,7 +1173,7 @@ function updateCtFiltersButton() {
     const btn = document.getElementById('ctFiltersBtn');
     if (!btn) return;
 
-    const count = [ctFilterHideOwned, ctFilterHidePossible, ctFilterHasLorebook, ctFilterIsOC].filter(Boolean).length;
+    const count = [ctFilterLikes, ctFilterHideOwned, ctFilterHidePossible, ctFilterHasLorebook, ctFilterIsOC].filter(Boolean).length;
     btn.classList.toggle('has-filters', count > 0);
     const span = btn.querySelector('span');
     if (span) span.textContent = count > 0 ? `Features (${count})` : 'Features';
@@ -1264,6 +1350,19 @@ function initCtView() {
 
     if (filtersDropdown) filtersDropdown.addEventListener('click', (e) => e.stopPropagation());
 
+    on('ctFilterLikes', 'change', async () => {
+        const el = document.getElementById('ctFilterLikes');
+        if (!el) return;
+        if (el.checked && !(await ensureCtAccount('see your liked characters'))) {
+            el.checked = false;
+            return;
+        }
+        ctFilterLikes = el.checked;
+        updateCtFiltersButton();
+        ctCurrentPage = 1;
+        loadCharacters(false);
+    });
+
     on('ctFilterHasLorebook', 'change', () => {
         const el = document.getElementById('ctFilterHasLorebook');
         if (el) ctFilterHasLorebook = el.checked;
@@ -1327,6 +1426,14 @@ function initCtView() {
 
         on('ctImportBtn', 'click', () => {
             if (ctSelectedChar) importCharacter(ctSelectedChar);
+        });
+
+        on('ctCharLikeBtn', 'click', () => toggleCtLike());
+        on('ctCharLikeBtn', 'keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                toggleCtLike();
+            }
         });
 
         const modalOverlay = document.getElementById('ctCharModal');
@@ -1800,6 +1907,9 @@ class ChartavernBrowseView extends BrowseView {
                     <i class="fa-solid fa-sliders"></i> <span>Features</span>
                 </button>
                 <div id="ctFiltersDropdown" class="dropdown-menu browse-features-dropdown hidden" style="width: 240px;">
+                    <div class="dropdown-section-title">Account:</div>
+                    <label class="filter-checkbox"><input type="checkbox" id="ctFilterLikes"> <i class="fa-solid fa-heart" style="color: #ff6b6b;"></i> My Likes</label>
+                    <hr style="margin: 8px 0; border-color: var(--glass-border);">
                     <div class="dropdown-section-title">Character must have:</div>
                     <label class="filter-checkbox"><input type="checkbox" id="ctFilterHasLorebook"> <i class="fa-solid fa-book"></i> Lorebook</label>
                     <label class="filter-checkbox"><input type="checkbox" id="ctFilterIsOC"> <i class="fa-solid fa-star"></i> Original Character</label>
@@ -1991,8 +2101,8 @@ class ChartavernBrowseView extends BrowseView {
                             <i class="fa-solid fa-comments"></i>
                             <span id="ctCharChats">0</span> chats
                         </div>
-                        <div class="browse-stat">
-                            <i class="fa-solid fa-heart"></i>
+                        <div class="browse-stat ct-like-btn browse-fav-toggle" id="ctCharLikeBtn" role="button" tabindex="0" title="Like on CharacterTavern">
+                            <i class="fa-regular fa-heart"></i>
                             <span id="ctCharLikes">0</span> likes
                         </div>
                         <div class="browse-stat">
@@ -2123,6 +2233,7 @@ class ChartavernBrowseView extends BrowseView {
             ctFilterHideOwned = false;
             ctFilterHidePossible = false;
             ctFilterHasLorebook = false;
+            ctFilterLikes = false;
             ctFilterIsOC = false;
             ctIncludeTags = new Set();
             ctExcludeTags = new Set();
