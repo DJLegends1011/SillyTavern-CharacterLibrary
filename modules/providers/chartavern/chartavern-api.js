@@ -447,6 +447,8 @@ function adaptDetail(data) {
         isNSFW: character.isNSFW === true || hasSexualWarning(data.contentWarnings),
         likes: data.likesData?.likeCount ?? null,
         dislikes: data.likesData?.dislikeCount ?? null,
+        userReaction: data.likesData?.userReaction ?? null, // 'like' | 'dislike' | null (guest: null)
+        authorUserId: data.authorUserId ?? null,
         chats: character.analytics_chats ?? null,
         totalTokens: character.tokenTotal ?? 0,
         createdAt: toEpochSeconds(character.createdAt),
@@ -603,6 +605,96 @@ export async function fetchHomeFeed(feedId, apiRequest, opts) {
     const list = data?.[feed.key];
     if (!Array.isArray(list)) throw new Error(`CharacterTavern homepage has no ${feed.label} feed`);
     return list.map(adaptSearchHit);
+}
+
+// ========================================
+// ACCOUNT (cookie session via cl-helper)
+// ========================================
+
+/**
+ * POST one allowlisted CT account write through cl-helper's /ct-write.
+ * @returns {Promise<Object>} CT's JSON reply
+ */
+async function ctWrite(path, body, apiRequest) {
+    if (!apiRequest) throw new Error('CharacterTavern account actions need cl-helper');
+    const resp = await apiRequest(`${CL_HELPER_CT_BASE}/ct-write${path}`, 'POST', body);
+    const data = await resp.json().catch(() => null);
+    if (!resp.ok) {
+        if (resp.status === 401) ctSessionActive = false;
+        const err = new Error(data?.message || data?.error || `CharacterTavern returned HTTP ${resp.status}`);
+        err.status = resp.status;
+        throw err;
+    }
+    return data;
+}
+
+/**
+ * Toggle the account's like on a card. CT's endpoint TOGGLES: liking an already-liked card
+ * removes the like, so callers send this only when the wanted state differs from userReaction.
+ * @param {string} cardId - CT card id (CT_...)
+ * @returns {Promise<{likeCount: number, dislikeCount: number, userReaction: 'like'|'dislike'|null}>}
+ */
+export function ctToggleLike(cardId, apiRequest) {
+    return ctWrite('/api/cards/like', { cardId, like: true }, apiRequest).then((d) => {
+        _detailCache.clear(); // cached detail pages carry the old likesData
+        return d;
+    });
+}
+
+/**
+ * Follow or unfollow a creator.
+ * @param {string} authorUserId - the creator's CT user id (profile.userId / authorUserId)
+ * @param {boolean} follow
+ * @returns {Promise<{isFollowing: boolean}>}
+ */
+export async function ctSetFollow(authorUserId, follow, apiRequest) {
+    const d = await ctWrite('/api/creator/follow', { authorUserId, action: follow ? 'follow' : 'unfollow' }, apiRequest);
+    _homeCache = null; // the timeline follows the follow list
+    return { isFollowing: d?.isFollowing === true };
+}
+
+/**
+ * The account's timeline (homepage TimelineCards: newest from followed creators, fixed 28).
+ * @returns {Promise<Array>} empty for guests
+ */
+export async function fetchTimeline(apiRequest, opts) {
+    const data = await fetchHomeData(apiRequest, opts);
+    return (data?.TimelineCards || []).map(adaptSearchHit);
+}
+
+/**
+ * The account's liked cards (/library/reactions), newest reaction first.
+ * @returns {Promise<Array>} catalog-hit shaped, with reactedAt (epoch seconds)
+ */
+export async function fetchLikedCards(apiRequest) {
+    const data = await fetchCtPageData('/library/reactions', null, apiRequest);
+    if (!data?.user) {
+        const err = new Error('Log in to CharacterTavern to see your liked characters');
+        err.status = 401;
+        throw err;
+    }
+    return (data.likedCards || []).map(c => adaptSearchHit({
+        ...c,
+        author: c.path?.split('/')[0] || '',
+        contentWarnings: c.isNSFW ? ['nsfw_sexual'] : [],
+        reactedAt: toEpochSeconds(c.reactedAt),
+    }));
+}
+
+/**
+ * The account's followed creators as CT user ids. CT exposes no "following" page; every
+ * character page streams this list, so read it off one (any card works; a feed card is cached).
+ * @returns {Promise<string[]>}
+ */
+export async function fetchFollowedCreatorIds(apiRequest) {
+    const home = await fetchHomeData(apiRequest);
+    const anyCard = home?.TimelineCards?.[0] || home?.TrendingCharacters?.[0];
+    if (!anyCard?.path) return [];
+    const [author, slug] = anyCard.path.split('/');
+    const pagePath = `/character/${encodeURIComponent(author)}/${encodeURIComponent(slug)}`;
+    const data = await fetchCtPageData(pagePath, null, apiRequest);
+    const ids = data?.follows?.follows;
+    return Array.isArray(ids) ? ids.filter(id => typeof id === 'string') : [];
 }
 
 // Sort values the creator page accepts (anything else becomes newest)

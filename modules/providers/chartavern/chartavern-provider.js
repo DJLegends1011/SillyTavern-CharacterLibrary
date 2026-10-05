@@ -91,7 +91,12 @@ class ChartavernProvider extends ProviderBase {
     get iconUrl() { return `${CT_SITE_BASE}/favicon.ico`; }
     // Base SFW browse works without cl-helper (ctFetch falls to ST /proxy/ when no session), so
     // NO global minClHelperVersion. Only NSFW (cookie session via /ct-proxy) is cl-helper-gated.
-    get clHelperFeatures() { return { nsfw: { minVersion: '1.12.1', label: 'NSFW browsing' } }; }
+    get clHelperFeatures() {
+        return {
+            nsfw: { minVersion: '1.12.1', label: 'NSFW browsing' },
+            account: { minVersion: '1.13.0', label: 'Account sync (likes, follows)' },
+        };
+    }
     get browseView() { return chartavernBrowseView; }
 
     get linkStatFields() {

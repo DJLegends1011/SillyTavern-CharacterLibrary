@@ -758,7 +758,18 @@ const CT_ALLOWED_PATHS = [
     /^\/search\/cards\/__data\.json$/,
     /^\/character\/[^/]+\/[^/]+\/__data\.json$/,
     /^\/author\/[^/]+\/__data\.json$/,
+    /^\/library\/reactions\/__data\.json$/, // the account's liked cards (session only)
 ];
+
+// The only CT writes the proxy performs, each with a strict body shape rebuilt from validated
+// fields so nothing else a caller sends reaches CT. Both are JSON fetches on the site itself.
+const CT_WRITES = {
+    '/api/cards/like': (b) => (typeof b?.cardId === 'string' && b.cardId && typeof b.like === 'boolean'
+        ? { cardId: b.cardId, like: b.like } : null),
+    '/api/creator/follow': (b) => (typeof b?.authorUserId === 'string' && b.authorUserId
+        && (b.action === 'follow' || b.action === 'unfollow')
+        ? { authorUserId: b.authorUserId, action: b.action } : null),
+};
 
 const CT_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)';
 
@@ -769,8 +780,15 @@ function ctUserFromLayout(text) {
     const values = head?.nodes?.[0]?.data;
     const idx = Array.isArray(values) ? values[0]?.user : undefined;
     if (typeof idx !== 'number' || idx < 0) return null;
-    const user = values[idx];
-    return user && typeof user === 'object' ? user : null;
+    const flat = values[idx];
+    if (!flat || typeof flat !== 'object' || Array.isArray(flat)) return null;
+    // Flat devalue: each field holds an index into `values`; resolve one level (primitives only)
+    const user = {};
+    for (const [key, i] of Object.entries(flat)) {
+        const v = typeof i === 'number' && i >= 0 ? values[i] : undefined;
+        user[key] = v !== null && typeof v === 'object' ? undefined : v;
+    }
+    return user;
 }
 
 function registerCharacterTavernRoutes(router) {
@@ -858,11 +876,21 @@ function registerCharacterTavernRoutes(router) {
                     return;
                 }
 
-                // Only the catalog node's values: the layout's user prefs may name the warning too
-                const nodes = JSON.parse(text.split('\n')[0])?.nodes || [];
-                const hasNsfw = nodes.some(n => Array.isArray(n?.data)
-                    && n.data[0] && 'searchResults' in n.data[0]
-                    && n.data.includes('nsfw_sexual'));
+                // The account's own content prefs (a JSON-string array on the user) are the
+                // authority; fall back to spotting sexual-warning hits in the catalog node
+                let hasNsfw = null;
+                try {
+                    const allowed = typeof user.allowedContentWarnings === 'string'
+                        ? JSON.parse(user.allowedContentWarnings) : user.allowedContentWarnings;
+                    if (Array.isArray(allowed)) hasNsfw = allowed.includes('nsfw_sexual');
+                } catch { /* fall through to the hit scan */ }
+                if (hasNsfw === null) {
+                    // Only the catalog node's values: the layout's user prefs may name the warning too
+                    const nodes = JSON.parse(text.split('\n')[0])?.nodes || [];
+                    hasNsfw = nodes.some(n => Array.isArray(n?.data)
+                        && n.data[0] && 'searchResults' in n.data[0]
+                        && n.data.includes('nsfw_sexual'));
+                }
                 captureCtExpiry(setCookie); // this authed request slid the window; snapshot the new expiry
                 console.log(`[cl-helper] CT validate: logged in, hasNSFW=${hasNsfw}`);
                 res.json({ valid: true, hasNsfw, username: user.username || user.name || null, expires: ctSessionExpires });
@@ -898,6 +926,55 @@ function registerCharacterTavernRoutes(router) {
         res.json({ active: !!ctSessionCookies, expires: ctSessionExpires });
     });
 
+
+    /**
+     * POST /ct-write/*
+     * Cookie-authenticated CT account writes (like toggle, follow/unfollow). Path-allowlisted to
+     * CT_WRITES, body rebuilt from validated fields, browser-equivalent Origin/Referer.
+     */
+    router.post('/ct-write/*', async (req, res) => {
+        const targetPath = new URL('/' + req.params[0], 'https://character-tavern.com/').pathname;
+        const build = Object.hasOwn(CT_WRITES, targetPath) ? CT_WRITES[targetPath] : null;
+        if (!build) {
+            console.warn(`[cl-helper] CT write blocked: ${targetPath}`);
+            return res.status(403).json({ error: 'Write path not allowed' });
+        }
+        if (!ctSessionCookies) {
+            return res.status(401).json({ error: 'No CharacterTavern session' });
+        }
+        const body = build(req.body);
+        if (!body) return res.status(400).json({ error: 'Invalid request body' });
+
+        try {
+            const response = await fetch(`https://character-tavern.com${targetPath}`, {
+                method: 'POST',
+                headers: {
+                    'User-Agent': CT_UA,
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json',
+                    'Origin': 'https://character-tavern.com',
+                    'Referer': 'https://character-tavern.com/',
+                    'Cookie': ctSessionCookies,
+                },
+                body: JSON.stringify(body),
+            });
+            const setCookie = response.headers.get('set-cookie');
+            if (setCookie && (setCookie.includes('session=;') || /max-age=0/i.test(setCookie))) {
+                console.warn('[cl-helper] CT write: session rejected');
+                ctSessionCookies = null;
+                ctSessionExpires = null;
+                return res.status(401).json({ error: 'CharacterTavern session expired' });
+            }
+            captureCtExpiry(setCookie);
+            const text = await response.text();
+            res.status(response.status);
+            res.set('Content-Type', response.headers.get('content-type') || 'application/json');
+            res.send(text);
+        } catch (err) {
+            console.error('[cl-helper] CT write error:', err.message);
+            res.status(502).json({ error: 'Failed to reach CharacterTavern' });
+        }
+    });
 
     /**
      * GET /ct-proxy/*
