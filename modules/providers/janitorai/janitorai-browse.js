@@ -15,9 +15,11 @@ import {
     resolveJanitoraiTagIds,
     resolveJanitoraiAvatarUrl,
     janitoraiCharacterUrl,
+    janitoraiScriptUrl,
     hasHiddenDefinition,
     isLockedNoProxy,
     hydrateJanitoraiScripts,
+    hydrateJanitoraiAdvancedScripts,
     extractCharacterBookFromScripts,
     hasBrowserEndpoint,
     getBrowserMode,
@@ -584,10 +586,9 @@ function openPreviewModal(hit) {
     const altSection = document.getElementById('janitoraiCharAltGreetingsSection');
     if (altSection) altSection.style.display = 'none';
     // Reset or a card whose detail fetch fails shows the previous card's lorebook.
-    const loreSection = document.getElementById('janitoraiCharLorebookSection');
-    if (loreSection) loreSection.style.display = 'none';
+    hideSections(['janitoraiCharLorebookSection', 'janitoraiCharScriptsSection']);
     // Reset the detail-driven stat chips too, or a failed fetch keeps the previous counts.
-    for (const id of ['janitoraiCharGreetingsStat', 'janitoraiCharLorebookStat']) {
+    for (const id of ['janitoraiCharGreetingsStat', 'janitoraiCharLorebookStat', 'janitoraiCharScriptsStat']) {
         const chip = document.getElementById(id);
         if (chip) chip.style.display = 'none';
     }
@@ -879,7 +880,7 @@ async function fetchAndPopulateDetails(hit, token) {
                                 : 'Cloudflare blocked the definition fetch. Check the browser under Settings > Online > JanitorAI: press Test there to see what is failing.';
                 descEl.innerHTML = `<em style="color: var(--text-secondary, #888)">${msg}${limited ? '' : ' Importing uses the same request, so it will not work until this does.'}</em>`;
             }
-            hideSections(['janitoraiCharScenarioSection', 'janitoraiCharFirstMsgSection', 'janitoraiCharExamplesSection', 'janitoraiCharLorebookSection']);
+            hideSections(['janitoraiCharScenarioSection', 'janitoraiCharFirstMsgSection', 'janitoraiCharExamplesSection', 'janitoraiCharLorebookSection', 'janitoraiCharScriptsSection']);
             setImportButtonState(isCharInLocalLibrary(hit), false, 'unavailable');
             return;
         }
@@ -930,9 +931,13 @@ async function fetchAndPopulateDetails(hit, token) {
         // Lorebook content sits behind per-script fetches; hydrate AFTER the paint so the hidden
         // notice and sections never wait on those extra round-trips, while Import still finds it
         // pre-paid (its own hydrate call no-ops on the already-mutated scripts).
-        await hydrateJanitoraiScripts(detail);
+        const [, advanced] = await Promise.all([
+            hydrateJanitoraiScripts(detail),
+            hydrateJanitoraiAdvancedScripts(detail),
+        ]);
         if (token !== jaDetailToken) return;
         renderLorebookSummary(detail);
+        renderAdvancedScripts(advanced);
     } catch (err) {
         debugLog('[JanitoraiBrowse] Detail error:', err);
         if (token === jaDetailToken) {
@@ -1132,6 +1137,59 @@ function renderLorebookSummary(detail) {
     deferRender(el, () => header + CoreAPI.renderLorebookEntriesHtml(book.entries));
 }
 
+// Display only: JanitorAI runs these server-side and the import does not carry them.
+function renderAdvancedScripts(scripts) {
+    const section = document.getElementById('janitoraiCharScriptsSection');
+    const el = document.getElementById('janitoraiCharScripts');
+    const stat = document.getElementById('janitoraiCharScriptsStat');
+    if (!section || !el) return;
+
+    if (!scripts.length) {
+        section.style.display = 'none';
+        el.innerHTML = '';
+        if (stat) stat.style.display = 'none';
+        return;
+    }
+
+    if (stat) {
+        stat.innerHTML = `<i class="fa-solid fa-code"></i> ${scripts.length} script${scripts.length === 1 ? '' : 's'}`;
+        stat.style.display = 'flex';
+    }
+
+    const item = (s) => {
+        let depth = null;
+        try { depth = JSON.parse(s.settings || 'null')?.depth ?? null; } catch { /* no depth */ }
+        const meta = [
+            depth != null ? `Context depth ${escapeHtml(String(depth))}` : '',
+            s.message_count ? `${formatNumber(s.message_count)} messages` : '',
+            s.user_name ? `by @${escapeHtml(s.user_name)}` : '',
+            `<a href="${escapeHtml(janitoraiScriptUrl(s.id))}" target="_blank" rel="noopener noreferrer">Open on JanitorAI</a>`,
+        ].filter(Boolean).join(' &middot; ');
+        const desc = s.description ? `<div class="janitorai-script-desc">${escapeHtml(s.description)}</div>` : '';
+        const code = s.script
+            ? `<pre class="janitorai-script-code"><code>${escapeHtml(s.script)}</code></pre>`
+            : `<em style="color: var(--text-secondary, #888)">${!s.is_public || s.is_code_public === false
+                ? 'The creator keeps this script\'s code private.'
+                : 'The script\'s code could not be loaded.'}</em>`;
+        return `
+            <details class="browse-alt-greeting">
+                <summary>
+                    <span class="browse-alt-greeting-preview">${escapeHtml(s.title || 'Untitled script')}</span>
+                    <span class="browse-alt-greeting-chevron"><i class="fa-solid fa-chevron-down"></i></span>
+                </summary>
+                <div class="browse-alt-greeting-body">
+                    <div class="janitorai-script-meta">${meta}</div>
+                    ${desc}
+                    ${code}
+                </div>
+            </details>`;
+    };
+
+    section.style.display = 'block';
+    const note = '<div class="janitorai-lorebook-head">JanitorAI runs these scripts on its own server every turn to rewrite the prompt. SillyTavern can\'t run them, so they are not part of the import.</div>';
+    deferRender(el, () => `${note}<div class="browse-alt-greetings-list">${scripts.map(item).join('')}</div>`);
+}
+
 function cleanupCharModal() {
     BrowseView.closeAvatarViewer();
     CoreAPI.setBrowseAltGreetings(null);
@@ -1139,8 +1197,10 @@ function cleanupCharModal() {
         const el = document.getElementById(id);
         if (el) el.innerHTML = '';
     }
-    const lore = document.getElementById('janitoraiCharLorebook');
-    if (lore) lore.innerHTML = '';
+    for (const id of ['janitoraiCharLorebook', 'janitoraiCharScripts']) {
+        const el = document.getElementById(id);
+        if (el) el.innerHTML = '';
+    }
     setHiddenNotice(null);
     jaPaintedNotes = '';
     const notesEl = document.getElementById('janitoraiCharCreatorNotes');
@@ -2233,6 +2293,9 @@ class JanitoraiBrowseView extends BrowseView {
                             <i class="fa-solid fa-book"></i>
                             <span id="janitoraiCharLorebookCount">0</span> lorebook
                         </div>
+                        <div class="browse-stat" id="janitoraiCharScriptsStat" style="display: none;">
+                            <i class="fa-solid fa-code"></i> 0 scripts
+                        </div>
                         <div class="browse-stat">
                             <i class="fa-solid fa-calendar"></i>
                             <span id="janitoraiCharDate">Unknown</span>
@@ -2291,6 +2354,13 @@ class JanitoraiBrowseView extends BrowseView {
                         <i class="fa-solid fa-book"></i> Lorebook
                     </h3>
                     <div id="janitoraiCharLorebook" class="scrolling-text"></div>
+                </div>
+
+                <div class="browse-char-section" id="janitoraiCharScriptsSection" style="display: none;">
+                    <h3 class="browse-section-title" data-section="janitoraiCharScripts" data-label="Advanced Scripts" data-icon="fa-solid fa-code" title="Click to expand">
+                        <i class="fa-solid fa-code"></i> Advanced Scripts
+                    </h3>
+                    <div id="janitoraiCharScripts" class="scrolling-text"></div>
                 </div>
             </div>
         </div>

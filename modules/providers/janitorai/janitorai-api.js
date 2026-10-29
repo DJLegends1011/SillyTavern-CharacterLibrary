@@ -42,6 +42,10 @@ export function janitoraiCharacterUrl(id, name) {
     return `${JANITORAI_SITE_BASE}/characters/${id}_${slug}`;
 }
 
+export function janitoraiScriptUrl(id) {
+    return `${JANITORAI_SITE_BASE}/scripts/${id}`;
+}
+
 // ========================================
 // TRANSPORT
 // ========================================
@@ -680,6 +684,33 @@ export async function hydrateJanitoraiScripts(character, { signal } = {}) {
         } catch { /* leave unfetched */ }
     }
     return !hasUnfetchedLorebook(character);
+}
+
+/**
+ * Advanced scripts are JS that JanitorAI runs server-side each turn to rewrite the prompt.
+ * SillyTavern has nothing that runs them, so they are fetched for display only, never imported.
+ * The detail lists them only to a signed-in user; a guest gets an empty `scripts` array.
+ * @param {Object} character - anything carrying a `scripts` array
+ * @param {AbortSignal} [opts.signal]
+ * @returns {Promise<Object[]>} the listed advanced scripts; readable code lands on `script`
+ */
+export async function hydrateJanitoraiAdvancedScripts(character, { signal } = {}) {
+    const scripts = Array.isArray(character?.scripts) ? character.scripts : [];
+    const advanced = scripts.filter(s => s && s.type === 'advanced');
+    for (const s of advanced) {
+        if (!s.is_public || s.script || s.is_code_public === false) continue;
+        if (typeof s.id !== 'string' || !UUID_RE.test(s.id)) continue;
+        try {
+            const full = await hampterFetch(`/script/${s.id}`, { signal, anon: true });
+            if (typeof full?.script === 'string' && full.script) {
+                s.script = full.script;
+                if (!s.settings && typeof full.settings === 'string') s.settings = full.settings;
+            }
+            // The stub omits this flag; only the script fetch says whether the code is locked.
+            if (typeof full?.is_code_public === 'boolean') s.is_code_public = full.is_code_public;
+        } catch { /* leave unfetched; the preview says the code could not be loaded */ }
+    }
+    return advanced;
 }
 
 /**

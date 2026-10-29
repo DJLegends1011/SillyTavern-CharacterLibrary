@@ -11,6 +11,29 @@
     font-size: var(--font-sm);
 }
 
+/* Advanced scripts reuse the shared .browse-alt-greeting collapsible; only the body content is ours */
+.janitorai-script-meta {
+    margin-bottom: var(--space-xs);
+    color: var(--text-secondary);
+    font-size: var(--font-sm);
+}
+
+.janitorai-script-desc {
+    margin-bottom: var(--space-xs);
+    white-space: pre-line;
+}
+
+/* Wrap instead of scrolling sideways: long regex lines would otherwise push a phone screen wide */
+.scrolling-text pre.janitorai-script-code {
+    max-height: 360px;
+    margin: var(--space-xs) 0 0;
+    overflow: auto;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    font-size: var(--font-xs);
+    line-height: 1.5;
+}
+
 /* The preview's definition-withheld notice now uses the shared .browse-notice component
    (provider-utils buildProviderNotice); no janitorai-specific styling needed. */
 
